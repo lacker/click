@@ -1631,6 +1631,13 @@ struct SpecElaborationContext {
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
     function_contract: bool,
+    /// The context is the function entry (`old(...)`), so a resource count
+    /// is the entry's population, not the current one.
+    at_function_entry: bool,
+    /// The recorded state a proof snapshot names, when the context is one:
+    /// a resource count there is that state's population, which the spec
+    /// form cannot name and the elaboration evaluates.
+    snapshot_state: Option<CState>,
 }
 
 impl Default for SpecElaborationContext {
@@ -1640,7 +1647,9 @@ impl Default for SpecElaborationContext {
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Current,
             current_loop_entry: None,
+            at_function_entry: false,
             function_contract: false,
+            snapshot_state: None,
         }
     }
 }
@@ -1679,6 +1688,8 @@ impl SpecElaborationContext {
                 current_memory: SpecMemory::FunctionEntry,
                 current_loop_entry: None,
                 function_contract: true,
+                at_function_entry: true,
+                snapshot_state: None,
             });
         }
         let mut values = entry_values
@@ -1701,6 +1712,8 @@ impl SpecElaborationContext {
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
             current_loop_entry: None,
             function_contract: false,
+            at_function_entry: true,
+            snapshot_state: None,
         })
     }
 }

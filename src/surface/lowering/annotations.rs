@@ -47,6 +47,8 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
+        snapshots: None,
+        count_assumptions: None,
     };
     let all_predicates = predicate_environment
         .definitions
@@ -99,6 +101,8 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
+        snapshots: None,
+        count_assumptions: None,
     };
     let all_predicates = predicate_environment
         .definitions
@@ -201,6 +205,8 @@ pub(in crate::surface) fn annotated_function(
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
         branch_join_target: None,
+        snapshots: None,
+        count_assumptions: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
     let source_body = parsed_function.to_kernel_function().body().clone();
@@ -273,10 +279,63 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         statement_index: 0,
         next_quantifier_variable: 3_300_000,
         branch_join_target: Some(branch_join_target),
+        snapshots: None,
+        count_assumptions: None,
     };
     lowerer
         .click_proposition_to_spec_proposition(proposition, &SpecElaborationContext::default())
         .map_err(ClickError::new)
+}
+
+/// Elaborates a proposition stated in a fixed-state proof into the kernel's
+/// spec form, exactly as a contract clause is elaborated: `old(...)` names
+/// the function entry, a predicate call stays a predicate, and the kernel
+/// lowers the result at the proof's state. `array_element_types` names the
+/// array parameters and proof-local array bindings in scope.
+pub(in crate::surface) fn elaborate_fixed_state_proposition(
+    proposition: &ClickProposition,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<SpecProposition, String> {
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        function_effects: &[],
+        predicate_environment,
+        click_function_environment,
+        entry_state,
+        entry_values,
+        parameter_array_element_types: array_element_types,
+        quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 2_000_000,
+        branch_join_target: None,
+        implicit_contract_mutable_segments: &[],
+        snapshots: Some(snapshots),
+        count_assumptions: Some(assumptions),
+    };
+    // The proof's current locals are fixed values in every context: a name a
+    // snapshot or the entry does not bind keeps its current value, as the
+    // proof reads it.
+    let mut context = SpecElaborationContext::default();
+    context.values = current_values
+        .into_iter()
+        .map(|(name, value)| (name, SpecExpression::Value(value)))
+        .collect();
+    if let Some(result) = result {
+        context
+            .values
+            .insert("result".to_string(), SpecExpression::Value(result.clone()));
+    }
+    lowerer.click_proposition_to_spec_proposition(proposition, &context)
 }
 
 pub(in crate::surface) fn function_contract_summary(
@@ -311,6 +370,8 @@ pub(in crate::surface) fn function_contract_summary(
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
+        snapshots: None,
+        count_assumptions: None,
     };
     let context = SpecElaborationContext::for_function_contract();
     let all_predicates = predicate_environment
@@ -616,6 +677,12 @@ struct AnnotationLowerer<'a> {
     statement_index: usize,
     next_quantifier_variable: u64,
     branch_join_target: Option<&'a ProgramPointRef>,
+    /// The states a proof recorded at program points and marks, when the
+    /// proposition is stated inside a proof.
+    snapshots: Option<&'a RecordedSnapshots>,
+    /// The proof's fact context, under which a count at a recorded state
+    /// selects its populations.
+    count_assumptions: Option<&'a PureFactContext>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -774,12 +841,22 @@ impl AnnotationLowerer<'_> {
             ClickProposition::At {
                 selector,
                 proposition,
-            } => match self.resolve_visit_selector(selector)? {
-                ResolvedProgramPoint::Current => {
-                    self.click_proposition_to_spec_proposition(proposition, environment)
+            } => {
+                if let Some(snapshot) = self.snapshot_environment(selector, environment) {
+                    return self.click_proposition_to_spec_proposition(proposition, &snapshot);
                 }
-                _ => Err("`at(...)` propositions are proof-script snapshots".to_string()),
-            },
+                match self.resolve_visit_selector(selector)? {
+                    ResolvedProgramPoint::Current => {
+                        self.click_proposition_to_spec_proposition(proposition, environment)
+                    }
+                    ResolvedProgramPoint::FunctionEntry => {
+                        let old_environment =
+                            environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                        self.click_proposition_to_spec_proposition(proposition, &old_environment)
+                    }
+                    _ => Err("`at(...)` propositions are proof-script snapshots".to_string()),
+                }
+            }
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -992,17 +1069,43 @@ impl AnnotationLowerer<'_> {
                 else {
                     return Err("`count(...)` expects a declared resource".to_string());
                 };
-                Ok(SpecExpression::CountedResourceCount {
-                    name: name.clone(),
-                    arguments: arguments
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        ContractExpression::ResourceWildcard => Ok(None),
+                        argument => self
+                            .lower_contract_expression_to_spec(argument, environment)
+                            .map(Some),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                // A count at a recorded state is that state's population.
+                if let Some(state) = &environment.snapshot_state {
+                    let values = arguments
                         .iter()
                         .map(|argument| match argument {
-                            ContractExpression::ResourceWildcard => Ok(None),
-                            argument => self
-                                .lower_contract_expression_to_spec(argument, environment)
-                                .map(Some),
+                            None => Some(None),
+                            Some(SpecExpression::Value(value)) => Some(Some(value.clone())),
+                            Some(_) => None,
                         })
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            format!("`count({name})` at a recorded state needs fixed arguments")
+                        })?;
+                    let assumptions = self.count_assumptions.cloned().unwrap_or_default();
+                    return Ok(SpecExpression::Value(CValue::Int32(
+                        state.counted_population_sum(name, &values, &assumptions),
+                    )));
+                }
+                let count = SpecExpression::CountedResourceCount {
+                    name: name.clone(),
+                    arguments,
+                };
+                // A count named at the function entry is the entry's
+                // population, which the kernel evaluates at the entry state.
+                Ok(if environment.at_function_entry {
+                    SpecExpression::LoopEntrySnapshot(Box::new(count))
+                } else {
+                    count
                 })
             }
             ContractExpression::ResourceWildcard => {
@@ -1226,12 +1329,56 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    /// The elaboration context of a state a proof recorded under `selector`:
+    /// its locals are fixed values and its memory is fixed, so the kernel
+    /// lowers loads there exactly as the proof observed them.
+    fn snapshot_environment(
+        &self,
+        selector: &SnapshotSelector,
+        environment: &SpecElaborationContext,
+    ) -> Option<SpecElaborationContext> {
+        let state = self.snapshots?.get(selector)?;
+        let mut values = environment.values.clone();
+        values.extend(
+            state
+                .locals()
+                .object_values()
+                .map(|(name, value)| (name.to_string(), SpecExpression::Value(value.clone()))),
+        );
+        let array_refs = state
+            .locals()
+            .array_object_values()
+            .map(|(name, value, element_type)| {
+                (
+                    name.to_string(),
+                    SpecArrayRef {
+                        memory: SpecMemory::Fixed(state.memory().clone()),
+                        pointer: SpecExpression::Value(value.clone()),
+                        element_type,
+                    },
+                )
+            })
+            .collect();
+        Some(SpecElaborationContext {
+            values,
+            array_refs,
+            current_memory: SpecMemory::Fixed(state.memory().clone()),
+            current_loop_entry: None,
+            function_contract: false,
+            at_function_entry: false,
+            snapshot_state: Some(state.clone()),
+        })
+    }
+
     fn lower_at_expression_to_spec(
         &mut self,
         selector: &SnapshotSelector,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
+        if let Some(snapshot) = self.snapshot_environment(selector, environment) {
+            return self.lower_contract_expression_to_spec(expression, &snapshot);
+        }
         match self.resolve_visit_selector(selector)? {
             ResolvedProgramPoint::Current => {
                 self.lower_contract_expression_to_spec(expression, environment)
@@ -1592,6 +1739,9 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecArrayRef, String> {
+        if let Some(snapshot) = self.snapshot_environment(selector, environment) {
+            return self.lower_array_ref_to_spec(expression, &snapshot);
+        }
         match self.resolve_visit_selector(selector)? {
             ResolvedProgramPoint::Current => self.lower_array_ref_to_spec(expression, environment),
             ResolvedProgramPoint::FunctionEntry => {

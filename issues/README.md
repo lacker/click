@@ -29,7 +29,6 @@ Reachable through the kernel API; the surface's exact checks currently mask
 them, and since the removal of double execution (2026-09-02) no whole-body
 re-execution stands behind those checks any more:
 
-- [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
 ## Functionality gaps: 29

@@ -1290,7 +1290,12 @@ fn function_claim_holds_on_prepared_path(
             let is_function_fresh_heap_pointer = |pointer: &Pointer, current: &CMemory| {
                 let matches_allocation = |memory: &CMemory| {
                     memory.heap.live_allocations.keys().any(|base| {
-                        base == pointer
+                        // Freshness is a property of the allocation, not of
+                        // the particular address selected within it. An
+                        // interior pointer into a block live at entry must
+                        // still be covered by the function's mutable frame.
+                        base.block == pointer.block
+                            || base == pointer
                             || crate::kernel::assumptions::pointers_equal_ignoring_memories(
                                 base, pointer,
                             )
@@ -1558,6 +1563,93 @@ fn heap_free_effect_is_valid(
 ///
 /// Path validity, resource expansion, and verification conditions are checked
 /// once per path and then shared by the individual claim checks.
+/// Lowers proposition ensure `contract_index` of `function` at the
+/// post-state `outcome` reaches from `caller_state` with `arguments`: the
+/// one lowering a claim proof closes and claim certification matches, so a
+/// completion matches by construction. Each path pairs the ensure's
+/// proposition with the facts its loads introduced. An ensure stated as a
+/// registered predicate is closed as that predicate identity, the form the
+/// proof states and unfolds on the goal, unless `unfolded_predicates` names
+/// the predicate, in which case it is closed as the body the contract
+/// stores. `None` when the outcome does not return or the states cannot be
+/// reconstructed.
+pub fn c_function_ensure_goals(
+    function: &CFunction,
+    contract_index: usize,
+    caller_state: &CState,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+    unfolded_predicates: &[String],
+) -> Option<Vec<(Proposition, Vec<Proposition>)>> {
+    let ensure = function.contract_ensures().get(contract_index)?;
+    let ensure = function
+        .predicate_unfoldings()
+        .iter()
+        .find(|unfolding| unfolding.body() == ensure)
+        .filter(|unfolding| match unfolding.predicate() {
+            SpecProposition::Predicate { name, .. } => !unfolded_predicates.contains(name),
+            _ => false,
+        })
+        .map_or(ensure, CPredicateUnfolding::predicate);
+    let CFunctionOutcome::Return {
+        value,
+        state: return_state,
+    } = outcome
+    else {
+        return None;
+    };
+    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    entry_state.resources = expand_all_composite_resource_facts(
+        entry_state.resources(),
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        assumptions,
+    )?;
+    let post_resources = expand_all_composite_resource_facts(
+        return_state.resources(),
+        function.composite_resource_definitions(),
+        return_state.memory(),
+        assumptions,
+    )?;
+    let mut post_state = entry_state
+        .clone()
+        .with_memory(return_state.memory().clone());
+    post_state.resources = post_resources;
+    post_state.counted_populations = return_state.counted_populations.clone();
+    if function.return_type() != CType::Void {
+        post_state
+            .locals
+            .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
+    let lowering_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .defer_non_exact_loadability_obligations();
+    let mut budget = ExecutionBudget::default();
+    let paths = lower_spec_proposition_at_state_with_loop_entry(
+        &post_state,
+        ensure,
+        Some(&entry_state),
+        &lowering_assumptions,
+        &mut budget,
+    )
+    .ok()?;
+    Some(
+        paths
+            .into_iter()
+            .map(|path| {
+                let facts = path
+                    .facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect();
+                (path.proposition, facts)
+            })
+            .collect(),
+    )
+}
+
 pub fn c_verified_function_contract_claims(
     function: &CFunction,
     contract_execution: &CFunctionContractExecution,

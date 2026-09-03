@@ -722,7 +722,10 @@ fn alpha_proposition_key(
 pub(crate) fn quantified_equivalence_index_key(
     proposition: &Proposition,
 ) -> Option<QuantifiedEquivalenceKey> {
-    if !matches!(proposition, Proposition::ForAll { .. }) {
+    if !matches!(
+        proposition,
+        Proposition::ForAll { .. } | Proposition::Exists { .. }
+    ) {
         return None;
     }
     alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedEquivalenceKey)

@@ -388,16 +388,17 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the snapshot-bridged restricted simp should expand");
     // `owner->data` is untouched by `box_touch` (`mutable owner->value`
-    // only), so its load variable after the calls is the same variable as at
-    // statement 2's entry: the snapshot premise is reflexive and the
-    // expansion rewrites straight from the remaining one.
+    // only), but the kernel names the load after the calls by a fresh
+    // variable it relates to statement 2's entry by an equality: the
+    // expansion rewrites through that snapshot premise, in the form the
+    // proof stated it, and the remaining premise is then the goal itself.
     assert!(
-        expanded.contains("rewrite(at(statement(2).entry, owner->data) == data);"),
+        expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
         "the rewrite must cite the construction-time premise form:\n{expanded}"
     );
     assert!(
-        !expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
-        "a reflexive snapshot premise must not be rewritten:\n{expanded}"
+        expanded.contains("assumption();"),
+        "the remaining premise closes the rewritten goal:\n{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
         .expect("the explicit bridged-premise certificate should check");

@@ -658,7 +658,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         let count_witness = ClickProposition::Comparison {
             left: observed_quantity.clone(),
             operator: ComparisonOperator::LessEqual,
-            right: ContractExpression::ResourceCount(Box::new(counted_resource)),
+            right: ContractExpression::ResourceCount(Box::new(counted_resource.clone())),
         };
         let count_kernel = lower_outcome_proposition_with_assumptions(
             parameters,
@@ -741,6 +741,28 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         }
         surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
         available_pure_facts.insert(nonnegative_kernel);
+        // The observed count is nonnegative: the kernel states that as a
+        // population fact of the entry, and a certificate that cites it
+        // needs this spelling of it.
+        let count_nonnegative_witness = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::LessEqual,
+            right: ContractExpression::ResourceCount(Box::new(counted_resource.clone())),
+        };
+        if let Ok(count_nonnegative_kernel) = lower_outcome_proposition_with_assumptions(
+            parameters,
+            arguments,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts.assumptions(),
+            &count_nonnegative_witness,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            surface_propositions
+                .record_lowering(&count_nonnegative_witness, &count_nonnegative_kernel)?;
+        }
     }
     let underlying_resource = match resource {
         ResourceClause::Quantified { resource, .. } => resource.as_ref(),

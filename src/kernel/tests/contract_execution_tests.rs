@@ -1257,6 +1257,7 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
         CExecutionSemantics::EXECUTE_BODIES,
         CFunctionContractExecutionMode::VerifyLoops,
     );
+
     assert!(
         c_verified_function_contract_claim(
             &function,
@@ -1442,6 +1443,74 @@ fn contract_effect_claim_rejects_an_undecidable_guard() {
         )
         .is_none(),
         "a guarded frame must be case-split or proven true before certification"
+    );
+}
+
+#[test]
+fn contract_effect_claim_rejects_interior_entry_live_heap_pointer_as_fresh() {
+    let allocation_base = Pointer {
+        block: PointerBlock::Heap(991_003),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let interior = Pointer {
+        block: allocation_base.block.clone(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let function = c_function(
+        CType::Int32,
+        "interior_entry_live_effect",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_seq(
+            c_store(
+                c_pointer_offset_bytes(c_variable("p"), 8),
+                c_int32_literal(1),
+            ),
+            c_return(c_int32_literal(0)),
+        ),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::OwnMemory(CMemorySegment::new(
+            c_pointer_offset_bytes(c_variable("p"), 8),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        Vec::new(),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        vec![CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        )],
+        vec![CFunctionContractClaim::effect(0)],
+        true,
+    );
+    let caller_state = CState::new()
+        .with_memory(
+            CMemory::new()
+                .with_heap_allocation_claim(allocation_base.clone(), Bitvector32Term::Constant(16))
+                .expect("the entry allocation should be live"),
+        )
+        .with_resource_context(own_memory_context(interior, 0, 1));
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        caller_state,
+        function.clone(),
+        vec![c_pointer_value(allocation_base)],
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::Effect(0),
+            &execution,
+        )
+        .is_none(),
+        "an interior pointer into an entry-live block must not bypass the mutable frame"
     );
 }
 

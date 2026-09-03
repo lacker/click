@@ -1,11 +1,269 @@
 use super::*;
+use std::fmt::Write;
+
+fn memory_havoc_write_set_identity(mutable_ranges: &[CMemoryRange]) -> Vec<String> {
+    let mut identity = mutable_ranges
+        .iter()
+        .map(|range| {
+            let mut identity = String::new();
+            identity.push_str("range(");
+            havoc_pointer_identity(&mut identity, range.base(), 0);
+            identity.push_str(", ");
+            havoc_bitvector_identity(&mut identity, range.start(), 0);
+            identity.push_str(", ");
+            havoc_bitvector_identity(&mut identity, range.end(), 0);
+            let _ = write!(identity, ", {})", range.element_width());
+            identity
+        })
+        .collect::<Vec<_>>();
+    identity.sort();
+    identity
+}
+
+fn havoc_pointer_identity(identity: &mut String, pointer: &Pointer, depth: usize) {
+    if depth >= 64 {
+        identity.push_str("depth-limit");
+        return;
+    }
+    let _ = write!(identity, "pointer({:?}, ", pointer.block);
+    havoc_pointer_offset_identity(identity, &pointer.offset, depth + 1);
+    identity.push(')');
+}
+
+fn havoc_pointer_offset_identity(identity: &mut String, offset: &PointerOffsetTerm, depth: usize) {
+    if depth >= 64 {
+        identity.push_str("depth-limit");
+        return;
+    }
+    match offset {
+        PointerOffsetTerm::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
+        PointerOffsetTerm::Variable(variable) => {
+            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
+            {
+                identity.push_str("load(");
+                havoc_pointer_identity(identity, &pointer, depth + 1);
+                identity.push(')');
+            } else {
+                let _ = write!(identity, "variable({})", variable.0);
+            }
+        }
+        PointerOffsetTerm::Add(left, right) => {
+            identity.push_str("add(");
+            havoc_pointer_offset_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_offset_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let _ = write!(identity, "scaled(");
+            havoc_bitvector_identity(identity, value, depth + 1);
+            let _ = write!(identity, ", {byte_width})");
+        }
+    }
+}
+
+fn havoc_bitvector_identity(identity: &mut String, term: &Bitvector32Term, depth: usize) {
+    if depth >= 64 {
+        identity.push_str("depth-limit");
+        return;
+    }
+    match term {
+        Bitvector32Term::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
+        Bitvector32Term::Variable(variable) => {
+            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
+            {
+                identity.push_str("load(");
+                havoc_pointer_identity(identity, &pointer, depth + 1);
+                identity.push(')');
+            } else {
+                let _ = write!(identity, "variable({})", variable.0);
+            }
+        }
+        Bitvector32Term::Add(left, right) => {
+            havoc_bitvector_binary_identity(identity, "add", left, right, depth)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            havoc_bitvector_binary_identity(identity, "subtract", left, right, depth)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            havoc_bitvector_binary_identity(identity, "multiply", left, right, depth)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            havoc_bitvector_binary_identity(identity, "divide", left, right, depth)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            havoc_bitvector_binary_identity(identity, "remainder", left, right, depth)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            havoc_bitvector_binary_identity(identity, "shift-left", left, right, depth)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            havoc_bitvector_binary_identity(identity, "arithmetic-shift-right", left, right, depth)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-and", left, right, depth)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-or", left, right, depth)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-xor", left, right, depth)
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            identity.push_str("bitwise-not(");
+            havoc_bitvector_identity(identity, value, depth + 1);
+            identity.push(')');
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            identity.push_str("if(");
+            havoc_condition_identity(identity, condition, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, then_term, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, else_term, depth + 1);
+            identity.push(')');
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            identity.push_str("range-fold(");
+            havoc_bitvector_identity(identity, start, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, end, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, initial, depth + 1);
+            let _ = write!(identity, ", {}, ", accumulator.0);
+            let _ = write!(identity, "{}, ", item.0);
+            havoc_bitvector_identity(identity, body, depth + 1);
+            identity.push(')');
+        }
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            let _ = write!(identity, "pure({name:?}, [");
+            for (index, argument) in arguments.iter().enumerate() {
+                if index > 0 {
+                    identity.push_str(", ");
+                }
+                havoc_bitvector_identity(identity, argument, depth + 1);
+            }
+            identity.push_str("])");
+        }
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            identity.push_str("load(");
+            havoc_pointer_identity(identity, pointer, depth + 1);
+            identity.push(')');
+        }
+    }
+}
+
+fn havoc_bitvector_binary_identity(
+    identity: &mut String,
+    name: &str,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    depth: usize,
+) {
+    identity.push_str(name);
+    identity.push('(');
+    havoc_bitvector_identity(identity, left, depth + 1);
+    identity.push_str(", ");
+    havoc_bitvector_identity(identity, right, depth + 1);
+    identity.push(')');
+}
+
+fn havoc_condition_identity(identity: &mut String, condition: &ConditionTerm, depth: usize) {
+    if depth >= 64 {
+        identity.push_str("depth-limit");
+        return;
+    }
+    match condition {
+        ConditionTerm::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
+        ConditionTerm::Variable(variable) => {
+            let _ = write!(identity, "variable({})", variable.0);
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            havoc_condition_binary_identity(identity, "less-than", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            havoc_condition_binary_identity(identity, "less-equal", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            havoc_condition_binary_identity(identity, "greater-than", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            havoc_condition_binary_identity(identity, "greater-equal", left, right, depth)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            havoc_condition_binary_identity(identity, "equal", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            havoc_condition_binary_identity(identity, "add-overflows", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            havoc_condition_binary_identity(identity, "subtract-overflows", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            havoc_condition_binary_identity(identity, "multiply-overflows", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            havoc_condition_binary_identity(identity, "divide-overflows", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            havoc_condition_binary_identity(identity, "shift-left-overflows", left, right, depth)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            identity.push_str("offset-equal(");
+            havoc_pointer_offset_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_offset_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            identity.push_str("pointer-equal(");
+            havoc_pointer_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
+    }
+}
+
+fn havoc_condition_binary_identity(
+    identity: &mut String,
+    name: &str,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    depth: usize,
+) {
+    identity.push_str(name);
+    identity.push('(');
+    havoc_bitvector_identity(identity, left, depth + 1);
+    identity.push_str(", ");
+    havoc_bitvector_identity(identity, right, depth + 1);
+    identity.push(')');
+}
 
 fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
     use std::hash::{Hash, Hasher};
 
-    // Keep this fingerprint form-invariant across proof execution and
-    // independent certification. It separates alpha-colliding havoc shapes
-    // without making marker identity depend on snapshot-local terms.
+    // This compact marker fingerprint remains form-invariant across proof
+    // execution and independent certification. Call havocs supplement it with
+    // a lossless structural key below; loop markers retain this shape because
+    // their checked write set is already carried by the derivation edge.
     let mut shape = mutable_ranges
         .iter()
         .map(|range| {
@@ -894,13 +1152,18 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        // Marker identity includes the form-invariant shape of the write set
-        // so equal-parent havocs with different footprints cannot share one
-        // first-wins derivation.
-        let write_set_fingerprint = memory_havoc_write_set_fingerprint(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
-            CBlock::new(write_set_fingerprint),
+            CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges)),
+        );
+        // Keep the legacy marker's semantic shape and add a collision-free
+        // structural key for the checked write set. This key is intentionally
+        // not named as a havoc marker: canonical load snapshots must continue
+        // to treat the call-havoc edge as the only global memory barrier.
+        let identity = memory_havoc_write_set_identity(mutable_ranges);
+        std::sync::Arc::make_mut(&mut self.blocks).insert(
+            format!("call-write-set:{}:{}", variable.0, identity.join("|")).into(),
+            CBlock::new(0),
         );
         if let Some(base) = base {
             record_c_memory_derivation(
@@ -914,6 +1177,64 @@ impl CMemory {
             );
         }
         self
+    }
+
+    /// Checks that `self` is exactly the cell-and-marker result produced by a
+    /// call havoc from `before`. This is deliberately a structural producer
+    /// check rather than a second alias approximation: erased cells are
+    /// accepted only when the endpoint has the call-havoc shape and the same
+    /// conservative retention rule as [`Self::with_call_memory_havoc`].
+    pub(in crate::kernel) fn matches_call_memory_havoc_result(
+        &self,
+        before: &Self,
+        mutable_ranges: &[CMemoryRange],
+        assumptions: &PureFactContext,
+    ) -> bool {
+        if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 2 {
+            return false;
+        }
+        if !before
+            .blocks
+            .iter()
+            .all(|(block, value)| self.blocks.get(block) == Some(value))
+        {
+            return false;
+        }
+        let added_blocks = self
+            .blocks
+            .iter()
+            .filter(|(block, _)| !before.blocks.contains_key(*block))
+            .collect::<Vec<_>>();
+        let Some((marker, marker_block)) = added_blocks
+            .iter()
+            .find(|(block, _)| block.starts_with("call-havoc:"))
+        else {
+            return false;
+        };
+        let Some(variable) = marker
+            .strip_prefix("call-havoc:")
+            .and_then(|variable| variable.parse::<u64>().ok())
+        else {
+            return false;
+        };
+        let write_set_marker: PointerBlock = format!(
+            "call-write-set:{variable}:{}",
+            memory_havoc_write_set_identity(mutable_ranges).join("|")
+        )
+        .into();
+        if added_blocks.len() != 2
+            || **marker_block != CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges))
+            || self.blocks.get(&write_set_marker) != Some(&CBlock::new(0))
+        {
+            return false;
+        }
+
+        let mut expected_cells = before.cells.as_ref().clone();
+        expected_cells.retain(|pointer, _| {
+            pointer.block.starts_with("local:")
+                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        self.cells.as_ref() == &expected_cells
     }
 
     pub fn store(self, pointer: Pointer, value: CValue) -> Self {

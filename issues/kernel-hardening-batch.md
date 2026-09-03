@@ -5,34 +5,17 @@ code defect that an adversarial trace found unreachable from C source or proof
 scripts today. They are grouped because each is a small, self-contained fix
 with its own test; split this file if any of them grows.
 
-1. **Interior heap pointers classified function-fresh.**
-   `is_function_fresh_heap_pointer`
-   (`src/kernel/api/contract_certification/contract_claims.rs:1274-1291`)
-   tests `!matches_allocation(entry_memory) && matches!(block, Heap(_))`,
-   and `matches_allocation` compares whole pointers, so `Heap(id) + 8` into a
-   block live at entry is treated as fresh and skips the mutable-range check.
-   Unreachable because ownership gates every store, but the classification
-   should be block-identity based like `CMemory::is_live_heap_address`
-   (`src/kernel/primitives/memory_state.rs:275`).
-   Test: an effect claim for a function storing through an interior pointer
-   into an entry-live block outside its declared footprint must fail.
-2. **Free-variable collection misses symbolic block sizes.**
-   `collect_memory_bitvector_variables`
-   (`src/kernel/reasoning/variable_collection.rs:948-961`) visits block keys
-   and cells but not `CBlock.size`, while
-   `substitute_bitvector_variable_in_memory`
-   (`src/kernel/reasoning/substitution.rs:1784-1799`) does rewrite sizes. A
-   variable free only in a block size is invisible to
-   `without_free_bitvector_variable` and to the capture-avoiding reserved set.
-   Test: a memory with a symbolic block size `n` reports `n` as free.
-3. **Interface joins accept uncertified effect facts.**
-   `src/kernel/proof/execution.rs:1156` and `:1177` accept
-   `CMemoryMutatesOnly` and `CMemoryEffectSummary` arm facts without
-   `is_certified()` and without checking the declared ranges cover the
-   before-to-after diff, unlike the catch-all at `:1203`. Unreachable because
-   `ExecutionProofCore.effect_facts` is `pub(crate)`. The asymmetry is
-   unexplained; require certification or document why it is safe.
-   Test: an uncertified `CMemoryMutatesOnly` arm fact is rejected at the join.
+1. **Interior heap pointers classified function-fresh.** Resolved by making
+   `is_function_fresh_heap_pointer` classify entry-live allocations by block
+   identity and adding the requested contract-effect regression.
+2. **Free-variable collection misses symbolic block sizes.** Resolved by
+   visiting block sizes in both free-variable and binder-variable collection;
+   the regression also checks the existing substitution path.
+3. **Interface joins accept uncertified effect facts.** Resolved by requiring
+   certification for pointer and range memory effects, checking endpoint
+   coverage, and validating conservative erased-cell endpoints against the
+   kernel's call-havoc producer. The regressions cover uncertified effects,
+   uncovered writes, and arbitrary erased cells.
 4. **Premise-free ghost-invariant theorems.** The two owned-resource
    ghost-invariant axioms (`src/kernel/api.rs:2701-2757`) mint a `Theorem`
    with no premises whose conclusion is justified partly by

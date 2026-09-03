@@ -1495,20 +1495,14 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Starts one externally selected proposition judgment from a
-    /// fixed-state proof context without rebuilding its persistent facts.
-    ///
-    /// Grouped contract finalization owns several independent ensure goals;
-    /// this audited root operation focuses one of them while sharing the
-    /// checked outcome context. It is not a proof transition and therefore
-    /// starts fresh provenance. A fixed-state descendant may have published
-    /// checked `have` facts before another external obligation is selected;
-    /// a proof that already owns a proposition goal cannot replace it.
+    /// Focuses a kernel proposition goal without a surface spelling; tests
+    /// use it to address a goal directly.
+    #[cfg(test)]
     pub(super) fn focus_fixed_state_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
         self.focus_fixed_state_goal_with_surface(goal, None)
     }
 
-    fn focus_fixed_state_goal_with_surface(
+    pub(super) fn focus_fixed_state_goal_with_surface(
         &self,
         goal: Proposition,
         surface_goal: Option<ClickProposition>,

@@ -501,3 +501,31 @@ fn load_variable_free_variables_include_its_snapshot_cells() {
     crate::kernel::reasoning::collect_bitvector_variables(&load_variable, &mut variables);
     assert!(variables.contains(&counter));
 }
+
+#[test]
+fn symbolic_memory_block_sizes_are_free_and_substitutable() {
+    let size_variable = Variable(12_345);
+    let block = PointerBlock::Concrete("symbolic-size".to_string());
+    let memory = CMemory {
+        blocks: std::sync::Arc::new(BTreeMap::from([(
+            block.clone(),
+            CBlock::with_symbolic_size(Bitvector32Term::Variable(size_variable)),
+        )])),
+        cells: std::sync::Arc::new(BTreeMap::new()),
+        heap: std::sync::Arc::new(CHeapMemory::default()),
+    };
+
+    let mut variables = BTreeSet::new();
+    crate::kernel::reasoning::collect_memory_bitvector_variables(&memory, &mut variables);
+    assert_eq!(variables, BTreeSet::from([size_variable]));
+
+    let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_memory(
+        &memory,
+        size_variable,
+        &Bitvector32Term::Constant(24),
+    );
+    assert_eq!(
+        substituted.blocks.get(&block).map(CBlock::size),
+        Some(&Bitvector32Term::Constant(24)),
+    );
+}

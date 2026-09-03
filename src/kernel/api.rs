@@ -841,6 +841,48 @@ pub fn c_function(
     CFunction::new(return_type, name, parameters, body)
 }
 
+/// Lowers a spec proposition at `state`, the one lowering every proof-side
+/// proposition and every contract clause share. `entry_state` is what
+/// `old(...)` refers to. The result is the proposition on the lowering's
+/// single path with the facts its loads introduced and the obligations
+/// they left open (a load the state does not show loadable); `None` when
+/// the lowering fails or splits into several paths.
+pub fn c_lower_spec_proposition_at_state(
+    state: &CState,
+    proposition: &SpecProposition,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Option<(Proposition, Vec<Proposition>, Vec<Proposition>)> {
+    let lowering_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads()
+        .defer_non_exact_loadability_obligations();
+    let mut budget = ExecutionBudget::default();
+    let paths = lower_spec_proposition_at_state_with_loop_entry(
+        state,
+        proposition,
+        entry_state,
+        &lowering_assumptions,
+        &mut budget,
+    )
+    .ok()?;
+    let [path] = paths.as_slice() else {
+        return None;
+    };
+    Some((
+        path.proposition.clone(),
+        path.facts
+            .iter()
+            .map(|fact| fact.proposition().clone())
+            .collect(),
+        path.obligations
+            .iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect(),
+    ))
+}
+
 pub fn c_function_entry_state(
     caller_state: &CState,
     function: &CFunction,

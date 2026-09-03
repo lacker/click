@@ -868,6 +868,97 @@ mod exit_claim {
 
 use exit_claim::{ClaimClosure, ClosedClaim};
 
+/// The kernel's lowering of a claim's ensure at this path's outcome, with
+/// the facts its loads introduced: the goal a claim proof closes is what
+/// claim certification lowers, so the completion matches by construction.
+/// A lowering with several paths is not yet closed as several goals.
+fn kernel_claim_goal(
+    function: &CFunction,
+    claim: &FunctionClaimRef<'_>,
+    pre_state: &CState,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+    unfolded_predicates: &[String],
+) -> Option<(Proposition, Vec<Proposition>)> {
+    let FunctionClaimRef::Ensure(source_index, _) = claim else {
+        return None;
+    };
+    let contract_index = function
+        .contract_claims()
+        .iter()
+        .find_map(
+            |contract_claim| match (contract_claim.key(), contract_claim.target()) {
+                (
+                    CFunctionContractClaimKey::Ensure(index),
+                    CFunctionContractClaimTarget::EnsureProposition(contract_index),
+                ) if index == source_index => Some(*contract_index),
+                _ => None,
+            },
+        )?;
+    let mut goals = crate::kernel::c_function_ensure_goals(
+        function,
+        contract_index,
+        pre_state,
+        arguments,
+        outcome,
+        assumptions,
+        unfolded_predicates,
+    )?;
+    if goals.len() != 1 {
+        return None;
+    }
+    goals.pop()
+}
+
+/// The forms an explicit closer may find a claim's goal in: the identity of
+/// a registered predicate ensure first, then the body when the proof has
+/// unfolded that predicate. A closer step is exact, so the closer tries each
+/// form; two forms at most.
+fn kernel_claim_goal_forms(
+    function: &CFunction,
+    claim: &FunctionClaimRef<'_>,
+    pre_state: &CState,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+    unfolded_predicates: &[String],
+) -> Vec<(Proposition, Vec<Proposition>)> {
+    let mut forms = Vec::new();
+    for unfolds in [&[][..], unfolded_predicates] {
+        if let Some(form) = kernel_claim_goal(
+            function,
+            claim,
+            pre_state,
+            arguments,
+            outcome,
+            assumptions,
+            unfolds,
+        ) && !forms.contains(&form)
+        {
+            forms.push(form);
+        }
+    }
+    forms
+}
+
+/// Focuses a claim goal from an outcome Proof that carries the path's
+/// requirements: the kernel's lowering with the facts its loads introduced
+/// when there is one, else the surface's lowering of the surface goal.
+fn focus_claim_goal<'a>(
+    root: &Proof<'a>,
+    path_requirements: &[Proposition],
+    kernel_goal: Option<(Proposition, Vec<Proposition>)>,
+    surface_goal: &ClickProposition,
+) -> Result<Proof<'a>, ClickError> {
+    match kernel_goal {
+        Some((goal, facts)) => root
+            .with_checked_outcome_facts(&[path_requirements, facts.as_slice()].concat())?
+            .focus_fixed_state_goal_with_surface(goal, Some(surface_goal.clone())),
+        None => root.focus_fixed_state_surface_goal(surface_goal),
+    }
+}
+
 /// Selects the one ungrouped proposition claim refined by top-level
 /// `choose`/`witness` operations and starts its result-aware judgment from the
 /// current outcome Proof. Rewrites and active unfolds are re-applied inside
@@ -875,6 +966,9 @@ use exit_claim::{ClaimClosure, ClosedClaim};
 /// but every operation advances this retained Proof directly.
 fn begin_outcome_existence_proof<'a>(
     outcome_root: &Proof<'a>,
+    function: &CFunction,
+    pre_state: &CState,
+    arguments: &[CExpression],
     outcome: &CFunctionOutcome,
     path_requirements: &[Proposition],
     claims: &[FunctionClaimRef<'_>],
@@ -911,7 +1005,16 @@ fn begin_outcome_existence_proof<'a>(
     let root = outcome_root
         .with_outcome_snapshot(outcome)?
         .with_checked_outcome_facts(path_requirements)?;
-    let mut proof = root.focus_fixed_state_surface_goal(&surface_goal)?;
+    let kernel_goal = kernel_claim_goal(
+        function,
+        &claims[claim_index],
+        pre_state,
+        arguments,
+        outcome,
+        root.facts().assumptions(),
+        &[],
+    );
+    let mut proof = focus_claim_goal(&root, path_requirements, kernel_goal, &surface_goal)?;
     for equality in &rewrite_claim_equalities[claim_index] {
         proof = proof.apply_step(ProofStep::Rewrite(equality.clone()))?;
     }
@@ -934,6 +1037,10 @@ fn begin_outcome_existence_proof<'a>(
 /// reach, is a miss; only a deadline is an error.
 fn close_claim_directly_from_outcome<'a>(
     outcome_root: &Proof<'a>,
+    function: &CFunction,
+    claim: &FunctionClaimRef<'_>,
+    pre_state: &CState,
+    arguments: &[CExpression],
     outcome: &CFunctionOutcome,
     path_requirements: &[Proposition],
     surface_goal: &ClickProposition,
@@ -943,7 +1050,16 @@ fn close_claim_directly_from_outcome<'a>(
     let root = outcome_root
         .with_outcome_snapshot(outcome)?
         .with_checked_outcome_facts(path_requirements)?;
-    let mut proof = match root.focus_fixed_state_surface_goal(surface_goal) {
+    let kernel_goal = kernel_claim_goal(
+        function,
+        claim,
+        pre_state,
+        arguments,
+        outcome,
+        root.facts().assumptions(),
+        &[],
+    );
+    let mut proof = match focus_claim_goal(&root, path_requirements, kernel_goal, surface_goal) {
         Ok(proof) => proof,
         Err(_) => {
             check_verification_deadline()?;
@@ -2198,6 +2314,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `choose` is unavailable"
                                                 ))
                                             })?,
+                                            function,
+                                            pre_state,
+                                            arguments,
                                             &outcome,
                                             &path_requirements,
                                             claims,
@@ -2234,6 +2353,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `witness` is unavailable"
                                                 ))
                                             })?,
+                                            function,
+                                            pre_state,
+                                            arguments,
                                             &outcome,
                                             &path_requirements,
                                             claims,
@@ -2333,15 +2455,32 @@ pub(super) fn finish_ordered_proof<'a>(
                                     else {
                                         unreachable!("resource ensures were handled above")
                                     };
-                                    let goal = match &rewritten_claim_goals[claim_index] {
-                                        Some(goal) => goal.clone(),
-                                        None => {
-                                            if let Some(recorded) = outcome_surface_propositions
-                                                .available_kernel(surface_goal, &path_requirements)
+                                    let kernel_goals = kernel_claim_goal_forms(
+                                        function,
+                                        claim,
+                                        pre_state,
+                                        arguments,
+                                        &outcome,
+                                        &assumptions_from_propositions(&path_requirements),
+                                        &unfolded_predicates,
+                                    );
+                                    let goal_candidates = match (
+                                        &rewritten_claim_goals[claim_index],
+                                        kernel_goals.is_empty(),
+                                    ) {
+                                        (Some(goal), _) => vec![(goal.clone(), Vec::new())],
+                                        (None, false) => kernel_goals,
+                                        (None, true) => vec![(
                                             {
-                                                recorded.clone()
-                                            } else {
-                                                lower_ensure_proposition_goal(
+                                                if let Some(recorded) = outcome_surface_propositions
+                                                    .available_kernel(
+                                                        surface_goal,
+                                                        &path_requirements,
+                                                    )
+                                                {
+                                                    recorded.clone()
+                                                } else {
+                                                    lower_ensure_proposition_goal(
                                             &path_requirements,
                                             surface_goal,
                                             parsed_function.parameters(),
@@ -2358,17 +2497,40 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` could not lower goal: {message}"
                                             ))
                                         })?
-                                            }
-                                        }
+                                                }
+                                            },
+                                            Vec::new(),
+                                        )],
                                     };
                                     let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
-                                    match fixed_state_root
-                                        .focus_fixed_state_goal(goal)?
-                                        .apply_step(ProofStep::Assumption)
-                                    {
-                                        Ok(proof) => {
+                                    let mut closed = None;
+                                    let mut last_error = None;
+                                    for (goal, goal_facts) in goal_candidates {
+                                        match fixed_state_root
+                                            .with_checked_outcome_facts(
+                                                &[
+                                                    path_requirements.as_slice(),
+                                                    goal_facts.as_slice(),
+                                                ]
+                                                .concat(),
+                                            )?
+                                            .focus_fixed_state_goal_with_surface(
+                                                goal,
+                                                Some(surface_goal.clone()),
+                                            )?
+                                            .apply_step(ProofStep::Assumption)
+                                        {
+                                            Ok(proof) => {
+                                                closed = Some(proof);
+                                                break;
+                                            }
+                                            Err(error) => last_error = Some(error),
+                                        }
+                                    }
+                                    match closed {
+                                        Some(proof) => {
                                             retained_certificate = Some(proof.certificate());
                                             closures[claim_index] =
                                                 ClaimClosure::by_exact_check_completing(
@@ -2377,7 +2539,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                             closed_any = true;
                                             break;
                                         }
-                                        Err(_) => check_verification_deadline()?,
+                                        None => {
+                                            drop(last_error);
+                                            check_verification_deadline()?;
+                                        }
                                     }
                                 }
                                 if !closed_any {
@@ -2464,34 +2629,71 @@ pub(super) fn finish_ordered_proof<'a>(
                                     else {
                                         continue;
                                     };
-                                    let goal = match &rewritten_claim_goals[claim_index] {
-                                        Some(goal) => goal.clone(),
-                                        None => lower_ensure_proposition_goal(
-                                            &path_requirements,
-                                            surface_goal,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            &outcome,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            &proof_execution.presentation.recorded_snapshots,
-                                            &unfolded_predicates,
-                                        )
-                                        .map_err(|message| {
-                                            ClickError::new(format!(
-                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
-                                            ))
-                                        })?,
+                                    let kernel_goals = kernel_claim_goal_forms(
+                                        function,
+                                        claim,
+                                        pre_state,
+                                        arguments,
+                                        &outcome,
+                                        &assumptions_from_propositions(&path_requirements),
+                                        &unfolded_predicates,
+                                    );
+                                    let goal_candidates = match (
+                                        &rewritten_claim_goals[claim_index],
+                                        kernel_goals.is_empty(),
+                                    ) {
+                                        (Some(goal), _) => vec![(goal.clone(), Vec::new())],
+                                        (None, false) => kernel_goals,
+                                        (None, true) => vec![(
+                                            lower_ensure_proposition_goal(
+                                                &path_requirements,
+                                                surface_goal,
+                                                parsed_function.parameters(),
+                                                arguments,
+                                                pre_state,
+                                                &outcome,
+                                                predicate_environment,
+                                                click_function_environment,
+                                                &proof_execution.presentation.recorded_snapshots,
+                                                &unfolded_predicates,
+                                            )
+                                            .map_err(|message| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
+                                                ))
+                                            })?,
+                                            Vec::new(),
+                                        )],
                                     };
                                     let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
-                                    match fixed_state_root
-                                        .focus_fixed_state_goal(goal)?
-                                        .apply_step(ProofStep::Normalize)
-                                    {
-                                        Ok(proof) => {
+                                    let mut closed = None;
+                                    let mut last_error = None;
+                                    for (goal, goal_facts) in goal_candidates {
+                                        match fixed_state_root
+                                            .with_checked_outcome_facts(
+                                                &[
+                                                    path_requirements.as_slice(),
+                                                    goal_facts.as_slice(),
+                                                ]
+                                                .concat(),
+                                            )?
+                                            .focus_fixed_state_goal_with_surface(
+                                                goal,
+                                                Some(surface_goal.clone()),
+                                            )?
+                                            .apply_step(ProofStep::Normalize)
+                                        {
+                                            Ok(proof) => {
+                                                closed = Some(proof);
+                                                break;
+                                            }
+                                            Err(error) => last_error = Some(error),
+                                        }
+                                    }
+                                    match closed {
+                                        Some(proof) => {
                                             retained_certificate
                                                 .get_or_insert_with(|| proof.certificate());
                                             closures[claim_index] =
@@ -2500,7 +2702,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 );
                                             closed_any = true;
                                         }
-                                        Err(_) => check_verification_deadline()?,
+                                        None => {
+                                            drop(last_error);
+                                            check_verification_deadline()?;
+                                        }
                                     }
                                 }
                                 if !closed_any {
@@ -2577,31 +2782,69 @@ pub(super) fn finish_ordered_proof<'a>(
                                     else {
                                         continue;
                                     };
-                                    let goal = match &rewritten_claim_goals[claim_index] {
-                                        Some(goal) => goal.clone(),
-                                        None => lower_ensure_proposition_goal(
-                                            &path_requirements,
-                                            surface_goal,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            &outcome,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            &proof_execution.presentation.recorded_snapshots,
-                                            &unfolded_predicates,
-                                        )
-                                        .map_err(|message| {
-                                            ClickError::new(format!(
-                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower goal: {message}"
-                                            ))
-                                        })?,
+                                    let kernel_goals = kernel_claim_goal_forms(
+                                        function,
+                                        claim,
+                                        pre_state,
+                                        arguments,
+                                        &outcome,
+                                        &assumptions_from_propositions(&path_requirements),
+                                        &unfolded_predicates,
+                                    );
+                                    let goal_candidates = match (
+                                        &rewritten_claim_goals[claim_index],
+                                        kernel_goals.is_empty(),
+                                    ) {
+                                        (Some(goal), _) => vec![(goal.clone(), Vec::new())],
+                                        (None, false) => kernel_goals,
+                                        (None, true) => vec![(
+                                            lower_ensure_proposition_goal(
+                                                &path_requirements,
+                                                surface_goal,
+                                                parsed_function.parameters(),
+                                                arguments,
+                                                pre_state,
+                                                &outcome,
+                                                predicate_environment,
+                                                click_function_environment,
+                                                &proof_execution.presentation.recorded_snapshots,
+                                                &unfolded_predicates,
+                                            )
+                                            .map_err(|message| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower goal: {message}"
+                                                ))
+                                            })?,
+                                            Vec::new(),
+                                        )],
                                     };
-                                    match fixed_state_root
-                                        .focus_fixed_state_goal(goal)?
-                                        .apply_step(ProofStep::Rewrite(surface_equality.clone()))
-                                    {
-                                        Ok(proof) => {
+                                    let mut closed = None;
+                                    let mut last_error = None;
+                                    for (goal, goal_facts) in goal_candidates {
+                                        match fixed_state_root
+                                            .with_checked_outcome_facts(
+                                                &[
+                                                    path_requirements.as_slice(),
+                                                    goal_facts.as_slice(),
+                                                ]
+                                                .concat(),
+                                            )?
+                                            .focus_fixed_state_goal_with_surface(
+                                                goal,
+                                                Some(surface_goal.clone()),
+                                            )?
+                                            .apply_step(ProofStep::Rewrite(
+                                                surface_equality.clone(),
+                                            )) {
+                                            Ok(proof) => {
+                                                closed = Some(proof);
+                                                break;
+                                            }
+                                            Err(error) => last_error = Some(error),
+                                        }
+                                    }
+                                    match closed {
+                                        Some(proof) => {
                                             let rewritten = proof.goal().cloned().ok_or_else(|| {
                                                 ClickError::new(format!(
                                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: checked `rewrite` lost its proposition goal"
@@ -2614,10 +2857,13 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 .push(surface_equality.clone());
                                             rewrote_any = true;
                                         }
-                                        Err(error) => {
+                                        None => {
                                             check_verification_deadline()?;
-                                            first_error
-                                                .get_or_insert_with(|| error.message().to_string());
+                                            if let Some(error) = last_error {
+                                                first_error.get_or_insert_with(|| {
+                                                    error.message().to_string()
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -3183,9 +3429,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                             if !tried_predicates.insert(name.clone()) {
                                                 continue;
                                             }
-                                            if unfolded_predicates.contains(name) {
-                                                continue;
-                                            }
                                             match direct_proof.apply_step(
                                                 ProofStep::UnfoldPredicate(name.clone()),
                                             ) {
@@ -3582,6 +3825,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                 && let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
                                 && let Some(completed) = close_claim_directly_from_outcome(
                                     root,
+                                    function,
+                                    claim,
+                                    pre_state,
+                                    arguments,
                                     &outcome,
                                     &path_requirements,
                                     surface_goal,

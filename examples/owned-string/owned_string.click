@@ -353,7 +353,7 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     have owner->data[owner->len] == 0 by {
         rewrite(owner->data == at(statement(4).entry, owner->data));
         rewrite(owner->len == at(statement(4).entry, (index + 1)));
-        assumption();
+        normalize();
     }
     step();
     have terminated_at(owner->data, owner->len) by {
