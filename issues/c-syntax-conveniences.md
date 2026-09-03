@@ -24,6 +24,8 @@ existing terms; none needs new kernel state.
 - **For-loop forms.** Declarations require initializers, the condition is
   mandatory (`for (;;)` fails), and the step must be one scalar update
   (`:1206-1224`, `:1266-1291`; mdtest `c_for_loop_rejects_declaration`).
+  Comma-separated scalar assignment/update steps are now accepted and lowered
+  in source order.
 
 ## Violated invariant
 

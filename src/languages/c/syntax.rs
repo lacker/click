@@ -33,6 +33,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.unbraced-body",
     "statement.while",
     "statement.for",
+    "statement.for-step-list",
     "statement.store",
     "statement.malloc",
     "statement.calloc",
@@ -1575,7 +1576,7 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     let condition = self.parse_expression()?;
                     self.expect(Token::Semicolon)?;
-                    let step = self.parse_scalar_update_statement("for-loop step")?;
+                    let step = self.parse_for_step()?;
                     self.expect(Token::RParen)?;
                     let body = self.parse_controlled_statement("for")?;
                     self.pop_scope();
@@ -1840,6 +1841,15 @@ impl Parser {
             }
         };
         Ok(C0Statement::Assign { name, expression })
+    }
+
+    fn parse_for_step(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        let mut steps = vec![self.parse_scalar_update_statement("for-loop step")?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            steps.push(self.parse_scalar_update_statement("for-loop step")?);
+        }
+        Ok(balanced_statement_sequence(steps).unwrap_or(C0Statement::Skip))
     }
 
     fn call_assignment_statement(

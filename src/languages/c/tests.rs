@@ -279,6 +279,23 @@ fn c0_syntax_accepts_declaration_initializer_in_for_loop() {
 }
 
 #[test]
+fn c0_syntax_accepts_a_comma_separated_for_step() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i = 0;
+            int32 j = 3;
+            for (i = 0; i < 3; i++, j--) {
+                j = j + 1;
+            }
+            return j;
+        }
+        "#,
+    )
+    .expect("a for-loop step may sequence scalar updates with commas");
+}
+
+#[test]
 fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"
