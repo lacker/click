@@ -1,15 +1,16 @@
 use super::diagnostics::*;
+use super::validation::collect_click_function_calls;
 use super::validation::{collect_called_predicates, collect_resource_count_families, tactic_name};
-use super::validation::{
-    collect_click_function_calls, collect_click_function_calls_in_proposition,
-};
 use super::*;
 
 mod attempt;
 mod claim_proofs;
 #[cfg(test)]
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
-pub(in crate::surface) use fixed_state_proofs::lower_fixed_state_proposition_through_kernel;
+pub(in crate::surface) use fixed_state_proofs::{
+    evaluate_fixed_state_expression_through_kernel, lower_fixed_state_proposition_through_kernel,
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls,
+};
 mod cursor_execution;
 mod execution_planning;
 pub(in crate::surface) mod fact_reasoning;

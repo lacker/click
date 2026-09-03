@@ -1195,6 +1195,9 @@ impl PureFactContext {
         if self.transport_memory_load_condition_facts {
             fingerprint ^= 1 << 61;
         }
+        if !self.pure_function_definitions.is_empty() {
+            fingerprint ^= Self::fingerprint(4, &self.pure_function_definitions.fingerprint());
+        }
         self.content_fingerprint = fingerprint;
     }
 
@@ -1975,6 +1978,33 @@ impl PureFactContext {
 
     pub(super) fn should_defer_non_exact_condition_reasoning(&self) -> bool {
         self.defer_non_exact_condition_reasoning
+    }
+
+    /// The pure function definitions the kernel evaluates constant
+    /// applications by. A context carries one table.
+    pub(crate) fn with_pure_function_definitions(
+        mut self,
+        definitions: std::sync::Arc<crate::kernel::primitives::SpecPureFunctionDefinitions>,
+    ) -> Self {
+        if self.pure_function_definitions.fingerprint() == definitions.fingerprint() {
+            return self;
+        }
+        if !self.pure_function_definitions.is_empty() {
+            self.content_fingerprint ^=
+                Self::fingerprint(4, &self.pure_function_definitions.fingerprint());
+        }
+        if !definitions.is_empty() {
+            self.content_fingerprint ^= Self::fingerprint(4, &definitions.fingerprint());
+        }
+        self.pure_function_definitions = definitions;
+        self
+    }
+
+    pub(super) fn pure_function_definition(
+        &self,
+        name: &str,
+    ) -> Option<&crate::kernel::primitives::SpecPureFunctionDefinition> {
+        self.pure_function_definitions.get(name)
     }
 
     pub(crate) fn prefer_symbolic_external_loads(mut self) -> Self {

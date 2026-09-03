@@ -284,6 +284,47 @@ pub enum SpecMemory {
     Fixed(CMemory),
 }
 
+/// A pure Click function's definition in spec form. The kernel evaluates an
+/// application whose arguments are all constants by the body, with the
+/// parameters bound as locals; every call inside the body is an application.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct SpecPureFunctionDefinition {
+    pub parameters: Vec<String>,
+    pub body: SpecExpression,
+}
+
+/// The pure function definitions a lowering evaluates under, fingerprinted
+/// once so a fact context carries them at no cost per lowering.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SpecPureFunctionDefinitions {
+    definitions: BTreeMap<String, SpecPureFunctionDefinition>,
+    fingerprint: u64,
+}
+
+impl SpecPureFunctionDefinitions {
+    pub fn new(definitions: BTreeMap<String, SpecPureFunctionDefinition>) -> Self {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&definitions, &mut hasher);
+        let fingerprint = std::hash::Hasher::finish(&hasher);
+        Self {
+            definitions,
+            fingerprint,
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&SpecPureFunctionDefinition> {
+        self.definitions.get(name)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.definitions.is_empty()
+    }
+
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecExpression {
     Value(CValue),
@@ -2035,6 +2076,8 @@ pub(super) enum AtomicPropositionDerivationEvidence {
 
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
+    /// The pure function definitions constant applications evaluate by.
+    pub(super) pure_function_definitions: std::sync::Arc<SpecPureFunctionDefinitions>,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
     /// Exact signed-order bounds keyed by either endpoint — under the term
     /// the fact wrote and, when different, its canonical form as an alias.

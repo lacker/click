@@ -5527,23 +5527,19 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     check_verification_deadline()?;
     let values = parameter_values(parameters, arguments)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
-    let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
     let assumptions = assumptions.clone().allow_symbolic_contract_loads();
-    let mut next_variable = 2_000_000;
-    let mut active_functions = BTreeSet::new();
-    lower_outcome_proposition_with_environment(
-        &mut values,
+    lower_fixed_state_proposition_through_kernel(
+        candidate,
+        &assumptions,
+        &values,
         &array_refs,
         view.old_reference_state(state),
         state,
         None,
-        &assumptions,
-        candidate,
-        &mut next_variable,
+        &view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
-        &view.recorded_snapshots,
-        &mut active_functions,
     )
     .map_err(ClickError::new)
 }

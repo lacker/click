@@ -108,64 +108,113 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    // A state the kernel lowers at binds the parameters at their entry
-    // values and the proof-local bindings; the state's own locals win.
-    let bound = |state: &CState| {
-        let mut bound = state.clone();
-        for (name, value) in values {
-            if bound.locals().get(name).is_none() {
-                bound = bound.with_local(name.clone(), value.clone());
-            }
-        }
-        bound
-    };
-    let entry_state = bound(pre_state);
-    let mut lowering_state = bound(state);
-    if let Some(result) = result {
-        lowering_state = lowering_state.with_local("result", result.clone());
-    }
-    let mut element_types = array_refs
-        .iter()
-        .map(|(name, array_ref)| (name.clone(), array_ref.element_type))
-        .collect::<BTreeMap<_, _>>();
-    element_types.extend(
-        lowering_state
-            .locals()
-            .array_object_values()
-            .map(|(name, _, element_type)| (name.to_string(), element_type)),
-    );
-    let entry_values = entry_state
-        .locals()
-        .object_values()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
-    let current_values = lowering_state
-        .locals()
-        .object_values()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+/// The kernel lowering of a proof-side proposition whose calls named in
+/// `opaque_click_functions` stay applications: the proof unfolds them itself.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<Proposition, String> {
+    let assumptions = &assumptions
+        .clone()
+        .with_pure_function_definitions(click_function_environment.spec_definitions().clone());
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
     let spec = crate::surface::lowering::elaborate_fixed_state_proposition(
         proposition,
-        element_types,
-        &entry_state,
-        entry_values,
-        current_values,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
         result,
         recorded_snapshots,
         assumptions,
         predicate_environment,
         click_function_environment,
+        opaque_click_functions.clone(),
     )?;
     let (lowered, _, obligations) = crate::kernel::c_lower_spec_proposition_at_state(
-        &lowering_state,
+        &states.lowering_state,
         &spec,
-        Some(&entry_state),
+        Some(&states.entry_state),
         assumptions,
-    )
-    .ok_or_else(|| "the kernel lowering did not produce one path".to_string())?;
-    // A proposition that reads memory the state shows freed is not stated
-    // at this state; every other load obligation is certification's to
-    // discharge from the path's facts.
+    )?;
+    refuse_impossible_loads(&obligations)?;
+    Ok(lowered)
+}
+
+/// The one evaluation of a proof-side expression: elaborated into the
+/// kernel's spec form like a contract expression and evaluated by the kernel
+/// at the proof's state. Calls named in `opaque_click_functions` stay
+/// applications: the proof unfolds them itself.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<CValue, String> {
+    let assumptions = &assumptions
+        .clone()
+        .with_pure_function_definitions(click_function_environment.spec_definitions().clone());
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
+    let spec = crate::surface::lowering::elaborate_fixed_state_expression(
+        expression,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        result,
+        recorded_snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions.clone(),
+    )?;
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )?;
+    refuse_impossible_loads(&obligations)?;
+    Ok(value)
+}
+
+/// A proposition or expression that reads memory the state shows freed is
+/// not stated at this state; every other load obligation is certification's
+/// to discharge from the path's facts.
+fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
     if let Some(obligation) = obligations
         .iter()
         .find(|obligation| crate::kernel::c_loadability_obligation_impossible(obligation))
@@ -174,14 +223,78 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel(
             "the proposition reads memory that is not loadable here: {obligation:?}"
         ));
     }
-    Ok(lowered)
+    Ok(())
+}
+
+/// The states a fixed-state lowering runs at, with the values in scope at
+/// each: the entry state and the current state, each binding the proof's
+/// parameter and proof-local values where the state does not bind the name,
+/// and `result` bound on the current state.
+struct FixedStateLowering {
+    entry_state: CState,
+    lowering_state: CState,
+    element_types: BTreeMap<String, CType>,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+}
+
+impl FixedStateLowering {
+    fn new(
+        values: &BTreeMap<String, CValue>,
+        array_refs: &ClickArrayRefs,
+        pre_state: &CState,
+        state: &CState,
+        result: Option<&CValue>,
+    ) -> Self {
+        let bound = |state: &CState| {
+            let mut bound = state.clone();
+            for (name, value) in values {
+                if bound.locals().get(name).is_none() {
+                    bound = bound.with_local(name.clone(), value.clone());
+                }
+            }
+            bound
+        };
+        let entry_state = bound(pre_state);
+        let mut lowering_state = bound(state);
+        if let Some(result) = result {
+            lowering_state = lowering_state.with_local("result", result.clone());
+        }
+        let mut element_types = array_refs
+            .iter()
+            .map(|(name, array_ref)| (name.clone(), array_ref.element_type))
+            .collect::<BTreeMap<_, _>>();
+        element_types.extend(
+            lowering_state
+                .locals()
+                .array_object_values()
+                .map(|(name, _, element_type)| (name.to_string(), element_type)),
+        );
+        let entry_values = entry_state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect();
+        let current_values = lowering_state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect();
+        Self {
+            entry_state,
+            lowering_state,
+            element_types,
+            entry_values,
+            current_values,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn lower_fixed_state_proposition_with_values_and_assumptions(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
-    mut values: BTreeMap<String, CValue>,
+    values: BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     pre_state: &CState,
     state: &CState,
@@ -190,7 +303,7 @@ fn lower_fixed_state_proposition_with_values_and_assumptions(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    match lower_fixed_state_proposition_through_kernel(
+    lower_fixed_state_proposition_through_kernel(
         proposition,
         assumptions,
         &values,
@@ -201,27 +314,6 @@ fn lower_fixed_state_proposition_with_values_and_assumptions(
         recorded_snapshots,
         predicate_environment,
         click_function_environment,
-    ) {
-        Ok(lowered) => {
-            return Ok(lowered);
-        }
-        Err(_) => {}
-    }
-    let mut next_variable = 2_000_000;
-    let mut active_functions = BTreeSet::new();
-    lower_outcome_proposition_with_environment(
-        &mut values,
-        array_refs,
-        pre_state,
-        state,
-        result,
-        assumptions,
-        proposition,
-        &mut next_variable,
-        predicate_environment,
-        click_function_environment,
-        recorded_snapshots,
-        &mut active_functions,
     )
 }
 
@@ -229,7 +321,7 @@ fn lower_fixed_state_proposition_with_values_and_assumptions(
 fn lower_fixed_state_proposition_with_memory_resolution(
     proposition: &ClickProposition,
     available: &[Proposition],
-    mut values: BTreeMap<String, CValue>,
+    values: BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     pre_state: &CState,
     state: &CState,
@@ -240,21 +332,17 @@ fn lower_fixed_state_proposition_with_memory_resolution(
 ) -> Result<Proposition, String> {
     let assumptions =
         assumptions_from_propositions(available).defer_non_exact_loadability_obligations();
-    let mut next_variable = 2_000_000;
-    let mut active_functions = BTreeSet::new();
-    lower_outcome_proposition_with_environment(
-        &mut values,
+    lower_fixed_state_proposition_through_kernel(
+        proposition,
+        &assumptions,
+        &values,
         array_refs,
         pre_state,
         state,
         result,
-        &assumptions,
-        proposition,
-        &mut next_variable,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
-        recorded_snapshots,
-        &mut active_functions,
     )
 }
 
@@ -502,7 +590,8 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` have proof {outer_tactic_index}: could not lower `simp` premise: {message}"
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower `simp` premise `{}`: {message}",
+                    describe_click_proposition(surface)
                 ))
             })?;
             let exact_available = available

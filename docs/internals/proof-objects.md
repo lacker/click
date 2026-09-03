@@ -237,7 +237,13 @@ goes the same way: elaborated into the kernel's spec form exactly as a
 contract clause is (`elaborate_fixed_state_proposition`, with the proof's
 recorded snapshots, `old(...)` as the function entry, `result`, and the
 proof's current locals as fixed values) and lowered by the kernel
-(`c_lower_spec_proposition_at_state`). A count named at a recorded state
+(`c_lower_spec_proposition_at_state`); an expression a proof evaluates goes
+the same way (`elaborate_fixed_state_expression`,
+`c_evaluate_spec_expression_at_state`). A call the proof unfolds itself
+stays an application, and the kernel evaluates an application of a pure
+function to constants by the function's definition, elaborated once per
+environment (`SpecPureFunctionDefinitions`), carried by the fact context,
+and bounded by the call budget. A count named at a recorded state
 is that state's population. A negated condition is the condition with the
 other value, as an execution spells the branch it did not take, and
 loadability terms are canonical, so a proposition lowered anywhere is
@@ -251,7 +257,7 @@ artifact's own caller state also certifies a path rebased from that state.
 A claim with no `by` block is closed by the direct logical closure from
 the outcome Proof, which records its completion like any other closer.
 Only a claim with no matching completion is proved from the path's facts,
-a route that goes with the surface evaluator it served.
+the second-proof route that goes with the legacy claim checker.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A

@@ -1725,23 +1725,23 @@ fn lower_pure_simp_after_function_unfold(
         unfolded_applications.push(application.clone());
         tactics.push(ProofTactic::UnfoldFunction(application));
 
-        let mut values = context.values.clone();
-        let mut next_variable = 2_000_000;
-        let mut active_functions = BTreeSet::new();
-        collect_click_function_calls_in_proposition(&unfolded_surface_goal, &mut active_functions);
-        let refreshed_goal = lower_outcome_proposition_with_environment(
-            &mut values,
+        let mut opaque_calls = BTreeSet::new();
+        crate::surface::validation::collect_click_function_calls_in_proposition(
+            &unfolded_surface_goal,
+            &mut opaque_calls,
+        );
+        let refreshed_goal = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+            &unfolded_surface_goal,
+            &assumptions,
+            &context.values,
             &context.array_refs,
             &state,
             &state,
             None,
-            &assumptions,
-            &unfolded_surface_goal,
-            &mut next_variable,
+            &RecordedSnapshots::new(),
             predicate_environment,
             click_function_environment,
-            &RecordedSnapshots::new(),
-            &mut active_functions,
+            &opaque_calls,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         let Some(plan) = plan_simp_certificate(&refreshed_goal, &assumptions) else {
@@ -3070,26 +3070,24 @@ fn prove_pure_theorem_tactics(
                 ) {
                     surface_goal = Some(next_surface_goal.clone());
                     let assumptions = assumptions_from_propositions(&available);
-                    let mut values = context.values.clone();
-                    let mut next_variable = 2_000_000;
-                    let mut active_functions = BTreeSet::new();
-                    collect_click_function_calls_in_proposition(
+                    let values = context.values.clone();
+                    let mut opaque_calls = BTreeSet::new();
+                    crate::surface::validation::collect_click_function_calls_in_proposition(
                         &next_surface_goal,
-                        &mut active_functions,
+                        &mut opaque_calls,
                     );
-                    goal = lower_outcome_proposition_with_environment(
-                        &mut values,
+                    goal = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                        &next_surface_goal,
+                        &assumptions,
+                        &values,
                         &context.array_refs,
                         &state,
                         &state,
                         None,
-                        &assumptions,
-                        &next_surface_goal,
-                        &mut next_variable,
+                        &RecordedSnapshots::new(),
                         predicate_environment,
                         click_function_environment,
-                        &RecordedSnapshots::new(),
-                        &mut active_functions,
+                        &opaque_calls,
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
