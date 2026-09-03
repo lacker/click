@@ -132,7 +132,7 @@ impl ResourcePureFacts for ProofResourcePureFacts {
         if self.facts.contains_top_level(&fact) {
             return false;
         }
-        self.facts = self.facts.with_fact(fact.clone());
+        self.facts = self.facts.with_kernel_checked_fact(fact.clone());
         self.added.push(fact);
         true
     }

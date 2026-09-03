@@ -633,7 +633,7 @@ impl<'a> Proof<'a> {
                 .chain(common_path_facts[arm_index].as_ref().into_iter().flatten())
             {
                 if !facts.contains(fact) {
-                    facts = facts.with_fact(fact.clone());
+                    facts = facts.with_kernel_checked_fact(fact.clone());
                     added_facts.push(fact.clone());
                 }
             }
@@ -907,7 +907,7 @@ impl<'a> Proof<'a> {
         if at_frontier && let Some(execution) = self.execution() {
             for fact in execution.core.effect_facts.iter() {
                 if !body_facts.contains(fact.proposition()) {
-                    body_facts = body_facts.with_fact(fact.proposition().clone());
+                    body_facts = body_facts.with_kernel_checked_fact(fact.proposition().clone());
                 }
             }
         }
@@ -923,7 +923,7 @@ impl<'a> Proof<'a> {
             && !body_facts.contains(&body_kernel)
             && body_facts.assumptions().proves(&body_kernel)
         {
-            body_facts = body_facts.with_fact(body_kernel.clone());
+            body_facts = body_facts.with_kernel_checked_fact(body_kernel.clone());
         }
         for name in self.focused_branch_unfolds().iter() {
             let recorded_bodies = match self.context.as_ref() {

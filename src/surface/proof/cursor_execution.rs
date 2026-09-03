@@ -69,7 +69,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     )));
                 }
                 if !concrete_facts.contains_top_level(&fact) {
-                    concrete_facts = concrete_facts.with_fact(fact);
+                    concrete_facts = concrete_facts.with_kernel_checked_fact(fact);
                 }
             }
             ProofAssertion::Resource(resource) => {
@@ -175,7 +175,8 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                 let mut pre_advance_facts = concrete_facts.clone();
                 for fact in &execution.core.effect_facts {
                     if !pre_advance_facts.contains_top_level(fact.proposition()) {
-                        pre_advance_facts = pre_advance_facts.with_fact(fact.proposition().clone());
+                        pre_advance_facts =
+                            pre_advance_facts.with_kernel_checked_fact(fact.proposition().clone());
                     }
                 }
                 for fact in entry_loadables {

@@ -876,7 +876,7 @@ impl<'a> Proof<'a> {
         let mut added_facts = Vec::new();
         let mut retain_fact = |fact: &Proposition| -> Result<(), ClickError> {
             if !facts.contains_top_level(fact) {
-                facts = facts.with_fact(fact.clone());
+                facts = facts.with_kernel_checked_fact(fact.clone());
                 added_facts.push(fact.clone());
             }
             for surface in then_abstract.surface_propositions.surfaces(fact) {
@@ -1357,7 +1357,7 @@ impl<'a> Proof<'a> {
                 && arms[1].facts.contains(fact)
                 && !facts.contains(fact)
             {
-                facts = facts.with_fact(fact.clone());
+                facts = facts.with_kernel_checked_fact(fact.clone());
                 common_added_facts.push(fact.clone());
                 for surface in arms[0]
                     .execution
@@ -1554,7 +1554,7 @@ impl<'a> Proof<'a> {
                 && arms[1].facts.contains(fact)
                 && !facts.contains(fact)
             {
-                facts = facts.with_fact(fact.clone());
+                facts = facts.with_kernel_checked_fact(fact.clone());
                 common_added_facts.push(fact.clone());
                 for surface in arms[0]
                     .execution

@@ -298,7 +298,7 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
-    pub(crate) fn publish_checked_focused_result(
+    pub(in crate::kernel) fn publish_checked_focused_result(
         &self,
         locals: L,
         branch: Option<ProofBranch<O, E>>,
@@ -324,6 +324,20 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
             },
             self.focused_branch,
         ))
+    }
+
+    /// Publishes a focused result assembled by the checked kernel proof
+    /// drivers. The raw state replacement stays kernel-scoped; this adapter
+    /// is the one route used by the language layer after its operation-specific
+    /// checker has produced the result and fact deltas.
+    pub(crate) fn publish_checked_result(
+        &self,
+        locals: L,
+        branch: Option<ProofBranch<O, E>>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofFocusError> {
+        self.publish_checked_focused_result(locals, branch, added_facts, checked_facts)
     }
 
     pub(crate) fn replace_focused_with_checked_branches(

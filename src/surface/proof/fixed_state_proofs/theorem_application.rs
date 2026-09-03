@@ -127,7 +127,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         if !facts.contains_top_level(&conclusion) {
             added_facts.push(conclusion.clone());
         }
-        facts = facts.with_fact(conclusion);
+        facts = facts.with_kernel_checked_fact(conclusion);
     }
 
     Ok(CheckedFixedStateTheoremApplication { facts, added_facts })

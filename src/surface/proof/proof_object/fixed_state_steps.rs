@@ -85,7 +85,7 @@ impl<'a> Proof<'a> {
             if !facts.contains(&fact) {
                 added_facts.push(fact.clone());
             }
-            facts = facts.with_fact(fact);
+            facts = facts.with_kernel_checked_fact(fact);
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(self.checked_fact_transition(
@@ -257,7 +257,7 @@ impl<'a> Proof<'a> {
         let added_facts = (!self.facts().contains_top_level(&chosen_fact))
             .then(|| vec![chosen_fact.clone()])
             .unwrap_or_default();
-        let facts = self.facts().with_fact(chosen_fact.clone());
+        let facts = self.facts().with_kernel_checked_fact(chosen_fact.clone());
         Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
     }
 
@@ -892,8 +892,8 @@ impl<'a> Proof<'a> {
                 evidence_plan.push(OutcomeEvidenceFork::Split {
                     partition,
                     arm_facts: [
-                        self.facts().with_fact(positive.clone()),
-                        self.facts().with_fact(negative.clone()),
+                        self.facts().with_kernel_checked_fact(positive.clone()),
+                        self.facts().with_kernel_checked_fact(negative.clone()),
                     ],
                 });
                 vec![(true, Some(positive)), (false, Some(negative))]
@@ -1106,7 +1106,7 @@ impl<'a> Proof<'a> {
             vec![checked.target.clone()]
         };
         let checked_facts = vec![checked.source, checked.target.clone()];
-        facts = facts.with_fact(checked.target);
+        facts = facts.with_kernel_checked_fact(checked.target);
         // A focused branch outcome goal records the checker-owned source and target
         // lowerings atomically with its fact successor; the drain no longer
         // has to re-record them into a caller-owned map for this path.
@@ -1189,7 +1189,7 @@ impl<'a> Proof<'a> {
         } else {
             vec![checked.target.clone()]
         };
-        facts = facts.with_fact(checked.target);
+        facts = facts.with_kernel_checked_fact(checked.target);
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(self.checked_execution_transition(
             facts,

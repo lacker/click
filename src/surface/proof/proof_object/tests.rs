@@ -900,14 +900,16 @@ fn introduced_since_recovers_only_the_appended_delta() {
         // insertion order, regardless of the shared ancestor's size.
         let first = indexed_fact(size + 1);
         let second = indexed_fact(size + 2);
-        let fork = ancestor.with_fact(first.clone()).with_fact(second.clone());
+        let fork = ancestor
+            .with_kernel_checked_fact(first.clone())
+            .with_kernel_checked_fact(second.clone());
         assert_eq!(
             fork.introduced_since(&ancestor),
             Some(vec![first.clone(), second.clone()])
         );
 
         // A duplicate insertion introduces nothing.
-        let unchanged = ancestor.with_fact(indexed_fact(0));
+        let unchanged = ancestor.with_kernel_checked_fact(indexed_fact(0));
         assert_eq!(unchanged.introduced_since(&ancestor), Some(Vec::new()));
 
         // The ancestor itself is a trivial delta, and identity — not
@@ -918,7 +920,7 @@ fn introduced_since_recovers_only_the_appended_delta() {
         assert_eq!(fork.introduced_since(&rebuilt), None);
 
         // Divergent forks are not each other's ancestors.
-        let sibling = ancestor.with_fact(indexed_fact(size + 3));
+        let sibling = ancestor.with_kernel_checked_fact(indexed_fact(size + 3));
         assert_eq!(sibling.introduced_since(&fork), None);
     }
 }
@@ -935,7 +937,7 @@ fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
 
         let added = indexed_fact(size + 1);
         let before = fact_node_allocations();
-        let successor = fork.with_fact(added.clone());
+        let successor = fork.with_kernel_checked_fact(added.clone());
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
         allocation_samples.push((size, logarithmic_height, allocations));
@@ -8284,7 +8286,7 @@ fn proof_condition_split_filters_conflicts_without_rebuilding_facts() {
     assert!(!checked_split.validates_exhaustive_join(
         &state,
         &condition,
-        &empty.with_fact(indexed_fact(99_999)),
+        &empty.with_kernel_checked_fact(indexed_fact(99_999)),
         arm_theorems,
         arm_facts,
     ));

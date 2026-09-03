@@ -175,7 +175,16 @@ impl ProofFacts {
         self.top_level_exact.contains(fact)
     }
 
-    pub(crate) fn with_fact(&self, fact: Proposition) -> Self {
+    /// Appends a proposition after a checked kernel operation has established
+    /// it. Surface proof drivers use this named adapter only to carry facts
+    /// returned by those operations; it deliberately does not become a
+    /// second semantic checker. The raw index mutation below remains scoped
+    /// to the kernel so every such publication is visible in the kernel audit.
+    pub(crate) fn with_kernel_checked_fact(&self, fact: Proposition) -> Self {
+        self.with_fact(fact)
+    }
+
+    pub(in crate::kernel) fn with_fact(&self, fact: Proposition) -> Self {
         if self.top_level_exact.contains(&fact) {
             return self.clone();
         }

@@ -216,7 +216,7 @@ impl<'a> Proof<'a> {
             .then(|| equality.clone())
             .into_iter()
             .collect::<Vec<_>>();
-        facts = facts.with_fact(equality.clone());
+        facts = facts.with_kernel_checked_fact(equality.clone());
 
         let branch = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => {

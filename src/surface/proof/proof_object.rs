@@ -1331,7 +1331,7 @@ impl<'a> Proof<'a> {
         transition: CheckedFocusedTransition,
     ) -> Result<KernelProofHandle, ClickError> {
         self.state
-            .publish_checked_focused_result(
+            .publish_checked_result(
                 transition.locals,
                 transition.branch,
                 transition.added_facts,
