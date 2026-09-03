@@ -376,6 +376,9 @@ pub(in crate::kernel) fn element_count_from_bytes(
     if element_width == 0 {
         return None;
     }
+    if element_width == 1 {
+        return Some(bytes.clone());
+    }
     let element_width = Bitvector32Term::Constant(element_width);
     match bytes {
         Bitvector32Term::Multiply(left, right) if right.as_ref() == &element_width => {

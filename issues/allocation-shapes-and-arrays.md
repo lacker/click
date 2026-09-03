@@ -35,6 +35,11 @@ items[8]` indexed by field.
 Byte-buffer regressions also cover `uint8* p = malloc(n * sizeof(uint8))`
 with one-byte access and `calloc(n, sizeof(uint8))` zeroing before `free(p)`.
 
+The bounded `realloc` implementation now applies to `uint8*` as well as
+`int32*`, including symbolic byte extents and preserved zeroed prefixes. The
+remaining arbitrary-layout `realloc` cases stay outside this issue's supported
+typed allocation model.
+
 ## Acceptance criteria
 
 - `sizeof` applies to every supported type and evaluates to the documented

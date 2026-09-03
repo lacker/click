@@ -615,13 +615,19 @@ pub(crate) fn execute_c_realloc_assign_paths(
             obligations: Vec::new(),
         }]);
     };
-    if state.local_object_type(target) != Some(CType::Int32Pointer) {
+    let Some(target_type @ (CType::Int32Pointer | CType::UInt8Pointer)) =
+        state.local_object_type(target)
+    else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
         }]);
-    }
+    };
+    let element_width = target_type
+        .pointee_type()
+        .expect("realloc target has a pointee type")
+        .byte_width();
 
     let mut paths = Vec::new();
     for old_path in evaluate_c_expression_paths(state, old_expression, assumptions, budget)? {
@@ -708,7 +714,9 @@ pub(crate) fn execute_c_realloc_assign_paths(
             });
             continue;
         };
-        let Some(old_count) = int32_element_count_from_bytes(&old_bytes) else {
+        let Some(old_count) =
+            crate::kernel::reasoning::element_count_from_bytes(&old_bytes, element_width)
+        else {
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -754,7 +762,9 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             };
-            let Some(new_count) = int32_element_count_from_bytes(&new_bytes) else {
+            let Some(new_count) =
+                crate::kernel::reasoning::element_count_from_bytes(&new_bytes, element_width)
+            else {
                 let Some((merged_facts, merged_obligations)) =
                     merge_execution_pure_facts_and_obligations(
                         &facts,
@@ -838,10 +848,11 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             };
-            let complete_access = CResourceFact::own_memory(CMemoryRange::new(
+            let complete_access = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
                 old_pointer.clone(),
                 Bitvector32Term::Constant(0),
                 old_count.clone(),
+                element_width,
             ));
             let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
             else {
@@ -957,7 +968,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let assigned = execute_c_lvalue_assignment_paths(
                 &pending_state,
                 &c_variable(target.to_string()),
-                &CExpression::Value(CValue::typed_pointer(pending_pointer, CType::Int32Pointer)),
+                &CExpression::Value(CValue::typed_pointer(pending_pointer, target_type)),
                 &effective_assumptions,
                 budget,
             )?;
@@ -1247,8 +1258,11 @@ pub(crate) fn resolve_pending_heap_allocations(
                     pending_reallocation.old_pointer,
                     pending_reallocation.old_bytes.clone(),
                 );
-                let old_count = int32_element_count_from_bytes(&pending_reallocation.old_bytes)
-                    .expect("supported reallocations have an exact int32 element count");
+                let old_count = crate::kernel::reasoning::element_count_from_bytes(
+                    &pending_reallocation.old_bytes,
+                    element_width,
+                )
+                .expect("supported reallocations have an exact typed element count");
                 let old_memory = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
                     match old_allocation.allocation() {
                         Some((pointer, _)) => pointer.clone(),
@@ -1273,8 +1287,11 @@ pub(crate) fn resolve_pending_heap_allocations(
                         CMemoryRange::new_with_element_width(
                             resolved_base,
                             Bitvector32Term::Constant(0),
-                            int32_element_count_from_bytes(&bytes)
-                                .expect("supported allocations have an exact int32 element count"),
+                            crate::kernel::reasoning::element_count_from_bytes(
+                                &bytes,
+                                element_width,
+                            )
+                            .expect("supported allocations have an exact typed element count"),
                             element_width,
                         ),
                     ));
