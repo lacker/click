@@ -26,11 +26,11 @@ Examples have three distinct provenance classes:
   byte-for-byte. They must include a `SOURCE.md` plus a checked source-integrity
   manifest so proof work cannot silently edit the imported C.
 
-Every project currently in this tree is synthetic. In particular,
-`jsonc-refcount/` is deliberately **json-c-shaped**, not copied from json-c.
-It exercises library-like field operations but does not yet support the claim
-that Click verifies unchanged real-world C. The first unchanged-source fixture
-is tracked in `issues/audit-existing-c-source-fidelity.md`.
+Most projects in this tree are synthetic. In particular, `jsonc-refcount/` is
+deliberately **json-c-shaped**, not copied from json-c. The
+`jsonc-existing-source/` project is the first unchanged-source fixture; its
+SHA-256 manifest is checked by the examples gate, while its parser-only status
+records the current C0 boundary.
 
 Current projects:
 
@@ -42,6 +42,8 @@ Current projects:
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
   a small object.
+- `jsonc-existing-source/` preserves the upstream json-c version helper and
+  reports its checked parser-only qualification.
 - `owned-string/` verifies a length-tracked string with a trailing terminator
   whose composite resource ties metadata to a mutable backing-memory content
   invariant.
