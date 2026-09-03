@@ -2809,14 +2809,26 @@ impl CResourceFact {
         bytes: &Bitvector32Term,
         assumptions: &PureFactContext,
     ) -> bool {
-        let Some(element_count) = crate::kernel::reasoning::int32_element_count_from_bytes(bytes)
+        self.is_proven_separate_from_allocation_with_element_width(base, bytes, 4, assumptions)
+    }
+
+    pub(in crate::kernel) fn is_proven_separate_from_allocation_with_element_width(
+        &self,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+        element_width: u32,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let Some(element_count) =
+            crate::kernel::reasoning::element_count_from_bytes(bytes, element_width)
         else {
             return false;
         };
-        let allocation_memory = CResource::Memory(CMemoryRange::new(
+        let allocation_memory = CResource::Memory(CMemoryRange::new_with_element_width(
             base.clone(),
             Bitvector32Term::Constant(0),
             element_count,
+            element_width,
         ));
         assumptions.proves(&Proposition::CResourceSeparate {
             left: allocation_memory,

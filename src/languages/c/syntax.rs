@@ -3759,18 +3759,32 @@ impl Parser {
                         "`calloc` size must be `sizeof(struct {target_struct})` for target `struct {target_struct} *`"
                     )));
                 }
-            } else if !matches!(
-                element_size,
-                C0Expression::Int32Literal(4)
-                    | C0Expression::SizeOfType {
-                        c_type: C0Type::Int32,
-                        struct_name: None,
-                        ..
-                    }
-            ) {
-                return Err(self.error_here(
-                    "`calloc` currently supports only `sizeof(int32)` or a matching struct size",
-                ));
+            } else {
+                let matches_target_element = match self.variable_types.get(&target).copied() {
+                    Some(C0Type::UInt8Pointer) => matches!(
+                        element_size,
+                        C0Expression::Int32Literal(1)
+                            | C0Expression::SizeOfType {
+                                c_type: C0Type::UInt8,
+                                struct_name: None,
+                                ..
+                            }
+                    ),
+                    _ => matches!(
+                        element_size,
+                        C0Expression::Int32Literal(4)
+                            | C0Expression::SizeOfType {
+                                c_type: C0Type::Int32,
+                                struct_name: None,
+                                ..
+                            }
+                    ),
+                };
+                if !matches_target_element {
+                    return Err(self.error_here(
+                        "`calloc` currently supports only `sizeof(int32)`, `sizeof(uint8)`, or a matching struct size",
+                    ));
+                }
             }
             C0Expression::Multiply(Box::new(count.clone()), Box::new(element_size.clone()))
         } else {

@@ -593,8 +593,8 @@ Not implemented yet:
 
 - fractional permissions,
 - general C allocation APIs beyond exact struct allocation, runtime-sized
-  `int32` arrays, bounded `int32` `realloc` (including preserved zeroed
-  prefixes), the supported zeroed `calloc` forms, and `free`,
+  `int32` arrays, `uint8` byte buffers, bounded `int32` `realloc` (including
+  preserved zeroed prefixes), the supported zeroed `calloc` forms, and `free`,
 - custom resource-family algebra,
 - implicit resource unfold/fold search in `auto`,
 - persistent token resources,

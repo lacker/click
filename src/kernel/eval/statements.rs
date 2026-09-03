@@ -440,26 +440,36 @@ pub(super) fn execute_c_heap_allocate_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    if state.local_object_type(target) != Some(CType::Int32Pointer) {
+    let Some(target_type @ (CType::Int32Pointer | CType::UInt8Pointer)) =
+        state.local_object_type(target)
+    else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
         }]);
-    }
+    };
+    let element_width = target_type
+        .pointee_type()
+        .expect("heap allocation target has a pointee type")
+        .byte_width();
 
-    let element_count_expression = match bytes_expression {
-        CExpression::Multiply(left, right)
-            if right.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
-        {
-            Some(left.as_ref())
+    let element_count_expression = if element_width == CType::Int32.byte_width() {
+        match bytes_expression {
+            CExpression::Multiply(left, right)
+                if right.as_ref() == &CExpression::Value(int32(element_width)) =>
+            {
+                Some(left.as_ref())
+            }
+            CExpression::Multiply(left, right)
+                if left.as_ref() == &CExpression::Value(int32(element_width)) =>
+            {
+                Some(right.as_ref())
+            }
+            _ => None,
         }
-        CExpression::Multiply(left, right)
-            if left.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
-        {
-            Some(right.as_ref())
-        }
-        _ => None,
+    } else {
+        None
     };
     let evaluated_size_expression = element_count_expression.unwrap_or(bytes_expression);
     let mut paths = Vec::new();
@@ -497,17 +507,15 @@ pub(super) fn execute_c_heap_allocate_paths(
             )) == Some(true);
             let fits = effective_assumptions.decide(&ConditionTerm::signed_less_equal(
                 size.clone(),
-                Bitvector32Term::Constant(i32::MAX as u32 / CType::Int32.byte_width()),
+                Bitvector32Term::Constant(i32::MAX as u32 / element_width),
             )) == Some(true);
             (
-                Bitvector32Term::multiply(
-                    size,
-                    Bitvector32Term::Constant(CType::Int32.byte_width()),
-                ),
+                Bitvector32Term::multiply(size, Bitvector32Term::Constant(element_width)),
                 positive && fits,
             )
         } else {
-            let valid = int32_element_count_from_bytes(&size).is_some()
+            let valid = (element_width != CType::Int32.byte_width()
+                || int32_element_count_from_bytes(&size).is_some())
                 && effective_assumptions.decide(&ConditionTerm::signed_greater_than(
                     size.clone(),
                     Bitvector32Term::Constant(0),
@@ -542,7 +550,7 @@ pub(super) fn execute_c_heap_allocate_paths(
         let assigned = execute_c_lvalue_assignment_paths(
             &success_state,
             &c_variable(target.to_string()),
-            &CExpression::Value(CValue::typed_pointer(pointer, CType::Int32Pointer)),
+            &CExpression::Value(CValue::typed_pointer(pointer, target_type)),
             &effective_assumptions,
             budget,
         )?;
@@ -567,6 +575,27 @@ pub(super) fn execute_c_heap_allocate_paths(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+fn heap_allocation_element_width(state: &CState, base: &Pointer) -> u32 {
+    state
+        .locals
+        .bindings
+        .values()
+        .find_map(|binding| {
+            let CLocalBinding::Object {
+                value: CValue::Pointer(pointer),
+                c_type,
+                ..
+            } = binding
+            else {
+                return None;
+            };
+            (pointer.pointer() == base)
+                .then(|| c_type.pointee_type().map(CType::byte_width))
+                .flatten()
+        })
+        .unwrap_or(CType::Int32.byte_width())
 }
 
 pub(crate) fn execute_c_realloc_assign_paths(
@@ -1034,6 +1063,11 @@ fn execute_c_heap_free_paths(
             .filter_map(|fact| fact.allocation())
             .find(|(base, _)| **base == *pointer.pointer())
             .map(|(_, bytes)| bytes.clone());
+        let element_width = pointer
+            .c_type()
+            .pointee_type()
+            .map(CType::byte_width)
+            .unwrap_or(CType::Int32.byte_width());
         let before_free = state.memory.clone();
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(pointer.pointer()) {
@@ -1094,11 +1128,21 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
-        let complete_access = CResourceFact::own_memory(CMemoryRange::new(
+        let Some(element_count) =
+            crate::kernel::reasoning::element_count_from_bytes(&bytes, element_width)
+        else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let complete_access = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
             pointer.pointer().clone(),
             Bitvector32Term::Constant(0),
-            int32_element_count_from_bytes(&bytes)
-                .expect("supported allocations have an exact int32 element count"),
+            element_count,
+            element_width,
         ));
         let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
         else {
@@ -1120,9 +1164,10 @@ fn execute_c_heap_free_paths(
             });
         if let Some(stale) = resources.facts().iter().find(|resource| {
             resource.may_refer_to_memory_block(&pointer.block)
-                && !resource.is_proven_separate_from_allocation(
+                && !resource.is_proven_separate_from_allocation_with_element_width(
                     &pointer,
                     &bytes,
+                    element_width,
                     &resource_assumptions,
                 )
         }) {
@@ -1180,6 +1225,7 @@ pub(crate) fn resolve_pending_heap_allocations(
         if let Some(pending_reallocation) =
             state.memory.heap.pending_reallocations.get(&base).cloned()
         {
+            let element_width = heap_allocation_element_width(&state, &base);
             let (memory, bytes, resolved_base, _) = state
                 .memory
                 .clone()
@@ -1203,13 +1249,14 @@ pub(crate) fn resolve_pending_heap_allocations(
                 );
                 let old_count = int32_element_count_from_bytes(&pending_reallocation.old_bytes)
                     .expect("supported reallocations have an exact int32 element count");
-                let old_memory = CResourceFact::own_memory(CMemoryRange::new(
+                let old_memory = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
                     match old_allocation.allocation() {
                         Some((pointer, _)) => pointer.clone(),
                         None => unreachable!("allocation resource was just constructed"),
                     },
                     Bitvector32Term::Constant(0),
                     old_count,
+                    element_width,
                 ));
                 state.resources = state
                     .resources
@@ -1222,15 +1269,19 @@ pub(crate) fn resolve_pending_heap_allocations(
                         resolved_base.clone(),
                         bytes.clone(),
                     ))
-                    .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
-                        resolved_base,
-                        Bitvector32Term::Constant(0),
-                        int32_element_count_from_bytes(&bytes)
-                            .expect("supported allocations have an exact int32 element count"),
-                    )));
+                    .unchecked_with_fact(CResourceFact::own_memory(
+                        CMemoryRange::new_with_element_width(
+                            resolved_base,
+                            Bitvector32Term::Constant(0),
+                            int32_element_count_from_bytes(&bytes)
+                                .expect("supported allocations have an exact int32 element count"),
+                            element_width,
+                        ),
+                    ));
             }
             continue;
         }
+        let element_width = heap_allocation_element_width(&state, &base);
         let (memory, bytes, resolved_base) = state
             .memory
             .clone()
@@ -1254,12 +1305,15 @@ pub(crate) fn resolve_pending_heap_allocations(
                     resolved_base.clone(),
                     bytes.clone(),
                 ))
-                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
-                    resolved_base,
-                    Bitvector32Term::Constant(0),
-                    int32_element_count_from_bytes(&bytes)
-                        .expect("supported allocations have an exact int32 element count"),
-                )));
+                .unchecked_with_fact(CResourceFact::own_memory(
+                    CMemoryRange::new_with_element_width(
+                        resolved_base,
+                        Bitvector32Term::Constant(0),
+                        crate::kernel::reasoning::element_count_from_bytes(&bytes, element_width)
+                            .expect("supported allocation has an exact typed element count"),
+                        element_width,
+                    ),
+                ));
         }
     }
     state

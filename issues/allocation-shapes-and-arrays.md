@@ -7,9 +7,8 @@ be discarded", `src/languages/c/syntax.rs:1241-1244`); struct allocation must
 literally be `malloc(sizeof(struct S))` matching the target's type
 (`:1379-1400`); `sizeof` applies only to structs (`:1727-1737`), so
 `n * sizeof(int)` is unwritable and runtime int32 allocation uses the magic
-form `malloc(count * 4)`; broader allocation beyond the supported `calloc`
-forms, bounded nonzero-int32 and zeroed-prefix `realloc`, and arbitrary byte
-layouts is unsupported
+form `malloc(count * 4)`; byte-oriented `uint8*` allocation was also missing,
+while arbitrary byte-layout `realloc` remains unsupported
 (`docs/concepts/resources.md:590-595`;
 `docs/internals/roadmap.md:142-145`).
 Local arrays take exactly one dimension suffix (`:1025-1064`), initializers
@@ -33,6 +32,8 @@ the allocation resource; a zeroed `calloc` prefix surviving a grown
 indexed `m[i][j]` with
 bounds obligations; `int32 a[3] = {1, 2, 3};`; an array of structs `struct S
 items[8]` indexed by field.
+Byte-buffer regressions also cover `uint8* p = malloc(n * sizeof(uint8))`
+with one-byte access and `calloc(n, sizeof(uint8))` zeroing before `free(p)`.
 
 ## Acceptance criteria
 
@@ -44,6 +45,9 @@ items[8]` indexed by field.
   `free`; bounded zeroed prefixes preserve their initialization status while
   grown tails remain uninitialized. Arbitrary-layout realloc cases stay an
   explicit follow-up.
+- `malloc` and `calloc` assigned to `uint8*` are modeled as positive byte
+  extents, with one-byte access ranges and zeroed `calloc` reads; their
+  complete ranges can be reclaimed by `free`.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.
