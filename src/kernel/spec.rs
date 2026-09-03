@@ -1258,17 +1258,60 @@ fn evaluate_spec_pure_function_application_paths(
         }
         paths = next;
     }
-    Ok(paths
-        .into_iter()
-        .map(|(arguments, facts, obligations)| SpecExpressionPath {
+    let mut results = Vec::new();
+    for (arguments, facts, obligations) in paths {
+        // An application of a defined function to constants is its body at
+        // those constants: the definition is evaluated, never searched, and
+        // the call budget bounds the unfolding.
+        if let Some(definition) = assumptions.pure_function_definition(name)
+            && definition.parameters.len() == arguments.len()
+            && arguments
+                .iter()
+                .all(|argument| matches!(argument, Bitvector32Term::Constant(_)))
+        {
+            budget.consume_function_call()?;
+            let mut body_state = state.clone();
+            for (parameter, argument) in definition.parameters.iter().zip(&arguments) {
+                body_state
+                    .locals
+                    .set(parameter.clone(), CValue::Int32(argument.clone()));
+            }
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            for body_path in evaluate_spec_expression_paths_with_loop_entry(
+                &body_state,
+                &definition.body,
+                loop_entry_state,
+                &path_assumptions,
+                budget,
+            )? {
+                if let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &body_path.facts,
+                        &body_path.obligations,
+                        assumptions,
+                    )
+                {
+                    results.push(SpecExpressionPath {
+                        value: body_path.value,
+                        facts: merged_facts,
+                        obligations: merged_obligations,
+                    });
+                }
+            }
+            continue;
+        }
+        results.push(SpecExpressionPath {
             value: CValue::Int32(Bitvector32Term::PureFunctionApplication {
                 name: name.to_string(),
                 arguments,
             }),
             facts,
             obligations,
-        })
-        .collect())
+        });
+    }
+    Ok(results)
 }
 
 pub(super) fn evaluate_spec_pointer_offset_paths(

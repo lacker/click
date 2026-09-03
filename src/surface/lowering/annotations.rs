@@ -48,6 +48,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
         snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let all_predicates = predicate_environment
@@ -102,6 +103,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
         snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let all_predicates = predicate_environment
@@ -206,6 +208,7 @@ pub(in crate::surface) fn annotated_function(
         next_quantifier_variable: 3_000_000,
         branch_join_target: None,
         snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
@@ -280,6 +283,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         next_quantifier_variable: 3_300_000,
         branch_join_target: Some(branch_join_target),
         snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     lowerer
@@ -287,24 +291,26 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         .map_err(ClickError::new)
 }
 
-/// Elaborates a proposition stated in a fixed-state proof into the kernel's
-/// spec form, exactly as a contract clause is elaborated: `old(...)` names
-/// the function entry, a predicate call stays a predicate, and the kernel
-/// lowers the result at the proof's state. `array_element_types` names the
-/// array parameters and proof-local array bindings in scope.
-pub(in crate::surface) fn elaborate_fixed_state_proposition(
-    proposition: &ClickProposition,
+/// The elaborator and context of a fixed-state proof: `old(...)` names the
+/// function entry, a predicate call stays a predicate, recorded snapshots
+/// are fixed states, and the proof's current locals and `result` are fixed
+/// values. `array_element_types` names the array parameters and proof-local
+/// array bindings in scope; `opaque_click_functions` names the calls the
+/// proof unfolds itself.
+#[allow(clippy::too_many_arguments)]
+fn fixed_state_elaboration<'a>(
     array_element_types: BTreeMap<String, CType>,
-    entry_state: &CState,
+    entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
     result: Option<&CValue>,
-    snapshots: &RecordedSnapshots,
-    assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<SpecProposition, String> {
-    let mut lowerer = AnnotationLowerer {
+    snapshots: &'a RecordedSnapshots,
+    assumptions: &'a PureFactContext,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> (AnnotationLowerer<'a>, SpecElaborationContext) {
+    let lowerer = AnnotationLowerer {
         structural_clauses: &[],
         function_effects: &[],
         predicate_environment,
@@ -320,6 +326,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition(
         branch_join_target: None,
         implicit_contract_mutable_segments: &[],
         snapshots: Some(snapshots),
+        opaque_click_functions,
         count_assumptions: Some(assumptions),
     };
     // The proof's current locals are fixed values in every context: a name a
@@ -335,7 +342,143 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition(
             .values
             .insert("result".to_string(), SpecExpression::Value(result.clone()));
     }
+    (lowerer, context)
+}
+
+/// Elaborates a proposition stated in a fixed-state proof into the kernel's
+/// spec form, exactly as a contract clause is elaborated; the kernel then
+/// lowers the result at the proof's state.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_proposition(
+    proposition: &ClickProposition,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> Result<SpecProposition, String> {
+    let (mut lowerer, context) = fixed_state_elaboration(
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    );
     lowerer.click_proposition_to_spec_proposition(proposition, &context)
+}
+
+/// Elaborates an expression stated in a fixed-state proof into the kernel's
+/// spec form, as `elaborate_fixed_state_proposition` does a proposition; the
+/// kernel then evaluates the result at the proof's state.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_expression(
+    expression: &ContractExpression,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> Result<SpecExpression, String> {
+    let (mut lowerer, context) = fixed_state_elaboration(
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    );
+    lowerer.lower_contract_expression_to_spec(expression, &context)
+}
+
+/// The pure function definitions in spec form, for the kernel to evaluate
+/// constant applications by. Every call in a body stays an application; the
+/// kernel unfolds those it can. A definition the elaboration cannot express
+/// is left out, and its applications stay opaque.
+pub(in crate::surface) fn elaborate_pure_function_definitions(
+    click_function_environment: &ClickFunctionEnvironment,
+) -> BTreeMap<String, crate::kernel::SpecPureFunctionDefinition> {
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let entry_state = CState::new();
+    let opaque_click_functions = click_function_environment
+        .definitions
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut definitions = BTreeMap::new();
+    for (name, definition) in &click_function_environment.definitions {
+        let mut array_element_types = BTreeMap::new();
+        let mut context = SpecElaborationContext::default();
+        for parameter in definition.parameters() {
+            let variable =
+                SpecExpression::CExpression(CExpression::Variable(parameter.name().to_string()));
+            context
+                .values
+                .insert(parameter.name().to_string(), variable.clone());
+            if let Some(element_type) = click_array_element_type(parameter.c_type()) {
+                array_element_types.insert(parameter.name().to_string(), element_type);
+                context.array_refs.insert(
+                    parameter.name().to_string(),
+                    SpecArrayRef {
+                        memory: SpecMemory::Current,
+                        pointer: variable,
+                        element_type,
+                    },
+                );
+            }
+        }
+        let mut lowerer = AnnotationLowerer {
+            structural_clauses: &[],
+            function_effects: &[],
+            predicate_environment: &predicate_environment,
+            click_function_environment,
+            entry_state: &entry_state,
+            entry_values: BTreeMap::new(),
+            parameter_array_element_types: array_element_types,
+            quantified_values: BTreeMap::new(),
+            active_click_functions: BTreeSet::new(),
+            loop_index: 0,
+            statement_index: 0,
+            next_quantifier_variable: 2_000_000,
+            branch_join_target: None,
+            implicit_contract_mutable_segments: &[],
+            snapshots: None,
+            opaque_click_functions: opaque_click_functions.clone(),
+            count_assumptions: None,
+        };
+        if let Ok(body) = lowerer.lower_contract_expression_to_spec(definition.body(), &context) {
+            definitions.insert(
+                name.clone(),
+                crate::kernel::SpecPureFunctionDefinition {
+                    parameters: definition
+                        .parameters()
+                        .iter()
+                        .map(|parameter| parameter.name().to_string())
+                        .collect(),
+                    body,
+                },
+            );
+        }
+    }
+    definitions
 }
 
 pub(in crate::surface) fn function_contract_summary(
@@ -371,6 +514,7 @@ pub(in crate::surface) fn function_contract_summary(
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
         snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let context = SpecElaborationContext::for_function_contract();
@@ -683,6 +827,8 @@ struct AnnotationLowerer<'a> {
     /// The proof's fact context, under which a count at a recorded state
     /// selects its populations.
     count_assumptions: Option<&'a PureFactContext>,
+    /// Calls a proof unfolds itself; they stay applications.
+    opaque_click_functions: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1222,9 +1368,19 @@ impl AnnotationLowerer<'_> {
                 })
             }
             ContractExpression::Let {
-                name, value, body, ..
+                name,
+                c_type,
+                value,
+                body,
             } => {
                 let value = self.lower_contract_expression_to_spec(value, environment)?;
+                if let (Some(c_type), SpecExpression::Value(fixed)) = (c_type, &value) {
+                    if !c_value_matches_click_type(fixed, *c_type) {
+                        return Err(format!(
+                            "let binding `{name}` evaluated to {fixed:?}, which does not match {c_type:?}"
+                        ));
+                    }
+                }
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
                     name.clone(),
@@ -1271,22 +1427,6 @@ impl AnnotationLowerer<'_> {
         expression: &CExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
-        if let CExpression::Add(left, right) = expression {
-            if let Some(element_type) = self.c_expression_array_element_type(left, environment) {
-                return Ok(SpecExpression::PointerOffset {
-                    pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                    elements: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-                    byte_width: element_type.byte_width(),
-                });
-            }
-            if let Some(element_type) = self.c_expression_array_element_type(right, environment) {
-                return Ok(SpecExpression::PointerOffset {
-                    pointer: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-                    elements: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                    byte_width: element_type.byte_width(),
-                });
-            }
-        }
         self.lower_c_fragment_to_spec(expression, environment)
     }
 
@@ -1414,6 +1554,9 @@ impl AnnotationLowerer<'_> {
             SnapshotSelector::ProgramPoint(program_point) => {
                 self.resolve_program_point_ref(program_point)
             }
+            SnapshotSelector::Mark(name) if self.snapshots.is_some() => Err(format!(
+                "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
+            )),
             SnapshotSelector::Mark(name) => Err(format!(
                 "proof-local mark `{name}` is available only in an execution proof"
             )),
@@ -1435,15 +1578,20 @@ impl AnnotationLowerer<'_> {
             (CodeRegion::Function, ProgramPointKind::Exit) => {
                 Err("`at(function.exit, ...)` is not supported yet".to_string())
             }
+            (CodeRegion::Loop(_), ProgramPointKind::Exit) | (CodeRegion::Statement(_), _)
+                if self.snapshots.is_some() =>
+            {
+                Err(format!(
+                    "no state snapshot was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
+                    crate::surface::diagnostics::describe_program_point_ref(program_point)
+                ))
+            }
             (CodeRegion::Loop(index), ProgramPointKind::Exit) => Err(format!(
                 "`at(loop({index}).exit, ...)` requires a recorded snapshot in an execution proof"
             )),
-            (CodeRegion::Statement(index), kind) => Err(format!(
-                "`at(statement({index}).{}, ...)` is not supported in this context yet",
-                match kind {
-                    ProgramPointKind::Entry => "entry",
-                    ProgramPointKind::Exit => "exit",
-                }
+            (CodeRegion::Statement(_), _) => Err(format!(
+                "`at({}, ...)` is not supported in this context yet",
+                crate::surface::diagnostics::describe_program_point_ref(program_point)
             )),
         }
     }
@@ -1489,14 +1637,51 @@ impl AnnotationLowerer<'_> {
                     byte_width: 1,
                 })
             }
-            CExpression::Add(left, right) => Ok(SpecExpression::Add(
-                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-            )),
-            CExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
-                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-            )),
+            // Arithmetic on a pointer offsets it by whole elements, as C does.
+            CExpression::Add(left, right) => {
+                if let Some(element_type) = self.c_expression_array_element_type(left, environment)
+                {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                        elements: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                        byte_width: element_type.byte_width(),
+                    });
+                }
+                if let Some(element_type) = self.c_expression_array_element_type(right, environment)
+                {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                        elements: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                        byte_width: element_type.byte_width(),
+                    });
+                }
+                Ok(SpecExpression::Add(
+                    Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                    Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                ))
+            }
+            CExpression::Subtract(left, right) => {
+                if let Some(element_type) = self.c_expression_array_element_type(left, environment)
+                {
+                    if self
+                        .c_expression_array_element_type(right, environment)
+                        .is_none()
+                    {
+                        return Ok(SpecExpression::PointerOffset {
+                            pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                            elements: Box::new(SpecExpression::Subtract(
+                                Box::new(SpecExpression::Value(int32(0))),
+                                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                            )),
+                            byte_width: element_type.byte_width(),
+                        });
+                    }
+                }
+                Ok(SpecExpression::Subtract(
+                    Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                    Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                ))
+            }
             CExpression::Multiply(left, right) => Ok(SpecExpression::Multiply(
                 Box::new(self.lower_c_fragment_to_spec(left, environment)?),
                 Box::new(self.lower_c_fragment_to_spec(right, environment)?),
@@ -1583,6 +1768,15 @@ impl AnnotationLowerer<'_> {
             ));
         }
 
+        if self.opaque_click_functions.contains(name) {
+            return Ok(SpecExpression::PureFunctionApplication {
+                name: name.to_string(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
+                    .collect::<Result<Vec<_>, _>>()?,
+            });
+        }
         if self.active_click_functions.contains(name) {
             if definition.decreases().is_none() {
                 return Err(format!(

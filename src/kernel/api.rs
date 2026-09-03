@@ -852,7 +852,7 @@ pub fn c_lower_spec_proposition_at_state(
     proposition: &SpecProposition,
     entry_state: Option<&CState>,
     assumptions: &PureFactContext,
-) -> Option<(Proposition, Vec<Proposition>, Vec<Proposition>)> {
+) -> Result<(Proposition, Vec<Proposition>, Vec<Proposition>), String> {
     let lowering_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -866,16 +866,58 @@ pub fn c_lower_spec_proposition_at_state(
         &lowering_assumptions,
         &mut budget,
     )
-    .ok()?;
+    .map_err(|limit| format!("the kernel lowering hit {limit:?}"))?;
     let [path] = paths.as_slice() else {
-        return None;
+        return Err(format!(
+            "the kernel lowering produced {} paths, not one",
+            paths.len()
+        ));
     };
-    Some((
+    Ok((
         path.proposition.clone(),
         path.facts
             .iter()
             .map(|fact| fact.proposition().clone())
             .collect(),
+        path.obligations
+            .iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect(),
+    ))
+}
+
+/// Evaluates a spec expression at `state`: the one evaluation every
+/// proof-side expression and every contract expression share. `entry_state`
+/// is what `old(...)` refers to. The result is the value on the evaluation's
+/// single path with the load obligations the path left open.
+pub fn c_evaluate_spec_expression_at_state(
+    state: &CState,
+    expression: &SpecExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<(CValue, Vec<Proposition>), String> {
+    let lowering_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads()
+        .defer_non_exact_loadability_obligations();
+    let mut budget = ExecutionBudget::default();
+    let paths = evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        expression,
+        entry_state,
+        &lowering_assumptions,
+        &mut budget,
+    )
+    .map_err(|limit| format!("the kernel evaluation hit {limit:?}"))?;
+    let [path] = paths.as_slice() else {
+        return Err(format!(
+            "the kernel evaluation produced {} paths, not one",
+            paths.len()
+        ));
+    };
+    Ok((
+        path.value.clone(),
         path.obligations
             .iter()
             .map(|obligation| obligation.proposition().clone())

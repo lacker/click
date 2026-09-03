@@ -1697,12 +1697,9 @@ impl SpecElaborationContext {
             .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone())))
             .collect::<BTreeMap<_, _>>();
 
+        // A binding the proof holds as an expression (a function parameter
+        // bound to its argument, a `let` name) reads the same at the entry.
         for (name, value) in &self.values {
-            if !matches!(value, SpecExpression::Value(_)) {
-                return Err(format!(
-                    "`old(...)` cannot capture non-fixed spec value `{name}`: `{value:?}`"
-                ));
-            }
             values.insert(name.clone(), value.clone());
         }
 
@@ -3013,16 +3010,29 @@ impl PredicateEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClickFunctionEnvironment {
     definitions: BTreeMap<String, ClickFunctionDefinition>,
+    /// The definitions in spec form, for the kernel to evaluate constant
+    /// applications by; elaborated once with the environment.
+    spec_definitions: std::sync::Arc<crate::kernel::SpecPureFunctionDefinitions>,
 }
 
 impl ClickFunctionEnvironment {
     fn new(definitions: &[ClickFunctionDefinition]) -> Self {
-        Self {
+        let mut environment = Self {
             definitions: definitions
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
-        }
+            spec_definitions: std::sync::Arc::default(),
+        };
+        environment.spec_definitions =
+            std::sync::Arc::new(crate::kernel::SpecPureFunctionDefinitions::new(
+                lowering::elaborate_pure_function_definitions(&environment),
+            ));
+        environment
+    }
+
+    fn spec_definitions(&self) -> &std::sync::Arc<crate::kernel::SpecPureFunctionDefinitions> {
+        &self.spec_definitions
     }
 
     fn get(&self, name: &str) -> Option<&ClickFunctionDefinition> {

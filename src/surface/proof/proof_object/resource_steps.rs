@@ -95,7 +95,7 @@ impl<'a> Proof<'a> {
     fn apply_function_unfold_in_state(
         &self,
         application: &ClickFunctionApplication,
-        mut values: BTreeMap<String, CValue>,
+        values: BTreeMap<String, CValue>,
         array_refs: ClickArrayRefs,
         pre_state: &CState,
         state: &CState,
@@ -234,22 +234,23 @@ impl<'a> Proof<'a> {
                     rewrite_click_proposition_by_surface_equality(surface, &surface_equality)
                 });
                 let kernel = if let Some(surface) = &surface {
-                    let mut next_variable = 2_000_000;
-                    let mut active_functions = BTreeSet::new();
-                    collect_click_function_calls_in_proposition(surface, &mut active_functions);
-                    lower_outcome_proposition_with_environment(
-                        &mut values,
+                    let mut opaque_calls = BTreeSet::new();
+                    crate::surface::validation::collect_click_function_calls_in_proposition(
+                        surface,
+                        &mut opaque_calls,
+                    );
+                    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                        surface,
+                        facts.assumptions(),
+                        &values,
                         &array_refs,
                         pre_state,
                         state,
                         result,
-                        facts.assumptions(),
-                        surface,
-                        &mut next_variable,
+                        recorded_snapshots,
                         predicate_environment,
                         click_function_environment,
-                        recorded_snapshots,
-                        &mut active_functions,
+                        &opaque_calls,
                     )
                     .map_err(|message| {
                         self.step_error(format!(
