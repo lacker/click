@@ -1413,6 +1413,16 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
+        CStatement::Break => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Break(state.clone()),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+        CStatement::Continue => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Continue(state.clone()),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
         CStatement::Declare { name, c_type } => {
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
@@ -1492,7 +1502,9 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             budget,
                         )?);
                     }
-                    outcome @ (CStatementOutcome::Return { .. }
+                    outcome @ (CStatementOutcome::Break(_)
+                    | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
@@ -1826,9 +1838,17 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                 continue;
                             };
                             match body_path.outcome {
-                                CStatementOutcome::Normal(next_state) => {
+                                CStatementOutcome::Normal(next_state)
+                                | CStatementOutcome::Continue(next_state) => {
                                     pending.push(PendingLoopPath {
                                         state: next_state,
+                                        facts,
+                                        obligations,
+                                    });
+                                }
+                                CStatementOutcome::Break(next_state) => {
+                                    paths.push(CStatementExecutionPath {
+                                        outcome: CStatementOutcome::Normal(next_state),
                                         facts,
                                         obligations,
                                     });

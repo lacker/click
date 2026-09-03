@@ -491,6 +491,8 @@ pub enum SpecResource {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
     Skip,
+    Break,
+    Continue,
     Declare {
         name: String,
         c_type: CType,
@@ -940,6 +942,8 @@ pub(super) enum CLValueOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatementOutcome {
     Normal(CState),
+    Break(CState),
+    Continue(CState),
     Return {
         value: CValue,
         state: CState,

@@ -403,7 +403,10 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         !matches!(expression, CExpression::Value(_) | CExpression::Variable(_))
     }
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => false,
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => false,
         CStatement::Assign { name, expression } => {
             state.local_object_type(name) == Some(CType::UInt8) || expression_consults(expression)
         }
@@ -480,6 +483,8 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         } => statement_contains_call(then_branch) || statement_contains_call(else_branch),
         CStatement::While { body, .. } => statement_contains_call(body),
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }

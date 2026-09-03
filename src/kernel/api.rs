@@ -786,6 +786,14 @@ pub fn c_skip() -> CStatement {
     CStatement::Skip
 }
 
+pub fn c_break() -> CStatement {
+    CStatement::Break
+}
+
+pub fn c_continue() -> CStatement {
+    CStatement::Continue
+}
+
 pub fn c_return(expression: CExpression) -> CStatement {
     CStatement::Return(expression)
 }

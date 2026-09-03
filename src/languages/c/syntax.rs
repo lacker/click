@@ -36,6 +36,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.else-if",
     "statement.unbraced-body",
     "statement.while",
+    "statement.break",
+    "statement.continue",
     "statement.do-while",
     "statement.for",
     "statement.for-step-list",
@@ -197,6 +199,8 @@ impl C0Type {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Statement {
     Skip,
+    Break,
+    Continue,
     Declare {
         c_type: C0Type,
         name: String,
@@ -480,6 +484,8 @@ impl C0Statement {
     pub fn to_kernel_statement(&self) -> crate::kernel::CStatement {
         match self {
             Self::Skip => crate::kernel::c_skip(),
+            Self::Break => crate::kernel::c_break(),
+            Self::Continue => crate::kernel::c_continue(),
             Self::Declare { c_type, name } => {
                 crate::kernel::c_declare(name.clone(), c_type.to_kernel_type())
             }
@@ -764,6 +770,8 @@ fn validate_function_returns(
         }
         C0Statement::While { body, .. } => validate_function_returns(body, return_type),
         C0Statement::Skip
+        | C0Statement::Break
+        | C0Statement::Continue
         | C0Statement::Declare { .. }
         | C0Statement::Assign { .. }
         | C0Statement::CallAssign { .. }
@@ -991,7 +999,15 @@ struct Parser {
     /// overwrite the outer object; the parser rejects it instead. Sibling
     /// scopes may reuse a name because the earlier object is dead.
     scopes: Vec<Vec<String>>,
+    loop_contexts: Vec<CLoopContext>,
     abi: CAbi,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CLoopContext {
+    While,
+    For,
+    DoWhile,
 }
 
 impl Parser {
@@ -1007,6 +1023,7 @@ impl Parser {
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             scopes: Vec::new(),
+            loop_contexts: Vec::new(),
             abi,
         })
     }
@@ -1655,6 +1672,45 @@ impl Parser {
         self.parse_statement()
     }
 
+    fn parse_loop_control_statement(
+        &mut self,
+        continue_statement: bool,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let keyword = if continue_statement {
+            "continue"
+        } else {
+            "break"
+        };
+        let context = self.loop_contexts.last().copied();
+        let supported = match (continue_statement, context) {
+            (false, Some(CLoopContext::While | CLoopContext::For)) => true,
+            (true, Some(CLoopContext::While)) => true,
+            _ => false,
+        };
+        if !supported {
+            let message = match context {
+                None => format!("`{keyword}` must be inside a loop"),
+                Some(CLoopContext::For) if continue_statement => {
+                    "`continue` in a `for` loop is not supported until its step is modeled explicitly"
+                        .to_string()
+                }
+                Some(CLoopContext::DoWhile) => {
+                    format!("`{keyword}` in a `do`-`while` loop is not supported yet")
+                }
+                Some(CLoopContext::While) => unreachable!(),
+                Some(CLoopContext::For) => unreachable!(),
+            };
+            return Err(self.error_here(message));
+        }
+        self.position += 1;
+        self.expect(Token::Semicolon)?;
+        Ok(if continue_statement {
+            C0Statement::Continue
+        } else {
+            C0Statement::Break
+        })
+    }
+
     fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
             Some(Token::Semicolon) => {
@@ -1703,6 +1759,8 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
                 }
+                Some("break") => self.parse_loop_control_statement(false),
+                Some("continue") => self.parse_loop_control_statement(true),
                 Some("if") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
@@ -1726,12 +1784,16 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
+                    self.loop_contexts.push(CLoopContext::While);
                     let body = Box::new(self.parse_controlled_statement("while")?);
+                    self.loop_contexts.pop();
                     Ok(C0Statement::While { condition, body })
                 }
                 Some("do") => {
                     self.position += 1;
+                    self.loop_contexts.push(CLoopContext::DoWhile);
                     let body = self.parse_controlled_statement("do")?;
+                    self.loop_contexts.pop();
                     if self.peek_ident() != Some("while") {
                         return Err(self.error_here("expected `while` after `do` body"));
                     }
@@ -1760,7 +1822,9 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     let step = self.parse_for_step()?;
                     self.expect(Token::RParen)?;
+                    self.loop_contexts.push(CLoopContext::For);
                     let body = self.parse_controlled_statement("for")?;
+                    self.loop_contexts.pop();
                     self.pop_scope();
                     let body = C0Statement::Seq(Box::new(body), Box::new(step));
                     Ok(C0Statement::Seq(

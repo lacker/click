@@ -123,6 +123,8 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         } => kernel_loop_by_index(then_branch, target, next_loop_index)
             .or_else(|| kernel_loop_by_index(else_branch, target, next_loop_index)),
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }

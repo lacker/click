@@ -1786,6 +1786,10 @@ pub(crate) struct ExecutionFrontier {
 pub(crate) struct ProofExecutionContinuation {
     pub(crate) remaining: Option<Arc<CStatement>>,
     pub(crate) next_statement_index: usize,
+    /// The source statement index immediately after the loop. A `break`
+    /// consumes the loop continuation and resumes here; `continue` resumes
+    /// at `next_statement_index`, the loop head itself.
+    pub(crate) loop_exit_statement_index: usize,
 }
 
 /// Surface-independent execution state owned by a checked proof branch.
@@ -2199,7 +2203,9 @@ fn check_evidence_events(
                         state = next_state;
                         remaining = tail;
                     }
-                    outcome @ (CStatementOutcome::Return { .. }
+                    outcome @ (CStatementOutcome::Break(_)
+                    | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges) => {
                         if tail.is_some() {
                             return None;
@@ -2289,6 +2295,7 @@ fn trace_completion(
                 };
                 match outcome {
                     CStatementOutcome::Normal(_) => {}
+                    CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => {}
                     CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
                         // The path completes under the context its final
                         // theorem was proved under, recorded right after it.
@@ -2513,15 +2520,36 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
-        self.evidence_source = match &outcome {
-            CStatementOutcome::Normal(_) => source_after,
-            _ => None,
-        };
+        self.evidence_source = matches!(&outcome, CStatementOutcome::Normal(_))
+            .then_some(source_after)
+            .flatten();
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
             CStatementOutcome::Return { state, .. } => {
                 self.evidence_state = Some(state);
                 self.evidence_completed = true;
+            }
+            CStatementOutcome::Break(state) | CStatementOutcome::Continue(state)
+                if matches!(self.frontier.region, ExecutionRegionKind::LoopBody) =>
+            {
+                // A loop-preservation proof executes one body iteration in a
+                // bounded region. Both controls reach that region's typed
+                // boundary; the enclosing loop rule consumes the distinction
+                // when it builds its back-edge and final-exit obligations.
+                self.evidence_state = Some(state);
+                self.evidence_completed = true;
+            }
+            CStatementOutcome::Break(state) => {
+                let source_after = self.advance_loop_control(false)?;
+                self.evidence_source = source_after;
+                self.evidence_state = Some(state);
+                self.evidence_completed = false;
+            }
+            CStatementOutcome::Continue(state) => {
+                let source_after = self.advance_loop_control(true)?;
+                self.evidence_source = source_after;
+                self.evidence_state = Some(state);
+                self.evidence_completed = false;
             }
             // An error outcome is recorded so the driver reports it; it
             // completes the trace without a state a later theorem could
@@ -2531,6 +2559,40 @@ impl ExecutionProofCore {
             | CStatementOutcome::RuntimeError(_) => self.evidence_completed = true,
         }
         Ok(())
+    }
+
+    /// Consumes the innermost concrete-loop continuation for a checked
+    /// `break`/`continue`. The ordinary statement theorem proves only the
+    /// control statement itself; this frontier movement supplies the exact
+    /// source that the next condition or statement theorem must consume.
+    fn advance_loop_control(
+        &mut self,
+        continue_statement: bool,
+    ) -> Result<Option<Arc<CStatement>>, EvidenceRefusal> {
+        let continuation = self
+            .frontier
+            .continuations
+            .pop()
+            .ok_or_else(|| EvidenceRefusal::from("loop control has no enclosing loop"))?;
+        let Some(loop_source) = continuation.remaining else {
+            return Err(EvidenceRefusal::from(
+                "loop control has an empty enclosing-loop continuation",
+            ));
+        };
+        let (next_statement_index, source_after) = if continue_statement {
+            (continuation.next_statement_index, Some(loop_source))
+        } else {
+            let (_, tail) = split_shared_source(&loop_source);
+            (continuation.loop_exit_statement_index, tail)
+        };
+        self.frontier.next_statement_index = next_statement_index;
+        self.frontier.position = match &source_after {
+            Some(remaining) => FrontierPosition::StatementEntry {
+                remaining: remaining.clone(),
+            },
+            None => FrontierPosition::RegionBoundary,
+        };
+        Ok(source_after)
     }
 
     /// Forks the single open trace into one trace per outcome theorem, each

@@ -520,7 +520,10 @@ fn collect_expression_variable_names(expression: &CExpression, names: &mut BTree
 
 fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => {}
         CStatement::Assign { name, expression } => {
             names.insert(name.clone());
             collect_expression_variable_names(expression, names);

@@ -844,6 +844,7 @@ fn execute_concrete_loop_head_step(
             .push(ProofExecutionContinuation {
                 remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
+                loop_exit_statement_index: continuation_node,
             });
         execution.core.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
@@ -1968,9 +1969,10 @@ fn execute_step_from_frontier_position_selecting_path(
     let successor_pure_facts = transition.pure_facts;
     let outcome = transition.outcome;
     if let Some(statement_exit_state) = match &outcome {
-        CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
-            Some(state.clone())
-        }
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Return { state, .. } => Some(state.clone()),
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
         CStatementOutcome::VerificationDiverges => None,
     } {
@@ -1988,9 +1990,10 @@ fn execute_step_from_frontier_position_selecting_path(
                 loop_index,
                 ProgramPointKind::Exit,
                 match &outcome {
-                    CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
-                        state.clone()
-                    }
+                    CStatementOutcome::Normal(state)
+                    | CStatementOutcome::Break(state)
+                    | CStatementOutcome::Continue(state)
+                    | CStatementOutcome::Return { state, .. } => state.clone(),
                     CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)
                     | CStatementOutcome::VerificationDiverges => unreachable!(),
@@ -2093,6 +2096,7 @@ fn execute_step_from_frontier_position_selecting_path(
             execution.core.frontier.next_statement_index = source_region.continuation_node;
             *state = execution_state;
         }
+        CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => {}
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
             append_execution_effect_facts(
@@ -2757,6 +2761,8 @@ fn describe_statement_head(statement: &CStatement) -> String {
     match statement {
         CStatement::Seq(first, _) => describe_statement_head(first),
         CStatement::Skip => "skip".to_string(),
+        CStatement::Break => "break".to_string(),
+        CStatement::Continue => "continue".to_string(),
         CStatement::Declare { name, .. } => format!("declare {name}"),
         CStatement::Assign { name, expression } => {
             format!("{name} = {}", describe_c_expression(expression))

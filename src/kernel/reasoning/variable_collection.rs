@@ -312,7 +312,10 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Assert {
@@ -594,6 +597,9 @@ pub(in crate::kernel) fn collect_c_statement_outcome_bitvector_variables(
 ) {
     match outcome {
         CStatementOutcome::Normal(state) => collect_c_state_bitvector_variables(state, variables),
+        CStatementOutcome::Break(state) | CStatementOutcome::Continue(state) => {
+            collect_c_state_bitvector_variables(state, variables)
+        }
         CStatementOutcome::Return { value, state } => {
             collect_c_value_bitvector_variables(value, variables);
             collect_c_state_bitvector_variables(state, variables);

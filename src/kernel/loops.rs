@@ -456,7 +456,9 @@ pub(super) fn execute_c_statement_verification_paths(
                             variables,
                         )?);
                     }
-                    outcome @ (CStatementOutcome::Return { .. }
+                    outcome @ (CStatementOutcome::Break(_)
+                    | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
@@ -560,6 +562,8 @@ pub(super) fn execute_c_statement_verification_paths(
             budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
             let operation = match statement {
                 CStatement::Skip => "verification statement: skip",
+                CStatement::Break => "verification statement: break",
+                CStatement::Continue => "verification statement: continue",
                 CStatement::Declare { .. } => "verification statement: declare",
                 CStatement::Assign { .. } => "verification statement: assign",
                 CStatement::CallAssign { .. } => "verification statement: call assign",
@@ -1413,7 +1417,8 @@ pub(super) fn collect_loop_preservation_summary(
                 variables,
             )? {
                 match body_path.outcome {
-                    CStatementOutcome::Normal(next_state) => {
+                    CStatementOutcome::Normal(next_state)
+                    | CStatementOutcome::Continue(next_state) => {
                         for (may_continue, condition_contexts) in [
                             (
                                 true,
@@ -1525,6 +1530,52 @@ pub(super) fn collect_loop_preservation_summary(
                                 }
                             }
                         }
+                    }
+                    CStatementOutcome::Break(next_state) => {
+                        let path_assumptions = assumptions_with_path_context(
+                            assumptions,
+                            &body_path.facts,
+                            &body_path.obligations,
+                        );
+                        let effect_obligations = collect_loop_effect_check_obligations(
+                            top_state,
+                            &next_state,
+                            effect_checks,
+                            &body_path.facts,
+                            &body_path.obligations,
+                            assumptions,
+                            budget,
+                        )?;
+                        let path_obligations = collect_invariant_check_obligations(
+                            &next_state,
+                            loop_entry_state,
+                            invariant_checks,
+                            InvariantPhase::Preservation,
+                            &path_assumptions,
+                            budget,
+                        )?;
+                        let final_path_facts = body_path.facts;
+                        let final_path_obligations = body_path.obligations;
+                        let mut final_obligations = final_path_obligations.clone();
+                        append_required_proof_obligations_under_path_context(
+                            &mut final_obligations,
+                            assumptions,
+                            &effect_obligations,
+                            &final_path_facts,
+                            &final_path_obligations,
+                        );
+                        append_required_proof_obligations_under_path_context(
+                            &mut final_obligations,
+                            assumptions,
+                            &path_obligations,
+                            &final_path_facts,
+                            &final_path_obligations,
+                        );
+                        final_exit_paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::Normal(next_state),
+                            facts: final_path_facts,
+                            obligations: final_obligations,
+                        });
                     }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
@@ -2245,6 +2296,8 @@ pub(super) fn havoc_loop_modified_locals(
 pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
     match statement {
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
@@ -2271,6 +2324,8 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
 pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
@@ -2339,7 +2394,10 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
 
 pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
         }

@@ -114,6 +114,14 @@ id = "c0.statement.while"
 path = "reference/language/c0.md#loops"
 
 [[item]]
+id = "c0.statement.break"
+path = "reference/language/c0.md#loops"
+
+[[item]]
+id = "c0.statement.continue"
+path = "reference/language/c0.md#loops"
+
+[[item]]
 id = "c0.statement.do-while"
 path = "reference/language/c0.md#loops"
 

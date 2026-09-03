@@ -986,6 +986,7 @@ mod proof_fact_store_tests {
             frontier.continuations.push(ProofExecutionContinuation {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 1,
+                loop_exit_statement_index: 2,
             });
             let ancestor = frontier.clone();
 
@@ -1011,6 +1012,7 @@ mod proof_fact_store_tests {
             frontier.continuations.push(ProofExecutionContinuation {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 2,
+                loop_exit_statement_index: 3,
             });
             assert!(
                 frontier

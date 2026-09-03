@@ -344,6 +344,8 @@ fn structural_recursion_paths(
 ) -> Result<Vec<StructuralRecursionPath>, CTerminationError> {
     match statement {
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
@@ -642,7 +644,10 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
 fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
     let escapes = |expression: &CExpression| expression_takes_address_of(expression, name);
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => false,
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => false,
         CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
             escapes(expression)
         }
@@ -712,6 +717,8 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         }
         CStatement::While { body, .. } => statement_calls(body, calls),
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::HeapAllocate { .. }
@@ -733,6 +740,7 @@ fn recursion_paths(
 ) -> Result<Vec<i64>, CTerminationError> {
     match statement {
         CStatement::Skip
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
@@ -740,6 +748,7 @@ fn recursion_paths(
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(lower_bounds),
         CStatement::Return(_) => Ok(Vec::new()),
+        CStatement::Break => Ok(Vec::new()),
         CStatement::Assign { name, .. } if name == measure => Err(error(format!(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
         ))),
@@ -853,13 +862,14 @@ fn loop_paths(
 ) -> Result<Vec<i64>, CTerminationError> {
     match statement {
         CStatement::Skip
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(offsets),
-        CStatement::Return(_) => Ok(Vec::new()),
+        CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
         CStatement::Assign { name, expression } if name == measure => {
             let step = variable_minus_positive(expression, measure).ok_or_else(|| {
                 error(format!(
@@ -937,6 +947,8 @@ fn check_loops(
             Ok(nested_terminate)
         }
         CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }

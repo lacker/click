@@ -361,6 +361,83 @@ fn c0_syntax_accepts_a_do_while_loop_with_an_unbraced_body() {
 }
 
 #[test]
+fn c0_syntax_accepts_break_and_continue_in_while_bodies() {
+    let function = syntax::parse_function(
+        r#"
+        int32 control() {
+            int32 i = 0;
+            while (i < 4) {
+                i++;
+                if (i == 1) {
+                    continue;
+                }
+                if (i == 3) {
+                    break;
+                }
+            }
+            return i;
+        }
+        "#,
+    )
+    .expect("break and continue should parse in a while body");
+
+    fn count_controls(statement: &syntax::C0Statement) -> (usize, usize) {
+        match statement {
+            syntax::C0Statement::Break => (1, 0),
+            syntax::C0Statement::Continue => (0, 1),
+            syntax::C0Statement::Seq(first, second) => {
+                let (breaks, continues) = count_controls(first);
+                let (more_breaks, more_continues) = count_controls(second);
+                (breaks + more_breaks, continues + more_continues)
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let (breaks, continues) = count_controls(then_branch);
+                let (more_breaks, more_continues) = count_controls(else_branch);
+                (breaks + more_breaks, continues + more_continues)
+            }
+            syntax::C0Statement::While { body, .. } => count_controls(body),
+            _ => (0, 0),
+        }
+    }
+
+    assert_eq!(count_controls(function.body()), (1, 1));
+}
+
+#[test]
+fn c0_syntax_rejects_loop_control_outside_its_supported_loop() {
+    for (source, expected) in [
+        (
+            "int32 bad() { break; return 0; }",
+            "`break` must be inside a loop",
+        ),
+        (
+            "int32 bad() { continue; return 0; }",
+            "`continue` must be inside a loop",
+        ),
+        (
+            "int32 bad() { for (; 0;) { continue; } return 0; }",
+            "`continue` in a `for` loop is not supported",
+        ),
+        (
+            "int32 bad() { do { break; } while (0); return 0; }",
+            "`break` in a `do`-`while` loop is not supported yet",
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported loop-control placement should be rejected");
+        assert!(
+            error.message().contains(expected),
+            "diagnostic did not contain `{expected}`: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_accepts_prefix_scalar_updates() {
     syntax::parse_function(
         r#"
@@ -578,7 +655,9 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
                 ..
             } => contains_skip(then_branch) || contains_skip(else_branch),
             syntax::C0Statement::While { body, .. } => contains_skip(body),
-            syntax::C0Statement::Declare { .. }
+            syntax::C0Statement::Break
+            | syntax::C0Statement::Continue
+            | syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::Call { .. }
             | syntax::C0Statement::CallAssign { .. }

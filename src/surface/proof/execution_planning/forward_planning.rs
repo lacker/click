@@ -971,7 +971,9 @@ fn advance_execution_proof_statement(
                     next_opaque_call: context.next_opaque_call,
                     next_kernel_variable: context.next_kernel_variable,
                 }),
-                CStatementOutcome::Return { .. } => {}
+                CStatementOutcome::Break(_)
+                | CStatementOutcome::Continue(_)
+                | CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(

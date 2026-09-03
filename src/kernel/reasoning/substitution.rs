@@ -755,7 +755,10 @@ fn collect_c_expression_bound_variables(
 
 fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut BTreeSet<Variable>) {
     match statement {
-        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Assert {
@@ -861,7 +864,9 @@ fn collect_statement_outcome_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match outcome {
-        CStatementOutcome::Normal(state) => collect_c_state_bound_variables(state, variables),
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state) => collect_c_state_bound_variables(state, variables),
         CStatementOutcome::Return { value, state } => {
             collect_c_value_bound_variables(value, variables);
             collect_c_state_bound_variables(state, variables);
@@ -1369,6 +1374,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
 ) -> CStatement {
     match statement {
         CStatement::Skip => CStatement::Skip,
+        CStatement::Break => CStatement::Break,
+        CStatement::Continue => CStatement::Continue,
         CStatement::Declare { name, c_type } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,
@@ -1911,6 +1918,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement_outcome(
     match outcome {
         CStatementOutcome::Normal(state) => {
             CStatementOutcome::Normal(substitute_bitvector_variable_in_c_state(state, from, to))
+        }
+        CStatementOutcome::Break(state) => {
+            CStatementOutcome::Break(substitute_bitvector_variable_in_c_state(state, from, to))
+        }
+        CStatementOutcome::Continue(state) => {
+            CStatementOutcome::Continue(substitute_bitvector_variable_in_c_state(state, from, to))
         }
         CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
             value: substitute_bitvector_variable_in_c_value(value, from, to),

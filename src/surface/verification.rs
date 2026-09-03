@@ -1436,6 +1436,8 @@ pub(in crate::surface) fn c0_statement_calls(
                 collect_function_pointer_names(body, names);
             }
             syntax::C0Statement::Skip
+            | syntax::C0Statement::Break
+            | syntax::C0Statement::Continue
             | syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::CallAssign { .. }
@@ -1521,7 +1523,9 @@ pub(in crate::surface) fn c0_statement_calls(
         function_pointer_names: &BTreeSet<String>,
     ) {
         match statement {
-            syntax::C0Statement::Skip => {}
+            syntax::C0Statement::Skip
+            | syntax::C0Statement::Break
+            | syntax::C0Statement::Continue => {}
             syntax::C0Statement::Seq(first, second) => {
                 visit(first, calls, function_pointer_names);
                 visit(second, calls, function_pointer_names);

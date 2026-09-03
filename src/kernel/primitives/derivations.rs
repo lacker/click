@@ -952,7 +952,10 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
             cost.statement_steps = cost.statement_steps.saturating_add(1);
         }
         match statement {
-            CStatement::Skip | CStatement::Declare { .. } => {}
+            CStatement::Skip
+            | CStatement::Break
+            | CStatement::Continue
+            | CStatement::Declare { .. } => {}
             CStatement::Assign { expression, .. } => {
                 cost.add_expression(1); // assignment target lvalue
                 cost.add_expression(c_expression_source_steps(expression));

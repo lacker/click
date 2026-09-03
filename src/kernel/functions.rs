@@ -4788,6 +4788,10 @@ pub(super) fn function_outcome_from_body(
             CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
             obligations,
         ),
+        CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => (
+            CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
+            obligations,
+        ),
         CStatementOutcome::VerificationDiverges => {
             (CFunctionOutcome::VerificationDiverges, obligations)
         }

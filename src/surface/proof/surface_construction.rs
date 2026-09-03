@@ -1073,9 +1073,10 @@ pub(super) fn append_proof_step_for_operation(
                 .proof_certificate_builder
                 .lowering_planned_transition = false;
             let post_state = match &evidence.transition.outcome {
-                CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
-                    Some(state)
-                }
+                CStatementOutcome::Normal(state)
+                | CStatementOutcome::Break(state)
+                | CStatementOutcome::Continue(state)
+                | CStatementOutcome::Return { state, .. } => Some(state),
                 CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {
                     None
                 }
