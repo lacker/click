@@ -149,7 +149,7 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
     let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
         panic!("successful allocation should assign a heap pointer");
     };
-    assert!(success.memory().is_zeroed_heap_address(pointer));
+    assert!(success.memory().is_zeroed_heap_address(pointer, 4));
 
     let read = evaluate_c_expression_paths(
         &success,
@@ -194,6 +194,123 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
             outcome: CExpressionOutcome::Value(CValue::Int32(value)),
             ..
         }] if *value == Bitvector32Term::Constant(7)
+    ));
+}
+
+#[test]
+fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(Pointer::null()))
+        .with_local("q", CValue::Pointer(Pointer::null()));
+    let calloc_paths = execute_c_statement_paths(
+        &state,
+        &c_heap_allocate_sized_with_zeroed(
+            "p",
+            c_multiply(c_int32_literal(2), c_int32_literal(4)),
+            true,
+        ),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("calloc-shaped allocation should execute");
+    let CStatementOutcome::Normal(calloc_pending) = &calloc_paths[0].outcome else {
+        panic!("calloc should produce a pending outcome");
+    };
+    let Some(CValue::Pointer(calloc_pointer)) = calloc_pending.locals().get("p") else {
+        panic!("calloc should assign a pointer");
+    };
+    let allocated = resolve_pending_heap_allocations(
+        calloc_pending,
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            pointer_is_null_condition(calloc_pointer.clone()),
+            false,
+        )),
+    );
+    let Some(CValue::Pointer(old_pointer)) = allocated.locals().get("p") else {
+        panic!("calloc success should assign a heap pointer");
+    };
+
+    let realloc_paths = execute_c_statement_paths(
+        &allocated,
+        &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(12)]),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("realloc of zeroed storage should execute");
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(pending),
+            ..
+        },
+    ] = realloc_paths.as_slice()
+    else {
+        panic!("realloc should produce one pending path: {realloc_paths:?}");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("q") else {
+        panic!("realloc should assign a pending pointer");
+    };
+    assert_eq!(
+        pending
+            .memory()
+            .heap
+            .pending_reallocations
+            .get(pending_pointer)
+            .and_then(|pending| pending.zeroed_prefix.as_ref()),
+        Some(&Bitvector32Term::Constant(8))
+    );
+    assert!(pending.memory().live_heap_block_size(old_pointer).is_some());
+
+    let success = resolve_pending_heap_allocations(
+        pending,
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            pointer_is_null_condition(pending_pointer.clone()),
+            false,
+        )),
+    );
+    let Some(CValue::Pointer(resized)) = success.locals().get("q") else {
+        panic!("successful realloc should assign a heap pointer");
+    };
+    assert!(success.memory().is_zeroed_heap_address(resized, 4));
+    assert!(success.memory().is_uninitialized_heap_address(
+        &Pointer {
+            block: resized.block.clone(),
+            offset: PointerOffsetTerm::Constant(8),
+        },
+        4,
+    ));
+
+    let prefix_read = evaluate_c_expression_paths(
+        &success,
+        &c_index(c_variable("q"), c_int32_literal(1)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("zeroed realloc prefix read should execute");
+    assert!(matches!(
+        prefix_read.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Int32(value)),
+            ..
+        }] if *value == Bitvector32Term::Constant(0)
+    ));
+
+    let tail_read = evaluate_c_expression_paths(
+        &success,
+        &c_index(c_variable("q"), c_int32_literal(2)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("uninitialized realloc tail read should execute");
+    assert!(matches!(
+        tail_read.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            ..
+        }]
     ));
 }
 

@@ -2565,6 +2565,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                 .iter()
                 .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
                 .collect(),
+            zeroed_prefix_allocations: memory
+                .heap
+                .zeroed_prefix_allocations
+                .iter()
+                .map(|(base, prefix)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        substitute_bitvector_variable(prefix, from, to),
+                    )
+                })
+                .collect(),
             zeroed_pending_allocations: memory
                 .heap
                 .zeroed_pending_allocations
@@ -2585,6 +2596,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                                 to,
                             ),
                             old_bytes: substitute_bitvector_variable(&pending.old_bytes, from, to),
+                            zeroed_prefix: pending
+                                .zeroed_prefix
+                                .as_ref()
+                                .map(|prefix| substitute_bitvector_variable(prefix, from, to)),
                             copied_cells: pending
                                 .copied_cells
                                 .iter()

@@ -8,8 +8,8 @@ literally be `malloc(sizeof(struct S))` matching the target's type
 (`:1379-1400`); `sizeof` applies only to structs (`:1727-1737`), so
 `n * sizeof(int)` is unwritable and runtime int32 allocation uses the magic
 form `malloc(count * 4)`; broader allocation beyond the supported `calloc`
-forms, bounded nonzero-int32 `realloc`, and arbitrary byte layouts is
-unsupported
+forms, bounded nonzero-int32 and zeroed-prefix `realloc`, and arbitrary byte
+layouts is unsupported
 (`docs/concepts/resources.md:590-595`;
 `docs/internals/roadmap.md:142-145`).
 Local arrays take exactly one dimension suffix (`:1025-1064`), initializers
@@ -28,7 +28,9 @@ verify without rewriting.
 Mdtests with unchanged C: `int32* p = malloc(n * sizeof(int32));` with
 `allocation(p, n * 4)`; `calloc(n, sizeof(struct S))` producing zeroed cells;
 `realloc(p, m * 4)` preserving the first `min(n, m)` cells and transferring
-the allocation resource; a local `int32 m[3][4]` indexed `m[i][j]` with
+the allocation resource; a zeroed `calloc` prefix surviving a grown
+`realloc` while its new tail remains uninitialized; a local `int32 m[3][4]`
+indexed `m[i][j]` with
 bounds obligations; `int32 a[3] = {1, 2, 3};`; an array of structs `struct S
 items[8]` indexed by field.
 
@@ -39,8 +41,9 @@ items[8]` indexed by field.
   of that symbolic byte size, with typed access obligations at use.
 - `calloc` and the supported bounded `realloc` form are modeled builtins with
   their lifetime transitions recorded in the memory DAG like `malloc` and
-  `free`; remaining zeroed-prefix and arbitrary-layout realloc cases stay
-  explicit follow-up work.
+  `free`; bounded zeroed prefixes preserve their initialization status while
+  grown tails remain uninitialized. Arbitrary-layout realloc cases stay an
+  explicit follow-up.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

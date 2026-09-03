@@ -255,7 +255,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // Unlike external argument memory, a fresh heap block has a known
     // initialization history. Permission authorizes a read but cannot turn a
     // never-written heap cell into an unconstrained initialized value.
-    if memory.is_uninitialized_heap_address(&pointer) {
+    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width()) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
             facts,
@@ -404,7 +404,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         return paths;
     }
 
-    if memory.is_zeroed_heap_address(&pointer) {
+    if memory.is_zeroed_heap_address(&pointer, value_type.byte_width()) {
         let value = match value_type {
             CType::Int32 => int32(Bitvector32Term::Constant(0)),
             CType::UInt8 => uint8(Bitvector32Term::Constant(0)),

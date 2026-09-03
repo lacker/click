@@ -571,18 +571,32 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             }
-            if state.memory.heap.zeroed_allocations.contains(&old_pointer) {
-                // The current memory state has a whole-block zero marker, while
-                // realloc needs a prefix marker when the new block grows. Keep
-                // this unsupported until the representation can avoid claiming
-                // zeroes for the newly added tail.
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts: all_facts,
-                    obligations: all_obligations,
-                });
-                continue;
-            }
+            let zeroed_source = if state.memory.heap.zeroed_allocations.contains(&old_pointer) {
+                Some(old_bytes.clone())
+            } else {
+                state
+                    .memory
+                    .heap
+                    .zeroed_prefix_allocations
+                    .get(&old_pointer)
+                    .cloned()
+            };
+            let zeroed_prefix = match zeroed_source {
+                None => None,
+                Some(old_prefix) => {
+                    let (Some(old_prefix), Some(new_bytes)) =
+                        (old_prefix.as_const(), new_bytes.as_const())
+                    else {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: all_facts,
+                            obligations: all_obligations,
+                        });
+                        continue;
+                    };
+                    Some(Bitvector32Term::Constant(old_prefix.min(new_bytes)))
+                }
+            };
 
             let allocation = CResourceFact::own_allocation(old_pointer.clone(), old_bytes.clone());
             let Some(resources) = state
@@ -706,6 +720,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     pending_pointer.clone(),
                     old_pointer.clone(),
                     old_bytes.clone(),
+                    zeroed_prefix,
                     copied_cells
                         .into_iter()
                         .map(|(offset, value)| {

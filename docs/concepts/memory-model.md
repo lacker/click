@@ -35,9 +35,9 @@ A pending `realloc` keeps its old live block and resources in place until the
 result is refined. Failure removes only the pending result. Success records a
 free edge for the old block, allocates a fresh block, copies the initialized
 prefix cells that fit, and transfers the complete allocation and memory
-resources to the fresh block. The current representation cannot express a
-zeroed prefix followed by an uninitialized grown tail, so reallocating a
-zeroed block is rejected until that state is modeled explicitly.
+resources to the fresh block. For a bounded zeroed `calloc` source, the
+successful result also records the preserved zeroed prefix; any grown tail is
+uninitialized and is not treated as zero.
 
 Click tracks two different facts on the successful branch:
 
