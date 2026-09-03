@@ -3419,26 +3419,53 @@ impl Parser {
             }
             C0Statement::While { condition, body } => {
                 let (prefix, condition) = self.lower_expression_calls(condition)?;
+                let body = self.lower_statement_calls(*body)?;
                 if !prefix.is_empty() {
-                    return Err(self.error_here(
-                        "calls in loop conditions are not supported because the condition is reevaluated",
-                    ));
+                    let guard = prepend_statements(
+                        prefix,
+                        C0Statement::If {
+                            condition: C0Expression::Not(Box::new(condition)),
+                            then_branch: Box::new(C0Statement::Break),
+                            else_branch: Box::new(C0Statement::Skip),
+                        },
+                    );
+                    return Ok(C0Statement::While {
+                        condition: C0Expression::Int32Literal(1),
+                        body: Box::new(C0Statement::Seq(Box::new(guard), Box::new(body))),
+                    });
                 }
                 Ok(C0Statement::While {
                     condition,
-                    body: Box::new(self.lower_statement_calls(*body)?),
+                    body: Box::new(body),
                 })
             }
             C0Statement::DoWhile { condition, body } => {
                 let (prefix, condition) = self.lower_expression_calls(condition)?;
-                if !prefix.is_empty() {
-                    return Err(self.error_here(
-                        "calls in loop conditions are not supported because the condition is reevaluated",
-                    ));
+                let body = self.lower_statement_calls(*body)?;
+                if prefix.is_empty() {
+                    return Ok(C0Statement::DoWhile {
+                        condition,
+                        body: Box::new(body),
+                    });
                 }
-                Ok(C0Statement::DoWhile {
-                    condition,
-                    body: Box::new(self.lower_statement_calls(*body)?),
+                // A do-while condition runs after the first body execution,
+                // and `continue` must also reach it. Use an unconditional
+                // while shell whose tail checks the lowered condition. A
+                // continue gets the same call-and-check sequence before
+                // returning to the shell head; nested loops keep their own
+                // continue targets.
+                let body = prepend_condition_check_before_loop_continues(body, &prefix, &condition);
+                let condition_check = prepend_statements(
+                    prefix,
+                    C0Statement::If {
+                        condition: C0Expression::Not(Box::new(condition)),
+                        then_branch: Box::new(C0Statement::Break),
+                        else_branch: Box::new(C0Statement::Skip),
+                    },
+                );
+                Ok(C0Statement::While {
+                    condition: C0Expression::Int32Literal(1),
+                    body: Box::new(C0Statement::Seq(Box::new(body), Box::new(condition_check))),
                 })
             }
             C0Statement::For {
@@ -3448,16 +3475,30 @@ impl Parser {
                 body,
             } => {
                 let (prefix, condition) = self.lower_expression_calls(condition)?;
+                let initializer = self.lower_statement_calls(*initializer)?;
+                let step = self.lower_statement_calls(*step)?;
+                let body = self.lower_statement_calls(*body)?;
                 if !prefix.is_empty() {
-                    return Err(self.error_here(
-                        "calls in loop conditions are not supported because the condition is reevaluated",
-                    ));
+                    let guard = prepend_statements(
+                        prefix,
+                        C0Statement::If {
+                            condition: C0Expression::Not(Box::new(condition)),
+                            then_branch: Box::new(C0Statement::Break),
+                            else_branch: Box::new(C0Statement::Skip),
+                        },
+                    );
+                    return Ok(C0Statement::For {
+                        initializer: Box::new(initializer),
+                        condition: C0Expression::Int32Literal(1),
+                        step: Box::new(step),
+                        body: Box::new(C0Statement::Seq(Box::new(guard), Box::new(body))),
+                    });
                 }
                 Ok(C0Statement::For {
-                    initializer: Box::new(self.lower_statement_calls(*initializer)?),
+                    initializer: Box::new(initializer),
                     condition,
-                    step: Box::new(self.lower_statement_calls(*step)?),
-                    body: Box::new(self.lower_statement_calls(*body)?),
+                    step: Box::new(step),
+                    body: Box::new(body),
                 })
             }
             C0Statement::Switch { expression, cases } => {
@@ -3558,22 +3599,46 @@ impl Parser {
                 let (mut prefix, condition) = self.lower_expression_calls(*condition)?;
                 let (then_prefix, then_branch) = self.lower_expression_calls(*then_branch)?;
                 let (else_prefix, else_branch) = self.lower_expression_calls(*else_branch)?;
-                if !then_prefix.is_empty() || !else_prefix.is_empty() {
-                    return Err(self
-                        .error_here("calls in conditional expression branches are not supported"));
+                if then_prefix.is_empty() && else_prefix.is_empty() {
+                    return Ok((
+                        prefix,
+                        C0Expression::Conditional {
+                            condition: Box::new(condition),
+                            then_branch: Box::new(then_branch),
+                            else_branch: Box::new(else_branch),
+                        },
+                    ));
                 }
-                Ok((
-                    {
-                        prefix.extend(then_prefix);
-                        prefix.extend(else_prefix);
-                        prefix
+                let target = self.fresh_synthesized_call_name();
+                let then_statement = prepend_statements(
+                    then_prefix,
+                    C0Statement::Assign {
+                        name: target.clone(),
+                        expression: then_branch,
                     },
-                    C0Expression::Conditional {
-                        condition: Box::new(condition),
-                        then_branch: Box::new(then_branch),
-                        else_branch: Box::new(else_branch),
+                );
+                let else_statement = prepend_statements(
+                    else_prefix,
+                    C0Statement::Assign {
+                        name: target.clone(),
+                        expression: else_branch,
                     },
-                ))
+                );
+                // A conditional branch may not execute, so the result needs a
+                // real stack binding before either arm assigns it. C0's
+                // expression calls currently participate in scalar
+                // expressions, whose temporary storage uses the int32 ABI
+                // slot just like an ordinary scalar result.
+                prefix.push(C0Statement::Declare {
+                    c_type: C0Type::Int32,
+                    name: target.clone(),
+                });
+                prefix.push(C0Statement::If {
+                    condition,
+                    then_branch: Box::new(then_statement),
+                    else_branch: Box::new(else_statement),
+                });
+                Ok((prefix, C0Expression::Variable(target)))
             }
             C0Expression::AddressOf(expression) => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
@@ -4601,6 +4666,85 @@ fn prepend_statements(prefix: Vec<C0Statement>, statement: C0Statement) -> C0Sta
     let mut statements = prefix;
     statements.push(statement);
     balanced_statement_sequence(statements).expect("the statement prefix is non-empty")
+}
+
+/// Run a lowered loop-condition prefix and condition check before each
+/// `continue` that targets the current loop. Nested loops consume their own
+/// `continue` statements, while a `switch` does not introduce a continue
+/// target and is traversed.
+fn prepend_condition_check_before_loop_continues(
+    statement: C0Statement,
+    prefix: &[C0Statement],
+    loop_condition: &C0Expression,
+) -> C0Statement {
+    match statement {
+        C0Statement::Continue => prepend_statements(
+            prefix.to_vec(),
+            C0Statement::If {
+                condition: C0Expression::Not(Box::new(loop_condition.clone())),
+                then_branch: Box::new(C0Statement::Break),
+                else_branch: Box::new(C0Statement::Continue),
+            },
+        ),
+        C0Statement::Seq(first, second) => C0Statement::Seq(
+            Box::new(prepend_condition_check_before_loop_continues(
+                *first,
+                prefix,
+                loop_condition,
+            )),
+            Box::new(prepend_condition_check_before_loop_continues(
+                *second,
+                prefix,
+                loop_condition,
+            )),
+        ),
+        C0Statement::If {
+            condition: if_condition,
+            then_branch,
+            else_branch,
+        } => C0Statement::If {
+            condition: if_condition.clone(),
+            then_branch: Box::new(prepend_condition_check_before_loop_continues(
+                *then_branch,
+                prefix,
+                loop_condition,
+            )),
+            else_branch: Box::new(prepend_condition_check_before_loop_continues(
+                *else_branch,
+                prefix,
+                loop_condition,
+            )),
+        },
+        C0Statement::Switch { expression, cases } => C0Statement::Switch {
+            expression,
+            cases: cases
+                .into_iter()
+                .map(|case| C0SwitchCase {
+                    value: case.value,
+                    body: Box::new(prepend_condition_check_before_loop_continues(
+                        *case.body,
+                        prefix,
+                        loop_condition,
+                    )),
+                })
+                .collect(),
+        },
+        statement @ (C0Statement::While { .. }
+        | C0Statement::DoWhile { .. }
+        | C0Statement::For { .. }
+        | C0Statement::Skip
+        | C0Statement::Break
+        | C0Statement::Declare { .. }
+        | C0Statement::DeclareStructValue { .. }
+        | C0Statement::Assign { .. }
+        | C0Statement::CallAssign { .. }
+        | C0Statement::Call { .. }
+        | C0Statement::HeapAllocate { .. }
+        | C0Statement::HeapFree { .. }
+        | C0Statement::Return(_)
+        | C0Statement::Store { .. }
+        | C0Statement::Update { .. }) => statement,
+    }
 }
 
 fn statement_contains_embedded_call(statement: &C0Statement) -> bool {

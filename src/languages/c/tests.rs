@@ -3970,6 +3970,63 @@ fn c0_syntax_lowers_calls_in_expression_position() {
 }
 
 #[test]
+fn c0_syntax_lowers_calls_in_conditional_expression_branches() {
+    let function = syntax::parse_function(
+        r#"
+        int32 caller(int32 condition) {
+            return condition ? increment(0) : 0;
+        }
+        "#,
+    )
+    .expect("calls in conditional branches should be lowered lazily");
+    let debug = format!("{:?}", function.body());
+    assert!(debug.contains("If {"), "conditional branches become a C if");
+    assert!(debug.contains("CallAssign"), "the selected call is checked");
+    assert!(
+        !debug.contains("Conditional {"),
+        "the lowered body does not evaluate conditional call branches eagerly"
+    );
+    assert!(
+        debug.contains("Declare { c_type: Int32"),
+        "the conditional result has a stack binding before either arm"
+    );
+}
+
+#[test]
+fn c0_syntax_lowers_calls_in_reevaluated_loop_conditions() {
+    let function = syntax::parse_function(
+        r#"
+        int32 caller() {
+            do {
+                continue;
+            } while (should_continue());
+            while (should_continue()) {
+                break;
+            }
+            for (; should_continue();) {
+                break;
+            }
+            return 0;
+        }
+        "#,
+    )
+    .expect("calls in loop conditions should be reevaluated in the loop body");
+    let debug = format!("{:?}", function.body());
+    assert!(
+        debug.matches("CallAssign").count() >= 3,
+        "each loop iteration has a checked condition call"
+    );
+    assert!(
+        debug.matches("Int32Literal(1)").count() >= 3,
+        "all call-bearing loop conditions become unconditional iteration shells"
+    );
+    assert!(
+        !debug.contains("DoWhile"),
+        "do-while conditions move their checked call into the loop body"
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_multiple_unsequenced_expression_calls() {
     let error = syntax::parse_function(
         r#"

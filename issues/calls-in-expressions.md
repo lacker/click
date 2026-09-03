@@ -5,17 +5,20 @@ Found by the 2026-09-01 kernel audit at cb034b21.
 The first implementation slice now accepts calls in unconditional expression
 positions, including return expressions, `if` conditions, nested arguments,
 and array indexes. It lowers each call to a fresh temporary and the existing
-checked `CallAssign` statement. Calls in loop conditions and conditional
-expression branches remain open because they require control-flow-aware
-lowering; multiple calls in one unsequenced expression are rejected instead
-of being silently sequenced.
+checked `CallAssign` statement. Conditional-expression branches are now
+lowered lazily through a statement-level `if`; `while`, `for`, and `do ...
+while` conditions reevaluate their call prefixes inside iteration guards,
+including the post-body condition of `do ... while` and its `continue` path.
+Multiple calls in one unsequenced expression are rejected instead of being
+silently sequenced.
 
 Before this slice, calls existed only as `f(args);` statements or as direct
 assignments `x = f(args);`. The parser now handles calls in unconditional
-expression positions, but lowering still rejects calls in loop conditions and
-conditional-expression branches because those forms require control-flow-aware
-sequencing. Multiple calls in one unsequenced
-expression are rejected rather than silently choosing an evaluation order.
+expression positions, but multiple calls in one unsequenced expression are
+rejected rather than silently choosing an evaluation order. The implementation
+now lowers calls in every structured loop condition into control-flow guards;
+the remaining gap is diagnostic source-position fidelity for synthesized
+lowering errors.
 The named-temporary workaround remains necessary for those unsupported forms
 (`mdtests/c_local_named_result_across_calls.md` exercises the pattern).
 
