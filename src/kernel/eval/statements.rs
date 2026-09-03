@@ -98,6 +98,193 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
     Ok(paths)
 }
 
+fn execute_c_lvalue_update_paths(
+    state: &CState,
+    target: &CExpression,
+    operator: CUpdateOperator,
+    operand: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for target_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
+        let CLValuePath {
+            outcome,
+            facts,
+            obligations,
+        } = target_path;
+        let CLValueOutcome::LValue(lvalue) = outcome else {
+            let outcome = match outcome {
+                CLValueOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CLValueOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                CLValueOutcome::LValue(_) => unreachable!(),
+            };
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        if !matches!(lvalue.value_type, CType::Int32 | CType::UInt8) {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+
+        for current_path in read_c_lvalue_paths(
+            state,
+            CLValueOutcome::LValue(lvalue.clone()),
+            facts,
+            obligations,
+            assumptions,
+            &mut budget.next_kernel_variable,
+        ) {
+            let CExpressionPath {
+                outcome: current_outcome,
+                facts: current_facts,
+                obligations: current_obligations,
+            } = current_path;
+            let CExpressionOutcome::Value(current) = current_outcome else {
+                let outcome = match current_outcome {
+                    CExpressionOutcome::UndefinedBehavior(error) => {
+                        CStatementOutcome::UndefinedBehavior(error)
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        CStatementOutcome::RuntimeError(error)
+                    }
+                    CExpressionOutcome::Value(_) => unreachable!(),
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts: current_facts,
+                    obligations: current_obligations,
+                });
+                continue;
+            };
+
+            let operand_assumptions =
+                assumptions_with_path_context(assumptions, &current_facts, &current_obligations);
+            for operand_path in
+                evaluate_c_expression_paths(state, operand, &operand_assumptions, budget)?
+            {
+                let CExpressionPath {
+                    outcome: operand_outcome,
+                    facts: operand_facts,
+                    obligations: operand_obligations,
+                } = operand_path;
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &current_facts,
+                    &current_obligations,
+                    &operand_facts,
+                    &operand_obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                let CExpressionOutcome::Value(operand_value) = operand_outcome else {
+                    let outcome = match operand_outcome {
+                        CExpressionOutcome::UndefinedBehavior(error) => {
+                            CStatementOutcome::UndefinedBehavior(error)
+                        }
+                        CExpressionOutcome::RuntimeError(error) => {
+                            CStatementOutcome::RuntimeError(error)
+                        }
+                        CExpressionOutcome::Value(_) => unreachable!(),
+                    };
+                    paths.push(CStatementExecutionPath {
+                        outcome,
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                };
+
+                let update_expression = c_update_expression(
+                    operator,
+                    CExpression::Value(current.clone()),
+                    CExpression::Value(operand_value),
+                );
+                let update_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                for result_path in evaluate_c_expression_paths(
+                    state,
+                    &update_expression,
+                    &update_assumptions,
+                    budget,
+                )? {
+                    let CExpressionPath {
+                        outcome,
+                        facts: result_facts,
+                        obligations: result_obligations,
+                    } = result_path;
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &result_facts,
+                        &result_obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    match outcome {
+                        CExpressionOutcome::Value(value) => paths.extend(write_c_lvalue_paths(
+                            state,
+                            lvalue.clone(),
+                            value,
+                            facts,
+                            obligations,
+                            assumptions,
+                        )),
+                        CExpressionOutcome::UndefinedBehavior(error) => {
+                            paths.push(CStatementExecutionPath {
+                                outcome: CStatementOutcome::UndefinedBehavior(error),
+                                facts,
+                                obligations,
+                            })
+                        }
+                        CExpressionOutcome::RuntimeError(error) => {
+                            paths.push(CStatementExecutionPath {
+                                outcome: CStatementOutcome::RuntimeError(error),
+                                facts,
+                                obligations,
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn c_update_expression(
+    operator: CUpdateOperator,
+    left: CExpression,
+    right: CExpression,
+) -> CExpression {
+    let left = Box::new(left);
+    let right = Box::new(right);
+    match operator {
+        CUpdateOperator::Add => CExpression::Add(left, right),
+        CUpdateOperator::Subtract => CExpression::Subtract(left, right),
+        CUpdateOperator::Multiply => CExpression::Multiply(left, right),
+        CUpdateOperator::Divide => CExpression::Divide(left, right),
+        CUpdateOperator::Remainder => CExpression::Remainder(left, right),
+        CUpdateOperator::ShiftLeft => CExpression::ShiftLeft(left, right),
+        CUpdateOperator::ShiftRight => CExpression::ShiftRight(left, right),
+        CUpdateOperator::BitwiseAnd => CExpression::BitwiseAnd(left, right),
+        CUpdateOperator::BitwiseOr => CExpression::BitwiseOr(left, right),
+        CUpdateOperator::BitwiseXor => CExpression::BitwiseXor(left, right),
+    }
+}
+
 pub(in crate::kernel) fn write_c_lvalue_paths(
     state: &CState,
     lvalue: CLValue,
@@ -1356,6 +1543,11 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             assumptions,
             budget,
         )?,
+        CStatement::Update {
+            target,
+            operator,
+            operand,
+        } => execute_c_lvalue_update_paths(state, target, *operator, operand, assumptions, budget)?,
         CStatement::If {
             condition,
             then_branch,

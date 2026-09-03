@@ -2804,6 +2804,13 @@ fn describe_statement_head(statement: &CStatement) -> String {
                 describe_c_expression(value)
             )
         }
+        CStatement::Update {
+            target, operand, ..
+        } => format!(
+            "update {} with {}",
+            describe_c_expression(target),
+            describe_c_expression(operand)
+        ),
         CStatement::If { condition, .. } => format!("if ({})", describe_c_expression(condition)),
         CStatement::While { condition, .. } => {
             format!("while ({})", describe_c_expression(condition))

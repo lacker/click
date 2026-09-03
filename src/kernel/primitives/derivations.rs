@@ -987,6 +987,14 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 cost.add_expression(1usize.saturating_add(c_expression_source_steps(pointer)));
                 cost.add_expression(c_expression_source_steps(value));
             }
+            CStatement::Update {
+                target, operand, ..
+            } => {
+                cost.add_expression(c_expression_steps_for_mode(target, true));
+                cost.add_expression(1); // read the current lvalue value
+                cost.add_expression(c_expression_source_steps(operand));
+                cost.add_expression(1); // apply the update operator
+            }
             CStatement::If {
                 condition,
                 then_branch,

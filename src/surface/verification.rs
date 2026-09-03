@@ -1441,7 +1441,8 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
-            | syntax::C0Statement::Store { .. } => calls.push(BTreeSet::new()),
+            | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::Update { .. } => calls.push(BTreeSet::new()),
         }
     }
 

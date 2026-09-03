@@ -419,6 +419,7 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         | CStatement::Assert { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::Update { .. }
         | CStatement::If { .. }
         | CStatement::While { .. } => true,
     }
@@ -484,7 +485,8 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => false,
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => false,
         CStatement::HeapAllocate { .. } | CStatement::HeapFree { .. } => false,
     }
 }

@@ -799,6 +799,18 @@ pub fn c_typed_store(pointer: CExpression, value: CExpression, value_type: CType
     }
 }
 
+pub fn c_update(
+    target: CExpression,
+    operator: CUpdateOperator,
+    operand: CExpression,
+) -> CStatement {
+    CStatement::Update {
+        target,
+        operator,
+        operand,
+    }
+}
+
 pub fn c_if(
     condition: CExpression,
     then_branch: CStatement,

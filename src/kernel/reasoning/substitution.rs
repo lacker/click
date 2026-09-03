@@ -781,6 +781,12 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
             collect_c_expression_bound_variables(pointer, variables);
             collect_c_expression_bound_variables(value, variables);
         }
+        CStatement::Update {
+            target, operand, ..
+        } => {
+            collect_c_expression_bound_variables(target, variables);
+            collect_c_expression_bound_variables(operand, variables);
+        }
         CStatement::If {
             condition,
             then_branch,
@@ -1427,6 +1433,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
             value_type: *value_type,
+        },
+        CStatement::Update {
+            target,
+            operator,
+            operand,
+        } => CStatement::Update {
+            target: substitute_bitvector_variable_in_c_expression(target, from, to),
+            operator: *operator,
+            operand: substitute_bitvector_variable_in_c_expression(operand, from, to),
         },
         CStatement::If {
             condition,

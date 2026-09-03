@@ -36,7 +36,6 @@ C language coverage:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model break, continue, do-while, switch, and goto](non-structured-control-flow.md)
-- [Parse the everyday C syntax the C0 frontend rejects](c-syntax-conveniences.md)
 - [Allow function calls in expression position](calls-in-expressions.md)
 - [Specify external and libc functions without a body](external-function-contracts.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)

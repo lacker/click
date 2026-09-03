@@ -347,7 +347,8 @@ fn structural_recursion_paths(
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(paths),
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => Ok(paths),
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
@@ -654,6 +655,9 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             escapes(pointer) || escapes(value)
         }
+        CStatement::Update {
+            target, operand, ..
+        } => escapes(target) || escapes(operand),
         CStatement::Seq(first, second) => {
             statement_takes_address_of(first, name) || statement_takes_address_of(second, name)
         }
@@ -715,7 +719,8 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => {}
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => {}
     }
 }
 
@@ -732,7 +737,8 @@ fn recursion_paths(
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(lower_bounds),
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => Ok(lower_bounds),
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Assign { name, .. } if name == measure => Err(error(format!(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
@@ -851,7 +857,8 @@ fn loop_paths(
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(offsets),
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => Ok(offsets),
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Assign { name, expression } if name == measure => {
             let step = variable_minus_positive(expression, measure).ok_or_else(|| {
@@ -939,7 +946,8 @@ fn check_loops(
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(true),
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => Ok(true),
     }
 }
 

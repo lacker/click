@@ -59,6 +59,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.shift-right-assign",
     "statement.bitwise-and-assign",
     "statement.bitwise-or-assign",
+    "statement.memory-lvalue-update",
     "expression.variable",
     "expression.int-literal",
     "expression.hex-literal",
@@ -216,6 +217,11 @@ pub enum C0Statement {
         value: C0Expression,
         value_type: Option<C0Type>,
     },
+    Update {
+        target: C0Expression,
+        operator: C0UpdateOperator,
+        operand: C0Expression,
+    },
     If {
         condition: C0Expression,
         then_branch: Box<C0Statement>,
@@ -225,6 +231,20 @@ pub enum C0Statement {
         condition: C0Expression,
         body: Box<C0Statement>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum C0UpdateOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    ShiftLeft,
+    ShiftRight,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -495,6 +515,26 @@ impl C0Statement {
                     value.to_kernel_expression(),
                 ),
             },
+            Self::Update {
+                target,
+                operator,
+                operand,
+            } => crate::kernel::c_update(
+                target.to_kernel_expression(),
+                match operator {
+                    C0UpdateOperator::Add => crate::kernel::CUpdateOperator::Add,
+                    C0UpdateOperator::Subtract => crate::kernel::CUpdateOperator::Subtract,
+                    C0UpdateOperator::Multiply => crate::kernel::CUpdateOperator::Multiply,
+                    C0UpdateOperator::Divide => crate::kernel::CUpdateOperator::Divide,
+                    C0UpdateOperator::Remainder => crate::kernel::CUpdateOperator::Remainder,
+                    C0UpdateOperator::ShiftLeft => crate::kernel::CUpdateOperator::ShiftLeft,
+                    C0UpdateOperator::ShiftRight => crate::kernel::CUpdateOperator::ShiftRight,
+                    C0UpdateOperator::BitwiseAnd => crate::kernel::CUpdateOperator::BitwiseAnd,
+                    C0UpdateOperator::BitwiseOr => crate::kernel::CUpdateOperator::BitwiseOr,
+                    C0UpdateOperator::BitwiseXor => crate::kernel::CUpdateOperator::BitwiseXor,
+                },
+                operand.to_kernel_expression(),
+            ),
             Self::If {
                 condition,
                 then_branch,
@@ -706,7 +746,8 @@ fn validate_function_returns(
         | C0Statement::HeapAllocate { .. }
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
-        | C0Statement::Store { .. } => Ok(()),
+        | C0Statement::Store { .. }
+        | C0Statement::Update { .. } => Ok(()),
     }
 }
 
@@ -1481,38 +1522,19 @@ impl Parser {
                 Ok(C0Statement::Skip)
             }
             Some(Token::Star) => {
-                self.position += 1;
-                let pointer = self.parse_unary()?;
-                self.expect(Token::Equal)?;
-                let value = self.parse_expression()?;
+                let statement = self.parse_memory_lvalue_statement("statement", None)?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store {
-                    pointer,
-                    value,
-                    value_type: None,
-                })
+                Ok(statement)
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
-                let (pointer, value_type) = self.parse_postfix_lvalue_pointer()?;
-                self.expect(Token::Equal)?;
-                let value = self.parse_expression()?;
+                let statement = self.parse_memory_lvalue_statement("statement", None)?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store {
-                    pointer,
-                    value,
-                    value_type,
-                })
+                Ok(statement)
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
-                let (pointer, value_type) = self.parse_postfix_lvalue_pointer()?;
-                self.expect(Token::Equal)?;
-                let value = self.parse_expression()?;
+                let statement = self.parse_memory_lvalue_statement("statement", None)?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store {
-                    pointer,
-                    value,
-                    value_type,
-                })
+                Ok(statement)
             }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
                 let statement = self.parse_scalar_update_statement("statement")?;
@@ -1520,7 +1542,12 @@ impl Parser {
                 Ok(statement)
             }
             Some(Token::PlusPlus | Token::MinusMinus) => {
-                let statement = self.parse_scalar_update_statement("statement")?;
+                let statement = if self.prefix_starts_memory_lvalue() {
+                    let prefix = self.next();
+                    self.parse_memory_lvalue_statement("statement", prefix)?
+                } else {
+                    self.parse_scalar_update_statement("statement")?
+                };
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
@@ -1989,14 +2016,114 @@ impl Parser {
         Ok(C0Statement::Assign { name, expression })
     }
 
+    fn parse_update_statement(&mut self, context: &str) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() == Some(&Token::Star)
+            || matches!(self.peek(), Some(Token::Ident(_)))
+                && matches!(self.peek_next(), Some(Token::LBracket | Token::Arrow))
+        {
+            return self.parse_memory_lvalue_statement(context, None);
+        }
+        if matches!(self.peek(), Some(Token::PlusPlus | Token::MinusMinus))
+            && self.prefix_starts_memory_lvalue()
+        {
+            let prefix = self.next();
+            return self.parse_memory_lvalue_statement(context, prefix);
+        }
+        self.parse_scalar_update_statement(context)
+    }
+
+    fn parse_memory_lvalue_statement(
+        &mut self,
+        context: &str,
+        prefix_operator: Option<Token>,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let target = if self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            C0Expression::Load(Box::new(self.parse_unary()?))
+        } else {
+            self.parse_postfix()?
+        };
+        let operator = match prefix_operator {
+            Some(operator) => operator,
+            None => self.next().ok_or_else(|| {
+                self.error_here(format!(
+                    "expected memory lvalue update operator in {context}, got end of input"
+                ))
+            })?,
+        };
+        if operator == Token::Equal {
+            let value = self.parse_expression()?;
+            return match target {
+                C0Expression::Load(pointer) => Ok(C0Statement::Store {
+                    pointer: *pointer,
+                    value,
+                    value_type: None,
+                }),
+                C0Expression::Field {
+                    pointer,
+                    field_type,
+                    ..
+                } => Ok(C0Statement::Store {
+                    pointer: *pointer,
+                    value,
+                    value_type: Some(field_type),
+                }),
+                C0Expression::Index(base, index) => Ok(C0Statement::Store {
+                    pointer: C0Expression::Add(base, index),
+                    value,
+                    value_type: None,
+                }),
+                target => Err(self.error_here(format!(
+                    "expected memory lvalue assignment target in {context}, got {target:?}"
+                ))),
+            };
+        }
+
+        let increment = matches!(operator, Token::PlusPlus | Token::MinusMinus);
+        let operator = match operator {
+            Token::PlusPlus | Token::PlusEqual => C0UpdateOperator::Add,
+            Token::MinusMinus | Token::MinusEqual => C0UpdateOperator::Subtract,
+            Token::StarEqual => C0UpdateOperator::Multiply,
+            Token::SlashEqual => C0UpdateOperator::Divide,
+            Token::PercentEqual => C0UpdateOperator::Remainder,
+            Token::ShiftLeftEqual => C0UpdateOperator::ShiftLeft,
+            Token::ShiftRightEqual => C0UpdateOperator::ShiftRight,
+            Token::AmpEqual => C0UpdateOperator::BitwiseAnd,
+            Token::PipeEqual => C0UpdateOperator::BitwiseOr,
+            Token::CaretEqual => C0UpdateOperator::BitwiseXor,
+            token => {
+                return Err(self.error_here(format!(
+                    "expected memory lvalue update operator in {context}, got {}",
+                    token.describe()
+                )));
+            }
+        };
+        let operand = if increment {
+            C0Expression::Int32Literal(1)
+        } else {
+            self.parse_expression()?
+        };
+        Ok(C0Statement::Update {
+            target,
+            operator,
+            operand,
+        })
+    }
+
+    fn prefix_starts_memory_lvalue(&self) -> bool {
+        self.peek_n(1) == Some(&Token::Star)
+            || matches!(self.peek_n(1), Some(Token::Ident(_)))
+                && matches!(self.peek_n(2), Some(Token::LBracket | Token::Arrow))
+    }
+
     fn parse_for_step(&mut self) -> Result<C0Statement, C0SyntaxError> {
         if self.peek() == Some(&Token::RParen) {
             return Ok(C0Statement::Skip);
         }
-        let mut steps = vec![self.parse_scalar_update_statement("for-loop step")?];
+        let mut steps = vec![self.parse_update_statement("for-loop step")?];
         while self.peek() == Some(&Token::Comma) {
             self.position += 1;
-            steps.push(self.parse_scalar_update_statement("for-loop step")?);
+            steps.push(self.parse_update_statement("for-loop step")?);
         }
         Ok(balanced_statement_sequence(steps).unwrap_or(C0Statement::Skip))
     }
@@ -2461,22 +2588,6 @@ impl Parser {
                 }
                 _ => return Ok(expression),
             }
-        }
-    }
-
-    fn parse_postfix_lvalue_pointer(
-        &mut self,
-    ) -> Result<(C0Expression, Option<C0Type>), C0SyntaxError> {
-        match self.parse_postfix()? {
-            C0Expression::Field {
-                pointer,
-                field_type,
-                ..
-            } => Ok((*pointer, Some(field_type))),
-            C0Expression::Index(base, index) => Ok((C0Expression::Add(base, index), None)),
-            expression => Err(self.error_here(format!(
-                "expected field or indexed assignment target, got {expression:?}"
-            ))),
         }
     }
 

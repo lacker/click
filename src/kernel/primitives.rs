@@ -285,6 +285,20 @@ pub enum CComparisonOperator {
     GreaterEqual,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CUpdateOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    ShiftLeft,
+    ShiftRight,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecMemory {
     Current,
@@ -505,6 +519,13 @@ pub enum CStatement {
         pointer: CExpression,
         value: CExpression,
         value_type: CType,
+    },
+    /// Evaluate a compound-assignment or increment target as one lvalue,
+    /// read it, apply the operator with the operand, and write the result back.
+    Update {
+        target: CExpression,
+        operator: CUpdateOperator,
+        operand: CExpression,
     },
     If {
         condition: CExpression,

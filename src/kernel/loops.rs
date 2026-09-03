@@ -346,6 +346,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Return(_) => "verification statement: return",
                 CStatement::Store { .. } => "verification statement: store",
                 CStatement::TypedStore { .. } => "verification statement: typed store",
+                CStatement::Update { .. } => "verification statement: update",
                 CStatement::While { .. } => "verification statement: while",
                 CStatement::Seq(_, _) | CStatement::If { .. } => unreachable!(),
             };
@@ -2026,7 +2027,8 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => true,
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => true,
         CStatement::Seq(first, second) => {
             statement_may_write_memory(first) || statement_may_write_memory(second)
         }
@@ -2047,6 +2049,11 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => {}
+        CStatement::Update { target, .. } => {
+            if let CExpression::Variable(name) = target {
+                names.insert(name.clone());
+            }
+        }
         CStatement::Assign { name, .. } => {
             names.insert(name.clone());
         }
@@ -2134,6 +2141,12 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::TypedStore { pointer, value, .. } => {
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);
+        }
+        CStatement::Update {
+            target, operand, ..
+        } => {
+            collect_address_taken_in_expression(target, names);
+            collect_address_taken_in_expression(operand, names);
         }
         CStatement::Seq(first, second) => {
             collect_address_taken_locals(first, names);

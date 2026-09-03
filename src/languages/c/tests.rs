@@ -427,6 +427,67 @@ fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
 }
 
 #[test]
+fn c0_syntax_accepts_memory_lvalue_updates() {
+    let function = syntax::parse_function(
+        r#"
+        struct counter {
+            int32 count;
+        };
+
+        int32 updates(int32 values[], struct counter* counter) {
+            values[0] += 1;
+            ++counter->count;
+            counter->count--;
+            return values[0] + counter->count;
+        }
+        "#,
+    )
+    .expect("indexed and field compound updates should parse");
+
+    fn update_targets<'a>(
+        statement: &'a syntax::C0Statement,
+        targets: &mut Vec<&'a syntax::C0Expression>,
+    ) {
+        match statement {
+            syntax::C0Statement::Update { target, .. } => targets.push(target),
+            syntax::C0Statement::Seq(first, second) => {
+                update_targets(first, targets);
+                update_targets(second, targets);
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                update_targets(then_branch, targets);
+                update_targets(else_branch, targets);
+            }
+            syntax::C0Statement::While { body, .. } => update_targets(body, targets),
+            _ => {}
+        }
+    }
+
+    let mut targets = Vec::new();
+    update_targets(function.body(), &mut targets);
+    assert_eq!(targets.len(), 3);
+    assert!(matches!(targets[0], syntax::C0Expression::Index(_, _)));
+    assert!(matches!(
+        targets[1],
+        syntax::C0Expression::Field {
+            field_type: syntax::C0Type::Int32,
+            ..
+        }
+    ));
+    assert!(matches!(
+        targets[2],
+        syntax::C0Expression::Field {
+            field_type: syntax::C0Type::Int32,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn c0_syntax_accepts_scalar_casts_and_conditional_expressions() {
     let function = syntax::parse_function(
         r#"
@@ -524,7 +585,8 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
-            | syntax::C0Statement::Store { .. } => false,
+            | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::Update { .. } => false,
         }
     }
 

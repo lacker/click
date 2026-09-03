@@ -134,6 +134,10 @@ id = "c0.statement.store"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.statement.memory-lvalue-update"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.statement.malloc"
 path = "reference/language/c0.md#heap-allocation"
 

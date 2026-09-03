@@ -553,6 +553,12 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
             collect_expression_variable_names(pointer, names);
             collect_expression_variable_names(value, names);
         }
+        CStatement::Update {
+            target, operand, ..
+        } => {
+            collect_expression_variable_names(target, names);
+            collect_expression_variable_names(operand, names);
+        }
         // The execution cursor normally splits sequences before selection.
         // If a composite statement reaches this helper, only its immediate
         // operation may influence the next checked transition; later source
