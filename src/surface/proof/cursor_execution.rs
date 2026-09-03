@@ -2997,6 +2997,7 @@ fn describe_statement_head(statement: &CStatement) -> String {
         CStatement::Skip => "skip".to_string(),
         CStatement::Break => "break".to_string(),
         CStatement::Continue => "continue".to_string(),
+        CStatement::ContinueWithStep { .. } => "continue".to_string(),
         CStatement::Declare { name, .. } => format!("declare {name}"),
         CStatement::Assign { name, expression } => {
             format!("{name} = {}", describe_c_expression(expression))

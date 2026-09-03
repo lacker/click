@@ -1426,6 +1426,31 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
+        CStatement::ContinueWithStep { step } => {
+            let mut paths = Vec::new();
+            for step_path in execute_c_statement_paths(
+                state,
+                step,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )? {
+                let outcome = match step_path.outcome {
+                    CStatementOutcome::Normal(next_state)
+                    | CStatementOutcome::Continue(next_state) => {
+                        CStatementOutcome::Continue(next_state)
+                    }
+                    outcome => outcome,
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts: step_path.facts,
+                    obligations: step_path.obligations,
+                });
+            }
+            paths
+        }
         CStatement::Declare { name, c_type } => {
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)

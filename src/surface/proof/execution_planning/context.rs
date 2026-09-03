@@ -139,6 +139,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. }
         | CStatement::Assert { .. } => None,
+        CStatement::ContinueWithStep { .. } => None,
     }
 }
 

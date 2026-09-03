@@ -953,6 +953,53 @@ pub fn c_do_while_with_invariant_and_effect_checks(
     }
 }
 
+pub fn c_continue_with_step(step: CStatement) -> CStatement {
+    CStatement::ContinueWithStep {
+        step: Box::new(step),
+    }
+}
+
+/// Lowers the body of a C `for` loop to the existing `while` representation.
+/// A normal body completion reaches the appended step through the sequence;
+/// a `continue` must execute that same step before returning to the loop head.
+/// Nested loops are opaque here because their `continue` statements target
+/// those inner loops instead.
+pub fn c_for_body_with_step(body: CStatement, step: CStatement) -> CStatement {
+    fn rewrite(statement: CStatement, step: &CStatement) -> CStatement {
+        match statement {
+            CStatement::Continue => c_continue_with_step(step.clone()),
+            CStatement::Seq(first, second) => c_seq(
+                rewrite((*first).clone(), step),
+                rewrite((*second).clone(), step),
+            ),
+            CStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => c_if(
+                condition,
+                rewrite(*then_branch, step),
+                rewrite(*else_branch, step),
+            ),
+            CStatement::Switch { expression, cases } => c_switch(
+                expression,
+                cases
+                    .into_iter()
+                    .map(|case| CSwitchCase {
+                        value: case.value,
+                        body: Box::new(rewrite(*case.body, step)),
+                    })
+                    .collect(),
+            ),
+            // A nested loop consumes its own `continue` outcome.
+            statement @ CStatement::While { .. } => statement,
+            statement => statement,
+        }
+    }
+
+    c_seq(rewrite(body, &step), step)
+}
+
 pub fn c_parameter(name: impl Into<String>, c_type: CType) -> CParameter {
     CParameter::new(name, c_type)
 }

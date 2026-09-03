@@ -316,6 +316,9 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => {}
+        CStatement::ContinueWithStep { step } => {
+            collect_c_statement_bitvector_variables(step, variables);
+        }
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Assert {

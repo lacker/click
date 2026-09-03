@@ -524,6 +524,9 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => {}
+        CStatement::ContinueWithStep { step } => {
+            collect_statement_variable_names(step, names);
+        }
         CStatement::Assign { name, expression } => {
             names.insert(name.clone());
             collect_expression_variable_names(expression, names);

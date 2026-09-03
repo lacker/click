@@ -566,6 +566,9 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Skip => "verification statement: skip",
                 CStatement::Break => "verification statement: break",
                 CStatement::Continue => "verification statement: continue",
+                CStatement::ContinueWithStep { .. } => {
+                    "verification statement: continue with for step"
+                }
                 CStatement::Declare { .. } => "verification statement: declare",
                 CStatement::Assign { .. } => "verification statement: assign",
                 CStatement::CallAssign { .. } => "verification statement: call assign",
@@ -2341,6 +2344,7 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
             else_branch,
             ..
         } => statement_may_write_memory(then_branch) || statement_may_write_memory(else_branch),
+        CStatement::ContinueWithStep { step } => statement_may_write_memory(step),
         CStatement::While { body, .. } => statement_may_write_memory(body),
         CStatement::Switch { cases, .. } => cases
             .iter()
@@ -2385,6 +2389,9 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         } => {
             collect_loop_modified_locals(then_branch, names);
             collect_loop_modified_locals(else_branch, names);
+        }
+        CStatement::ContinueWithStep { step } => {
+            collect_loop_modified_locals(step, names);
         }
         CStatement::While { body, .. } => {
             collect_loop_modified_locals(body, names);
@@ -2477,6 +2484,9 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_in_expression(condition, names);
             collect_address_taken_locals(then_branch, names);
             collect_address_taken_locals(else_branch, names);
+        }
+        CStatement::ContinueWithStep { step } => {
+            collect_address_taken_locals(step, names);
         }
         CStatement::While {
             condition, body, ..

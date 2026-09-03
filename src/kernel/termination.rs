@@ -351,6 +351,14 @@ fn structural_recursion_paths(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(paths),
+        CStatement::ContinueWithStep { step } => structural_recursion_paths(
+            step,
+            function,
+            measure_arguments,
+            child_arguments,
+            guard,
+            paths,
+        ),
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
@@ -663,6 +671,7 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => false,
+        CStatement::ContinueWithStep { step } => statement_takes_address_of(step, name),
         CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
             escapes(expression)
         }
@@ -745,6 +754,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
                 statement_calls(&case.body, calls);
             }
         }
+        CStatement::ContinueWithStep { step } => statement_calls(step, calls),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -776,6 +786,9 @@ fn recursion_paths(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(lower_bounds),
+        CStatement::ContinueWithStep { step } => {
+            recursion_paths(step, measure, component, parameter_indices, lower_bounds)
+        }
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Break => Ok(Vec::new()),
         CStatement::Assign { name, .. } if name == measure => Err(error(format!(
@@ -911,6 +924,7 @@ fn loop_paths(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(offsets),
+        CStatement::ContinueWithStep { step } => loop_paths(step, measure, offsets),
         CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
         CStatement::Assign { name, expression } if name == measure => {
             let step = variable_minus_positive(expression, measure).ok_or_else(|| {
@@ -1002,6 +1016,7 @@ fn check_loops(
             }
             Ok(nested_terminate)
         }
+        CStatement::ContinueWithStep { step } => check_loops(step, supplied, next_index),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue

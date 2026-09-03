@@ -11,6 +11,12 @@ pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize 
         syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
             1 + count_loops(body)
         }
+        syntax::C0Statement::For {
+            initializer,
+            step,
+            body,
+            ..
+        } => count_loops(initializer) + 1 + count_loops(body) + count_loops(step),
         syntax::C0Statement::Switch { cases, .. } => {
             cases.iter().map(|case| count_loops(case.body())).sum()
         }
@@ -31,6 +37,12 @@ pub(in crate::surface) fn count_statements(statement: &syntax::C0Statement) -> u
         syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
             1 + count_statements(body)
         }
+        syntax::C0Statement::For {
+            initializer,
+            step,
+            body,
+            ..
+        } => count_statements(initializer) + 1 + count_statements(body) + count_statements(step),
         // A native switch is checked as one source operation; its case bodies
         // are part of that operation rather than independently addressable
         // statement regions.
@@ -138,6 +150,29 @@ impl SourceExecutionLayout {
                     *next_loop_index += 1;
                     layout.loop_bodies.insert(loop_index, *next_statement_index);
                     visit(body, next_statement_index, next_loop_index, layout);
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node: *next_statement_index,
+                            kind: SourceStatementKind::Loop { loop_index },
+                        },
+                    );
+                    statement_index
+                }
+                syntax::C0Statement::For {
+                    initializer,
+                    body,
+                    step,
+                    ..
+                } => {
+                    visit(initializer, next_statement_index, next_loop_index, layout);
+                    let statement_index = *next_statement_index;
+                    let loop_index = *next_loop_index;
+                    *next_statement_index += 1;
+                    *next_loop_index += 1;
+                    layout.loop_bodies.insert(loop_index, *next_statement_index);
+                    visit(body, next_statement_index, next_loop_index, layout);
+                    visit(step, next_statement_index, next_loop_index, layout);
                     layout.statements.insert(
                         statement_index,
                         SourceStatementRegion {
@@ -314,6 +349,10 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
         }
         syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
             collect_c0_loop_modified_locals(body, names);
+        }
+        syntax::C0Statement::For { body, step, .. } => {
+            collect_c0_loop_modified_locals(body, names);
+            collect_c0_loop_modified_locals(step, names);
         }
         syntax::C0Statement::Switch { cases, .. } => {
             for case in cases {

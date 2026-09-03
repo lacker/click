@@ -1942,6 +1942,24 @@ fn prepend_checked_evidence_statement(
     }
 }
 
+/// Finds the current loop head in the validated source tail after a control
+/// statement. The tail may contain the rest of the current body first; a
+/// nested loop also needs the enclosing loop's continuation after its own
+/// head, so returning the suffix at the matching head preserves both.
+fn loop_head_source(
+    mut source: Option<Arc<CStatement>>,
+    loop_head: &CStatement,
+) -> Option<Arc<CStatement>> {
+    while let Some(current) = source {
+        let (head, tail) = split_shared_source(&current);
+        if statements_have_same_source(&head, loop_head) {
+            return Some(current);
+        }
+        source = tail;
+    }
+    None
+}
+
 /// Whether two statements are the same C source. A proof binds loop
 /// clauses into the `while` statements at its frontier, so the theorem it
 /// records names the annotated statement while the proof object holds the
@@ -2523,7 +2541,7 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
         self.evidence_source = matches!(&outcome, CStatementOutcome::Normal(_))
-            .then_some(source_after)
+            .then_some(source_after.clone())
             .flatten();
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
@@ -2542,13 +2560,13 @@ impl ExecutionProofCore {
                 self.evidence_completed = true;
             }
             CStatementOutcome::Break(state) => {
-                let source_after = self.advance_loop_control(false)?;
+                let source_after = self.advance_loop_control(false, None)?;
                 self.evidence_source = source_after;
                 self.evidence_state = Some(state);
                 self.evidence_completed = false;
             }
             CStatementOutcome::Continue(state) => {
-                let source_after = self.advance_loop_control(true)?;
+                let source_after = self.advance_loop_control(true, source_after)?;
                 self.evidence_source = source_after;
                 self.evidence_state = Some(state);
                 self.evidence_completed = false;
@@ -2570,6 +2588,7 @@ impl ExecutionProofCore {
     fn advance_loop_control(
         &mut self,
         continue_statement: bool,
+        validated_source_after: Option<Arc<CStatement>>,
     ) -> Result<Option<Arc<CStatement>>, EvidenceRefusal> {
         let continuation = self
             .frontier
@@ -2582,18 +2601,32 @@ impl ExecutionProofCore {
             ));
         };
         let (next_statement_index, source_after) = if continue_statement {
-            (continuation.next_statement_index, Some(loop_source))
+            let frontier_source = loop_source.clone();
+            // The validated tail still contains the rest of the source body
+            // before the loop head. Preserve the exact loop head (and any
+            // enclosing-loop suffix after it) rather than treating that body
+            // tail as the next frontier statement.
+            let loop_head = split_shared_source(&loop_source).0;
+            let mut source = validated_source_after;
+            let source_after =
+                loop_head_source(source.take(), &loop_head).or(Some(loop_source.clone()));
+            self.frontier.position = FrontierPosition::StatementEntry {
+                remaining: frontier_source,
+            };
+            (continuation.next_statement_index, source_after)
         } else {
             let (_, tail) = split_shared_source(&loop_source);
             (continuation.loop_exit_statement_index, tail)
         };
         self.frontier.next_statement_index = next_statement_index;
-        self.frontier.position = match &source_after {
-            Some(remaining) => FrontierPosition::StatementEntry {
-                remaining: remaining.clone(),
-            },
-            None => FrontierPosition::RegionBoundary,
-        };
+        if !continue_statement {
+            self.frontier.position = match &source_after {
+                Some(remaining) => FrontierPosition::StatementEntry {
+                    remaining: remaining.clone(),
+                },
+                None => FrontierPosition::RegionBoundary,
+            };
+        }
         Ok(source_after)
     }
 

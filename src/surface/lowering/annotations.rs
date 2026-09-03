@@ -929,6 +929,31 @@ impl AnnotationLowerer<'_> {
                     )
                 }
             }
+            syntax::C0Statement::For {
+                initializer,
+                condition,
+                step,
+                body,
+            } => {
+                let lowered_initializer = self.lower_statement(initializer)?;
+                self.next_statement_index();
+                let loop_index = self.next_loop_index();
+                let lowered_body = self.lower_statement(body)?;
+                let lowered_step = self.lower_statement(step)?;
+                let effect_body = syntax::C0Statement::Seq(body.clone(), step.clone());
+                let invariant_checks = self.loop_invariant_checks(loop_index)?;
+                let effect_checks = self.loop_effect_checks(loop_index, &effect_body)?;
+                c_seq(
+                    lowered_initializer,
+                    c_while_with_invariant_and_effect_checks(
+                        condition.to_kernel_expression(),
+                        Vec::new(),
+                        invariant_checks,
+                        effect_checks,
+                        crate::kernel::c_for_body_with_step(lowered_body, lowered_step),
+                    ),
+                )
+            }
             syntax::C0Statement::If {
                 condition,
                 then_branch,

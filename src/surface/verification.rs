@@ -1435,6 +1435,16 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
                 collect_function_pointer_names(body, names);
             }
+            syntax::C0Statement::For {
+                initializer,
+                step,
+                body,
+                ..
+            } => {
+                collect_function_pointer_names(initializer, names);
+                collect_function_pointer_names(body, names);
+                collect_function_pointer_names(step, names);
+            }
             syntax::C0Statement::Switch { cases, .. } => {
                 for case in cases {
                     collect_function_pointer_names(case.body(), names);
@@ -1556,6 +1566,19 @@ pub(in crate::surface) fn c0_statement_calls(
                 collect_function_addresses(condition, &mut dependencies);
                 calls.push(dependencies);
                 visit(body, calls, function_pointer_names);
+            }
+            syntax::C0Statement::For {
+                initializer,
+                condition,
+                step,
+                body,
+            } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(condition, &mut dependencies);
+                calls.push(dependencies);
+                visit(initializer, calls, function_pointer_names);
+                visit(body, calls, function_pointer_names);
+                visit(step, calls, function_pointer_names);
             }
             syntax::C0Statement::Switch { expression, cases } => {
                 let mut dependencies = BTreeSet::new();

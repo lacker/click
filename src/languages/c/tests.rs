@@ -281,6 +281,46 @@ fn c0_syntax_accepts_declaration_initializer_in_for_loop() {
 }
 
 #[test]
+fn c0_syntax_accepts_continue_in_for_loop() {
+    let function = syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 total = 0;
+            for (int32 i = 0; i < 3; i++) {
+                if (i == 1) {
+                    continue;
+                }
+                total = total + 1;
+            }
+            return total;
+        }
+        "#,
+    )
+    .expect("continue should parse in a for loop");
+
+    fn contains_for(statement: &syntax::C0Statement) -> bool {
+        match statement {
+            syntax::C0Statement::For { .. } => true,
+            syntax::C0Statement::Seq(first, second) => contains_for(first) || contains_for(second),
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => contains_for(then_branch) || contains_for(else_branch),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                contains_for(body)
+            }
+            syntax::C0Statement::Switch { cases, .. } => {
+                cases.iter().any(|case| contains_for(case.body()))
+            }
+            _ => false,
+        }
+    }
+
+    assert!(contains_for(function.body()));
+}
+
+#[test]
 fn c0_syntax_accepts_a_comma_separated_for_step() {
     syntax::parse_function(
         r#"
@@ -584,10 +624,6 @@ fn c0_syntax_rejects_loop_control_outside_its_supported_loop() {
             "int32 bad() { continue; return 0; }",
             "`continue` must be inside a loop",
         ),
-        (
-            "int32 bad() { for (; 0;) { continue; } return 0; }",
-            "`continue` in a `for` loop is not supported",
-        ),
     ] {
         let error = syntax::parse_function(source)
             .expect_err("unsupported loop-control placement should be rejected");
@@ -821,6 +857,12 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
                 contains_skip(body)
             }
+            syntax::C0Statement::For {
+                initializer,
+                body,
+                step,
+                ..
+            } => contains_skip(initializer) || contains_skip(body) || contains_skip(step),
             syntax::C0Statement::Switch { cases, .. } => {
                 cases.iter().any(|case| contains_skip(case.body()))
             }

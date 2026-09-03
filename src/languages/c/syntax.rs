@@ -279,6 +279,12 @@ pub enum C0Statement {
         condition: C0Expression,
         body: Box<C0Statement>,
     },
+    For {
+        initializer: Box<C0Statement>,
+        condition: C0Expression,
+        step: Box<C0Statement>,
+        body: Box<C0Statement>,
+    },
     Switch {
         expression: C0Expression,
         cases: Vec<C0SwitchCase>,
@@ -644,6 +650,22 @@ impl C0Statement {
                 condition.to_kernel_expression(),
                 body.to_kernel_statement(),
             ),
+            Self::For {
+                initializer,
+                condition,
+                step,
+                body,
+            } => {
+                let step = step.to_kernel_statement();
+                crate::kernel::c_seq(
+                    initializer.to_kernel_statement(),
+                    crate::kernel::c_while(
+                        condition.to_kernel_expression(),
+                        Vec::new(),
+                        crate::kernel::c_for_body_with_step(body.to_kernel_statement(), step),
+                    ),
+                )
+            }
             Self::Switch { expression, cases } => crate::kernel::c_switch(
                 expression.to_kernel_expression(),
                 cases
@@ -847,9 +869,9 @@ fn validate_function_returns(
             validate_function_returns(then_branch, return_type)?;
             validate_function_returns(else_branch, return_type)
         }
-        C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
-            validate_function_returns(body, return_type)
-        }
+        C0Statement::While { body, .. }
+        | C0Statement::DoWhile { body, .. }
+        | C0Statement::For { body, .. } => validate_function_returns(body, return_type),
         C0Statement::Switch { cases, .. } => cases
             .iter()
             .try_for_each(|case| validate_function_returns(&case.body, return_type)),
@@ -2163,11 +2185,7 @@ impl Parser {
             });
             match loop_context {
                 Some(CLoopContext::While) => {}
-                Some(CLoopContext::For) => {
-                    return Err(self.error_here(
-                        "`continue` in a `for` loop is not supported until its step is modeled explicitly",
-                    ));
-                }
+                Some(CLoopContext::For) => {}
                 Some(CLoopContext::DoWhile) => {}
                 None => return Err(self.error_here("`continue` must be inside a loop")),
                 Some(CLoopContext::Switch) => unreachable!(),
@@ -2310,14 +2328,12 @@ impl Parser {
                     let body = self.parse_controlled_statement("for")?;
                     self.loop_contexts.pop();
                     self.pop_scope();
-                    let body = C0Statement::Seq(Box::new(body), Box::new(step));
-                    Ok(C0Statement::Seq(
-                        Box::new(init),
-                        Box::new(C0Statement::While {
-                            condition,
-                            body: Box::new(body),
-                        }),
-                    ))
+                    Ok(C0Statement::For {
+                        initializer: Box::new(init),
+                        condition,
+                        step: Box::new(step),
+                        body: Box::new(body),
+                    })
                 }
                 Some(other) => {
                     if other == "free" && self.peek_next() == Some(&Token::LParen) {

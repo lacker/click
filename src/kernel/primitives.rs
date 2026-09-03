@@ -566,6 +566,12 @@ pub enum CStatement {
     Skip,
     Break,
     Continue,
+    /// Internal lowering for a C `for` continue. The update clause is part
+    /// of this atomic control transfer so source proofs still see one
+    /// `continue` statement.
+    ContinueWithStep {
+        step: Box<CStatement>,
+    },
     Declare {
         name: String,
         c_type: CType,

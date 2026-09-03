@@ -759,6 +759,9 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => {}
+        CStatement::ContinueWithStep { step } => {
+            collect_c_statement_bound_variables(step, variables);
+        }
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Assert {
@@ -1394,6 +1397,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Skip => CStatement::Skip,
         CStatement::Break => CStatement::Break,
         CStatement::Continue => CStatement::Continue,
+        CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
+            step: Box::new(substitute_bitvector_variable_in_c_statement(step, from, to)),
+        },
         CStatement::Declare { name, c_type } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,
@@ -3295,6 +3301,9 @@ fn substitute_pointer_variable_in_c_statement(
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => statement.clone(),
+        CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
+            step: Box::new(substitute_pointer_variable_in_c_statement(step, from, to)),
+        },
         CStatement::Assign { name, expression } => CStatement::Assign {
             name: name.clone(),
             expression: substitute_pointer_variable_in_c_expression(expression, from, to),

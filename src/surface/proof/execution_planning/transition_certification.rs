@@ -407,6 +407,7 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. } => false,
+        CStatement::ContinueWithStep { step } => statement_consults_conditions(state, step),
         CStatement::Assign { name, expression } => {
             state.local_object_type(name) == Some(CType::UInt8) || expression_consults(expression)
         }
@@ -486,6 +487,7 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         CStatement::Switch { cases, .. } => {
             cases.iter().any(|case| statement_contains_call(&case.body))
         }
+        CStatement::ContinueWithStep { step } => statement_contains_call(step),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
