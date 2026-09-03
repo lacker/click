@@ -21,7 +21,10 @@ The follow-up slice now recognizes canonical whole-header guards and
 arbitrary conditional compilation unsupported.
 The modeled `<stdint.h>` system header is now accepted as a no-op because C0
 already defines the semantics of its supported `int32_t` and `uint8_t` names;
-other system headers remain unsupported.
+other system headers remain unsupported. The first macro slice now accepts
+object-like `#define NAME` replacements consisting of one supported integer or
+character literal, expanding them in source order across a translation unit
+and its included headers.
 
 ## Violated invariant
 
@@ -35,9 +38,11 @@ An mdtest project with one `.c` file holding two functions (one calling the
 other, declared before use by a prototype), a project-local header included
 with `#include "types.h"` that holds the struct declarations, and a standard
 header include (`#include <stdint.h>`) that is accepted and contributes only
-the names Click already knows. A negative mdtest shows that an unresolvable
-include or a macro definition produces a positioned diagnostic naming the
-construct rather than "unexpected character".
+the names Click already knows. A positive macro mdtest shares literal-only
+object-like definitions from a local header across more than one source file.
+Negative mdtests show that an unresolvable include or a multi-token/function-like
+macro produces a positioned diagnostic naming the construct rather than
+"unexpected character".
 
 ## Acceptance criteria
 
@@ -52,9 +57,14 @@ construct rather than "unexpected character".
   when a shared header is reached through multiple include paths.
 - `<stdint.h>` is accepted as a modeled no-op for the standard C0 type
   spellings; unknown system headers receive a source-named diagnostic.
-- System headers, arbitrary macros, conditional compilation, and other
-  preprocessor directives remain explicitly unsupported until a documented
-  allowlist or preprocessor subset is implemented.
+- Object-like macros with one supported integer or character literal are
+  expanded in source order across a translation unit and its included headers;
+  uses in comments and quoted literals remain untouched, and redefinitions or
+  other macro forms receive source-named diagnostics.
+- Function-like and multi-token macros, system headers other than the modeled
+  `<stdint.h>`, conditional compilation, and other preprocessor directives
+  remain explicitly unsupported until a documented allowlist or preprocessor
+  subset is implemented.
 - Shared struct declarations are reused across functions and files, replacing
   the per-file re-declaration in examples.
 - `scripts/check.sh` passes.

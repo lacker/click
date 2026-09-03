@@ -1,8 +1,9 @@
 //! Source-bundle utilities for the C0 frontend.
 //!
-//! This is deliberately a small include resolver, not a C preprocessor. It
-//! expands supplied project-local headers and rejects all other preprocessor
-//! directives so the C0 parser never silently verifies a different program.
+//! This is deliberately a small source expander, not a general C preprocessor.
+//! It expands supplied project-local headers, a narrow literal-only macro
+//! subset, and rejects all other preprocessor directives so the C0 parser
+//! never silently verifies a different program.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -53,6 +54,7 @@ enum SourceDirective {
     SystemInclude(String),
     HeaderGuardStart(String),
     HeaderGuardDefine(String),
+    MacroDefinition { name: String, value: String },
     HeaderGuardEnd,
     PragmaOnce,
 }
@@ -72,7 +74,8 @@ enum SignificantLine {
 }
 
 /// Returns the normalized project-local headers directly included by a source.
-/// Unsupported system headers and preprocessor directives are rejected.
+/// Unsupported system headers and preprocessor directives are rejected. The
+/// supported literal-only object-like macro definitions are accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
     Ok(analyze_source(source_path, source)?.includes)
 }
@@ -93,6 +96,7 @@ pub fn expand_includes<'a>(
     let mut dependencies = BTreeSet::new();
     let mut stack = Vec::new();
     let mut expanded_once = BTreeSet::new();
+    let mut macros = BTreeMap::new();
     let mut expanded = String::new();
     expand_source(
         root_path,
@@ -101,6 +105,7 @@ pub fn expand_includes<'a>(
         &mut stack,
         &mut dependencies,
         &mut expanded_once,
+        &mut macros,
         None,
         &mut expanded,
     )?;
@@ -117,6 +122,7 @@ fn expand_source<'a>(
     stack: &mut Vec<String>,
     dependencies: &mut BTreeSet<String>,
     expanded_once: &mut BTreeSet<String>,
+    macros: &mut BTreeMap<String, String>,
     include_site: Option<(&str, usize)>,
     expanded: &mut String,
 ) -> Result<(), CSourceError> {
@@ -136,10 +142,15 @@ fn expand_source<'a>(
         ));
     }
     stack.push(source_path.to_string());
+    let mut macro_block_comment = false;
     for (index, line) in source.lines().enumerate() {
         let line_number = index + 1;
         let Some(directive) = analysis.directives.get(&line_number) else {
-            expanded.push_str(line);
+            expanded.push_str(&expand_macros_in_line(
+                line,
+                macros,
+                &mut macro_block_comment,
+            ));
             expanded.push('\n');
             continue;
         };
@@ -164,11 +175,24 @@ fn expand_source<'a>(
                     stack,
                     dependencies,
                     expanded_once,
+                    macros,
                     Some((source_path, line_number)),
                     expanded,
                 )?;
             }
             SourceDirective::SystemInclude(_) => {}
+            SourceDirective::MacroDefinition { name, value } => {
+                if macros.insert(name.clone(), value.clone()).is_some() {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        format!("macro `{name}` is redefined"),
+                    ));
+                }
+                // Keep a line for the removed directive so source positions in
+                // the following C code remain aligned with the original file.
+                expanded.push('\n');
+            }
             SourceDirective::HeaderGuardStart(_)
             | SourceDirective::HeaderGuardDefine(_)
             | SourceDirective::HeaderGuardEnd
@@ -364,23 +388,32 @@ fn parse_directive<'a>(
         && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
     {
         let (name, trailing) = split_identifier(rest.trim_start());
-        match name {
-            Some(name) if trailing_comments_only(trailing) => {
-                return Ok(Some(SourceDirective::HeaderGuardDefine(name)));
-            }
-            Some(_) => {
-                return Err(CSourceError::new(
-                    source_path,
-                    line_number,
-                    format!("unsupported preprocessor directive `#{directive}`"),
-                ));
-            }
-            None => {}
+        let Some(name) = name else {
+            return Err(CSourceError::new(
+                source_path,
+                line_number,
+                "malformed macro definition; expected `#define NAME VALUE`",
+            ));
+        };
+        if trailing.starts_with('(') {
+            return Err(CSourceError::new(
+                source_path,
+                line_number,
+                "function-like macros are not supported; use an object-like literal macro",
+            ));
+        }
+        if trailing_comments_only(trailing) {
+            return Ok(Some(SourceDirective::HeaderGuardDefine(name)));
+        }
+        if let Some(value) = parse_macro_literal(trailing.trim_start()) {
+            return Ok(Some(SourceDirective::MacroDefinition { name, value }));
         }
         return Err(CSourceError::new(
             source_path,
             line_number,
-            "malformed header guard; expected `#define NAME`",
+            format!(
+                "unsupported macro definition `#{directive}`; expected one integer or character literal"
+            ),
         ));
     }
     if directive == "endif"
@@ -402,6 +435,161 @@ fn parse_directive<'a>(
         line_number,
         format!("unsupported preprocessor directive `#{directive}`"),
     ))
+}
+
+fn parse_macro_literal(input: &str) -> Option<String> {
+    let input = input.trim_start();
+    let end = if input.starts_with('\'') {
+        macro_character_literal_end(input)?
+    } else {
+        macro_integer_literal_end(input)?
+    };
+    let (literal, trailing) = input.split_at(end);
+    trailing_comments_only(trailing).then(|| literal.to_string())
+}
+
+fn macro_integer_literal_end(input: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut end = if bytes.first() == Some(&b'0') && matches!(bytes.get(1), Some(b'x') | Some(b'X'))
+    {
+        2
+    } else if bytes.first().is_some_and(u8::is_ascii_digit) {
+        1
+    } else {
+        return None;
+    };
+    let digit_end = end;
+    if digit_end == 2 {
+        while bytes.get(end).is_some_and(u8::is_ascii_hexdigit) {
+            end += 1;
+        }
+        if end == digit_end {
+            return None;
+        }
+    } else {
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+    }
+    let suffix_start = end;
+    while bytes.get(end).is_some_and(u8::is_ascii_alphabetic) {
+        end += 1;
+    }
+    let suffix = input[suffix_start..end].to_ascii_lowercase();
+    if !matches!(
+        suffix.as_str(),
+        "" | "u" | "l" | "ll" | "ul" | "lu" | "ull" | "llu"
+    ) {
+        return None;
+    }
+    if digit_end == 1 && input.starts_with('0') && end > 2 {
+        let digits = &input[1..suffix_start];
+        if digits.bytes().any(|digit| !(b'0'..=b'7').contains(&digit)) {
+            return None;
+        }
+    }
+    Some(end)
+}
+
+fn macro_character_literal_end(input: &str) -> Option<usize> {
+    let chars = input.char_indices().collect::<Vec<_>>();
+    let (_, first) = chars.get(1).copied()?;
+    let quote_index = if first == '\\' {
+        let (_, escaped) = chars.get(2).copied()?;
+        if !matches!(escaped, 'n' | 'r' | 't' | '0' | '\\' | '\'' | '"') {
+            return None;
+        }
+        3
+    } else {
+        if !first.is_ascii() || first == '\'' || first == '\n' {
+            return None;
+        }
+        2
+    };
+    let (end, quote) = chars.get(quote_index).copied()?;
+    (quote == '\'').then_some(end + quote.len_utf8())
+}
+
+fn expand_macros_in_line(
+    line: &str,
+    macros: &BTreeMap<String, String>,
+    in_block_comment: &mut bool,
+) -> String {
+    let chars = line.chars().collect::<Vec<_>>();
+    let mut expanded = String::with_capacity(line.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if *in_block_comment {
+            let start = index;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            if index + 1 == chars.len() {
+                expanded.extend(chars[start..].iter().copied());
+                return expanded;
+            }
+            index += 2;
+            expanded.extend(chars[start..index].iter().copied());
+            *in_block_comment = false;
+            continue;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'/') {
+            expanded.extend(chars[index..].iter().copied());
+            break;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+            let start = index;
+            index += 2;
+            *in_block_comment = true;
+            expanded.extend(chars[start..index].iter().copied());
+            continue;
+        }
+        if chars[index] == '\'' || chars[index] == '"' {
+            let start = index;
+            index = quoted_literal_end(&chars, index, chars[index]);
+            expanded.extend(chars[start..index].iter().copied());
+            continue;
+        }
+        if is_identifier_start(chars[index]) {
+            let start = index;
+            index += 1;
+            while index < chars.len() && is_identifier_continue(chars[index]) {
+                index += 1;
+            }
+            let name = chars[start..index].iter().collect::<String>();
+            if let Some(value) = macros.get(&name) {
+                expanded.push_str(value);
+            } else {
+                expanded.extend(chars[start..index].iter().copied());
+            }
+            continue;
+        }
+        expanded.push(chars[index]);
+        index += 1;
+    }
+    expanded
+}
+
+fn quoted_literal_end(chars: &[char], start: usize, quote: char) -> usize {
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index += 2;
+        } else if chars[index] == quote {
+            return index + 1;
+        } else {
+            index += 1;
+        }
+    }
+    chars.len()
+}
+
+fn is_identifier_start(character: char) -> bool {
+    character == '_' || character.is_ascii_alphabetic()
+}
+
+fn is_identifier_continue(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
 }
 
 fn split_identifier(input: &str) -> (Option<String>, &str) {
@@ -660,6 +848,53 @@ mod tests {
     }
 
     #[test]
+    fn literal_macros_expand_across_headers_without_touching_comments_or_literals() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                "#include \"config.h\"\nint32 run(int32 value) { return value + LIMIT; }\n",
+            ),
+            (
+                "config.h",
+                "#ifndef CONFIG_H\n#define CONFIG_H\n#define LIMIT 4\n#define MARKER '\\0'\n#endif\n",
+            ),
+        ]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("return value + 4;"));
+        assert!(!expanded.source().contains("#define LIMIT"));
+
+        let source = "#define LIMIT 4\nint32 run() { /* LIMIT */ return LIMIT + '\\0'; }\n";
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(
+            expanded
+                .source()
+                .contains("int32 run() { /* LIMIT */ return 4 + '\\0'; }")
+        );
+    }
+
+    #[test]
+    fn literal_macro_redefinitions_and_nonliteral_replacements_are_rejected() {
+        let redefined = BTreeMap::from([(
+            "main.c",
+            "#define LIMIT 4\n#define LIMIT 5\nint32 run() { return LIMIT; }\n",
+        )]);
+        let error = expand_includes("main.c", &redefined).unwrap_err();
+        assert!(error.to_string().contains("macro `LIMIT` is redefined"));
+
+        let cases = [
+            ("#define LIMIT (1 + 2)\n", "unsupported macro definition"),
+            (
+                "#define LIMIT(value) value\n",
+                "function-like macros are not supported",
+            ),
+        ];
+        for (source, expected) in cases {
+            let error = local_include_paths("main.c", source).unwrap_err();
+            assert!(error.to_string().contains(expected));
+        }
+    }
+
+    #[test]
     fn malformed_header_guards_are_rejected_but_arbitrary_conditionals_remain_unsupported() {
         let mismatched = BTreeMap::from([(
             "bad.h",
@@ -698,13 +933,10 @@ mod tests {
 
     #[test]
     fn unsupported_preprocessor_directives_are_rejected() {
-        let cases = [
-            ("#define VALUE 1\n", "unsupported preprocessor directive"),
-            (
-                "#include <stdio.h>\n",
-                "system header `<stdio.h>` is not supported",
-            ),
-        ];
+        let cases = [(
+            "#include <stdio.h>\n",
+            "system header `<stdio.h>` is not supported",
+        )];
         for (source, expected) in cases {
             let error = local_include_paths("main.c", source).unwrap_err();
             assert!(error.to_string().contains(expected));
