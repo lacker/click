@@ -7,15 +7,16 @@ checked outcome proof. `instantiate using` is also available inside pure
 theorem proofs. Pointer-valued `choose` witnesses and top-level grouped
 `choose`/`witness` now also use checked proof transitions, with regression
 coverage. Guarded composite children can now be exported through checked
-`branch ensuring`; the remaining proof-shape restrictions below are still
-open.
+`branch ensuring`, and resource scopes nested in branch arms now have
+checked regression coverage. The remaining proof-shape restrictions below
+are still open.
 
 Found by the 2026-09-01 kernel audit at cb034b21. Each bullet is a place
 where a proof author must restructure a correct proof to satisfy the driver,
 with no semantic reason.
 
-- Several shapes (heap-backed contract predicates, scopes nested in branch
-  arms, quantified scope bodies) fall to a compatibility path or
+- Several shapes (heap-backed contract predicates, quantified scope bodies)
+  fall to a compatibility path or
   `unsupported_proof_shape` (`claim_proofs.rs:76-102`, `:429`, `:607`).
 - Contract certification refuses requirements that lower to several paths
   unless one is selected or consistent
@@ -31,8 +32,9 @@ construct and the accepted alternative.
 
 ## Intended regression
 
-One mdtest per remaining bullet showing the natural shape verifies:
-a scope inside a branch arm and a contract with a conditional requirement.
+One mdtest per remaining bullet showing the natural shape verifies: a
+contract with a conditional requirement. The nested branch-arm scope shape
+is covered by `proof_branch_nested_resource_scope.md`.
 
 ## Acceptance criteria
 
