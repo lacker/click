@@ -212,10 +212,10 @@ instantiated body the context proves), and from containment and separation
 facts derived on demand from the composite definitions at the entry state;
 an artifact whose entry the kernel tied to the contract caller state through
 its `CheckedFunctionEntry` is rebased without a second equivalence search.
-With artifacts supplied, certification never executes the function body:
-when no artifact can be reused it produces no paths and names the premise
-kind or entry-state component that blocked reuse, which the surface reports
-as the contract failure. Those non-reuse outcomes are counted under
+Certification never executes the function body: it judges the checked
+artifacts it is given, and when none can be reused it produces no paths and
+names the premise kind or entry-state component that blocked reuse, which
+the surface reports as the contract failure. Those non-reuse outcomes are counted under
 `instrumentation::ContractFallback` and pinned by the same ratchet.
 
 Claims are certified by matching, not by proving again. Every claim closer

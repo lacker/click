@@ -45,7 +45,11 @@ pointer helpers, the Click-function and predicate-argument evaluators of
 expression evaluator) is deleted: resource clauses, effect footprints,
 resource-definition reads, and unfolded predicate bodies are elaborated
 and evaluated or lowered by the kernel like everything else. Slice 2 is
-complete.
+complete. Slice 3 is built: certification no longer executes a body for a
+caller that supplies no artifact (`ContractFallback::NoArtifact` and the
+artifact-less entry point are gone); the kernel tests that certified a
+contract from nothing now build one checked execution per resource-guard
+case and certify from those.
 
 ## Violated invariant
 

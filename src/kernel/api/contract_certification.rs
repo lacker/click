@@ -11,7 +11,7 @@ pub use contract_claims::*;
 /// caller leaves the guard symbolic, even if the C body contains no matching
 /// `if`. The cases below are generated wholly from the kernel contract and
 /// always include both truth values, so they add no trusted hypothesis.
-pub(super) fn contract_resource_condition_cases(
+pub(crate) fn contract_resource_condition_cases(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],

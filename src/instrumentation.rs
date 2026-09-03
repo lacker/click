@@ -1416,12 +1416,13 @@ mod tests {
 }
 
 /// Why opaque-contract certification could not reuse a checked artifact from
-/// claim finishing. With artifacts supplied it then produces no paths; only a
-/// kernel caller that supplied none gets the kernel's own body execution.
+/// claim finishing. It then produces no paths and the reason; certification
+/// never executes a body itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ContractFallback {
-    /// No artifact for this function had matching execution metadata.
-    NoArtifact,
+    /// No supplied artifact for this function had matching execution
+    /// metadata, or none was supplied.
+    NoMatchingArtifact,
     /// An artifact at the contract entry state assumed a predicate identity
     /// the reconstructed contract context cannot derive.
     UnauthorizedPredicatePremise,

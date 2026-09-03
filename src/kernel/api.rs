@@ -2936,35 +2936,10 @@ pub(crate) fn counted_populations_definitionally_equal(
     })
 }
 
-/// Produces the only execution frontier accepted for opaque contract
-/// certification.
-///
-/// The initial assumptions are derived inside the kernel solely from the
-/// function's exact contract and resource entry state. Callers cannot inject
-/// additional hypotheses.
-pub fn prove_c_function_contract_execution_paths_with_environment(
-    state: CState,
-    function: CFunction,
-    arguments: Vec<CExpression>,
-    derived_entry_facts: Vec<Proposition>,
-    environment: CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
-    mode: CFunctionContractExecutionMode,
-) -> CFunctionContractExecution {
-    prove_c_function_contract_execution_paths_with_checked_artifacts(
-        state,
-        function,
-        arguments,
-        derived_entry_facts,
-        environment,
-        execution_semantics,
-        mode,
-        &[],
-    )
-}
-
-/// Certifies an opaque contract while reusing a kernel-checked whole-function
-/// frontier when its retained authority is implied by the exact contract entry.
+/// Certifies an opaque contract from kernel-checked whole-function
+/// executions: an artifact is reused when its retained authority is implied
+/// by the exact contract entry. Certification never executes the body
+/// itself; with no reusable artifact it produces no paths and the reason.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     state: CState,
@@ -3504,71 +3479,17 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             ));
         }
         let reused = !alternatives.is_empty();
-        if !reused && checked_artifacts.is_empty() {
-            // A kernel caller that supplied no artifact asks for the
-            // kernel's own exact execution; that is one execution, not a
-            // rerun. With artifacts supplied, certification never
-            // executes the body: reuse either applies or the caller gets
-            // no paths and the reason.
-            record_checked_function_body_execution();
-            crate::instrumentation::record_contract_fallback(ContractFallback::NoArtifact);
-            let execution = crate::instrumentation::measure_operation(
-                function.name(),
-                "contract certification",
-                "contract body symbolic execution",
-                || {
-                    match mode {
-                    CFunctionContractExecutionMode::VerifyLoops => {
-                        prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
-                            state.clone(),
-                            function.clone(),
-                            arguments.clone(),
-                            assumptions,
-                            environment.clone(),
-                            execution_semantics,
-                            ExecutionBudget::for_c_function_verification(&function, &arguments),
-                            true,
-                        )
-                    }
-                    CFunctionContractExecutionMode::ExecuteLoops => {
-                        prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
-                            state.clone(),
-                            function.clone(),
-                            arguments.clone(),
-                            assumptions,
-                            environment.clone(),
-                            execution_semantics,
-                            ExecutionBudget::for_c_function(&function, &arguments),
-                            true,
-                        )
-                    }
-                }
-                },
-            );
-            if let Some(limit) = execution.limit {
-                return CFunctionContractExecution::with_limit(limit);
-            }
-            if crate::instrumentation::enabled() && execution.paths.is_empty() {
-                crate::instrumentation::emit(
-                    crate::instrumentation::VerificationEvent::Diagnostic(format!(
-                        "exact certification executed a resource-guard case for {} but produced no consistent path",
-                        function.name()
-                    )),
-                );
-            }
-            alternatives.push(CContractPathSet {
-                paths: execution.paths,
-                completion_origin_state: None,
-            });
-        } else if !reused {
-            let mut cause = ContractFallback::NoArtifact;
+        if !reused {
+            // Certification never executes the body: reuse either applies
+            // or the caller gets no paths and the reason.
+            let mut cause = ContractFallback::NoMatchingArtifact;
             let mut detail = format!(
                 "no checked execution of `{}` matched the contract's execution mode",
                 function.name()
             );
             for checked in &candidates {
                 if checked.state != state {
-                    if cause == ContractFallback::NoArtifact {
+                    if cause == ContractFallback::NoMatchingArtifact {
                         cause = ContractFallback::EntryStateDelta;
                         detail = format!(
                             "the checked execution of `{}` started at a different entry state than the contract and could not be rebased onto it",
@@ -3659,7 +3580,6 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     }
     CFunctionContractExecution {
         cases,
-        limit: None,
         reuse_diagnostic,
     }
 }

@@ -1924,11 +1924,8 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
     contract_execution: &CFunctionContractExecution,
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Result<Vec<CFunctionContractClaimKey>, String> {
-    if let Some(limit) = contract_execution.limit() {
-        return Err(format!("symbolic execution reached its {limit:?} limit"));
-    }
     if !contract_execution.is_complete() {
-        return Err("symbolic execution produced no paths".to_string());
+        return Err("certification produced no paths".to_string());
     }
     let cases = contract_path_set_views(contract_execution);
     let checked_propositions = checked_proposition_index(checked_propositions);

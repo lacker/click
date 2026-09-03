@@ -243,11 +243,11 @@ retained premise is proved by that reconstructed contract context. A limited or 
 frontier is never reusable. Every reusable artifact becomes one path set of
 the case, and a claim is certified when one path set certifies it on every
 path; a set is prepared for claim checking only when a claim is judged over
-it, so a claim the first set certifies never prepares the second. With
-artifacts supplied, certification never executes the body: when no artifact
-can be reused it produces no paths and the reason. Thus reuse removes
-duplicate C-body interpretation without trusting smart search state or
-weakening independent contract checking.
+it, so a claim the first set certifies never prepares the second.
+Certification never executes the body: when no artifact can be reused it
+produces no paths and the reason. Thus reuse removes duplicate C-body
+interpretation without trusting smart search state or weakening independent
+contract checking.
 
 Proof-directed folds, unfolds, and observations are retained as checked
 zero-source execution events. Each event names its exact input state,

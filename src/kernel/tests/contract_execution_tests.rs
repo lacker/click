@@ -722,7 +722,7 @@ fn contract_certification_checks_every_spec_lowering_path() {
         ],
         true,
     );
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         state,
         function.clone(),
         vec![c_pointer_value(queried)],
@@ -1232,7 +1232,7 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
         ],
         true,
     );
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         function.clone(),
         Vec::new(),
@@ -1248,7 +1248,7 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
         Vec::new(),
         c_return(c_int32_literal(1)),
     );
-    let impostor_execution = prove_c_function_contract_execution_paths_with_environment(
+    let impostor_execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         impostor,
         Vec::new(),
@@ -1304,7 +1304,7 @@ fn verified_function_rule_rejects_unclaimed_contract_obligations() {
         vec![CFunctionContractClaim::body_safety()],
         true,
     );
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         function.clone(),
         Vec::new(),
@@ -1365,7 +1365,7 @@ fn contract_certification_does_not_accept_injected_opaque_predicate_facts() {
             )))],
         }),
     };
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         function.clone(),
         Vec::new(),
@@ -1422,7 +1422,7 @@ fn contract_effect_claim_rejects_an_undecidable_guard() {
         vec![CFunctionContractClaim::effect(0)],
         true,
     );
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new().with_memory(CMemory::new().with_block(base.block.clone(), 4)),
         function.clone(),
         vec![
@@ -1494,7 +1494,7 @@ fn contract_effect_claim_rejects_interior_entry_live_heap_pointer_as_fresh() {
                 .expect("the entry allocation should be live"),
         )
         .with_resource_context(own_memory_context(interior, 0, 1));
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         caller_state,
         function.clone(),
         vec![c_pointer_value(allocation_base)],
@@ -1836,7 +1836,7 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
 fn contract_claim_rejects_same_source_function_with_a_different_contract() {
     let body = c_return(c_int32_literal(0));
     let uncontracted = c_function(CType::Int32, "contract_identity", Vec::new(), body.clone());
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         uncontracted,
         Vec::new(),
@@ -1913,7 +1913,6 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
             paths: vec![path],
             completion_origin_state: None,
         }]],
-        limit: None,
         reuse_diagnostic: None,
     };
 
@@ -1997,7 +1996,6 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
             CFunctionContractClaimKey::BodySafety,
             &CFunctionContractExecution {
                 cases,
-                limit: None,
                 reuse_diagnostic: None,
             },
         )
@@ -2070,7 +2068,6 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
             paths: vec![path],
             completion_origin_state: None,
         }]],
-        limit: None,
         reuse_diagnostic: None,
     };
 
@@ -2153,7 +2150,7 @@ fn contract_claim_rejects_caller_supplied_false_entry_fact() {
         vec![CFunctionContractClaim::ensure_proposition(0, 0)],
         true,
     );
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         CState::new(),
         function.clone(),
         Vec::new(),

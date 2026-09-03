@@ -1236,7 +1236,7 @@ fn contract_certification_splits_undecided_conditional_resource_guards() {
         c_heap_free(c_variable("item")),
         c_return(c_int32_literal(0)),
     ));
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         state,
         function.clone(),
         arguments,
@@ -1259,7 +1259,7 @@ fn conditional_resource_certification_checks_the_unsafe_case_too() {
             c_return(c_int32_literal(0)),
         ),
     ));
-    let execution = prove_c_function_contract_execution_paths_with_environment(
+    let execution = certify_contract_with_kernel_artifacts(
         state,
         function.clone(),
         arguments,

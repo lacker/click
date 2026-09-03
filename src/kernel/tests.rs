@@ -9,6 +9,61 @@ mod memory_reasoning_tests;
 mod proof_reasoning_tests;
 mod resource_tests;
 
+/// Certifies a contract from the kernel's own checked executions of the
+/// function, one per resource-guard case, the way the surface certifies a
+/// proof's artifacts: certification itself never executes a body.
+#[allow(clippy::too_many_arguments)]
+fn certify_contract_with_kernel_artifacts(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    derived_entry_facts: Vec<Proposition>,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+) -> CFunctionContractExecution {
+    let assume_all = |facts: &[Proposition]| {
+        facts
+            .iter()
+            .fold(PureFactContext::new(), |assumptions, fact| {
+                assumptions.assume_proposition(fact.clone())
+            })
+    };
+    let cases = crate::kernel::api::contract_certification::contract_resource_condition_cases(
+        &state,
+        &function,
+        &arguments,
+        &assume_all(&derived_entry_facts),
+    )
+    .unwrap_or_else(|| vec![Vec::new()]);
+    let artifacts = cases
+        .iter()
+        .map(|case_facts| {
+            let mut facts = derived_entry_facts.clone();
+            facts.extend(case_facts.iter().cloned());
+            prove_checked_c_function_execution_with_environment(
+                state.clone(),
+                function.clone(),
+                arguments.clone(),
+                assume_all(&facts),
+                environment.clone(),
+                execution_semantics,
+                mode,
+            )
+        })
+        .collect::<Vec<_>>();
+    prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state,
+        function,
+        arguments,
+        derived_entry_facts,
+        environment,
+        execution_semantics,
+        mode,
+        &artifacts,
+    )
+}
+
 fn memory_range(
     base: Pointer,
     start: impl Into<Bitvector32Term>,

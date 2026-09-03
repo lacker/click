@@ -2450,8 +2450,6 @@ pub struct CFunctionContractExecution {
     /// joined path; another publishes each arm), and a claim completed on
     /// one proof's outcome is matched against that proof's paths.
     pub(super) cases: Vec<Vec<CContractPathSet>>,
-    /// The execution limit the kernel's own execution hit, when it did.
-    pub(super) limit: Option<ExecutionLimit>,
     /// Why no supplied checked artifact could be reused when certification
     /// produced no paths. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
@@ -2487,15 +2485,6 @@ impl CFunctionContractExecution {
     pub(crate) fn empty() -> Self {
         Self {
             cases: Vec::new(),
-            limit: None,
-            reuse_diagnostic: None,
-        }
-    }
-
-    pub(crate) fn with_limit(limit: ExecutionLimit) -> Self {
-        Self {
-            cases: Vec::new(),
-            limit: Some(limit),
             reuse_diagnostic: None,
         }
     }
@@ -2505,15 +2494,10 @@ impl CFunctionContractExecution {
         self.cases.iter().flatten().map(|set| set.paths.len()).sum()
     }
 
-    pub fn limit(&self) -> Option<&ExecutionLimit> {
-        self.limit.as_ref()
-    }
-
     /// Whether every resource-guard case has a path set to judge claims
-    /// over and no execution limit was hit.
+    /// over.
     pub(crate) fn is_complete(&self) -> bool {
-        self.limit.is_none()
-            && !self.cases.is_empty()
+        !self.cases.is_empty()
             && self
                 .cases
                 .iter()
