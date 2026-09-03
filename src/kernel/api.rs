@@ -2399,10 +2399,30 @@ pub fn pure_fact_context_is_inconsistent(assumptions: &PureFactContext) -> bool 
     assumptions.is_inconsistent()
 }
 
+/// Reifies a contextual proof as a theorem that keeps the exact ambient facts
+/// selected by its derivation as implication premises. Kernel theorem objects
+/// may outlive the context that produced them, so dropping those premises
+/// would turn a path-local consequence into an unconditional axiom.
+fn theorem_from_contextual_proof(
+    assumptions: &PureFactContext,
+    conclusion: Proposition,
+) -> Option<Theorem> {
+    let derivation = assumptions.derive_proposition(&conclusion)?;
+    let proposition = derivation
+        .context_premises()
+        .into_iter()
+        .rev()
+        .fold(conclusion, |body, premise| {
+            Proposition::Implies(Box::new(premise), Box::new(body))
+        });
+    Some(Theorem::new(proposition))
+}
+
 /// Certifies the exact count lower bound witnessed by owned declared-resource
 /// authority in a concrete ghost state. The returned theorem is bound to the
-/// proposition reconstructed here; callers cannot use resource possession to
-/// bless an unrelated arithmetic fact.
+/// proposition reconstructed here and retains its contextual proof premises;
+/// callers cannot use resource possession to bless an unrelated arithmetic
+/// fact.
 pub fn prove_owned_resource_count_lower_bound(
     state: &CState,
     owned: &CResourceFact,
@@ -2439,7 +2459,10 @@ pub fn prove_owned_resource_count_lower_bound(
     };
     let conclusion =
         Proposition::ConditionIs(ConditionTerm::signed_less_equal(quantity, count), true);
-    (claimed == &conclusion && assumptions.proves(&conclusion)).then(|| Theorem::new(conclusion))
+    if claimed != &conclusion {
+        return None;
+    }
+    theorem_from_contextual_proof(assumptions, conclusion)
 }
 
 /// Certifies the nonnegativity invariant carried by an owned declared-resource
@@ -2458,7 +2481,10 @@ pub fn prove_owned_resource_quantity_nonnegative(
         ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), quantity),
         true,
     );
-    (claimed == &conclusion && assumptions.proves(&conclusion)).then(|| Theorem::new(conclusion))
+    if claimed != &conclusion {
+        return None;
+    }
+    theorem_from_contextual_proof(assumptions, conclusion)
 }
 
 /// Re-expresses a checked execution from a definitionally equal ghost-resource

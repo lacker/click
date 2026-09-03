@@ -109,6 +109,55 @@ fn zero_resource_count_witness_needs_no_population_bucket() {
 }
 
 #[test]
+fn owned_resource_invariant_theorems_retain_context_premises() {
+    let quantity = Bitvector32Term::Variable(Variable(912_000));
+    let count = Bitvector32Term::Variable(Variable(912_001));
+    let resource = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "symbolic".to_string(),
+            arguments: vec![int32(7)],
+        },
+        quantity.clone(),
+    );
+    let state = CState::new()
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(resource.clone()))
+        .with_counted_population("symbolic", vec![int32(7)], count.clone());
+    let count_claim = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(quantity.clone(), count),
+        true,
+    );
+    let nonnegative_claim = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), quantity),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(count_claim.clone())
+        .assume_proposition(nonnegative_claim.clone());
+
+    let count_theorem =
+        prove_owned_resource_count_lower_bound(&state, &resource, &count_claim, &assumptions)
+            .expect("the count invariant should be certified");
+    let nonnegative_theorem = prove_owned_resource_quantity_nonnegative(
+        &state,
+        &resource,
+        &nonnegative_claim,
+        &assumptions,
+    )
+    .expect("the quantity invariant should be certified");
+
+    for (theorem, conclusion) in [
+        (&count_theorem, &count_claim),
+        (&nonnegative_theorem, &nonnegative_claim),
+    ] {
+        let Proposition::Implies(premise, body) = theorem.proposition() else {
+            panic!("contextual resource theorem must retain its implication premise");
+        };
+        assert_eq!(premise.as_ref(), conclusion);
+        assert_eq!(body.as_ref(), conclusion);
+    }
+}
+
+#[test]
 fn resource_context_fork_updates_are_persistent_and_logarithmic() {
     for size in [16_usize, 64, 256, 1024, 4096] {
         let context = unrelated_token_context(size);
