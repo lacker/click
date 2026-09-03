@@ -85,19 +85,54 @@ fn collect_post_execution_if_have_indices<'a>(
 /// The terminal diagnostic for a proof no checked driver accepts. The
 /// drivers are the single verification engine; a shape they decline is a
 /// gap to close in a driver, never a reason to run a second engine.
-fn unsupported_proof_shape(proof_label: &str) -> ClickError {
-    let declines = take_driver_declines();
-    let declined_at = if declines.is_empty() {
-        String::new()
+fn proof_shape_hint(tactics: &[ProofTactic]) -> Option<(usize, &'static str)> {
+    tactics.iter().enumerate().find_map(|(index, tactic)| {
+        let shape = match tactic {
+            ProofTactic::Have(_) => "nested `have`",
+            ProofTactic::Open(_) => "resource scope",
+            ProofTactic::If(_) => "proof-level `if`",
+            ProofTactic::Cases(_) => "proof-level `cases`",
+            ProofTactic::Branch(_) => "proof-level `branch`",
+            ProofTactic::Loop(_) => "loop proof",
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. } => "frame scope",
+            ProofTactic::ConstructResource(_) => "resource construction",
+            ProofTactic::Witness(_) => "`witness`",
+            ProofTactic::Choose(_) => "`choose`",
+            ProofTactic::Induct { .. }
+            | ProofTactic::ApplyInduction { .. }
+            | ProofTactic::ApplyInductionUsing { .. } => "induction",
+            _ => return None,
+        };
+        Some((index, shape))
+    })
+}
+
+fn unsupported_proof_shape(
+    proof_label: &str,
+    grouped: bool,
+    tactics: &[ProofTactic],
+) -> ClickError {
+    let route = if grouped {
+        "grouped contract"
     } else {
-        let sites = declines
-            .iter()
-            .map(|location| format!("{}:{}", location.file(), location.line()))
-            .collect::<Vec<_>>();
-        format!(" (driver declines: {})", sites.join(", "))
+        "single-claim"
+    };
+    let shape = proof_shape_hint(tactics)
+        .map(|(index, shape)| format!("tactic {index} (`{shape}`)"))
+        .unwrap_or_else(|| "the supplied tactic sequence".to_string());
+    let rewrite = if grouped {
+        "For proposition-only work, move the operation into `have proposition by { ... }`; grouped execution must still form one transition covering all claims."
+    } else {
+        "Keep execution scopes at supported structural boundaries, and move proposition-only work into `have proposition by { ... }`."
+    };
+    let decline_count = take_driver_declines().len();
+    let attempts = if decline_count == 0 {
+        "No checked route accepted it."
+    } else {
+        "All checked routes declined it."
     };
     ClickError::new(format!(
-        "`{proof_label}`: this proof shape is not accepted by the checked proof drivers{declined_at}"
+        "`{proof_label}`: the {route} proof driver declined {shape}. {attempts} This is a proof-shape limitation, not a failed proposition check. {rewrite}"
     ))
 }
 
@@ -427,7 +462,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             Err(error) => return Err(error),
         }
     }
-    Err(unsupported_proof_shape(claim_label))
+    Err(unsupported_proof_shape(claim_label, false, tactics))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -606,7 +641,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             Err(error) => return Err(error),
         }
     }
-    Err(unsupported_proof_shape(&proof_label))
+    Err(unsupported_proof_shape(&proof_label, true, tactics))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4260,6 +4295,19 @@ pub(super) fn finish_ordered_proof<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_shape_diagnostic_names_route_and_tactic() {
+        // Do not let a decline recorded by another proof attempt leak into
+        // this direct diagnostic-unit test.
+        take_driver_declines();
+        let error = unsupported_proof_shape("f.ensures_0", false, &[ProofTactic::SmartFrame(None)]);
+
+        assert!(error.message().contains("single-claim proof driver"));
+        assert!(error.message().contains("tactic 0 (`frame scope`)"));
+        assert!(error.message().contains("proof-shape limitation"));
+        assert!(!error.message().contains("proof shape is not accepted"));
+    }
 
     #[test]
     fn inconsistent_context_is_not_sibling_path_evidence() {
