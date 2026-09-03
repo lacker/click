@@ -1,5 +1,11 @@
 # Lift proof-shape restrictions that force restructuring
 
+## Status
+
+Direct `intro()` steps after execution reaches function exit now advance the
+checked outcome proof. The remaining proof-shape restrictions below are still
+open.
+
 Found by the 2026-09-01 kernel audit at cb034b21. Each bullet is a place
 where a proof author must restructure a correct proof to satisfy the driver,
 with no semantic reason.
