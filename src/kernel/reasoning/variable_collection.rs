@@ -951,10 +951,11 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
     memory: &CMemory,
     variables: &mut BTreeSet<Variable>,
 ) {
-    for block in memory.blocks.keys() {
+    for (block, contents) in memory.blocks.iter() {
         if let PointerBlock::Symbolic(variable) = block {
             variables.insert(*variable);
         }
+        collect_bitvector_variables(contents.size(), variables);
     }
     for (pointer, value) in memory.cells.iter() {
         collect_pointer_bitvector_variables(pointer, variables);

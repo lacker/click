@@ -957,6 +957,9 @@ fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<V
 }
 
 fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
+    for contents in memory.blocks.values() {
+        collect_bitvector_bound_variables(contents.size(), variables);
+    }
     for (pointer, value) in memory.cells.as_ref() {
         collect_pointer_bound_variables(pointer, variables);
         collect_c_value_bound_variables(value, variables);

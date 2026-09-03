@@ -8,15 +8,9 @@ with its own test; split this file if any of them grows.
 1. **Interior heap pointers classified function-fresh.** Resolved by making
    `is_function_fresh_heap_pointer` classify entry-live allocations by block
    identity and adding the requested contract-effect regression.
-2. **Free-variable collection misses symbolic block sizes.**
-   `collect_memory_bitvector_variables`
-   (`src/kernel/reasoning/variable_collection.rs:948-961`) visits block keys
-   and cells but not `CBlock.size`, while
-   `substitute_bitvector_variable_in_memory`
-   (`src/kernel/reasoning/substitution.rs:1784-1799`) does rewrite sizes. A
-   variable free only in a block size is invisible to
-   `without_free_bitvector_variable` and to the capture-avoiding reserved set.
-   Test: a memory with a symbolic block size `n` reports `n` as free.
+2. **Free-variable collection misses symbolic block sizes.** Resolved by
+   visiting block sizes in both free-variable and binder-variable collection;
+   the regression also checks the existing substitution path.
 3. **Interface joins accept uncertified effect facts.**
    `src/kernel/proof/execution.rs:1156` and `:1177` accept
    `CMemoryMutatesOnly` and `CMemoryEffectSummary` arm facts without
