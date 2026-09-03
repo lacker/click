@@ -19,6 +19,10 @@ fn c_type_mismatch_expression_path(
     }
 }
 
+fn pointer_types_compatible(left: &CPointerValue, right: &CPointerValue) -> bool {
+    left.c_type() == right.c_type() || left.is_null() || right.is_null()
+}
+
 pub(in crate::kernel) fn evaluate_c_add_paths(
     state: &CState,
     left: &CExpression,
@@ -445,13 +449,16 @@ fn apply_c_comparison(
 ) -> Vec<CExpressionPath> {
     match (left, right) {
         (CValue::Pointer(left), CValue::Pointer(right)) => {
+            if !pointer_types_compatible(&left, &right) {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            }
             let Some(byte_width) = pointer_operation_step_width(left_step_width, right_step_width)
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
             apply_same_block_pointer_operation(
-                left,
-                right,
+                left.into_pointer(),
+                right.into_pointer(),
                 facts,
                 obligations,
                 assumptions,
@@ -540,13 +547,16 @@ pub(in crate::kernel) fn apply_c_subtract(
             )
         }
         (CValue::Pointer(left), CValue::Pointer(right)) => {
+            if left.c_type() != right.c_type() {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            }
             let Some(byte_width) = pointer_operation_step_width(left_step_width, right_step_width)
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
             apply_same_block_pointer_operation(
-                left,
-                right,
+                left.into_pointer(),
+                right.into_pointer(),
                 facts,
                 obligations,
                 assumptions,
@@ -577,13 +587,15 @@ struct PointerFormationGuard {
 
 fn pointer_offset_by_elements_paths(
     state: &CState,
-    pointer: Pointer,
+    pointer: CPointerValue,
     offset: Bitvector32Term,
     byte_width: u32,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let pointer_type = pointer.c_type();
+    let pointer = pointer.into_pointer();
     let result = pointer.offset_by_elements(offset.clone(), byte_width);
     let mut guards = Vec::new();
 
@@ -612,17 +624,26 @@ fn pointer_offset_by_elements_paths(
         guards.extend(pointer_block_bounds(state, &result, byte_width));
     }
 
-    apply_pointer_formation_guards(result, guards, facts, obligations, assumptions)
+    apply_pointer_formation_guards(
+        result,
+        pointer_type,
+        guards,
+        facts,
+        obligations,
+        assumptions,
+    )
 }
 
 pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     state: &CState,
-    pointer: Pointer,
+    pointer: CPointerValue,
     bytes: u32,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let pointer_type = pointer.c_type();
+    let pointer = pointer.into_pointer();
     if pointer.block.is_function() && bytes != 0 {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType),
@@ -632,7 +653,14 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     }
     let result = pointer.offset_by_bytes(bytes);
     let guards = pointer_block_bounds(state, &result, 1);
-    apply_pointer_formation_guards(result, guards, facts, obligations, assumptions)
+    apply_pointer_formation_guards(
+        result,
+        pointer_type,
+        guards,
+        facts,
+        obligations,
+        assumptions,
+    )
 }
 
 fn pointer_index_from_offset(pointer: &Pointer, byte_width: u32) -> Option<Bitvector32Term> {
@@ -802,13 +830,14 @@ fn pointer_index_from_base(
 
 fn apply_pointer_formation_guards(
     pointer: Pointer,
+    pointer_type: CType,
     guards: Vec<PointerFormationGuard>,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let mut normal = vec![CExpressionPath {
-        outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
+        outcome: CExpressionOutcome::Value(CValue::typed_pointer(pointer, pointer_type)),
         facts,
         obligations,
     }];
@@ -1429,18 +1458,24 @@ pub(in crate::kernel) fn apply_c_equal(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
-        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_paths(
-            pointer_equality_condition(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            if !pointer_types_compatible(&left, &right) {
+                vec![c_type_mismatch_expression_path(facts, obligations)]
+            } else {
+                condition_as_c_int32_paths(
+                    pointer_equality_condition(left.into_pointer(), right.into_pointer()),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            }
+        }
         (CValue::Pointer(pointer), CValue::Int32(bits))
         | (CValue::Int32(bits), CValue::Pointer(pointer))
             if bits.as_const() == Some(0) =>
         {
             condition_as_c_int32_paths(
-                pointer_is_null_condition(pointer),
+                pointer_is_null_condition(pointer.into_pointer()),
                 facts,
                 obligations,
                 assumptions,
@@ -1495,18 +1530,24 @@ pub(in crate::kernel) fn apply_c_not_equal(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
-        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_not_paths(
-            pointer_equality_condition(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            if !pointer_types_compatible(&left, &right) {
+                vec![c_type_mismatch_expression_path(facts, obligations)]
+            } else {
+                condition_as_c_int32_not_paths(
+                    pointer_equality_condition(left.into_pointer(), right.into_pointer()),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            }
+        }
         (CValue::Pointer(pointer), CValue::Int32(bits))
         | (CValue::Int32(bits), CValue::Pointer(pointer))
             if bits.as_const() == Some(0) =>
         {
             condition_as_c_int32_not_paths(
-                pointer_is_null_condition(pointer),
+                pointer_is_null_condition(pointer.into_pointer()),
                 facts,
                 obligations,
                 assumptions,

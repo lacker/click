@@ -968,7 +968,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             };
             certification_facts.push(Proposition::CMemoryLoadable {
                 memory: certification_state.memory().clone(),
-                base: base.clone(),
+                base: base.pointer().clone(),
                 bytes: Bitvector32Term::Constant(*bytes),
             });
         }

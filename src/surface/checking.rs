@@ -147,10 +147,10 @@ pub(super) fn apply_choose_tactic(
     *next_choice_variable += 1;
     let chosen = match sort {
         Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
-        Sort::CPointer(CType::FunctionPointer(_)) => {
-            CValue::Pointer(Pointer::symbolic_function(chosen_variable))
+        Sort::CPointer(c_type @ CType::FunctionPointer(_)) => {
+            CValue::typed_pointer(Pointer::symbolic_function(chosen_variable), c_type)
         }
-        Sort::CPointer(_) => CValue::Pointer(Pointer::symbolic(chosen_variable)),
+        Sort::CPointer(c_type) => CValue::typed_pointer(Pointer::symbolic(chosen_variable), c_type),
         _ => {
             return Err(ClickError::new(format!(
                 "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unsupported existential sort"
@@ -160,7 +160,7 @@ pub(super) fn apply_choose_tactic(
     let chosen_fact = match &chosen {
         CValue::Int32(value) => substitute_int32_variable_in_proposition(&body, var, value.clone()),
         CValue::Pointer(pointer) => {
-            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer)
+            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
         }
         CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
     };
@@ -240,7 +240,7 @@ pub(super) fn apply_witness_tactic(
         (Sort::CPointer(expected), CValue::Pointer(pointer))
             if expected.accepts(&CValue::Pointer(pointer.clone())) =>
         {
-            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, &pointer)
+            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
         }
         (Sort::CPointer(_), CValue::Pointer(_)) => {
             return Err(ClickError::new(format!(

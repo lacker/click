@@ -343,7 +343,7 @@ impl CLocalEnvironment {
             .map(CLocalBinding::slot)
             .cloned()
             .unwrap_or_else(|| CMemory::local_pointer(&name));
-        self.set_typed_at(name, value, c_type, slot);
+        self.set_typed_at(name, value.retag_pointer(c_type), c_type, slot);
     }
 
     pub(in crate::kernel) fn set_typed_at(
@@ -453,7 +453,16 @@ impl CLocalEnvironment {
             .filter_map(|(name, binding)| match binding {
                 CLocalBinding::ArrayObject {
                     element_type, slot, ..
-                } => Some((name.as_str(), CValue::Pointer(slot.clone()), *element_type)),
+                } => Some((
+                    name.as_str(),
+                    CValue::typed_pointer(
+                        slot.clone(),
+                        element_type
+                            .pointer_to()
+                            .expect("array element type must have a pointer type"),
+                    ),
+                    *element_type,
+                )),
                 CLocalBinding::Object { .. } | CLocalBinding::UninitializedObject { .. } => None,
             })
     }
@@ -1424,17 +1433,21 @@ impl CMemory {
         &self,
         pointer: &Pointer,
         pointee_byte_width: u32,
+        value_type: CType,
     ) -> CValue {
-        CValue::Pointer(Pointer {
-            block: pointer.block.clone(),
-            offset: PointerOffsetTerm::scale_int32(
-                Bitvector32Term::MemoryLoad(
-                    crate::kernel::intern_c_memory(self.clone()),
-                    Box::new(pointer.clone()),
+        CValue::typed_pointer(
+            Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(self.clone()),
+                        Box::new(pointer.clone()),
+                    ),
+                    i64::from(pointee_byte_width),
                 ),
-                i64::from(pointee_byte_width),
-            ),
-        })
+            },
+            value_type,
+        )
     }
 }
 

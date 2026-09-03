@@ -837,6 +837,7 @@ pub(in crate::surface) fn evaluate_effect_segment(
         let CValue::Pointer(base) = base else {
             return Err("segment base did not evaluate to a pointer".to_string());
         };
+        let base = base.into_pointer();
         let start = evaluate_c_contract_expression(
             &parameter_values,
             entry_state,
@@ -915,6 +916,7 @@ pub(in crate::surface) fn evaluate_requirement_segment(
     let CValue::Pointer(base) = base else {
         return Err("segment base did not evaluate to a pointer".to_string());
     };
+    let base = base.into_pointer();
     let start = evaluate_c_contract_expression(
         &parameter_values,
         entry_state,

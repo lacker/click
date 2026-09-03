@@ -813,7 +813,11 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
         }
         (CValue::Pointer(left), CValue::Pointer(right)) => {
-            pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+            pointers_proven_equal_for_memory_resolution(
+                left.pointer(),
+                right.pointer(),
+                assumptions,
+            )
         }
         _ => false,
     }

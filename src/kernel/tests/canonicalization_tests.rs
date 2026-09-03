@@ -166,8 +166,8 @@ fn index_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
     };
     let memory = CMemory::new().with_block("len", 4).with_block("data", 64);
     let state = CState::new()
-        .with_local("len_ptr", CValue::Pointer(len_cell.clone()))
-        .with_local("data", CValue::Pointer(data))
+        .with_local("len_ptr", CValue::pointer(len_cell.clone()))
+        .with_local("data", CValue::pointer(data))
         .with_memory(memory)
         .with_resource_context(view_memory_context(len_cell.clone(), 0, 1));
     let statement = c_return(c_add(
@@ -213,7 +213,7 @@ fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
     };
     let memory = CMemory::new().with_block("pp", 4);
     let state = CState::new()
-        .with_local("pp", CValue::Pointer(cell.clone()))
+        .with_local("pp", CValue::pointer(cell.clone()))
         .with_memory(memory)
         .with_resource_context(view_memory_context(cell, 0, 1));
     let statement = c_return(c_typed_load(c_variable("pp"), CType::Int32Pointer));

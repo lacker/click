@@ -245,9 +245,9 @@ fn execute_c_indirect_call_paths(
             CExpressionOutcome::Value(CValue::Pointer(pointer))
                 if pointer.offset == PointerOffsetTerm::Constant(0) =>
             {
-                match pointer.block {
+                match &pointer.block {
                     PointerBlock::Function(name) => {
-                        vec![Ok(name)]
+                        vec![Ok(name.clone())]
                     }
                     PointerBlock::FunctionSymbolic(_) => environment
                         .function_names_with_pointer_type(function_type)
@@ -1892,7 +1892,7 @@ pub(super) fn evaluate_loop_effect_segment(
         "segment base",
         budget,
     )? {
-        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(CValue::Pointer(pointer)) => pointer.into_pointer(),
         Ok(value) => {
             return Ok(Err(format!(
                 "segment base evaluated to {value:?}, not pointer"
@@ -1969,7 +1969,7 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         Ok(Ok(value))
     };
     let base = match evaluate(&segment.base, "segment base")? {
-        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(CValue::Pointer(pointer)) => pointer.into_pointer(),
         Ok(value) => {
             return Ok(Err(format!(
                 "segment base evaluated to {value:?}, not pointer"
@@ -2261,9 +2261,11 @@ pub(super) fn havoc_loop_modified_locals(
             CType::Int32Pointer
             | CType::UInt8Pointer
             | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variables.next())),
+            | CType::UInt8PointerPointer => {
+                CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
+            }
             CType::FunctionPointer(_) => {
-                CValue::Pointer(Pointer::symbolic_function(variables.next()))
+                CValue::typed_pointer(Pointer::symbolic_function(variables.next()), c_type)
             }
             // Array objects are never assigned by name (C forbids it), and
             // they bind as array objects rather than scalar objects above.

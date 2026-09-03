@@ -164,7 +164,9 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     }
 
     let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(state, arguments, assumptions, budget)? {
+    for arguments_path in
+        evaluate_c_arguments_paths(state, arguments, assumptions, budget, Some(environment))?
+    {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
@@ -178,8 +180,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not bind arguments for {}",
-                    function.name()
+                    "{}",
+                    argument_binding_error(function, &arguments_path.values)
                 ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
@@ -321,7 +323,7 @@ pub(super) fn execute_c_function_verification_paths(
         function.name(),
         "independent kernel execution",
         "verification argument evaluation",
-        || evaluate_c_arguments_paths(state, arguments, assumptions, budget),
+        || evaluate_c_arguments_paths(state, arguments, assumptions, budget, Some(environment)),
     )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
@@ -336,8 +338,8 @@ pub(super) fn execute_c_function_verification_paths(
         else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not bind arguments for {}",
-                    function.name()
+                    "{}",
+                    argument_binding_error(function, &arguments_path.values)
                 ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
@@ -496,6 +498,7 @@ pub(super) fn execute_c_function_call_paths(
                 rule,
                 arguments,
                 assumptions,
+                environment,
                 budget,
             );
         }
@@ -513,8 +516,13 @@ pub(super) fn execute_c_function_call_paths(
     }
 
     let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
-    {
+    for arguments_path in evaluate_c_arguments_paths(
+        caller_state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
@@ -529,8 +537,8 @@ pub(super) fn execute_c_function_call_paths(
         else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not bind arguments for {}",
-                    function.name()
+                    "{}",
+                    argument_binding_error(function, &arguments_path.values)
                 ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
@@ -611,6 +619,7 @@ fn execute_verified_function_rule(
     rule: &CVerifiedFunctionRule,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = &rule.function;
@@ -636,8 +645,13 @@ fn execute_verified_function_rule(
     let result_identity = variables.next();
     budget.next_kernel_variable = variables.next;
     let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
-    {
+    for arguments_path in evaluate_c_arguments_paths(
+        caller_state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
@@ -651,8 +665,8 @@ fn execute_verified_function_rule(
         else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not bind arguments for {}",
-                    function.name()
+                    "{}",
+                    argument_binding_error(function, &arguments_path.values)
                 ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
@@ -1474,7 +1488,7 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
                 .resources
                 .unchecked_with_fact(CResourceFact::view_memory(
                     CMemoryRange::new_with_element_width(
-                        pointer.clone(),
+                        pointer.pointer().clone(),
                         Bitvector32Term::Constant(0),
                         Bitvector32Term::Constant(i32::MAX as u32),
                         element_width,
@@ -1493,8 +1507,10 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variable)),
-        CType::FunctionPointer(_) => CValue::Pointer(Pointer::symbolic_function(variable)),
+        | CType::UInt8PointerPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
+        CType::FunctionPointer(_) => {
+            CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
+        }
         CType::Int32Array(_) | CType::UInt8Array(_) => {
             unreachable!("C functions cannot return array values")
         }
@@ -1529,6 +1545,7 @@ pub(super) fn evaluate_c_arguments_paths(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
+    environment: Option<&CExecutionEnvironment>,
 ) -> ExecutionResult<Vec<CArgumentsPath>> {
     let mut paths = vec![CArgumentsPath {
         values: Vec::new(),
@@ -1562,6 +1579,7 @@ pub(super) fn evaluate_c_arguments_paths(
 
                 match argument_path.outcome {
                     CExpressionOutcome::Value(value) => {
+                        let value = type_function_address_value(argument, value, environment);
                         let mut values = path.values.clone();
                         values.push(value);
                         next_paths.push(CArgumentsPath {
@@ -1594,6 +1612,53 @@ pub(super) fn evaluate_c_arguments_paths(
 
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+fn type_function_address_value(
+    expression: &CExpression,
+    value: CValue,
+    environment: Option<&CExecutionEnvironment>,
+) -> CValue {
+    let CExpression::FunctionAddress(name) = expression else {
+        return value;
+    };
+    let Some(environment) = environment else {
+        return value;
+    };
+    let Some(function) = environment.get_function(name) else {
+        return value;
+    };
+    match value {
+        CValue::Pointer(pointer)
+            if pointer.block.is_function() && pointer.c_type() == CType::FunctionPointer(0) =>
+        {
+            CValue::typed_pointer(pointer.into_pointer(), function.function_pointer_type())
+        }
+        value => value,
+    }
+}
+
+fn argument_binding_error(function: &CFunction, values: &[CValue]) -> String {
+    if function
+        .parameters()
+        .iter()
+        .zip(values)
+        .any(|(parameter, value)| {
+            matches!(
+                (parameter.c_type(), value),
+                (CType::FunctionPointer(expected), CValue::Pointer(actual))
+                    if actual.block.is_function()
+                        && actual.c_type() != CType::FunctionPointer(expected)
+            )
+        })
+    {
+        format!(
+            "incompatible signature for function pointer argument to {}",
+            function.name()
+        )
+    } else {
+        format!("could not bind arguments for {}", function.name())
+    }
 }
 
 pub(super) fn bind_c_function_arguments(
@@ -3098,9 +3163,9 @@ fn composite_names_pointer_base(composite: &CResourceFact, pointer: &Pointer) ->
         let CValue::Pointer(argument) = argument else {
             return false;
         };
-        argument == pointer
+        argument.pointer() == pointer
             || pointer
-                .element_index_from_base_with_width(argument, 1)
+                .element_index_from_base_with_width(argument.pointer(), 1)
                 .is_some()
     })
 }
@@ -4829,7 +4894,7 @@ mod provisional_ensure_obligation_tests {
             offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new()
-            .with_local("data", CValue::Pointer(data.clone()))
+            .with_local("data", CValue::pointer(data.clone()))
             .with_memory(memory.clone());
         let ensure = SpecProposition::Comparison {
             left: SpecExpression::MemoryLoad {

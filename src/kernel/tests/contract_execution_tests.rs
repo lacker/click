@@ -1067,7 +1067,7 @@ fn opaque_pointer_result_can_alias_its_argument() {
             .collect::<Vec<_>>(),
     );
     assert!(assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::pointer_equal(result.clone(), argument),
+        ConditionTerm::pointer_equal(result.pointer().clone(), argument),
         true,
     )));
 }

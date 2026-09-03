@@ -1569,12 +1569,12 @@ fn evaluated_segment_covers_resource_fact_read(
     };
     let segment = EvaluatedContractSegment {
         source: segment.clone(),
-        base,
+        base: base.into_pointer(),
         start,
         end,
         element_width: 4,
     };
-    let read_pointer = offset_pointer_by_elements(read_base, index, 4);
+    let read_pointer = offset_pointer_by_elements(read_base.into_pointer(), index, 4);
     segment_contains_pointer(&segment, &read_pointer, assumptions)
 }
 

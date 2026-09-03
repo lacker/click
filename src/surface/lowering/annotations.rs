@@ -1084,9 +1084,9 @@ impl AnnotationLowerer<'_> {
                     CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
                     c_type if c_type.is_pointer() => {
                         if matches!(c_type, CType::FunctionPointer(_)) {
-                            CValue::Pointer(Pointer::symbolic_function(variable))
+                            CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
                         } else {
-                            CValue::Pointer(Pointer::symbolic(variable))
+                            CValue::typed_pointer(Pointer::symbolic(variable), c_type)
                         }
                     }
                     _ => return Err("only int32 and pointer binders are supported".to_string()),
@@ -1128,9 +1128,9 @@ impl AnnotationLowerer<'_> {
                     CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
                     c_type if c_type.is_pointer() => {
                         if matches!(c_type, CType::FunctionPointer(_)) {
-                            CValue::Pointer(Pointer::symbolic_function(variable))
+                            CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
                         } else {
-                            CValue::Pointer(Pointer::symbolic(variable))
+                            CValue::typed_pointer(Pointer::symbolic(variable), c_type)
                         }
                     }
                     _ => return Err("only int32 and pointer binders are supported".to_string()),

@@ -1148,7 +1148,7 @@ mod condition_transition_tests {
     fn planning_condition_transition_still_checks_execution_obligations() {
         let state = CState::new().with_local(
             "p",
-            CValue::Pointer(Pointer {
+            CValue::pointer(Pointer {
                 block: "havoc:condition-obligation".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),

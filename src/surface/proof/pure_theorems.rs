@@ -290,24 +290,30 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::Void => unreachable!("pure theorem parameters cannot be void"),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
-                C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::Pointer(Pointer {
-                    block: PointerBlock::ExternalArgument,
-                    offset: scale_int32_offset(
-                        Bitvector32Term::Variable(Variable(
-                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                        )),
-                        4,
-                    ),
-                }),
-                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => CValue::Pointer(Pointer {
-                    block: PointerBlock::ExternalArgument,
-                    offset: scale_int32_offset(
-                        Bitvector32Term::Variable(Variable(
-                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                        )),
-                        1,
-                    ),
-                }),
+                C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            4,
+                        ),
+                    },
+                    CType::Int32Pointer,
+                ),
+                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            1,
+                        ),
+                    },
+                    CType::UInt8Pointer,
+                ),
                 C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
                     let element_width = parameter
                         .c_type()
@@ -315,19 +321,23 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                         .expect("pointer-to-pointer parameter has a pointee")
                         .to_kernel_type()
                         .byte_width();
-                    CValue::Pointer(Pointer {
-                        block: PointerBlock::ExternalArgument,
-                        offset: scale_int32_offset(
-                            Bitvector32Term::Variable(Variable(
-                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                            )),
-                            i64::from(element_width),
-                        ),
-                    })
+                    CValue::typed_pointer(
+                        Pointer {
+                            block: PointerBlock::ExternalArgument,
+                            offset: scale_int32_offset(
+                                Bitvector32Term::Variable(Variable(
+                                    POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                                )),
+                                i64::from(element_width),
+                            ),
+                        },
+                        parameter.c_type().to_kernel_type(),
+                    )
                 }
-                C0Type::FunctionPointer(_) => {
-                    CValue::Pointer(Pointer::symbolic_function(Variable(index as u64)))
-                }
+                C0Type::FunctionPointer(_) => CValue::typed_pointer(
+                    Pointer::symbolic_function(Variable(index as u64)),
+                    parameter.c_type().to_kernel_type(),
+                ),
             };
             (parameter.name().to_string(), value)
         })
@@ -350,7 +360,7 @@ pub(in crate::surface) fn pure_theorem_array_refs(
                 parameter.name().to_string(),
                 ClickArrayRef {
                     memory: memory.clone(),
-                    pointer: pointer.clone(),
+                    pointer: pointer.pointer().clone(),
                     element_type,
                 },
             ))

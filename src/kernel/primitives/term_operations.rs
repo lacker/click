@@ -641,18 +641,34 @@ impl CType {
         self.pointee_type().is_some() || matches!(self, Self::FunctionPointer(_))
     }
 
+    pub(crate) fn pointer_to(self) -> Option<Self> {
+        match self {
+            Self::Int32 => Some(Self::Int32Pointer),
+            Self::UInt8 => Some(Self::UInt8Pointer),
+            Self::Int32Pointer => Some(Self::Int32PointerPointer),
+            Self::UInt8Pointer => Some(Self::UInt8PointerPointer),
+            Self::Void
+            | Self::Int32PointerPointer
+            | Self::UInt8PointerPointer
+            | Self::FunctionPointer(_)
+            | Self::Int32Array(_)
+            | Self::UInt8Array(_) => None,
+        }
+    }
+
     pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
             (Self::Void, CValue::Void)
             | (Self::Int32, CValue::Int32(_))
             | (Self::UInt8, CValue::UInt8(_)) => true,
-            (Self::Int32Pointer, CValue::Pointer(pointer))
-            | (Self::UInt8Pointer, CValue::Pointer(pointer))
-            | (Self::Int32PointerPointer, CValue::Pointer(pointer))
-            | (Self::UInt8PointerPointer, CValue::Pointer(pointer)) => !pointer.block.is_function(),
-            (Self::FunctionPointer(_), CValue::Pointer(pointer)) => {
-                pointer.block.is_function()
-                    || matches!(&pointer.block, PointerBlock::Concrete(name) if name == "null")
+            (target, CValue::Pointer(pointer)) if target.is_pointer() => {
+                pointer.is_null()
+                    || (pointer.c_type() == target
+                        && if target.is_function_pointer() {
+                            pointer.block.is_function()
+                        } else {
+                            !pointer.block.is_function()
+                        })
             }
             _ => false,
         }
@@ -682,15 +698,34 @@ impl CType {
             _ => None,
         }
     }
+
+    fn is_function_pointer(self) -> bool {
+        matches!(self, Self::FunctionPointer(_))
+    }
 }
 
 impl CValue {
-    pub(in crate::kernel) fn c_type(&self) -> CType {
+    pub(crate) fn pointer(pointer: Pointer) -> Self {
+        Self::typed_pointer(pointer, CType::Int32Pointer)
+    }
+
+    pub(crate) fn typed_pointer(pointer: Pointer, c_type: CType) -> Self {
+        Self::Pointer(CPointerValue::new(pointer, c_type))
+    }
+
+    pub(crate) fn retag_pointer(self, c_type: CType) -> Self {
+        match self {
+            Self::Pointer(pointer) => Self::Pointer(pointer.with_type(c_type)),
+            value => value,
+        }
+    }
+
+    pub(crate) fn c_type(&self) -> CType {
         match self {
             Self::Void => CType::Void,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
-            Self::Pointer(_) => CType::Int32Pointer,
+            Self::Pointer(pointer) => pointer.c_type(),
         }
     }
 

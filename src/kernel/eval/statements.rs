@@ -533,7 +533,7 @@ pub(super) fn execute_c_heap_allocate_paths(
         let assigned = execute_c_lvalue_assignment_paths(
             &success_state,
             &c_variable(target.to_string()),
-            &CExpression::Value(CValue::Pointer(pointer)),
+            &CExpression::Value(CValue::typed_pointer(pointer, CType::Int32Pointer)),
             &effective_assumptions,
             budget,
         )?;
@@ -611,7 +611,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
         let old_pointer = match old_value {
-            CValue::Pointer(pointer) => pointer,
+            CValue::Pointer(pointer) => pointer.into_pointer(),
             CValue::Int32(bits) if bits.as_const() == Some(0) => Pointer::null(),
             _ => {
                 paths.push(CStatementExecutionPath {
@@ -919,7 +919,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let assigned = execute_c_lvalue_assignment_paths(
                 &pending_state,
                 &c_variable(target.to_string()),
-                &CExpression::Value(CValue::Pointer(pending_pointer)),
+                &CExpression::Value(CValue::typed_pointer(pending_pointer, CType::Int32Pointer)),
                 &effective_assumptions,
                 budget,
             )?;
@@ -962,7 +962,10 @@ fn execute_c_heap_free_paths(
         } = path;
         let outcome = match outcome {
             CExpressionOutcome::Value(CValue::Int32(bits)) if bits.as_const() == Some(0) => {
-                CExpressionOutcome::Value(CValue::Pointer(Pointer::null()))
+                CExpressionOutcome::Value(CValue::typed_pointer(
+                    Pointer::null(),
+                    CType::Int32Pointer,
+                ))
             }
             outcome => outcome,
         };
@@ -986,8 +989,8 @@ fn execute_c_heap_free_paths(
 
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
-        if pointer == Pointer::null()
-            || effective_assumptions.decide(&pointer_is_null_condition(pointer.clone()))
+        if pointer.is_null()
+            || effective_assumptions.decide(&pointer_is_null_condition(pointer.pointer().clone()))
                 == Some(true)
         {
             paths.push(CStatementExecutionPath {
@@ -1020,13 +1023,13 @@ fn execute_c_heap_free_paths(
             .facts()
             .iter()
             .filter_map(|fact| fact.allocation())
-            .find(|(base, _)| **base == pointer)
+            .find(|(base, _)| **base == *pointer.pointer())
             .map(|(_, bytes)| bytes.clone());
         let before_free = state.memory.clone();
         let mut working_memory = state.memory.clone();
-        let bytes = if let Some(bytes) = working_memory.live_heap_block_size(&pointer) {
+        let bytes = if let Some(bytes) = working_memory.live_heap_block_size(pointer.pointer()) {
             bytes.clone()
-        } else if working_memory.is_deallocated_heap_address(&pointer) {
+        } else if working_memory.is_deallocated_heap_address(pointer.pointer()) {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
@@ -1034,7 +1037,7 @@ fn execute_c_heap_free_paths(
                 obligations,
             });
             continue;
-        } else if working_memory.is_live_heap_address(&pointer) {
+        } else if working_memory.is_live_heap_address(pointer.pointer()) {
             let error = CInvalidFree::InteriorPointer;
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
@@ -1044,7 +1047,7 @@ fn execute_c_heap_free_paths(
             continue;
         } else if let Some(bytes) = declared_allocation {
             let Some(memory) =
-                working_memory.with_heap_allocation_claim(pointer.clone(), bytes.clone())
+                working_memory.with_heap_allocation_claim(pointer.pointer().clone(), bytes.clone())
             else {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
@@ -1067,7 +1070,7 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
-        let allocation = CResourceFact::own_allocation(pointer.clone(), bytes.clone());
+        let allocation = CResourceFact::own_allocation(pointer.pointer().clone(), bytes.clone());
         let Some(resources) = state
             .resources
             .clone()
@@ -1083,7 +1086,7 @@ fn execute_c_heap_free_paths(
             continue;
         };
         let complete_access = CResourceFact::own_memory(CMemoryRange::new(
-            pointer.clone(),
+            pointer.pointer().clone(),
             Bitvector32Term::Constant(0),
             int32_element_count_from_bytes(&bytes)
                 .expect("supported allocations have an exact int32 element count"),
@@ -1124,13 +1127,13 @@ fn execute_c_heap_free_paths(
             continue;
         }
         let memory = working_memory
-            .free_heap_block(&pointer)
+            .free_heap_block(pointer.pointer())
             .expect("validated live heap base should free");
         facts.push(ExecutionPureFact::internal(
             Proposition::CHeapAllocationFreed {
                 before: before_free,
                 after: memory.clone(),
-                allocation_base: pointer.clone(),
+                allocation_base: pointer.pointer().clone(),
                 bytes: bytes.clone(),
             },
         ));
@@ -1179,9 +1182,9 @@ pub(crate) fn resolve_pending_heap_allocations(
                     value: CValue::Pointer(pointer),
                     ..
                 } = binding
-                    && pointer == &base
+                    && pointer.pointer() == &base
                 {
-                    *pointer = resolved_base.clone();
+                    pointer.replace_pointer(resolved_base.clone());
                 }
             }
             if !is_null {
@@ -1230,9 +1233,9 @@ pub(crate) fn resolve_pending_heap_allocations(
                 value: CValue::Pointer(pointer),
                 ..
             } = binding
-                && pointer == &base
+                && pointer.pointer() == &base
             {
-                *pointer = resolved_base.clone();
+                pointer.replace_pointer(resolved_base.clone());
             }
         }
         if !is_null {
@@ -1271,7 +1274,7 @@ fn execute_c_return_expression_paths(
                 if state.memory.heap.pending_allocations.contains_key(&pointer) =>
             {
                 for truthiness_path in pending_allocation_outcome_paths(
-                    pointer.clone(),
+                    pointer.pointer().clone(),
                     facts,
                     obligations,
                     assumptions,
@@ -1297,7 +1300,7 @@ fn execute_c_return_expression_paths(
                         CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                     } else {
                         CStatementOutcome::Return {
-                            value: CValue::Pointer(resolved_pointer),
+                            value: CValue::typed_pointer(resolved_pointer, pointer.c_type()),
                             state: resolved_state,
                         }
                     };

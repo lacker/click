@@ -211,9 +211,9 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
         } => {
             let mut state = state.clone();
             let value = if matches!(c_type, CType::FunctionPointer(_)) {
-                CValue::Pointer(Pointer::symbolic_function(*variable))
+                CValue::typed_pointer(Pointer::symbolic_function(*variable), *c_type)
             } else {
-                CValue::Pointer(Pointer::symbolic(*variable))
+                CValue::typed_pointer(Pointer::symbolic(*variable), *c_type)
             };
             state.locals.set_typed(name.clone(), value, *c_type);
             Ok(lower_spec_proposition_at_state_with_loop_entry(
@@ -293,9 +293,9 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
         } => {
             let mut state = state.clone();
             let value = if matches!(c_type, CType::FunctionPointer(_)) {
-                CValue::Pointer(Pointer::symbolic_function(*variable))
+                CValue::typed_pointer(Pointer::symbolic_function(*variable), *c_type)
             } else {
-                CValue::Pointer(Pointer::symbolic(*variable))
+                CValue::typed_pointer(Pointer::symbolic(*variable), *c_type)
             };
             state.locals.set_typed(name.clone(), value, *c_type);
             Ok(lower_spec_proposition_at_state_with_loop_entry(
@@ -491,7 +491,7 @@ fn evaluate_spec_resource_at_state(
                         CValue::Int32(start),
                         CValue::Int32(end),
                     ] => Some(CResource::Memory(CMemoryRange::new_with_element_width(
-                        base.clone(),
+                        base.pointer().clone(),
                         start.clone(),
                         end.clone(),
                         element_width,
@@ -1242,6 +1242,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 let CValue::Pointer(pointer) = pointer_path.value else {
                     continue;
                 };
+                let pointer = pointer.into_pointer();
                 let memory = match memory {
                     SpecMemory::Current => state.memory(),
                     SpecMemory::FunctionEntry => match loop_entry_state {
@@ -1420,6 +1421,8 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
         let CValue::Pointer(pointer) = pointer_path.value else {
             continue;
         };
+        let pointer_type = pointer.c_type();
+        let pointer = pointer.into_pointer();
         let element_assumptions = assumptions_with_path_context(
             assumptions,
             &pointer_path.facts,
@@ -1446,7 +1449,10 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
             };
             let elements = canonicalized_offset_index_term(elements, &mut facts);
             paths.push(SpecExpressionPath {
-                value: CValue::Pointer(pointer.offset_by_elements(elements, byte_width)),
+                value: CValue::typed_pointer(
+                    pointer.offset_by_elements(elements, byte_width),
+                    pointer_type,
+                ),
                 facts,
                 obligations,
             });
@@ -2031,40 +2037,45 @@ pub(super) fn c_value_comparison_proposition(
     right: &CValue,
 ) -> Option<Proposition> {
     let pointer_condition = match (left, right) {
-        (CValue::Pointer(left), CValue::Pointer(right)) => match operator {
-            CComparisonOperator::Equal => Some((
-                pointer_equality_condition(left.clone(), right.clone()),
-                true,
-            )),
-            CComparisonOperator::NotEqual => Some((
-                pointer_equality_condition(left.clone(), right.clone()),
-                false,
-            )),
-            CComparisonOperator::LessThan
-            | CComparisonOperator::LessEqual
-            | CComparisonOperator::GreaterThan
-            | CComparisonOperator::GreaterEqual
-                if left.block == right.block =>
-            {
-                let left = byte_offset_from_pointer_offset(&left.offset)?;
-                let right = byte_offset_from_pointer_offset(&right.offset)?;
-                Some((pointer_order_condition(left, right, operator), true))
+        (CValue::Pointer(left), CValue::Pointer(right))
+            if left.c_type() == right.c_type() || left.is_null() || right.is_null() =>
+        {
+            match operator {
+                CComparisonOperator::Equal => Some((
+                    pointer_equality_condition(left.pointer().clone(), right.pointer().clone()),
+                    true,
+                )),
+                CComparisonOperator::NotEqual => Some((
+                    pointer_equality_condition(left.pointer().clone(), right.pointer().clone()),
+                    false,
+                )),
+                CComparisonOperator::LessThan
+                | CComparisonOperator::LessEqual
+                | CComparisonOperator::GreaterThan
+                | CComparisonOperator::GreaterEqual
+                    if left.block == right.block =>
+                {
+                    let left = byte_offset_from_pointer_offset(&left.offset)?;
+                    let right = byte_offset_from_pointer_offset(&right.offset)?;
+                    Some((pointer_order_condition(left, right, operator), true))
+                }
+                CComparisonOperator::LessThan
+                | CComparisonOperator::LessEqual
+                | CComparisonOperator::GreaterThan
+                | CComparisonOperator::GreaterEqual => None,
             }
-            CComparisonOperator::LessThan
-            | CComparisonOperator::LessEqual
-            | CComparisonOperator::GreaterThan
-            | CComparisonOperator::GreaterEqual => None,
-        },
+        }
+        (CValue::Pointer(_), CValue::Pointer(_)) => None,
         (CValue::Pointer(pointer), CValue::Int32(bits))
         | (CValue::Int32(bits), CValue::Pointer(pointer))
             if bits.as_const() == Some(0) =>
         {
             match operator {
                 CComparisonOperator::Equal => {
-                    Some((pointer_is_null_condition(pointer.clone()), true))
+                    Some((pointer_is_null_condition(pointer.pointer().clone()), true))
                 }
                 CComparisonOperator::NotEqual => {
-                    Some((pointer_is_null_condition(pointer.clone()), false))
+                    Some((pointer_is_null_condition(pointer.pointer().clone()), false))
                 }
                 CComparisonOperator::LessThan
                 | CComparisonOperator::LessEqual

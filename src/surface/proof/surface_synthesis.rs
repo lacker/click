@@ -757,7 +757,7 @@ fn synthesize_parameter_field_pointer_value(
             }
             let field_pointer = base.offset_by_bytes(field.offset_bytes());
             let loaded_offset = match state.memory().load(&field_pointer) {
-                CExpressionOutcome::Value(CValue::Pointer(value)) => value.offset,
+                CExpressionOutcome::Value(CValue::Pointer(value)) => value.offset.clone(),
                 // Struct pointer fields are represented in contract memory
                 // by their pointer-width scalar offset.
                 CExpressionOutcome::Value(CValue::Int32(value)) => PointerOffsetTerm::scale_int32(

@@ -1421,7 +1421,7 @@ fn c0_chained_field_load_executes_through_typed_pointer_memory() {
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let memory = crate::kernel::CMemory::new()
-        .store(root.clone(), crate::kernel::CValue::Pointer(leaf.clone()))
+        .store(root.clone(), crate::kernel::CValue::pointer(leaf.clone()))
         .store(leaf.clone(), crate::kernel::int32(9));
     let resources = crate::kernel::ResourceContext::new()
         .unchecked_with_fact(crate::kernel::CResourceFact::view_memory(memory_range(
@@ -1433,7 +1433,7 @@ fn c0_chained_field_load_executes_through_typed_pointer_memory() {
             leaf, 0, 1,
         )));
     let state = crate::kernel::CState::new()
-        .with_local("root", crate::kernel::CValue::Pointer(root))
+        .with_local("root", crate::kernel::CValue::pointer(root))
         .with_memory(memory)
         .with_resource_context(resources);
     let theorem = crate::kernel::prove_symbolic_c_execution(
@@ -1702,10 +1702,10 @@ fn c0_syntax_targets_kernel_store_and_load() {
     let statement = function.body_kernel_statement();
     let resources = own_memory_context(pointer.clone(), 0, 1);
     let initial = crate::kernel::CState::new()
-        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_local("p", crate::kernel::CValue::pointer(pointer.clone()))
         .with_resource_context(resources.clone());
     let final_state = crate::kernel::CState::new()
-        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_local("p", crate::kernel::CValue::pointer(pointer.clone()))
         .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)))
         .with_resource_context(resources);
     let theorem = crate::kernel::prove_symbolic_c_execution(
@@ -1758,7 +1758,7 @@ fn c0_syntax_targets_kernel_struct_field_load() {
         .with_block("object", 4)
         .store(pointer.clone(), crate::kernel::int32(3));
     let initial = crate::kernel::CState::new()
-        .with_local("obj", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_local("obj", crate::kernel::CValue::pointer(pointer.clone()))
         .with_memory(memory)
         .with_resource_context(view_memory_context(pointer, 0, 1));
     let theorem = crate::kernel::prove_symbolic_c_execution(
@@ -1989,7 +1989,7 @@ fn c0_syntax_targets_kernel_struct_pointer_field_roundtrip() {
     );
     assert_eq!(
         final_state.memory().load(&owner_data),
-        crate::kernel::CExpressionOutcome::Value(crate::kernel::CValue::Pointer(data.clone()))
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::CValue::pointer(data.clone()))
     );
     assert_eq!(
         final_state.memory().load(&data),
@@ -2240,7 +2240,7 @@ fn c0_syntax_targets_kernel_address_of_array_index() {
                 .with_block("block", 16)
                 .with_block("local:q", 8)
                 .store(second.clone(), crate::kernel::int32(23))
-                .store(local_q, crate::kernel::CValue::Pointer(second.clone())),
+                .store(local_q, crate::kernel::CValue::pointer(second.clone())),
         )
         .with_resource_context(resources);
     let arguments = vec![crate::kernel::c_pointer_value(base)];

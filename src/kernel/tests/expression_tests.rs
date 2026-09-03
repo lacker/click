@@ -268,10 +268,10 @@ fn pointer_equality_returns_c_int32_zero_or_one() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(p))
-        .with_local("same", CValue::Pointer(same))
-        .with_local("next", CValue::Pointer(next))
-        .with_local("other", CValue::Pointer(other));
+        .with_local("p", CValue::pointer(p))
+        .with_local("same", CValue::pointer(same))
+        .with_local("next", CValue::pointer(next))
+        .with_local("other", CValue::pointer(other));
     let examples = [
         (c_equal(c_variable("p"), c_variable("same")), int32(1)),
         (c_equal(c_variable("p"), c_variable("next")), int32(0)),
@@ -293,6 +293,73 @@ fn pointer_equality_returns_c_int32_zero_or_one() {
 }
 
 #[test]
+fn pointer_values_preserve_their_exact_c_types_without_changing_address_identity() {
+    let address = Pointer {
+        block: "same-address".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let int32_pointer = CValue::typed_pointer(address.clone(), CType::Int32Pointer);
+    let uint8_pointer = CValue::typed_pointer(address.clone(), CType::UInt8Pointer);
+
+    assert_eq!(int32_pointer.c_type(), CType::Int32Pointer);
+    assert_eq!(uint8_pointer.c_type(), CType::UInt8Pointer);
+    let CValue::Pointer(int32_pointer) = int32_pointer else {
+        unreachable!();
+    };
+    let CValue::Pointer(uint8_pointer) = uint8_pointer else {
+        unreachable!();
+    };
+    assert_eq!(int32_pointer.pointer(), uint8_pointer.pointer());
+}
+
+#[test]
+fn pointer_cast_retags_the_view_but_pointer_type_mismatch_is_not_implicit() {
+    let address = Pointer {
+        block: "typed-pointer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut state = CState::new();
+    state.locals.set_typed(
+        "int32_p",
+        CValue::pointer(address.clone()),
+        CType::Int32Pointer,
+    );
+    state.locals.set_typed(
+        "uint8_p",
+        CValue::pointer(address.clone()),
+        CType::UInt8Pointer,
+    );
+
+    let cast = c_cast(c_variable("int32_p"), CType::UInt8Pointer);
+    let cast_theorem = prove_c_expression_evaluation(state.clone(), cast.clone())
+        .expect("an explicit pointer cast should evaluate");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(value),
+        ..
+    } = cast_theorem.proposition()
+    else {
+        panic!("explicit pointer cast did not produce a value");
+    };
+    assert_eq!(value.c_type(), CType::UInt8Pointer);
+    let CValue::Pointer(value) = value else {
+        unreachable!();
+    };
+    assert_eq!(value.pointer(), &address);
+
+    let equality = c_equal(c_variable("int32_p"), c_variable("uint8_p"));
+    let equality_theorem = prove_c_expression_evaluation(state, equality.clone())
+        .expect("a mismatched pointer comparison should retain its error frontier");
+    assert!(matches!(
+        equality_theorem.proposition(),
+        Proposition::CExpressionEvaluates {
+            expression,
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            ..
+        } if expression == &equality
+    ));
+}
+
+#[test]
 fn spec_pointer_equality_lowers_to_a_pure_fact() {
     let left = Pointer::symbolic(Variable(22_100));
     let right = Pointer::symbolic(Variable(22_101));
@@ -300,23 +367,23 @@ fn spec_pointer_equality_lowers_to_a_pure_fact() {
 
     assert_eq!(
         c_value_comparison_proposition(
-            &CValue::Pointer(left.clone()),
+            &CValue::pointer(left.clone()),
             CComparisonOperator::Equal,
-            &CValue::Pointer(right.clone()),
+            &CValue::pointer(right.clone()),
         ),
         Some(Proposition::ConditionIs(equality.clone(), true)),
     );
     assert_eq!(
         c_value_comparison_proposition(
-            &CValue::Pointer(left.clone()),
+            &CValue::pointer(left.clone()),
             CComparisonOperator::NotEqual,
-            &CValue::Pointer(right),
+            &CValue::pointer(right),
         ),
         Some(Proposition::ConditionIs(equality, false)),
     );
     assert_eq!(
         c_value_comparison_proposition(
-            &CValue::Pointer(left),
+            &CValue::pointer(left),
             CComparisonOperator::LessThan,
             &CValue::Int32(Bitvector32Term::Constant(0)),
         ),
@@ -336,9 +403,9 @@ fn spec_pointer_order_lowers_same_block_offsets() {
     };
     assert_eq!(
         c_value_comparison_proposition(
-            &CValue::Pointer(left),
+            &CValue::pointer(left),
             CComparisonOperator::LessThan,
-            &CValue::Pointer(right),
+            &CValue::pointer(right),
         ),
         Some(Proposition::ConditionIs(
             ConditionTerm::Constant(true),
@@ -350,7 +417,7 @@ fn spec_pointer_order_lowers_same_block_offsets() {
 #[test]
 fn symbolic_pointer_truthiness_keeps_null_and_nonnull_paths() {
     let paths = c_truthiness_paths(
-        CValue::Pointer(Pointer::symbolic(Variable(22_000))),
+        CValue::pointer(Pointer::symbolic(Variable(22_000))),
         Vec::new(),
         Vec::new(),
         &PureFactContext::new(),
@@ -372,8 +439,8 @@ fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("nullp", CValue::Pointer(null))
-        .with_local("p", CValue::Pointer(nonnull));
+        .with_local("nullp", CValue::pointer(null))
+        .with_local("p", CValue::pointer(nonnull));
     let examples = [
         (c_equal(c_variable("nullp"), c_int32_literal(0)), int32(1)),
         (c_equal(c_int32_literal(0), c_variable("nullp")), int32(1)),
@@ -425,10 +492,10 @@ fn not_equal_and_not_return_c_int32_zero_or_one() {
         offset: PointerOffsetTerm::Constant(4),
     };
     let state = CState::new()
-        .with_local("nullp", CValue::Pointer(null))
-        .with_local("p", CValue::Pointer(p))
-        .with_local("same", CValue::Pointer(same))
-        .with_local("next", CValue::Pointer(next));
+        .with_local("nullp", CValue::pointer(null))
+        .with_local("p", CValue::pointer(p))
+        .with_local("same", CValue::pointer(same))
+        .with_local("next", CValue::pointer(next));
     let examples = [
         (
             c_not_equal(c_int32_literal(4), c_int32_literal(5)),
@@ -541,7 +608,7 @@ fn function_pointer_operations_report_indeterminate_pointee_type() {
     let mut state = CState::new();
     state
         .locals
-        .set_typed("callback", CValue::Pointer(pointer), function_type);
+        .set_typed("callback", CValue::pointer(pointer), function_type);
     let expressions = [
         c_load(c_variable("callback")),
         c_add(c_variable("callback"), c_int32_literal(1)),
@@ -575,8 +642,8 @@ fn symbolic_pointer_equality_reports_branch_facts() {
     };
     let condition = ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone());
     let state = CState::new()
-        .with_local("p", CValue::Pointer(left))
-        .with_local("q", CValue::Pointer(right));
+        .with_local("p", CValue::pointer(left))
+        .with_local("q", CValue::pointer(right));
     let statement = c_if(
         c_equal(c_variable("p"), c_variable("q")),
         c_return(c_int32_literal(1)),
@@ -736,7 +803,7 @@ fn viewed_memory_resource_permits_symbolic_external_load_from_incomplete_memory(
         offset: PointerOffsetTerm::Constant(4),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(pointer.clone()))
+        .with_local("p", CValue::pointer(pointer.clone()))
         .with_resource_context(view_memory_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let execution =
@@ -809,7 +876,7 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
     };
     let memory = CMemory::new().with_block("block", 16);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(pointer.clone()))
+        .with_local("p", CValue::pointer(pointer.clone()))
         .with_memory(memory.clone())
         .with_resource_context(view_memory_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
@@ -848,7 +915,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
         .store(second.clone(), int32(23));
     let resources = view_memory_context(base.clone(), 1, 2);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_memory(memory)
         .with_resource_context(resources.clone());
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
@@ -866,7 +933,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
                 state: CState::new()
                     .with_local(
                         "p",
-                        CValue::Pointer(Pointer {
+                        CValue::pointer(Pointer {
                             block: "block".into(),
                             offset: PointerOffsetTerm::Constant(0),
                         }),
@@ -889,7 +956,7 @@ fn pointer_addition_rejects_an_int32_index_beyond_the_object() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base))
+        .with_local("p", CValue::pointer(base))
         .with_memory(CMemory::new().with_block("array", 8));
     let expression = c_add(c_variable("p"), c_int32_literal(3));
 
@@ -912,7 +979,7 @@ fn pointer_index_sum_overflow_is_pointer_undefined_behavior() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(0),
     };
-    let state = CState::new().with_local("p", CValue::Pointer(base));
+    let state = CState::new().with_local("p", CValue::pointer(base));
     let expression = c_add(
         c_add(c_variable("p"), c_int32_literal(i32::MAX as u32)),
         c_int32_literal(1),
@@ -937,10 +1004,10 @@ fn pointer_index_sum_overflow_is_undefined_for_a_uint8_pointer() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(0),
     };
-    let mut state = CState::new().with_local("p", CValue::Pointer(base.clone()));
+    let mut state = CState::new().with_local("p", CValue::pointer(base.clone()));
     state
         .locals
-        .set_typed("p", CValue::Pointer(base), CType::UInt8Pointer);
+        .set_typed("p", CValue::pointer(base), CType::UInt8Pointer);
     let expression = c_add(
         c_add(c_variable("p"), c_int32_literal(i32::MAX as u32)),
         c_int32_literal(1),
@@ -966,7 +1033,7 @@ fn pointer_addition_allows_the_one_past_int32_element() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_memory(CMemory::new().with_block("array", 8));
     let expression = c_add(c_variable("p"), c_int32_literal(2));
     let result = Pointer {
@@ -982,7 +1049,7 @@ fn pointer_addition_allows_the_one_past_int32_element() {
         &Proposition::CExpressionEvaluates {
             state,
             expression,
-            outcome: CExpressionOutcome::Value(CValue::Pointer(result)),
+            outcome: CExpressionOutcome::Value(CValue::pointer(result)),
         }
     );
 }
@@ -994,11 +1061,11 @@ fn pointer_addition_rejects_a_uint8_index_beyond_the_object() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let mut state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_memory(CMemory::new().with_block("bytes", 4));
     state
         .locals
-        .set_typed("p", CValue::Pointer(base), CType::UInt8Pointer);
+        .set_typed("p", CValue::pointer(base), CType::UInt8Pointer);
     let expression = c_add(c_variable("p"), c_int32_literal(5));
 
     let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
@@ -1021,7 +1088,7 @@ fn byte_offset_rejects_a_pointer_beyond_the_object() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base))
+        .with_local("p", CValue::pointer(base))
         .with_memory(CMemory::new().with_block("object", 4));
     let expression = c_pointer_offset_bytes(c_variable("p"), 5);
 
@@ -1049,8 +1116,8 @@ fn pointer_relational_comparison_orders_same_block_elements() {
         offset: PointerOffsetTerm::Constant(8),
     };
     let state = CState::new()
-        .with_local("first", CValue::Pointer(first))
-        .with_local("second", CValue::Pointer(second));
+        .with_local("first", CValue::pointer(first))
+        .with_local("second", CValue::pointer(second));
     let examples = [
         (c_less_than(c_variable("first"), c_variable("second")), 1),
         (c_less_equal(c_variable("first"), c_variable("second")), 1),
@@ -1086,8 +1153,8 @@ fn pointer_subtraction_returns_same_block_element_distance() {
         offset: PointerOffsetTerm::Constant(8),
     };
     let state = CState::new()
-        .with_local("start", CValue::Pointer(start))
-        .with_local("end", CValue::Pointer(end));
+        .with_local("start", CValue::pointer(start))
+        .with_local("end", CValue::pointer(end));
     let expression = c_subtract(c_variable("end"), c_variable("start"));
 
     let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
@@ -1114,14 +1181,14 @@ fn uint8_pointer_subtraction_returns_byte_distance() {
         offset: PointerOffsetTerm::Constant(3),
     };
     let mut state = CState::new()
-        .with_local("start", CValue::Pointer(start.clone()))
-        .with_local("end", CValue::Pointer(end.clone()));
+        .with_local("start", CValue::pointer(start.clone()))
+        .with_local("end", CValue::pointer(end.clone()));
     state
         .locals
-        .set_typed("start", CValue::Pointer(start), CType::UInt8Pointer);
+        .set_typed("start", CValue::pointer(start), CType::UInt8Pointer);
     state
         .locals
-        .set_typed("end", CValue::Pointer(end), CType::UInt8Pointer);
+        .set_typed("end", CValue::pointer(end), CType::UInt8Pointer);
     let expression = c_subtract(c_variable("end"), c_variable("start"));
 
     let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
@@ -1144,7 +1211,7 @@ fn pointer_subtraction_by_one_steps_back_one_element() {
         offset: PointerOffsetTerm::Constant(8),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(pointer))
+        .with_local("p", CValue::pointer(pointer))
         .with_memory(CMemory::new().with_block("array", 12));
     let expression = c_subtract(c_variable("p"), c_int32_literal(1));
     let result = Pointer {
@@ -1160,7 +1227,7 @@ fn pointer_subtraction_by_one_steps_back_one_element() {
         &Proposition::CExpressionEvaluates {
             state,
             expression,
-            outcome: CExpressionOutcome::Value(CValue::Pointer(result)),
+            outcome: CExpressionOutcome::Value(CValue::pointer(result)),
         }
     );
 }
@@ -1176,8 +1243,8 @@ fn pointer_comparison_rejects_different_blocks_as_undefined_behavior() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("left", CValue::Pointer(left))
-        .with_local("right", CValue::Pointer(right));
+        .with_local("left", CValue::pointer(left))
+        .with_local("right", CValue::pointer(right));
     let expression = c_less_than(c_variable("left"), c_variable("right"));
 
     let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
@@ -1204,8 +1271,8 @@ fn pointer_subtraction_rejects_different_blocks_as_undefined_behavior() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("left", CValue::Pointer(left))
-        .with_local("right", CValue::Pointer(right));
+        .with_local("left", CValue::pointer(left))
+        .with_local("right", CValue::pointer(right));
     let expression = c_subtract(c_variable("left"), c_variable("right"));
 
     let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
@@ -1233,7 +1300,7 @@ fn viewed_memory_resource_permits_pointer_addition_load_beyond_memory_block() {
     };
     let memory = CMemory::new().with_block("block", 4);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_memory(memory.clone())
         .with_resource_context(view_memory_context(base, 1, 2));
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
@@ -1267,7 +1334,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
     let memory = CMemory::new().with_block("block", 12);
     let resources = own_memory_context(base.clone(), 0, 3);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_local("i", int32(0))
         .with_memory(memory.clone())
         .with_resource_context(resources.clone());
@@ -1305,7 +1372,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
     let final_state = CState::new()
         .with_local(
             "p",
-            CValue::Pointer(Pointer {
+            CValue::pointer(Pointer {
                 block: "block".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),
@@ -1346,7 +1413,7 @@ fn symbolic_loadable_discharges_pointer_access_obligation() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base.clone()))
+        .with_local("p", CValue::pointer(base.clone()))
         .with_local("i", int32(i_bits.clone()))
         .with_memory(memory.clone())
         .with_resource_context(own_memory_context(base.clone(), 0, n_bits.clone()));

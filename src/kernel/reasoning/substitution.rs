@@ -2765,9 +2765,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
         CValue::Void => CValue::Void,
         CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
-        CValue::Pointer(pointer) => {
-            CValue::Pointer(substitute_bitvector_variable_in_pointer(pointer, from, to))
-        }
+        CValue::Pointer(pointer) => CValue::typed_pointer(
+            substitute_bitvector_variable_in_pointer(pointer.pointer(), from, to),
+            pointer.c_type(),
+        ),
     }
 }
 
@@ -3138,9 +3139,10 @@ fn substitute_pointer_variable_in_condition(
 
 fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &Pointer) -> CValue {
     match value {
-        CValue::Pointer(pointer) => {
-            CValue::Pointer(substitute_pointer_variable_in_pointer(pointer, from, to))
-        }
+        CValue::Pointer(pointer) => CValue::typed_pointer(
+            substitute_pointer_variable_in_pointer(pointer.pointer(), from, to),
+            pointer.c_type(),
+        ),
         CValue::Void | CValue::Int32(_) | CValue::UInt8(_) => value.clone(),
     }
 }

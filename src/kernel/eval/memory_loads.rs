@@ -408,7 +408,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         let value = match value_type {
             CType::Int32 => int32(Bitvector32Term::Constant(0)),
             CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
-            _ if value_type.is_pointer() => CValue::Pointer(Pointer::null()),
+            _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {
                     outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -539,13 +539,16 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
         }
         _ => return None,
     };
-    Some(CValue::Pointer(Pointer {
-        block: pointer.block.clone(),
-        offset: PointerOffsetTerm::scale_int32(
-            Bitvector32Term::Variable(fresh),
-            i64::from(pointee_byte_width),
-        ),
-    }))
+    Some(CValue::typed_pointer(
+        Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(
+                Bitvector32Term::Variable(fresh),
+                i64::from(pointee_byte_width),
+            ),
+        },
+        value_type,
+    ))
 }
 
 /// The canonicalizing form of [`symbolic_load_value`]: a pointer loaded from
@@ -576,14 +579,17 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         }
         _ => {}
     }
-    let CValue::Pointer(Pointer {
+    let CValue::Pointer(pointer_value) = &value else {
+        return Some(value);
+    };
+    let Pointer {
         block,
         offset:
             PointerOffsetTerm::Int32Scaled {
                 value: bits,
                 byte_width,
             },
-    }) = &value
+    } = pointer_value.pointer()
     else {
         return Some(value);
     };
@@ -591,10 +597,13 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         return Some(value);
     }
     let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
-    Some(CValue::Pointer(Pointer {
-        block: block.clone(),
-        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(fresh), *byte_width),
-    }))
+    Some(CValue::typed_pointer(
+        Pointer {
+            block: block.clone(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(fresh), *byte_width),
+        },
+        pointer_value.c_type(),
+    ))
 }
 
 const LOAD_VARIABLE_BASE: u64 = 1 << 40;
@@ -1479,9 +1488,11 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer => {
-            Some(memory.symbolic_pointer_load(pointer, value_type.pointee_type()?.byte_width()))
-        }
+        | CType::UInt8PointerPointer => Some(memory.symbolic_pointer_load(
+            pointer,
+            value_type.pointee_type()?.byte_width(),
+            value_type,
+        )),
         CType::FunctionPointer(_) => None,
         CType::Int32Array(_) | CType::UInt8Array(_) => None,
     }

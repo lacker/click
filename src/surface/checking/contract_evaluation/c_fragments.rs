@@ -27,7 +27,10 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("byte-offset base is not a pointer".to_string());
             };
-            Ok(CValue::Pointer(pointer.offset_by_bytes(*bytes)))
+            Ok(CValue::typed_pointer(
+                pointer.pointer().offset_by_bytes(*bytes),
+                pointer.c_type(),
+            ))
         }
         CExpression::Add(left, right) => {
             let left =
@@ -170,7 +173,12 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
+            evaluate_contract_memory_load(
+                state,
+                pointer.pointer().clone(),
+                CType::Int32,
+                assumptions,
+            )
         }
         CExpression::TypedLoad {
             pointer,
@@ -190,7 +198,12 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            evaluate_contract_memory_load(state, pointer, *value_type, assumptions)
+            evaluate_contract_memory_load(
+                state,
+                pointer.pointer().clone(),
+                *value_type,
+                assumptions,
+            )
         }
         CExpression::Index(base, index) => {
             let value_type = c_contract_index_element_type(base);
@@ -673,10 +686,13 @@ fn symbolic_pointer_contract_memory_load(
     } else {
         bits
     };
-    Ok(CValue::Pointer(Pointer {
-        block: pointer.block,
-        offset: scale_int32_offset(bits, i64::from(pointee_byte_width)),
-    }))
+    Ok(CValue::typed_pointer(
+        Pointer {
+            block: pointer.block,
+            offset: scale_int32_offset(bits, i64::from(pointee_byte_width)),
+        },
+        value_type,
+    ))
 }
 
 pub(in crate::surface) fn evaluate_postcondition_add(
@@ -691,10 +707,20 @@ pub(in crate::surface) fn evaluate_postcondition_add(
 
     match (left, right) {
         (CValue::Pointer(pointer), offset) => promoted_int32_term(&offset)
-            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .map(|index| {
+                CValue::typed_pointer(
+                    offset_pointer_by_int32_elements(pointer.pointer().clone(), index),
+                    pointer.c_type(),
+                )
+            })
             .ok_or_else(|| format!("cannot add pointer and `{offset:?}`")),
         (offset, CValue::Pointer(pointer)) => promoted_int32_term(&offset)
-            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .map(|index| {
+                CValue::typed_pointer(
+                    offset_pointer_by_int32_elements(pointer.pointer().clone(), index),
+                    pointer.c_type(),
+                )
+            })
             .ok_or_else(|| format!("cannot add `{offset:?}` and pointer")),
         (left, right) => Err(format!("cannot add `{left:?}` and `{right:?}`")),
     }
@@ -715,10 +741,13 @@ pub(in crate::surface) fn evaluate_postcondition_sub(
             let Some(index) = promoted_int32_term(&offset) else {
                 return Err(format!("cannot subtract `{offset:?}` from pointer"));
             };
-            Ok(CValue::Pointer(offset_pointer_by_int32_elements(
-                pointer,
-                bitvector32_subtract(Bitvector32Term::Constant(0), index),
-            )))
+            Ok(CValue::typed_pointer(
+                offset_pointer_by_int32_elements(
+                    pointer.pointer().clone(),
+                    bitvector32_subtract(Bitvector32Term::Constant(0), index),
+                ),
+                pointer.c_type(),
+            ))
         }
         (left, right) => Err(format!("cannot subtract `{right:?}` from `{left:?}`")),
     }
@@ -821,7 +850,7 @@ pub(in crate::surface) fn evaluate_postcondition_pointer_add(
     right: CValue,
 ) -> Result<Pointer, String> {
     match evaluate_postcondition_add(left, right)? {
-        CValue::Pointer(pointer) => Ok(pointer),
+        CValue::Pointer(pointer) => Ok(pointer.into_pointer()),
         value => Err(format!(
             "index base did not evaluate to a pointer: `{value:?}`"
         )),

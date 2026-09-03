@@ -259,7 +259,7 @@ fn cached_projection_finds_the_owned_resource_that_packages_a_fact() {
     let allocation = CResourceFact::own_token(
         CResourceFact::ALLOCATION_RESOURCE_NAME.to_string(),
         vec![
-            CValue::Pointer(Pointer {
+            CValue::pointer(Pointer {
                 block: "allocation".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),
@@ -1362,11 +1362,11 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
     };
     let left = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
-        arguments: vec![CValue::Pointer(left_pointer.clone())],
+        arguments: vec![CValue::pointer(left_pointer.clone())],
     });
     let right = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
-        arguments: vec![CValue::Pointer(right_pointer.clone())],
+        arguments: vec![CValue::pointer(right_pointer.clone())],
     });
     let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::pointer_equal(left_pointer, right_pointer),
@@ -1607,7 +1607,7 @@ fn composite_exposure_finds_held_cells_by_structure_near_linearly() {
             let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
                 CResourceFact::own_composite(
                     "cell".to_string(),
-                    vec![CValue::Pointer(pointer(index))],
+                    vec![CValue::pointer(pointer(index))],
                 )
             }));
             let mut assumptions = PureFactContext::new();

@@ -244,19 +244,23 @@ impl<'a> Proof<'a> {
         let chosen_variable = Variable(self.state().locals().next_choice_variable);
         let chosen = match sort {
             Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
-            Sort::CPointer(CType::FunctionPointer(_)) => {
-                CValue::Pointer(Pointer::symbolic_function(chosen_variable))
+            Sort::CPointer(c_type @ CType::FunctionPointer(_)) => {
+                CValue::typed_pointer(Pointer::symbolic_function(chosen_variable), c_type)
             }
-            Sort::CPointer(_) => CValue::Pointer(Pointer::symbolic(chosen_variable)),
+            Sort::CPointer(c_type) => {
+                CValue::typed_pointer(Pointer::symbolic(chosen_variable), c_type)
+            }
             _ => return Err(self.step_error("unsupported existential choice sort")),
         };
         let chosen_fact = match &chosen {
             CValue::Int32(value) => {
                 substitute_int32_variable_in_proposition(&body, var, value.clone())
             }
-            CValue::Pointer(pointer) => {
-                crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer)
-            }
+            CValue::Pointer(pointer) => crate::kernel::substitute_pointer_variable_in_proposition(
+                &body,
+                var,
+                pointer.pointer(),
+            ),
             CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
         };
         let mut locals = self.state().locals().clone();

@@ -284,24 +284,27 @@ pub(in crate::surface) fn decode_predicate_arguments(
                     ));
                 };
                 default_memory.get_or_insert_with(|| memory.clone());
+                let element_type =
+                    click_array_element_type(parameter.c_type()).ok_or_else(|| {
+                        format!(
+                            "predicate `{}` argument `{}` is not an array-ref parameter",
+                            definition.name(),
+                            parameter.name()
+                        )
+                    })?;
                 values.insert(
                     parameter.name().to_string(),
-                    CValue::Pointer(pointer.clone()),
+                    CValue::typed_pointer(
+                        pointer.pointer().clone(),
+                        element_type.pointer_to().unwrap(),
+                    ),
                 );
                 array_refs.insert(
                     parameter.name().to_string(),
                     ClickArrayRef {
                         memory: memory.clone(),
-                        pointer: pointer.clone(),
-                        element_type: click_array_element_type(parameter.c_type()).ok_or_else(
-                            || {
-                                format!(
-                                    "predicate `{}` argument `{}` is not an array-ref parameter",
-                                    definition.name(),
-                                    parameter.name()
-                                )
-                            },
-                        )?,
+                        pointer: pointer.pointer().clone(),
+                        element_type,
                     },
                 );
                 index += 2;
@@ -860,6 +863,7 @@ fn evaluate_predicate_contract_segment(
     let CValue::Pointer(base) = base else {
         return Err("segment base did not evaluate to a pointer".to_string());
     };
+    let base = base.into_pointer();
     let start = evaluate_predicate_contract_expression(
         values,
         array_refs,

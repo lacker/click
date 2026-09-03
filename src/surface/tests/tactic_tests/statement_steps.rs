@@ -279,7 +279,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         true,
     );
     let statement = CStatement::TypedStore {
-        pointer: CExpression::Value(CValue::Pointer(second)),
+        pointer: CExpression::Value(CValue::pointer(second)),
         value: CExpression::Value(int32(9)),
         value_type: CType::Int32,
     };
@@ -1100,8 +1100,8 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
         syntax::C0Parameter::new(C0Type::Int32Pointer, "data".to_string(), None),
     ];
     let arguments = [
-        CExpression::Value(CValue::Pointer(owner)),
-        CExpression::Value(CValue::Pointer(data)),
+        CExpression::Value(CValue::pointer(owner)),
+        CExpression::Value(CValue::pointer(data)),
     ];
 
     let surface = super::proof::synthesize_surface_proposition(
@@ -1158,11 +1158,11 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
         syntax::C0Parameter::new(C0Type::Int32, "index".to_string(), None),
     ];
     let arguments = [
-        CExpression::Value(CValue::Pointer(Pointer {
+        CExpression::Value(CValue::pointer(Pointer {
             block: "arg-memory".into(),
             offset: owner_offset,
         })),
-        CExpression::Value(CValue::Pointer(Pointer {
+        CExpression::Value(CValue::pointer(Pointer {
             block: "arg-memory".into(),
             offset: data_offset,
         })),

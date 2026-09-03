@@ -150,6 +150,59 @@ pub struct Pointer {
     pub offset: PointerOffsetTerm,
 }
 
+/// A C pointer value carries both its raw address and the type through which
+/// the address is being viewed.  `Pointer` remains the untyped address
+/// identity used by memory, aliasing, and provenance; pointer casts retag the
+/// value without changing that identity.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CPointerValue {
+    pointer: Pointer,
+    c_type: CType,
+}
+
+impl CPointerValue {
+    pub(crate) fn new(pointer: Pointer, c_type: CType) -> Self {
+        assert!(
+            c_type.is_pointer(),
+            "C pointer values require a pointer type"
+        );
+        Self { pointer, c_type }
+    }
+
+    pub(crate) fn pointer(&self) -> &Pointer {
+        &self.pointer
+    }
+
+    pub(crate) fn into_pointer(self) -> Pointer {
+        self.pointer
+    }
+
+    pub(crate) fn c_type(&self) -> CType {
+        self.c_type
+    }
+
+    pub(crate) fn with_type(self, c_type: CType) -> Self {
+        Self::new(self.pointer, c_type)
+    }
+
+    pub(crate) fn replace_pointer(&mut self, pointer: Pointer) {
+        self.pointer = pointer;
+    }
+
+    pub(crate) fn is_null(&self) -> bool {
+        self.pointer.block == PointerBlock::Concrete("null".to_string())
+            && self.pointer.offset == PointerOffsetTerm::Constant(0)
+    }
+}
+
+impl std::ops::Deref for CPointerValue {
+    type Target = Pointer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.pointer
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum PointerBlock {
     Concrete(String),
@@ -215,7 +268,7 @@ pub enum CValue {
     Void,
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
-    Pointer(Pointer),
+    Pointer(CPointerValue),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

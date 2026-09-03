@@ -281,7 +281,10 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::Void => CValue::Void,
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
-            CValue::Pointer(pointer) => CValue::Pointer(canonicalize_pointer_loads(&pointer, 0)),
+            CValue::Pointer(pointer) => CValue::typed_pointer(
+                canonicalize_pointer_loads(pointer.pointer(), 0),
+                pointer.c_type(),
+            ),
         };
         std::sync::Arc::make_mut(&mut canonical.cells).insert(key, value);
     }

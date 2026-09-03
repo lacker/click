@@ -500,10 +500,10 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::UInt8Pointer
                 | CType::Int32PointerPointer
                 | CType::UInt8PointerPointer => {
-                    CValue::Pointer(Pointer::symbolic(variables.next()))
+                    CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
                 }
                 CType::FunctionPointer(_) => {
-                    CValue::Pointer(Pointer::symbolic_function(variables.next()))
+                    CValue::typed_pointer(Pointer::symbolic_function(variables.next()), *c_type)
                 }
                 CType::Int32Array(_) | CType::UInt8Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
@@ -609,7 +609,11 @@ pub fn c_uint8_literal(value: u8) -> CExpression {
 }
 
 pub fn c_pointer_value(pointer: Pointer) -> CExpression {
-    CExpression::Value(CValue::Pointer(pointer))
+    CExpression::Value(CValue::pointer(pointer))
+}
+
+pub fn c_typed_pointer_value(pointer: Pointer, c_type: CType) -> CExpression {
+    CExpression::Value(CValue::typed_pointer(pointer, c_type))
 }
 
 pub fn c_less_than(left: CExpression, right: CExpression) -> CExpression {

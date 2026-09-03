@@ -1,7 +1,7 @@
 use super::*;
 
 fn heap_allocation_paths() -> Vec<CStatementExecutionPath> {
-    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     execute_c_statement_paths(
         &state,
         &c_heap_allocate("p", 16),
@@ -28,7 +28,7 @@ fn successful_heap_allocation_state() -> CState {
         panic!("allocation should assign a pointer");
     };
     let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-        ConditionTerm::pointer_equal(pointer.clone(), Pointer::null()),
+        ConditionTerm::pointer_equal(pointer.pointer().clone(), Pointer::null()),
         false,
     ));
     resolve_pending_heap_allocations(pending, &assumptions)
@@ -83,7 +83,10 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
         success
             .resources()
             .facts()
-            .contains(&CResourceFact::own_allocation(pointer.clone(), 16))
+            .contains(&CResourceFact::own_allocation(
+                pointer.pointer().clone(),
+                16
+            ))
     );
     let read = evaluate_c_expression_paths(
         &success,
@@ -109,17 +112,21 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     let null = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pointer.clone(), Pointer::null()),
+            ConditionTerm::pointer_equal(pointer.pointer().clone(), Pointer::null()),
             true,
         )),
     );
     assert!(null.resources().facts().is_empty());
-    assert!(null.memory().live_heap_block_size(pointer).is_none());
+    assert!(
+        null.memory()
+            .live_heap_block_size(pointer.pointer())
+            .is_none()
+    );
 }
 
 #[test]
 fn zeroed_heap_allocation_reads_zero_until_a_store() {
-    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_allocate_sized_with_zeroed(
@@ -142,7 +149,7 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
     let success = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
             false,
         )),
     );
@@ -200,8 +207,8 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
 #[test]
 fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
     let state = CState::new()
-        .with_local("p", CValue::Pointer(Pointer::null()))
-        .with_local("q", CValue::Pointer(Pointer::null()));
+        .with_local("p", CValue::pointer(Pointer::null()))
+        .with_local("q", CValue::pointer(Pointer::null()));
     let calloc_paths = execute_c_statement_paths(
         &state,
         &c_heap_allocate_sized_with_zeroed(
@@ -224,7 +231,7 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
     let allocated = resolve_pending_heap_allocations(
         calloc_pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            pointer_is_null_condition(calloc_pointer.clone()),
+            pointer_is_null_condition(calloc_pointer.pointer().clone()),
             false,
         )),
     );
@@ -267,7 +274,7 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
     let success = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            pointer_is_null_condition(pending_pointer.clone()),
+            pointer_is_null_condition(pending_pointer.pointer().clone()),
             false,
         )),
     );
@@ -325,7 +332,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
-        .with_local("p", CValue::Pointer(Pointer::null()))
+        .with_local("p", CValue::pointer(Pointer::null()))
         .with_memory(
             CMemory::new()
                 .with_block("arg-memory", 4)
@@ -367,7 +374,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         panic!("unexpected pending-allocation derivation: {pending_derivation:?}");
     };
     assert_eq!(base.as_ref(), state.memory());
-    assert_eq!(allocation_base, &pending_pointer);
+    assert_eq!(allocation_base, pending_pointer.pointer());
     assert_eq!(*bytes, Bitvector32Term::Constant(16));
     assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
         state.memory(),
@@ -379,7 +386,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     let failed = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
             true,
         )),
     );
@@ -387,7 +394,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     assert!(
         failed
             .memory()
-            .live_heap_block_size(&pending_pointer)
+            .live_heap_block_size(pending_pointer.pointer())
             .is_none()
     );
     assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
@@ -401,7 +408,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     let succeeded = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
             false,
         )),
     );
@@ -448,7 +455,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
         &PureFactContext::new(),
     ));
 
-    let state = first.with_local("q", CValue::Pointer(Pointer::null()));
+    let state = first.with_local("q", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_allocate("q", 16),
@@ -475,7 +482,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     let second = resolve_pending_heap_allocations(
         pending,
         &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
             false,
         )),
     );
@@ -527,7 +534,7 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
             },
             ..
         }] if after == freed.memory()
-            && allocation_base == pointer
+            && allocation_base == pointer.pointer()
             && *bytes == Bitvector32Term::Constant(16)
     ));
     if !skip_without_memory_dag() {
@@ -537,7 +544,7 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
         assert!(matches!(
             derivation.as_ref(),
             CMemoryDerivation::HeapFreed { allocation_base, bytes, .. }
-                if allocation_base == pointer && *bytes == Bitvector32Term::Constant(16)
+                if allocation_base == pointer.pointer() && *bytes == Bitvector32Term::Constant(16)
         ));
     }
 
@@ -638,7 +645,7 @@ fn standalone_view_cannot_authorize_free() {
     let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
         panic!("successful allocation should expose its pointer")
     };
-    let pointer = pointer.clone();
+    let pointer = pointer.pointer().clone();
     let complete_access = CMemoryRange::new(
         pointer.clone(),
         Bitvector32Term::Constant(0),
@@ -676,7 +683,7 @@ fn persistent_composite_view_blocks_free_locally() {
     };
     let persistent = CResourceFact::view_composite(
         "borrowed_allocation".to_string(),
-        vec![CValue::Pointer(pointer.clone())],
+        vec![CValue::pointer(pointer.pointer().clone())],
     );
     let state = state.clone().with_resource_context(
         state
@@ -765,7 +772,7 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
     let state = CState::new()
         .with_memory(memory)
         .with_resource_context(resources)
-        .with_local("p", CValue::Pointer(allocation_base.clone()));
+        .with_local("p", CValue::pointer(allocation_base.clone()));
 
     let paths = execute_c_statement_paths(
         &state,
@@ -938,7 +945,7 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
     };
     let state = stored
         .clone()
-        .with_local("q", CValue::Pointer(Pointer::null()));
+        .with_local("q", CValue::pointer(Pointer::null()));
     let realloc_paths = execute_c_statement_paths(
         &state,
         &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(8)]),
@@ -973,7 +980,7 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
     assert!(pending.memory().live_heap_block_size(old_pointer).is_some());
 
     let success_assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-        pointer_is_null_condition(pending_pointer.clone()),
+        pointer_is_null_condition(pending_pointer.pointer().clone()),
         false,
     ));
     let success = resolve_pending_heap_allocations(pending, &success_assumptions);
@@ -981,43 +988,53 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
         panic!("successful realloc should assign a pointer");
     };
     assert_eq!(
-        success.memory().live_heap_block_size(resized),
+        success.memory().live_heap_block_size(resized.pointer()),
         Some(&Bitvector32Term::Constant(8))
     );
-    assert!(success.memory().is_deallocated_heap_address(old_pointer));
-    assert_eq!(success.memory().known_value(resized), Some(int32(37)));
+    assert!(
+        success
+            .memory()
+            .is_deallocated_heap_address(old_pointer.pointer())
+    );
+    assert_eq!(
+        success.memory().known_value(resized.pointer()),
+        Some(int32(37))
+    );
     assert!(
         success
             .resources()
             .facts()
-            .contains(&CResourceFact::own_allocation(resized.clone(), 8,))
+            .contains(&CResourceFact::own_allocation(resized.pointer().clone(), 8,))
     );
     assert!(!success.resources().facts().iter().any(|fact| {
         fact.allocation()
-            .is_some_and(|(base, _)| base == old_pointer)
+            .is_some_and(|(base, _)| base == old_pointer.pointer())
     }));
 
     let failure_assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
-        pointer_is_null_condition(pending_pointer.clone()),
+        pointer_is_null_condition(pending_pointer.pointer().clone()),
         true,
     ));
     let failure = resolve_pending_heap_allocations(pending, &failure_assumptions);
     assert_eq!(
         failure.locals().get("q"),
-        Some(&CValue::Pointer(Pointer::null()))
+        Some(&CValue::pointer(Pointer::null()))
     );
     assert!(failure.memory().live_heap_block_size(old_pointer).is_some());
     assert!(
         failure
             .resources()
             .facts()
-            .contains(&CResourceFact::own_allocation(old_pointer.clone(), 16,))
+            .contains(&CResourceFact::own_allocation(
+                old_pointer.pointer().clone(),
+                16,
+            ))
     );
 }
 
 #[test]
 fn free_null_needs_no_allocation_resources() {
-    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
@@ -1047,7 +1064,7 @@ fn free_preserves_a_separate_recursive_tail_with_the_same_symbolic_block() {
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(909_001)), 4),
     };
     let tail_resource =
-        CResourceFact::own_composite("allocated_list".to_string(), vec![CValue::Pointer(tail)]);
+        CResourceFact::own_composite("allocated_list".to_string(), vec![CValue::pointer(tail)]);
     let resources = ResourceContext::new()
         .unchecked_with_fact(CResourceFact::own_allocation(base.clone(), 16))
         .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
@@ -1062,7 +1079,7 @@ fn free_preserves_a_separate_recursive_tail_with_the_same_symbolic_block() {
     let state = CState::new()
         .with_memory(memory)
         .with_resource_context(resources)
-        .with_local("p", CValue::Pointer(base));
+        .with_local("p", CValue::pointer(base));
 
     let paths = execute_c_statement_paths(
         &state,
@@ -1087,7 +1104,7 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(910_000)), 4),
     };
-    let pointer_value = CValue::Pointer(pointer.clone());
+    let pointer_value = CValue::pointer(pointer.clone());
     let pointer_expression = SpecExpression::CExpression(c_variable("item"));
     let definition = CCompositeResourceDefinition::new(
         "owned_item",
@@ -1095,7 +1112,7 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
         Some(SpecProposition::Comparison {
             left: pointer_expression.clone(),
             operator: CComparisonOperator::NotEqual,
-            right: SpecExpression::Value(CValue::Pointer(Pointer::null())),
+            right: SpecExpression::Value(CValue::pointer(Pointer::null())),
         }),
         false,
         vec![
@@ -1151,7 +1168,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
     let active = SpecProposition::Comparison {
         left: SpecExpression::CExpression(c_variable("item")),
         operator: CComparisonOperator::NotEqual,
-        right: SpecExpression::Value(CValue::Pointer(Pointer::null())),
+        right: SpecExpression::Value(CValue::pointer(Pointer::null())),
     };
     function.contract_mutable = vec![
         CMemorySegment::new(c_int32_literal(7), c_int32_literal(0), c_int32_literal(1))
@@ -1163,7 +1180,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
             function: function.clone(),
         });
 
-    let null = CValue::Pointer(Pointer::null());
+    let null = CValue::pointer(Pointer::null());
     let null_state =
         CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
             CResourceFact::own_composite("owned_item".to_string(), vec![null]),
@@ -1192,7 +1209,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
     let nonnull_state = CState::new().with_resource_context(
         ResourceContext::new().unchecked_with_fact(CResourceFact::own_composite(
             "owned_item".to_string(),
-            vec![CValue::Pointer(nonnull.clone())],
+            vec![CValue::pointer(nonnull.clone())],
         )),
     );
     let nonnull_paths = execute_c_statement_paths(
@@ -1318,7 +1335,7 @@ fn interior_free_and_store_after_free_are_rejected() {
 
 #[test]
 fn returning_malloc_result_resolves_null_and_success_outcomes() {
-    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let statement = c_seq(c_heap_allocate("p", 16), c_return(c_variable("p")));
     let paths = execute_c_statement_paths(
         &state,
@@ -1347,7 +1364,7 @@ fn returning_malloc_result_resolves_null_and_success_outcomes() {
             panic!("malloc should return a pointer");
         };
         assert!(!state.memory().has_pending_heap_allocation());
-        if pointer == Pointer::null() {
+        if pointer.pointer() == &Pointer::null() {
             saw_failure = true;
             assert!(state.resources().facts().is_empty());
         } else {
@@ -1361,7 +1378,10 @@ fn returning_malloc_result_resolves_null_and_success_outcomes() {
                 state
                     .resources()
                     .facts()
-                    .contains(&CResourceFact::own_allocation(pointer.clone(), 16))
+                    .contains(&CResourceFact::own_allocation(
+                        pointer.pointer().clone(),
+                        16
+                    ))
             );
         }
     }
@@ -1370,7 +1390,7 @@ fn returning_malloc_result_resolves_null_and_success_outcomes() {
 
 #[test]
 fn unreturned_unresolved_malloc_result_cannot_cross_a_return() {
-    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let statement = c_seq(c_heap_allocate("p", 16), c_return(c_int32_literal(0)));
     let paths = execute_c_statement_paths(
         &state,

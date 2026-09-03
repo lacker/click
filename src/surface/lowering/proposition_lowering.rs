@@ -7,10 +7,10 @@ pub(in crate::surface) fn comparison_proposition(
 ) -> Result<Proposition, ClickError> {
     let pointer_and_null = match (&left, &right) {
         (CValue::Pointer(pointer), CValue::Int32(Bitvector32Term::Constant(0))) => {
-            Some((pointer.clone(), Pointer::null()))
+            Some((pointer.pointer().clone(), Pointer::null()))
         }
         (CValue::Int32(Bitvector32Term::Constant(0)), CValue::Pointer(pointer)) => {
-            Some((Pointer::null(), pointer.clone()))
+            Some((Pointer::null(), pointer.pointer().clone()))
         }
         _ => None,
     };
@@ -29,7 +29,9 @@ pub(in crate::surface) fn comparison_proposition(
             value,
         ));
     }
-    if let (CValue::Pointer(left), CValue::Pointer(right)) = (&left, &right) {
+    if let (CValue::Pointer(left), CValue::Pointer(right)) = (&left, &right)
+        && (left.c_type() == right.c_type() || left.is_null() || right.is_null())
+    {
         let value = match operator {
             ComparisonOperator::Equal => true,
             ComparisonOperator::NotEqual => false,
@@ -40,7 +42,7 @@ pub(in crate::surface) fn comparison_proposition(
             }
         };
         return Ok(Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(left.clone(), right.clone()),
+            ConditionTerm::pointer_equal(left.pointer().clone(), right.pointer().clone()),
             value,
         ));
     }

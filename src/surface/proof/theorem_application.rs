@@ -328,7 +328,10 @@ pub(super) fn theorem_application_bindings(
             }
             values.insert(
                 parameter.name().to_string(),
-                CValue::Pointer(array_ref.pointer.clone()),
+                CValue::typed_pointer(
+                    array_ref.pointer.clone(),
+                    expected_element_type.pointer_to().unwrap(),
+                ),
             );
             array_refs.insert(parameter.name().to_string(), array_ref);
         } else {

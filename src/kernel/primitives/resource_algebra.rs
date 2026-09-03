@@ -2776,7 +2776,7 @@ impl CResourceFact {
         let bytes = bytes.into();
         Self::own_token(
             Self::ALLOCATION_RESOURCE_NAME.to_string(),
-            vec![CValue::Pointer(base), int32(bytes)],
+            vec![CValue::pointer(base), int32(bytes)],
         )
     }
 
@@ -2790,7 +2790,7 @@ impl CResourceFact {
         let [CValue::Pointer(base), CValue::Int32(bytes)] = arguments.as_slice() else {
             return None;
         };
-        Some((base, bytes))
+        Some((base.pointer(), bytes))
     }
 
     pub(in crate::kernel) fn may_refer_to_memory_block(&self, block: &PointerBlock) -> bool {

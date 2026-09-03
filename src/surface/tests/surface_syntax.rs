@@ -751,14 +751,14 @@ fn surface_synthesis_omits_a_predicates_hidden_resource_state_argument() {
         name: "valid_pool".to_string(),
         arguments: vec![
             Term::CState(CState::new()),
-            Term::CValue(CValue::Pointer(pool.clone())),
+            Term::CValue(CValue::pointer(pool.clone())),
         ],
     };
 
     let surface = synthesize_surface_proposition(
         &proposition,
         function.parameters(),
-        &[CExpression::Value(CValue::Pointer(pool))],
+        &[CExpression::Value(CValue::pointer(pool))],
         &CState::new(),
     )
     .expect("the hidden state should not need a surface spelling");
@@ -805,7 +805,7 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     let surface = synthesize_surface_proposition(
         &proposition,
         function.parameters(),
-        &[CExpression::Value(CValue::Pointer(owner.clone()))],
+        &[CExpression::Value(CValue::pointer(owner.clone()))],
         &CState::new(),
     )
     .expect("known struct field load should have a surface spelling");
@@ -842,7 +842,7 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     let surface = synthesize_surface_proposition(
         &proposition,
         function.parameters(),
-        &[CExpression::Value(CValue::Pointer(owner))],
+        &[CExpression::Value(CValue::pointer(owner))],
         &CState::new(),
     )
     .expect("indexed pointer field load should have a surface spelling");

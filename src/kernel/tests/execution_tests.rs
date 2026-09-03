@@ -27,7 +27,7 @@ fn loop_back_edge_rejects_heap_and_resource_state_changes() {
     );
     let freed = execute_c_statement_paths(
         &top,
-        &c_heap_free(CExpression::Value(CValue::Pointer(Pointer {
+        &c_heap_free(CExpression::Value(CValue::pointer(Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
         }))),
@@ -145,12 +145,12 @@ fn join_state_abstracts_changed_pointer_locals() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let abstract_left = abstract_c_state_for_join(
-        &CState::new().with_local("selected", CValue::Pointer(left)),
+        &CState::new().with_local("selected", CValue::pointer(left)),
         &BTreeMap::new(),
     )
     .expect("pointer join abstraction");
     let abstract_right = abstract_c_state_for_join(
-        &CState::new().with_local("selected", CValue::Pointer(right)),
+        &CState::new().with_local("selected", CValue::pointer(right)),
         &BTreeMap::new(),
     )
     .expect("pointer join abstraction");
@@ -166,7 +166,7 @@ fn join_state_abstracts_changed_pointer_locals() {
 fn join_state_fresh_variables_do_not_collide_with_symbolic_pointer_blocks() {
     let state = CState::new().with_local(
         "selected",
-        CValue::Pointer(Pointer::symbolic(Variable(1_000_000))),
+        CValue::pointer(Pointer::symbolic(Variable(1_000_000))),
     );
     let abstract_state =
         abstract_c_state_for_join(&state, &BTreeMap::new()).expect("pointer join abstraction");

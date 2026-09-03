@@ -89,16 +89,35 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     }
 }
 
+fn cast_c_value_to_type(
+    value: CValue,
+    target_type: CType,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    if target_type.is_pointer() {
+        if let CValue::Pointer(pointer) = value {
+            return Some(CValue::typed_pointer(pointer.into_pointer(), target_type));
+        }
+    }
+    coerce_c_value_to_type(value, target_type, obligations, assumptions)
+}
+
 pub(in crate::kernel) fn coerce_c_null_pointer_constant(
     value: CValue,
     target_type: CType,
 ) -> Option<CValue> {
     if target_type.accepts(&value) {
-        return Some(value);
+        return Some(match value {
+            CValue::Pointer(pointer) if pointer.is_null() => {
+                CValue::typed_pointer(pointer.into_pointer(), target_type)
+            }
+            value => value,
+        });
     }
     match (target_type, value) {
         (target_type, CValue::Int32(Bitvector32Term::Constant(0))) if target_type.is_pointer() => {
-            Some(CValue::Pointer(Pointer::null()))
+            Some(CValue::typed_pointer(Pointer::null(), target_type))
         }
         _ => None,
     }
@@ -130,7 +149,14 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 .clone();
             vec![CExpressionPath {
                 outcome: if state.memory.has_block(&pointer.block) {
-                    CExpressionOutcome::Value(CValue::Pointer(pointer))
+                    CExpressionOutcome::Value(CValue::typed_pointer(
+                        pointer,
+                        state
+                            .locals
+                            .object_type(name)
+                            .and_then(CType::pointer_to)
+                            .unwrap_or(CType::Int32Pointer),
+                    ))
                 } else {
                     CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
                 },
@@ -142,7 +168,10 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
         CExpression::FunctionAddress(name) => vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(CValue::Pointer(Pointer::function(name.clone()))),
+            outcome: CExpressionOutcome::Value(CValue::typed_pointer(
+                Pointer::function(name.clone()),
+                CType::FunctionPointer(0),
+            )),
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
@@ -397,7 +426,7 @@ fn evaluate_c_cast_paths(
                             &effective_assumptions,
                         )
                         .map(CValue::Int32),
-                        value => coerce_c_value_to_type(
+                        value => cast_c_value_to_type(
                             value,
                             target_type,
                             &mut obligations,
@@ -405,7 +434,7 @@ fn evaluate_c_cast_paths(
                         ),
                     }
                 } else {
-                    coerce_c_value_to_type(
+                    cast_c_value_to_type(
                         value,
                         target_type,
                         &mut obligations,
@@ -527,7 +556,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, value_type)),
+                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                            pointer.pointer().clone(),
+                            value_type,
+                        )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -560,7 +592,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, *value_type)),
+                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                            pointer.pointer().clone(),
+                            *value_type,
+                        )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -595,7 +630,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, value_type)),
+                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                            pointer.pointer().clone(),
+                            value_type,
+                        )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -764,7 +802,13 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
         paths.push(match lvalue_path.outcome {
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
                 Some(pointer) => CExpressionPath {
-                    outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
+                    outcome: CExpressionOutcome::Value(CValue::typed_pointer(
+                        pointer,
+                        lvalue
+                            .value_type()
+                            .pointer_to()
+                            .unwrap_or(CType::Int32Pointer),
+                    )),
                     facts: lvalue_path.facts,
                     obligations: lvalue_path.obligations,
                 },
@@ -980,7 +1024,7 @@ pub(in crate::kernel) fn c_truthiness_paths(
             }
         }
         CValue::Pointer(pointer) => {
-            let is_null = pointer_is_null_condition(pointer);
+            let is_null = pointer_is_null_condition(pointer.pointer().clone());
             match decide_with_facts(assumptions, &facts, &is_null) {
                 Some(true) => vec![CTruthinessPath {
                     is_true: false,

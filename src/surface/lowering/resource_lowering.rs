@@ -27,15 +27,19 @@ pub(in crate::surface) fn initial_call_state(
                 )));
             }
             C0Type::FunctionPointer(_) => {
-                arguments.push(c_pointer_value(Pointer::symbolic_function(Variable(
-                    POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                ))));
+                arguments.push(c_typed_pointer_value(
+                    Pointer::symbolic_function(Variable(
+                        POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                    )),
+                    parameter.c_type().to_kernel_type(),
+                ));
             }
             C0Type::Int32Pointer
             | C0Type::UInt8Pointer
             | C0Type::Int32PointerPointer
             | C0Type::UInt8PointerPointer => {
                 let c_type = parameter.c_type();
+                let kernel_c_type = parameter.to_kernel_parameter().c_type();
                 // Struct array parameters are lowered to byte pointers in the
                 // kernel, so their symbolic external argument address uses
                 // byte-pointer identity. The struct stride is retained only
@@ -51,15 +55,18 @@ pub(in crate::surface) fn initial_call_state(
                     },
                     |_| 1,
                 );
-                arguments.push(c_pointer_value(Pointer {
-                    block: PointerBlock::ExternalArgument,
-                    offset: scale_int32_offset(
-                        Bitvector32Term::Variable(Variable(
-                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                        )),
-                        i64::from(element_width),
-                    ),
-                }));
+                arguments.push(c_typed_pointer_value(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            i64::from(element_width),
+                        ),
+                    },
+                    kernel_c_type,
+                ));
             }
             C0Type::Int32 => {
                 arguments.push(CExpression::Value(CValue::Int32(
@@ -779,6 +786,7 @@ fn lower_resource_segment_with_values(
             "could not lower `{resource_name}` resource: segment base did not evaluate to a pointer"
         )));
     };
+    let base = base.into_pointer();
     let start = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.start)
         .map_err(|message| {
             ClickError::new(format!(
@@ -1176,18 +1184,21 @@ fn symbolic_value_from_load(
     match element_type {
         CType::Int32 => CValue::Int32(load),
         CType::UInt8 => CValue::UInt8(load),
-        c_type if c_type.is_pointer() => CValue::Pointer(Pointer {
-            block: pointer.block.clone(),
-            offset: PointerOffsetTerm::scale_int32(
-                load,
-                i64::from(
-                    c_type
-                        .pointee_type()
-                        .expect("pointer element type has a pointee")
-                        .byte_width(),
+        c_type if c_type.is_pointer() => CValue::typed_pointer(
+            Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::scale_int32(
+                    load,
+                    i64::from(
+                        c_type
+                            .pointee_type()
+                            .expect("pointer element type has a pointee")
+                            .byte_width(),
+                    ),
                 ),
-            ),
-        }),
+            },
+            c_type,
+        ),
         _ => unreachable!("memory ranges cannot contain aggregate elements"),
     }
 }
@@ -1298,7 +1309,7 @@ pub(in crate::surface) fn array_refs_for_parameters(
                 parameter.name().to_string(),
                 ClickArrayRef {
                     memory: memory.clone(),
-                    pointer: pointer.clone(),
+                    pointer: pointer.pointer().clone(),
                     element_type,
                 },
             ))

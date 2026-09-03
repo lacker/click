@@ -602,7 +602,10 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
             .with_memory(initial_memory)
             .with_resource_context(initial_resources.clone())
     );
-    assert_eq!(verified.specification.arguments(), &[c_pointer_value(base)]);
+    assert_eq!(
+        verified.specification.arguments(),
+        &[crate::kernel::c_pointer_value(base)]
+    );
     assert_eq!(
         verified.specification.outcome(),
         &CFunctionOutcome::Return {
