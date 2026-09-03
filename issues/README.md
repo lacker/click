@@ -23,6 +23,10 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
+## Verifier regressions: 1
+
+- [Binary-tree verification exceeds the CLI limit since the binder-hygiene commit](binary-tree-verification-slowdown.md)
+
 ## Functionality gaps: 29
 
 C language coverage:
