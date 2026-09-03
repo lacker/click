@@ -1799,6 +1799,31 @@ impl PureFactContext {
             }
         }
 
+        // A held range describes a physical byte footprint even when its
+        // public bounds use another logical element width. This matters for
+        // ABI structs: the allocation's complete int32-indexed access can
+        // authorize a uint8 field or a pointer field at its byte offset.
+        // Keep this fallback read-only; resource consumption still requires
+        // matching logical range units so splitting ownership remains exact.
+        let range_base = base.offset_by_elements(start.clone(), element_width);
+        let range_bytes = Bitvector32Term::multiply(
+            Bitvector32Term::subtract(end.clone(), start.clone()),
+            Bitvector32Term::Constant(element_width),
+        );
+        if let Some(byte_offset) = pointer_byte_offset_from_base(pointer, &range_base) {
+            let access_end =
+                Bitvector32Term::add(byte_offset.clone(), Bitvector32Term::Constant(byte_width));
+            if self.decide(&ConditionTerm::signed_greater_equal(
+                byte_offset,
+                Bitvector32Term::Constant(0),
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_equal(access_end, range_bytes))
+                    == Some(true)
+            {
+                return true;
+            }
+        }
+
         if element_width > 0 && byte_width.is_multiple_of(element_width) {
             let range_base = base.offset_by_elements(start.clone(), element_width);
             let access_length = Bitvector32Term::Constant(byte_width / element_width);

@@ -619,6 +619,51 @@ fn c0_syntax_lowers_calloc_to_zeroed_runtime_allocation() {
 }
 
 #[test]
+fn c0_syntax_accepts_matching_struct_calloc() {
+    let function = syntax::parse_function(
+        r#"
+        struct item { int32 value; };
+        int32 allocate_zeroed(int32 count) {
+            struct item* item = calloc(count, sizeof(struct item));
+            return item->value;
+        }
+        "#,
+    )
+    .expect("calloc should accept a matching struct element size");
+
+    fn find_allocation(
+        statement: &syntax::C0Statement,
+    ) -> Option<(&str, &syntax::C0Expression, bool)> {
+        match statement {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => Some((target, bytes, *zeroed)),
+            syntax::C0Statement::Seq(first, second) => {
+                find_allocation(first).or_else(|| find_allocation(second))
+            }
+            _ => None,
+        }
+    }
+
+    let (target, bytes, zeroed) =
+        find_allocation(function.body()).expect("struct calloc should lower");
+    assert_eq!(target, "item");
+    assert!(zeroed);
+    assert_eq!(
+        bytes,
+        &syntax::C0Expression::Multiply(
+            Box::new(syntax::C0Expression::Variable("count".to_string())),
+            Box::new(syntax::C0Expression::SizeOfStruct {
+                name: "item".to_string(),
+                bytes: 4,
+            }),
+        )
+    );
+}
+
+#[test]
 fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
     let function = syntax::parse_function(
         r#"

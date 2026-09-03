@@ -392,9 +392,21 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         return paths;
     }
 
-    if memory.is_zeroed_heap_address(&pointer) && value_type == CType::Int32 {
+    if memory.is_zeroed_heap_address(&pointer) {
+        let value = match value_type {
+            CType::Int32 => int32(Bitvector32Term::Constant(0)),
+            CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
+            _ if value_type.is_pointer() => CValue::Pointer(Pointer::null()),
+            _ => {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
+                }];
+            }
+        };
         return vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::Constant(0))),
+            outcome: CExpressionOutcome::Value(value),
             facts,
             obligations,
         }];

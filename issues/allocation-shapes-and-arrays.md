@@ -7,8 +7,10 @@ be discarded", `src/languages/c/syntax.rs:1241-1244`); struct allocation must
 literally be `malloc(sizeof(struct S))` matching the target's type
 (`:1379-1400`); `sizeof` applies only to structs (`:1727-1737`), so
 `n * sizeof(int)` is unwritable and runtime int32 allocation uses the magic
-form `malloc(count * 4)`; `calloc`, `realloc`, and arbitrary byte layouts are
-unsupported (`docs/concepts/resources.md:590-595`; `docs/internals/roadmap.md:142-145`).
+form `malloc(count * 4)`; broader allocation beyond the supported `calloc`
+forms, `realloc`, and arbitrary byte layouts is unsupported
+(`docs/concepts/resources.md:590-595`;
+`docs/internals/roadmap.md:142-145`).
 Local arrays take exactly one dimension suffix (`:1025-1064`), initializers
 are rejected ("local array initializers are not supported", `:1145-1147`),
 and struct-typed arrays are rejected (`:922-926`, `:1129-1133`).

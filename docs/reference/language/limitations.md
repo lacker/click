@@ -19,10 +19,11 @@ operators.
 C0 supports `sizeof` for the modeled scalar and pointer types, plus
 `malloc(sizeof(struct T))` into a matching `struct T*` and runtime-sized
 `int32` backing allocations such as `malloc(count * sizeof(int32))`, with
-ordinary null checking and `free`; `calloc(count, sizeof(int32))` is the
-zeroed variant. It does not yet support zero sizes, arbitrary byte layouts,
-`size_t`, general `void *` conversions, allocator declarations, custom
-allocators, or `realloc`.
+ordinary null checking and `free`. The zeroed variants are
+`calloc(count, sizeof(int32))` and matching
+`calloc(count, sizeof(struct T))` for a `struct T*` target. It does not yet
+support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
+conversions, allocator declarations, custom allocators, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int32`, `uint8`, and pointer-valued fields, plus chained

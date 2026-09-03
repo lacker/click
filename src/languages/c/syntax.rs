@@ -1837,21 +1837,33 @@ impl Parser {
                     arguments.len()
                 )));
             };
-            if !matches!(
+            if let Some(target_struct) = self.variable_structs.get(&target) {
+                let matches_target = match element_size {
+                    C0Expression::SizeOfStruct { name, .. } => name == target_struct,
+                    C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        struct_name: Some(name),
+                        ..
+                    } => name == target_struct,
+                    _ => false,
+                };
+                if !matches_target {
+                    return Err(self.error_here(format!(
+                        "`calloc` size must be `sizeof(struct {target_struct})` for target `struct {target_struct} *`"
+                    )));
+                }
+            } else if !matches!(
                 element_size,
                 C0Expression::Int32Literal(4)
                     | C0Expression::SizeOfType {
                         c_type: C0Type::Int32,
+                        struct_name: None,
                         ..
                     }
             ) {
-                return Err(self
-                    .error_here("`calloc` currently supports only `sizeof(int32)` element sizes"));
-            }
-            if self.variable_structs.contains_key(&target) {
-                return Err(
-                    self.error_here("`calloc` currently supports only int32 element allocations")
-                );
+                return Err(self.error_here(
+                    "`calloc` currently supports only `sizeof(int32)` or a matching struct size",
+                ));
             }
             C0Expression::Multiply(Box::new(count.clone()), Box::new(element_size.clone()))
         } else {

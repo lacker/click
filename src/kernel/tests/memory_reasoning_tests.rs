@@ -74,6 +74,33 @@ fn memory_resource_coverage_requires_a_shared_element_width() {
 }
 
 #[test]
+fn typed_reads_can_use_a_differently_indexed_byte_footprint() {
+    let base = Pointer {
+        block: "struct-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let byte_field = base.offset_by_elements(Bitvector32Term::Constant(1), 1);
+    let assumptions = PureFactContext::new();
+
+    assert!(assumptions.pointer_access_in_range(
+        &byte_field,
+        1,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(2),
+        4,
+    ));
+    assert!(!assumptions.pointer_access_in_range(
+        &base.offset_by_elements(Bitvector32Term::Constant(8), 1),
+        1,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(2),
+        4,
+    ));
+}
+
+#[test]
 fn element_index_and_count_support_nonlegacy_widths() {
     for (element_width, index, byte_count) in
         [(1_u32, 3_u32, 3_u32), (2, 7, 14), (4, 5, 20), (8, 2, 16)]

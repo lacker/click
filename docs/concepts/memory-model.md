@@ -25,11 +25,11 @@ nonzero integers still cannot be used as pointers.
 
 The supported `malloc` and `calloc` forms have a null outcome and a successful
 outcome. Success creates a fresh block identity at offset zero, with either
-the exact LP64 size of `struct T` or a verified runtime `int32`-array extent
-such as `count * 4`. Heap identities are not reused within a proof. Fresh
-`malloc` bytes are uninitialized, so ownership permits stores but does not
-make an unstored cell readable; successful `calloc` cells read as zero until
-overwritten.
+the exact LP64 size of `struct T` or a verified runtime extent such as
+`count * 4` or `count * sizeof(struct T)`. Heap identities are not reused
+within a proof. Fresh `malloc` bytes are uninitialized, so ownership permits
+stores but does not make an unstored cell readable; successful `calloc` cells
+read as zero or null until overwritten.
 
 Click tracks two different facts on the successful branch:
 
