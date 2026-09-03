@@ -1443,14 +1443,18 @@ fn append_composite_resource_relation_facts_with_store<F: ResourcePureFacts>(
         };
         propositions.insert(proposition);
     }
-    for i in 0..owned_children.len() {
-        for right in &owned_children[i + 1..] {
-            let proposition = Proposition::CResourceSeparate {
-                left: owned_children[i].clone(),
-                right: right.clone(),
-            };
-            propositions.insert(proposition);
-        }
+    if owned_children.len() >= 2 {
+        // Keep ownership-derived separation lazy. The compact carrier is
+        // checked by the kernel when a particular member pair is requested;
+        // publishing every pair here makes one composite unfold quadratic.
+        let owned_context = ResourceContext::new().unchecked_with_facts(
+            contained_resources
+                .facts()
+                .iter()
+                .filter(|fact| fact.is_own())
+                .cloned(),
+        );
+        propositions.insert(Proposition::CResourceComposition(owned_context));
     }
 }
 

@@ -897,14 +897,18 @@ impl<'a> Proof<'a> {
             self.lower_surface_goal(&structural_proposition, "`have` body")?
         };
         // A `have` stated at an execution frontier proves its goal from the
-        // frontier's facts alone; the selected-separation materialization
-        // below serves outcome and fixed-state judgments, whose separation goals
-        // are read from retained resources rather than derived in the body.
+        // frontier's facts alone. After an explicit checked resource unfold,
+        // materialize only a selected separation goal from the compact
+        // composition; call postconditions remain lazy so source expansion
+        // preserves their anchored rewrites.
         let at_frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
-        let mut body_facts = if at_frontier {
-            self.facts().clone()
-        } else {
+        let resource_unfolded = self
+            .execution()
+            .is_some_and(|execution| execution.presentation.resource_unfolded);
+        let mut body_facts = if !at_frontier || resource_unfolded {
             self.facts().with_selected_resource_separation(&body_kernel)
+        } else {
+            self.facts().clone()
         };
         // A `have` stated at an execution frontier may use the frontier's
         // effect facts exactly as the shared mid-execution law offers them.

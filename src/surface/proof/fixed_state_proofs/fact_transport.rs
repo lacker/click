@@ -150,6 +150,11 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
+    // Resource compositions keep separation compact. Materialize only a
+    // listed separation premise on the local checked snapshot so explicit
+    // `transport using` retains its exact-premise contract without publishing
+    // every unrelated member pair.
+    let mut available = available.clone();
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
         let premise = if let Some(recorded) = surface_propositions
@@ -175,6 +180,7 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
                 ))
             })?
         };
+        available = available.with_selected_resource_separation(&premise);
         // A premise that lowers to a syntactically reflexive equality (two
         // snapshot reads canonicalized to one term) needs no fact. This is a
         // constant structural check, cheap enough for smart search to run

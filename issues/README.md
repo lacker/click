@@ -49,4 +49,3 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
-- [Keep composite resource-member verification within the slow-test budget](composite-resource-scaling.md)

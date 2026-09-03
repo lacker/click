@@ -1460,6 +1460,30 @@ impl PureFactContext {
         }
 
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right) {
+            let composition_covers = |target: &CMemoryRange, other: &CMemoryRange| {
+                self.resource_compositions.iter().any(|resources| {
+                    let intervals = resources
+                        .owned_memory_ranges_separate_from(
+                            &target.base().block,
+                            &CResource::Memory(other.clone()),
+                            |owner, child| self.proves_resource_contains_inner(owner, child),
+                        )
+                        .into_iter()
+                        .filter_map(|range| {
+                            self.fact_range_interval_on_target(
+                                target,
+                                range.base(),
+                                range.start(),
+                                range.end(),
+                            )
+                        })
+                        .collect();
+                    range_intervals_cover_target(target, intervals)
+                })
+            };
+            if composition_covers(left, right) || composition_covers(right, left) {
+                return true;
+            }
             return self.range_covered_by_resource_separate_ranges(left, right)
                 || self.range_covered_by_resource_separate_ranges(right, left);
         }

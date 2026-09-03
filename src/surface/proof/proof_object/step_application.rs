@@ -279,13 +279,13 @@ impl<'a> Proof<'a> {
             .execution_start_state(&execution.core.state);
 
         let mut data = (*goal.data).clone();
+        let mut available_facts = self.facts().clone();
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
             let fact = data
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
-                    self.facts()
-                        .available_across_effects(kernel, &execution.core.effect_facts)
+                    available_facts.available_across_effects(kernel, &execution.core.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -296,15 +296,13 @@ impl<'a> Proof<'a> {
             // prerequisites: an available fact across the recorded effects,
             // or a resource-shaped fact derived atomically from the context.
             let available = |fact: &Proposition| {
-                self.facts()
-                    .available_across_effects(fact, &execution.core.effect_facts)
+                available_facts.available_across_effects(fact, &execution.core.effect_facts)
                     || (matches!(
                         fact,
                         Proposition::CResourceContains { .. }
                             | Proposition::CResourceSeparate { .. }
                             | Proposition::CMemoryLoadable { .. }
-                    ) && self
-                        .facts()
+                    ) && available_facts
                         .assumptions()
                         .derive_atomic_proposition(fact)
                         .is_some())
@@ -325,7 +323,7 @@ impl<'a> Proof<'a> {
                     .filter_map(|snapshot_state| {
                         lower_fixed_state_proposition_with_assumptions(
                             surface,
-                            self.facts().assumptions(),
+                            available_facts.assumptions(),
                             context.parsed_function.parameters(),
                             context.arguments,
                             pre_state,
@@ -345,6 +343,7 @@ impl<'a> Proof<'a> {
                     "outcome `frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
                 )));
             }
+            available_facts = available_facts.with_selected_resource_separation(&fact);
             data.surface_propositions.record_lowering(surface, &fact)?;
             if !frame_facts.contains(&fact) {
                 frame_facts.push(fact);
@@ -433,28 +432,27 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
 
+        let mut available_facts = self.facts().clone();
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
             let fact = execution
                 .presentation
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
-                    self.facts()
-                        .available_across_effects(kernel, &execution.core.effect_facts)
+                    available_facts.available_across_effects(kernel, &execution.core.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
                 .unwrap_or_else(|| {
                     self.lower_surface_proposition(surface, "`frame using` premise")
                 })?;
-            if !self
-                .facts()
-                .available_across_effects(&fact, &execution.core.effect_facts)
-            {
+            let selected_facts = available_facts.with_selected_resource_separation(&fact);
+            if !selected_facts.available_across_effects(&fact, &execution.core.effect_facts) {
                 return Err(self.step_error(format!(
                     "`frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
                 )));
             }
+            available_facts = selected_facts;
             execution
                 .presentation
                 .surface_propositions

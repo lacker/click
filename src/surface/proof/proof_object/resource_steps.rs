@@ -632,6 +632,7 @@ impl<'a> Proof<'a> {
                     "kernel rejected checked resource `unfold`: {message}"
                 ))
             })?;
+        execution.presentation.resource_unfolded = true;
         execution.core.state = checked.state.into();
         let branch = self
             .focused_branch()

@@ -694,7 +694,15 @@ fn grouped_claims_share_one_execution_with_near_linear_work() {
 }
 
 #[test]
-fn composite_definition_members_scale_near_linearly() {
+fn composite_definition_members_preserve_small_bundle() {
+    let (c_source, click_source) = resource_member_project(3);
+    let verified = verify_c0_sources(&click_source, &[("preserve_bundle.c", c_source.as_str())])
+        .expect("a small composite resource bundle should verify");
+    assert!(!verified.is_empty());
+}
+
+#[test]
+fn composite_definition_members_keep_separation_work_compact() {
     let samples = [8, 16, 32, 64]
         .into_iter()
         .map(|size| {
@@ -713,6 +721,25 @@ fn composite_definition_members_scale_near_linearly() {
         })
         .collect::<Vec<_>>();
 
+    // The aggregate curve also includes fixed parser and certificate costs,
+    // so inspect the previously quadratic publisher directly. A zero curve
+    // proves that member separation is supplied by the compact composition
+    // authority instead of hidden by the fixed overhead.
+    let separation_work = samples
+        .iter()
+        .map(|sample| {
+            sample
+                .named_work
+                .get("operation `derived proposition: resource separate`")
+                .copied()
+                .unwrap_or(0)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        separation_work,
+        vec![0; samples.len()],
+        "composite member separation must use compact composition authority, not materialized pairs"
+    );
     assert_near_linear_scaling("composite definition members", &samples);
 }
 

@@ -3703,6 +3703,7 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
         .clone()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
+    let mut child_facts = Vec::new();
     let mut children = Vec::new();
     let body_active = evaluate_composite_resource_body_condition(
         definition,
@@ -3726,25 +3727,28 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
         };
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());
         if composite.is_own()
-            && let Some(child) = child.owned_resource()
+            && let Some(owned_child) = child.owned_resource()
         {
-            children.push(child.clone());
+            children.push(owned_child.clone());
         }
+        child_facts.push(child);
     }
     let mut propositions = Vec::new();
+    if composite.is_own() {
+        // The child context is the compact authority for ownership-derived
+        // separation. Publishing one carrier lets certification answer
+        // member-pair queries on demand instead of materializing O(N^2)
+        // `CResourceSeparate` propositions.
+        let child_context = ResourceContext::new()
+            .try_compose_with_facts(child_facts, assumptions)
+            .ok()?;
+        propositions.push(Proposition::CResourceComposition(child_context));
+    }
     for child in &children {
         propositions.push(Proposition::CResourceContains {
             parent: composite.resource().clone(),
             child: child.clone(),
         });
-    }
-    for index in 0..children.len() {
-        for right in &children[index + 1..] {
-            propositions.push(Proposition::CResourceSeparate {
-                left: children[index].clone(),
-                right: right.clone(),
-            });
-        }
     }
     Some(propositions)
 }

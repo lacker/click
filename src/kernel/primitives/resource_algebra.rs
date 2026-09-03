@@ -687,6 +687,39 @@ impl ResourceContext {
             .is_some_and(|(left_position, right_position)| left_position != right_position)
     }
 
+    /// Returns the owned memory members that are distinct from every owned
+    /// resource containing `other`. A caller can use the returned members to
+    /// cover a larger queried range without enumerating all member pairs.
+    pub(in crate::kernel) fn owned_memory_ranges_separate_from(
+        &self,
+        block: &PointerBlock,
+        other: &CResource,
+        contains: impl Fn(&CResource, &CResource) -> bool,
+    ) -> Vec<CMemoryRange> {
+        let facts = self.iter().collect::<Vec<_>>();
+        let excluded = facts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, fact)| {
+                (fact.is_own() && contains(fact.resource(), other)).then_some(index)
+            })
+            .collect::<BTreeSet<_>>();
+        if excluded.is_empty() {
+            return Vec::new();
+        }
+        facts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, fact)| {
+                if excluded.contains(&index) || !fact.is_own() {
+                    return None;
+                }
+                let range = fact.memory_own_range()?;
+                (range.base().block == *block).then_some(range.clone())
+            })
+            .collect()
+    }
+
     pub(in crate::kernel) fn proves_owned_pointers_separate_by(
         &self,
         left: &Pointer,

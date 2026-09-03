@@ -2004,6 +2004,7 @@ impl<'a> Proof<'a> {
             let kernel = proof
                 .lower_surface_proposition(surface, "restricted simp premise")
                 .ok()?;
+            proof = proof.materialize_selected_resource_separation(&kernel)?;
             if !proof.facts().contains_top_level(&kernel)
                 && !normalizes_context_free(&kernel)
                 && proof.facts().contains_proper_conjunct(&kernel)
@@ -2024,9 +2025,13 @@ impl<'a> Proof<'a> {
                 // A listed premise that lowers to a context-free truth needs
                 // no ambient fact authority. Retaining it lets the restricted
                 // derivation erase reflexive field equalities after the
-                // outcome state has evaluated their loads.
-                (proof.facts().contains_top_level(&kernel) || normalizes_context_free(&kernel))
-                    .then_some((kernel, surface.clone()))
+                // outcome state has evaluated their loads. Resource
+                // separation may instead be supplied by the compact
+                // composition authority, so use the same checked availability
+                // query without publishing unrelated member pairs.
+                (proof.facts().available_across_effects(&kernel, &[])
+                    || normalizes_context_free(&kernel))
+                .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
         let restricted = premise_pairs

@@ -923,6 +923,12 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// artifacts cannot masquerade as proof steps.
     pub(in crate::surface::proof) planned_statement_transitions:
         SharedVec<PlannedStatementTransition>,
+    /// Whether this execution lineage has explicitly unfolded a composite
+    /// resource. Only that checked operation opts a frontier `have` into
+    /// materializing one selected relation from the compact composition;
+    /// call postconditions keep the relation lazy so source expansion retains
+    /// their anchored rewrites.
+    pub(in crate::surface::proof) resource_unfolded: bool,
     /// Where a source tactic's expansion is being captured on this path.
     pub(in crate::surface::proof) expansion: ExpansionCursor,
     pub(in crate::surface::proof) branch_path: PersistentSequence<String>,
@@ -991,6 +997,7 @@ impl ExecutionProofState {
                 invariant_closer_step: Default::default(),
                 region_simp: None,
                 planned_statement_transitions: Default::default(),
+                resource_unfolded: false,
                 expansion: ExpansionCursor::default(),
                 branch_path,
                 branch_surface_facts: PersistentOrderedSet::default(),
@@ -1332,6 +1339,30 @@ impl<'a> Proof<'a> {
                 .with_state(self.refined_branch_state(facts))
         });
         CheckedFocusedTransition::replacing(locals, branch, added_facts, checked_facts)
+    }
+
+    /// Installs one resource separation selected from the compact composition
+    /// authority into this local checked proof state. The materialization is
+    /// an internal premise-selection operation, not a user-visible proof
+    /// step; enclosing scopes publish only their stated proposition.
+    pub(super) fn materialize_selected_resource_separation(
+        &self,
+        goal: &Proposition,
+    ) -> Option<Self> {
+        let facts = self.facts().with_selected_resource_separation(goal);
+        if facts.contains(goal) && !self.facts().contains(goal) {
+            let transition = self.checked_fact_transition(
+                self.state().locals().clone(),
+                facts,
+                false,
+                vec![goal.clone()],
+                vec![goal.clone()],
+            );
+            let state = self.publish_checked_transition(transition).ok()?;
+            Some(self.with_kernel_state(state))
+        } else {
+            Some(self.clone())
+        }
     }
 
     fn checked_execution_transition(
