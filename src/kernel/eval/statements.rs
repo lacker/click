@@ -832,8 +832,8 @@ fn execute_c_heap_free_paths(
             .resources
             .facts()
             .iter()
-            .find_map(|fact| fact.allocation())
-            .filter(|(base, _)| **base == pointer)
+            .filter_map(|fact| fact.allocation())
+            .find(|(base, _)| **base == pointer)
             .map(|(_, bytes)| bytes.clone());
         let before_free = state.memory.clone();
         let mut working_memory = state.memory.clone();

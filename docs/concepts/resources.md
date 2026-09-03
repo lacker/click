@@ -119,6 +119,9 @@ and complete owned access, then rejects any other direct or composite resource
 that may still refer to the freed allocation. A scoped call borrow has ended
 and therefore does not block `free`; a pre-existing persistent view does block
 it locally. A view proved separate from the freed allocation survives.
+When several allocation authorities are held, `free` selects the one whose
+evaluated base pointer matches the argument; unrelated authorities remain
+available for later deallocation.
 
 ## Owned memory
 

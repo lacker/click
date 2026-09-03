@@ -28,6 +28,7 @@ when evidence exposes one.
 - [Binary-tree verification exceeds the CLI limit since the binder-hygiene commit](binary-tree-verification-slowdown.md)
 
 ## Functionality gaps: 29
+## Functionality gaps: 30
 
 C language coverage:
 
@@ -48,6 +49,7 @@ C language coverage:
 - [Lift the block-scoped declaration restriction](block-scoped-declarations.md)
 - [Bound non-heap resource exhaustion](resource-exhaustion.md)
 - [Verify one unchanged existing-source fixture](audit-existing-c-source-fidelity.md)
+- [Match heap frees against every owned allocation authority](heap-free-multiple-allocation-authorities.md)
 
 Semantics and reasoning:
 
