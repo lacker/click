@@ -329,6 +329,22 @@ fn c0_syntax_accepts_unary_plus_and_a_for_initializer_list() {
 }
 
 #[test]
+fn c0_syntax_accepts_multiple_declarations_in_a_for_initializer() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 total = 0;
+            for (int32 i = 0, j = 3; i < 3; i++, j--) {
+                total = total + j;
+            }
+            return total;
+        }
+        "#,
+    )
+    .expect("a for-loop initializer may declare multiple initialized scalars");
+}
+
+#[test]
 fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
     syntax::parse_function(
         r#"

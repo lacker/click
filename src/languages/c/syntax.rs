@@ -36,6 +36,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.for-step-list",
     "statement.for-omitted-clause",
     "statement.for-init-list",
+    "statement.for-declaration-list",
     "statement.store",
     "statement.malloc",
     "statement.calloc",
@@ -1769,12 +1770,7 @@ impl Parser {
             return Ok(C0Statement::Skip);
         }
         if self.is_type_start() {
-            let initializer = self.parse_for_declaration_initializer()?;
-            if self.peek() == Some(&Token::Comma) {
-                return Err(self
-                    .error_here("multiple declarations in a `for` initializer are not supported"));
-            }
-            return Ok(initializer);
+            return self.parse_for_declaration_initializer();
         }
 
         let mut initializers = vec![self.parse_for_assignment_initializer()?];
@@ -1793,20 +1789,28 @@ impl Parser {
         if is_plain_struct_type(&parsed_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
         }
-        let name = self.expect_ident("for-loop local name")?;
-        self.declare_name(&name)?;
-        if self.peek() != Some(&Token::Equal) {
-            return Err(self.error_here("for-loop declarations require an initializer"));
+        let mut initializers = Vec::new();
+        loop {
+            let name = self.expect_ident("for-loop local name")?;
+            self.declare_name(&name)?;
+            if self.peek() != Some(&Token::Equal) {
+                return Err(self.error_here("for-loop declarations require an initializer"));
+            }
+            self.position += 1;
+            let expression = self.parse_expression()?;
+            initializers.push(C0Statement::Seq(
+                Box::new(C0Statement::Declare {
+                    c_type: parsed_type.c_type,
+                    name: name.clone(),
+                }),
+                Box::new(C0Statement::Assign { name, expression }),
+            ));
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
         }
-        self.position += 1;
-        let expression = self.parse_expression()?;
-        Ok(C0Statement::Seq(
-            Box::new(C0Statement::Declare {
-                c_type: parsed_type.c_type,
-                name: name.clone(),
-            }),
-            Box::new(C0Statement::Assign { name, expression }),
-        ))
+        Ok(balanced_statement_sequence(initializers).unwrap_or(C0Statement::Skip))
     }
 
     fn parse_for_assignment_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {

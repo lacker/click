@@ -114,6 +114,10 @@ id = "c0.statement.for-init-list"
 path = "reference/language/c0.md#loops"
 
 [[item]]
+id = "c0.statement.for-declaration-list"
+path = "reference/language/c0.md#loops"
+
+[[item]]
 id = "c0.statement.store"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
