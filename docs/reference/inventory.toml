@@ -86,6 +86,14 @@ id = "c0.statement.if"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.statement.else-if"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.unbraced-body"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.statement.while"
 path = "reference/language/c0.md#loops"
 

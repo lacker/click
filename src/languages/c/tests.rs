@@ -2629,6 +2629,67 @@ fn c0_syntax_accepts_sibling_scopes_reusing_a_name() {
 }
 
 #[test]
+fn c0_syntax_accepts_else_if_and_unbraced_controlled_statements() {
+    let function = syntax::parse_function(
+        r#"
+        int32 classify(int32 x) {
+            if (x < 0)
+                return -1;
+            else if (x == 0)
+                return 0;
+            else
+                return 1;
+        }
+        "#,
+    )
+    .expect("else-if arms may contain one unbraced statement");
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } if matches!(then_branch.as_ref(), syntax::C0Statement::Return(_))
+            && matches!(else_branch.as_ref(), syntax::C0Statement::If { .. })
+    ));
+
+    syntax::parse_function(
+        r#"
+        int32 advance(int32 n) {
+            int32 i = 0;
+            while (i < n)
+                i = i + 1;
+            for (int32 j = 0; j < 2; j++)
+                i = i + j;
+            return i;
+        }
+        "#,
+    )
+    .expect("while and for may control one unbraced statement");
+}
+
+#[test]
+fn c0_syntax_rejects_a_declaration_as_an_unbraced_controlled_statement() {
+    let error = syntax::parse_function(
+        r#"
+        int32 invalid(int32 condition) {
+            if (condition)
+                int32 value;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("C declarations need a compound statement body");
+    assert!(
+        error
+            .message()
+            .contains("declaration controlled by `if` must be enclosed in braces"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_known_function_call_assignment() {
     let increment = syntax::parse_function(
         r#"

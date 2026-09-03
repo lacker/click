@@ -29,6 +29,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.call-assignment",
     "statement.return",
     "statement.if",
+    "statement.else-if",
+    "statement.unbraced-body",
     "statement.while",
     "statement.for",
     "statement.store",
@@ -1380,6 +1382,24 @@ impl Parser {
         Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
     }
 
+    /// Parses the statement controlled by `if`, `else`, `while`, or `for`.
+    /// C permits a single statement in these positions, while declarations
+    /// remain valid only as block items in a compound statement.
+    fn parse_controlled_statement(
+        &mut self,
+        construct: &str,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() == Some(&Token::LBrace) {
+            return self.parse_block_statement();
+        }
+        if self.is_type_start() {
+            return Err(self.error_here(format!(
+                "a declaration controlled by `{construct}` must be enclosed in braces"
+            )));
+        }
+        self.parse_statement()
+    }
+
     fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
             Some(Token::Semicolon) => {
@@ -1518,10 +1538,10 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
-                    let then_branch = Box::new(self.parse_block_statement()?);
+                    let then_branch = Box::new(self.parse_controlled_statement("if")?);
                     let else_branch = if self.peek_ident() == Some("else") {
                         self.position += 1;
-                        Box::new(self.parse_block_statement()?)
+                        Box::new(self.parse_controlled_statement("else")?)
                     } else {
                         Box::new(C0Statement::Skip)
                     };
@@ -1536,7 +1556,7 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
-                    let body = Box::new(self.parse_block_statement()?);
+                    let body = Box::new(self.parse_controlled_statement("while")?);
                     Ok(C0Statement::While { condition, body })
                 }
                 Some("for") => {
@@ -1551,7 +1571,7 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     let step = self.parse_scalar_update_statement("for-loop step")?;
                     self.expect(Token::RParen)?;
-                    let body = self.parse_block_statement()?;
+                    let body = self.parse_controlled_statement("for")?;
                     self.pop_scope();
                     let body = C0Statement::Seq(Box::new(body), Box::new(step));
                     Ok(C0Statement::Seq(
