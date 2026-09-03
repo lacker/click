@@ -6,11 +6,23 @@ A call to a function with no C0 body in the project is a
 `CRuntimeError::UnknownFunction` (`src/kernel/primitives.rs:760`, raised at
 `src/kernel/loops.rs:15` and `:87`, rendered as "unknown function" at
 `src/surface/diagnostics.rs:497`).
-There is no extern-contract mechanism, so `memcpy`, `memset`, `strlen`,
-`printf`, or any vendored helper cannot appear in verified code.
+Before the first implementation slice, there was no extern-contract
+mechanism, so `memcpy`, `memset`, `strlen`, `printf`, or any vendored helper
+could not appear in verified code. The remaining gap is the standard-library
+contract catalog and automatic reporting of external assumptions.
 `docs/internals/roadmap.md:163-165` proposes treating `malloc`, `free`,
 `memcpy`, `memcmp`, `strlen`, "and friends" as modeled builtins or externally
 specified functions; `malloc` and `free` are the only ones modeled today.
+
+## Status
+
+The first implementation slice now supports body-less `extern` function
+contracts in sidecars. Their requires, ensures, resource clauses, and mutable
+footprints are checked at call sites, while the kernel records the declaration
+as an opaque assumption rather than executing a synthesized body. Empty
+contracts and callers that cannot establish an external precondition are
+rejected. The standard-library contract catalog and dependency reporting for
+external assumptions remain open.
 
 ## Violated invariant
 
