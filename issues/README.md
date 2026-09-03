@@ -27,7 +27,6 @@ when evidence exposes one.
 
 - [Binary-tree verification exceeds the CLI limit since the binder-hygiene commit](binary-tree-verification-slowdown.md)
 
-## Functionality gaps: 29
 ## Functionality gaps: 30
 
 C language coverage:
