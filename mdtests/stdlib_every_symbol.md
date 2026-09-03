@@ -4,6 +4,9 @@ This fixture gives every public declaration in `stdlib/prelude.click` a
 checked use. The documentation inventory separately checks that the fixture's
 source registry and the library reference remain complete.
 
+The external catalog symbols `memcpy`, `memcmp`, `memset`, and `strlen` are
+verified in `mdtests/stdlib_external_contracts.md`.
+
 ```c filename=stdlib_every_symbol.c
 int32 docs_identity(int32 value) {
     return value;
@@ -390,4 +393,3 @@ theorem docs_use_cstr_len_has_terminator(bytes: uint8[], len: int32) {
 ```expect
 pass
 ```
-

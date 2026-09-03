@@ -324,3 +324,41 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
         simp();
     }
 }
+
+extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
+    requires 0 <= bytes;
+    requires loadable(source[0..bytes]);
+    owns destination[0..bytes];
+    requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
+    mutable destination[0..bytes];
+    ensures result == destination;
+    ensures bytes_equal(destination, 0, old(source), 0, bytes);
+}
+
+extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
+    requires 0 <= bytes;
+    requires loadable(left[0..bytes]);
+    requires loadable(right[0..bytes]);
+    immutable;
+    ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
+    ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
+}
+
+extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
+    requires 0 <= value;
+    requires value <= 255;
+    requires 0 <= bytes;
+    owns destination[0..bytes];
+    mutable destination[0..bytes];
+    ensures result == destination;
+    ensures (0..bytes).all(|k| {
+        destination[k] == value
+    });
+}
+
+extern int32 strlen(uint8 bytes[]) {
+    requires loadable(bytes[0..1]);
+    requires bytes[0] == '\0';
+    immutable;
+    ensures result == 0;
+}

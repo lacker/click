@@ -185,7 +185,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .collect::<BTreeSet<_>>();
 
     let mut function_specs = BTreeSet::new();
-    for function in file.function_blocks() {
+    for function in combined_external_function_blocks(file)? {
         if !function_specs.insert(function.signature().name().to_string()) {
             return Err(ClickError::new(format!(
                 "duplicate C function spec `{}`",

@@ -90,16 +90,17 @@ use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;
 use validation::{
-    combined_click_function_definitions, combined_predicate_definitions,
-    combined_resource_definitions, combined_theorem_definitions,
+    combined_click_function_definitions, combined_external_function_blocks,
+    combined_predicate_definitions, combined_resource_definitions, combined_theorem_definitions,
     combined_theorem_definitions_with_stdlib_ensure_count, contains_old_expression,
     describe_c0_type, describe_resource_clause, proposition_contains_at_expression,
     proposition_contains_old_expression, proposition_contains_resource_count,
 };
 pub(in crate::surface) use verification::*;
 pub use verification::{
-    C0IncrementalSelection, c0_function_names, c0_incremental_selection, parse, verify_c0_sources,
-    verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
+    C0IncrementalSelection, c0_external_dependencies, c0_function_names, c0_incremental_selection,
+    parse, verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
+    verify_click_theorems,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;

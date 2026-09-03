@@ -15,9 +15,14 @@ type StandardLibraryDefinitions = (
 
 fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickError> {
     let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
-    if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
+    if !file.verifying_sources().is_empty()
+        || file
+            .function_blocks()
+            .iter()
+            .any(|function| !function.is_external())
+    {
         return Err(ClickError::new(
-            "internal Click standard library must not contain verifying sources or C function specs",
+            "internal Click standard library must not contain verifying sources or body-bearing C function specs",
         ));
     }
     Ok((
@@ -26,6 +31,29 @@ fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickErr
         file.resource_definitions().to_vec(),
         file.theorem_definitions().to_vec(),
     ))
+}
+
+fn standard_library_external_function_blocks() -> Result<Vec<FunctionBlock>, ClickError> {
+    let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
+    if !file.verifying_sources().is_empty()
+        || file
+            .function_blocks()
+            .iter()
+            .any(|function| !function.is_external())
+    {
+        return Err(ClickError::new(
+            "internal Click standard library must contain only body-less external C function specs",
+        ));
+    }
+    Ok(file.function_blocks().to_vec())
+}
+
+pub(in crate::surface) fn combined_external_function_blocks(
+    file: &ClickFile,
+) -> Result<Vec<FunctionBlock>, ClickError> {
+    let mut function_blocks = standard_library_external_function_blocks()?;
+    function_blocks.extend(file.function_blocks().iter().cloned());
+    Ok(function_blocks)
 }
 
 pub(in crate::surface) fn expand_declared_resource_clauses(

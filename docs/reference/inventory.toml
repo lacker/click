@@ -1986,6 +1986,22 @@ id = "stdlib.theorem.cstr_len_has_terminator"
 path = "reference/library/index.md#cstr_len_has_terminator"
 
 [[item]]
+id = "stdlib.extern.memcpy"
+path = "reference/library/index.md#memcpy"
+
+[[item]]
+id = "stdlib.extern.memcmp"
+path = "reference/library/index.md#memcmp"
+
+[[item]]
+id = "stdlib.extern.memset"
+path = "reference/library/index.md#memset"
+
+[[item]]
+id = "stdlib.extern.strlen"
+path = "reference/library/index.md#strlen"
+
+[[item]]
 id = "glossary.alias"
 path = "reference/glossary.md#alias"
 

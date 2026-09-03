@@ -516,6 +516,14 @@ fn standard_library_inventory_is_bidirectional() {
                 declarations.insert(format!("{kind}.{name}"));
             }
         }
+        if let Some(rest) = line.strip_prefix("extern ") {
+            let name = rest
+                .split('(')
+                .next()
+                .and_then(|signature| signature.split_whitespace().last())
+                .expect("external function name");
+            declarations.insert(format!("extern.{name}"));
+        }
     }
     assert_eq!(declarations, inventory_ids("stdlib."));
 }
@@ -587,7 +595,8 @@ fn standard_library_declarations_are_exact_source_includes() {
             || line.starts_with("function ")
             || line.starts_with("predicate ")
             || line.starts_with("resource ")
-            || line.starts_with("abstract resource ");
+            || line.starts_with("abstract resource ")
+            || line.starts_with("extern ");
         if declaration.is_empty() && !starts {
             continue;
         }

@@ -643,9 +643,10 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         // are file-global, so one guard covers this verification; nothing is
         // published, so nested composites still require `observe(...)` before
         // a user's `separate(...)` goal can cite them.
+        let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
         let built_function_environment = build_function_environment(
             &parsed_sources,
-            file.function_blocks(),
+            &external_and_user_function_blocks,
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
@@ -1377,8 +1378,16 @@ pub(in crate::surface) fn verification_required_functions(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_name: &str,
 ) -> Result<BTreeSet<String>, ClickError> {
-    if !file
-        .function_blocks()
+    let function_blocks = combined_external_function_blocks(file)?;
+    verification_required_functions_with_blocks(parsed_sources, function_name, &function_blocks)
+}
+
+fn verification_required_functions_with_blocks(
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    function_name: &str,
+    function_blocks: &[FunctionBlock],
+) -> Result<BTreeSet<String>, ClickError> {
+    if !function_blocks
         .iter()
         .any(|function| function.signature().name() == function_name)
     {
@@ -1393,8 +1402,7 @@ pub(in crate::surface) fn verification_required_functions(
             continue;
         }
         let Some(parsed) = parsed_sources.get(&name).map(|entry| &entry.1) else {
-            if file
-                .function_blocks()
+            if function_blocks
                 .iter()
                 .any(|function| function.is_external() && function.signature().name() == name)
             {
@@ -1405,6 +1413,46 @@ pub(in crate::surface) fn verification_required_functions(
         pending.extend(c0_statement_calls(parsed).into_iter().flatten());
     }
     Ok(required)
+}
+
+/// Returns the external C assumptions in each user function's transitive C
+/// call closure. This is intentionally derived from the same call graph used
+/// by targeted verification, so reporting cannot silently omit a transitive
+/// external callee.
+pub fn c0_external_dependencies(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let struct_layouts = parse_c_struct_layouts(click_source, &sources)?;
+    let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
+    let parsed_sources = parse_verified_sources(&file, &sources)?;
+    let function_blocks = combined_external_function_blocks(&file)?;
+    let external_names = function_blocks
+        .iter()
+        .filter(|function| function.is_external())
+        .map(|function| function.signature().name().to_string())
+        .collect::<BTreeSet<_>>();
+    let mut dependencies = BTreeMap::new();
+    for function in file
+        .function_blocks()
+        .iter()
+        .filter(|function| !function.is_external())
+    {
+        let required = verification_required_functions_with_blocks(
+            &parsed_sources,
+            function.signature().name(),
+            &function_blocks,
+        )?;
+        let external = required
+            .intersection(&external_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !external.is_empty() {
+            dependencies.insert(function.signature().name().to_string(), external);
+        }
+    }
+    Ok(dependencies)
 }
 
 pub(in crate::surface) fn c0_statement_calls(

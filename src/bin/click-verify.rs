@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -12,8 +13,8 @@ use click::cli::{
     source_refs,
 };
 use click::surface::{
-    c0_function_names, c0_incremental_selection, verify_c0_sources, verify_c0_sources_at,
-    verify_c0_sources_functions, verifying_source_paths,
+    VerifiedCTheorem, c0_external_dependencies, c0_function_names, c0_incremental_selection,
+    verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions, verifying_source_paths,
 };
 
 const USAGE: &str = "\
@@ -225,7 +226,8 @@ fn verify_changed(
             skipped += usize::from(selected.is_empty());
             continue;
         }
-        click::instrumentation::with_deadline(time_limit, || {
+        let dependencies = c0_external_dependencies(&click_source, &refs).map_err(click_message)?;
+        let verified_theorems = click::instrumentation::with_deadline(time_limit, || {
             if full_rebuild {
                 verify_c0_sources(&click_source, &refs)
             } else {
@@ -240,6 +242,7 @@ fn verify_changed(
                 )
             })
         })?;
+        print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild {
             // The rebuild verified the current sources; attest the requested
             // baseline too only when its sidecar and sources are identical,
@@ -613,8 +616,10 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
+    let (click_source, sources) = load_sidecar(click_path)?;
+    let dependencies =
+        c0_external_dependencies(&click_source, &source_refs(&sources)).map_err(click_message)?;
     click::instrumentation::with_deadline(time_limit, || {
-        let (click_source, sources) = load_sidecar(click_path)?;
         verify_c0_sources(&click_source, &source_refs(&sources)).map_err(|error| {
             format!(
                 "sidecar `{}` failed under its {} limit: {}",
@@ -623,7 +628,8 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
                 error.message()
             )
         })
-    })?;
+    })
+    .map(|verified| print_external_dependencies(&dependencies, &verified))?;
     if let Err(message) = record_full_verification(click_path, &[]) {
         eprintln!("click-verify: warning: could not record incremental baseline: {message}");
     }
@@ -636,21 +642,39 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
+    let (click_source, sources) = load_sidecar(click_path)?;
+    let dependencies =
+        c0_external_dependencies(&click_source, &source_refs(&sources)).map_err(click_message)?;
     click::instrumentation::with_deadline(time_limit, || {
-        let (click_source, sources) = load_sidecar(click_path)?;
-        verify_c0_sources_at(&click_source, &source_refs(&sources), line, column).map_err(
-            |error| {
-                format!(
-                    "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
-                    click_path.display(),
-                    format_duration(time_limit),
-                    error.message()
-                )
-            },
-        )?;
-        Ok::<(), String>(())
-    })?;
+        verify_c0_sources_at(&click_source, &source_refs(&sources), line, column).map_err(|error| {
+            format!(
+                "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
+                click_path.display(),
+                format_duration(time_limit),
+                error.message()
+            )
+        })
+    })
+    .map(|verified| print_external_dependencies(&dependencies, &verified))?;
     Ok(())
+}
+
+fn print_external_dependencies(
+    dependencies: &BTreeMap<String, Vec<String>>,
+    verified: &[VerifiedCTheorem],
+) {
+    let verified_functions = verified
+        .iter()
+        .map(|theorem| theorem.function_block.signature().name())
+        .collect::<std::collections::BTreeSet<_>>();
+    for (function, external) in dependencies {
+        if verified_functions.contains(function.as_str()) {
+            println!(
+                "external assumptions: {function} -> {}",
+                external.join(", ")
+            );
+        }
+    }
 }
 
 fn load_sidecar(click_path: &Path) -> Result<LoadedSidecar, String> {

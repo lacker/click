@@ -851,6 +851,95 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
+## External C contracts
+
+These declarations cover the narrow byte-oriented libc slice supported by C0.
+They are body-less assumptions: callers must satisfy their requirements, and
+Click does not verify an implementation of the external function.
+
+### `memcpy`
+
+```click
+extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
+    requires 0 <= bytes;
+    requires loadable(source[0..bytes]);
+    owns destination[0..bytes];
+    requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
+    mutable destination[0..bytes];
+    ensures result == destination;
+    ensures bytes_equal(destination, 0, old(source), 0, bytes);
+}
+```
+
+**Meaning:** Copies `bytes` bytes from a readable, non-overlapping source to
+an owned destination and returns the destination pointer.
+
+**Kind:** external C contract. The declaration is an explicit verification assumption.
+
+**Verified use:** [`mdtests/stdlib_external_contracts.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_external_contracts.md) checks its postcondition.
+
+### `memcmp`
+
+```click
+extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
+    requires 0 <= bytes;
+    requires loadable(left[0..bytes]);
+    requires loadable(right[0..bytes]);
+    immutable;
+    ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
+    ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
+}
+```
+
+**Meaning:** Reads both byte ranges without mutation and distinguishes equal
+from unequal prefixes by whether the result is zero.
+
+**Kind:** external C contract. The declaration is an explicit verification assumption.
+
+**Verified use:** [`mdtests/stdlib_external_contracts.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_external_contracts.md) checks its equality consequence.
+
+### `memset`
+
+```click
+extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
+    requires 0 <= value;
+    requires value <= 255;
+    requires 0 <= bytes;
+    owns destination[0..bytes];
+    mutable destination[0..bytes];
+    ensures result == destination;
+    ensures (0..bytes).all(|k| {
+        destination[k] == value
+    });
+}
+```
+
+**Meaning:** Fills an owned destination with the low byte of a representable
+value and returns the destination pointer.
+
+**Kind:** external C contract. The declaration is an explicit verification assumption.
+
+**Verified use:** [`mdtests/stdlib_external_contracts.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_external_contracts.md) checks its byte-fill consequence.
+
+### `strlen`
+
+```click
+extern int32 strlen(uint8 bytes[]) {
+    requires loadable(bytes[0..1]);
+    requires bytes[0] == '\0';
+    immutable;
+    ensures result == 0;
+}
+```
+
+**Meaning:** Returns zero for a readable byte string whose first byte is the
+terminator, without mutation. This is the currently checkable `strlen` slice;
+general variable-length string loadability remains outside the model.
+
+**Kind:** external C contract. The declaration is an explicit verification assumption.
+
+**Verified use:** [`mdtests/stdlib_external_contracts.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_external_contracts.md) checks its length consequence.
+
 ## Namespace and extension rules
 
 Standard-library definitions share the logic-declaration namespace with user

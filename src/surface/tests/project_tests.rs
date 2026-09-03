@@ -87,6 +87,52 @@ int32 caller(int32 x) {
 }
 
 #[test]
+fn external_dependency_report_is_transitive_and_per_function() {
+    let helper_c = r#"
+int32 helper(int32 x) {
+    int32 result;
+    result = external_identity(x);
+    return result;
+}
+"#;
+    let caller_c = r#"
+int32 caller(int32 x) {
+    return helper(x);
+}
+"#;
+    let click_source = r#"
+verifying "helper.c";
+verifying "caller.c";
+
+extern int32 external_identity(int32 x) {
+    requires x >= 0;
+    ensures result == x;
+}
+
+int32 helper(int32 x) {
+    ensures result == x;
+}
+
+int32 caller(int32 x) {
+    ensures result == x;
+}
+"#;
+    let dependencies = c0_external_dependencies(
+        click_source,
+        &[("helper.c", helper_c), ("caller.c", caller_c)],
+    )
+    .expect("external dependencies should parse");
+    assert_eq!(
+        dependencies.get("helper"),
+        Some(&vec!["external_identity".to_string()])
+    );
+    assert_eq!(
+        dependencies.get("caller"),
+        Some(&vec!["external_identity".to_string()])
+    );
+}
+
+#[test]
 fn location_verification_checks_function_pointer_targets() {
     let compare_c = r#"
 int32 compare(int32 left, int32 right) {

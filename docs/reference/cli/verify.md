@@ -53,10 +53,13 @@ instead of rebuilding again.
 
 ## Output and exit behavior
 
-Successful file or location verification is silent unless the selected mode
-has progress to report. Directory verification prints progress. Incremental
-explanation prints selected and reused functions with the reason for any full
-rebuild.
+Successful file or location verification prints one `external assumptions:`
+line for each verified function whose transitive C call closure uses an
+external contract, for example `external assumptions: probe -> strlen`.
+Directory verification also prints these lines alongside its progress.
+Incremental explanation prints selected and reused functions with the reason
+for any full rebuild; an incremental verification prints the same assumption
+lines for the claims it actually verifies.
 
 The command exits with status 1 when parsing, source loading, target discovery,
 verification, or the outer deadline fails. A proof failure is a correctness

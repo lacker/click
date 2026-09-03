@@ -64,8 +64,11 @@ than approximated.
 Sidecars may declare body-less C callees with `extern` contracts. The kernel
 applies those contracts as explicit assumptions, so the callee implementation
 is not checked by Click and its preconditions remain caller obligations. The
-standard-library contract catalog and automatic dependency reporting for
-external assumptions are not yet provided.
+standard library includes narrow byte-oriented contracts for `memcpy`,
+`memcmp`, `memset`, and `strlen`. `click verify` reports the transitive external
+assumptions used by each verified function. These contracts still describe
+only the supported C0 types; general `void *`, `size_t`, overlap semantics,
+and unbounded string loadability remain outside the model.
 
 A verifying source may contain multiple function definitions and compatible
 forward prototypes. Project-local quoted includes such as
