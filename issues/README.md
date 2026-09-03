@@ -41,7 +41,6 @@ C language coverage:
 - [Model volatile objects](volatile-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Lift the block-scoped declaration restriction](block-scoped-declarations.md)
-- [Bound non-heap resource exhaustion](resource-exhaustion.md)
 - [Match heap frees against every owned allocation authority](heap-free-multiple-allocation-authorities.md)
 
 Semantics and reasoning:

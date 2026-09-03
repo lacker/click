@@ -85,6 +85,10 @@ retain, nonfinal release, final release, and free across opaque calls.
   and `*=` statement sugar; `mdtests/xor_swap.md` exercises `^=`.
 - `mdtests/c_statement_update_rejects_expression.md`: update expressions remain
   unsupported inside larger expressions.
+- `mdtests/infinite_loop_partial_contract.md`: a perpetual loop still proves
+  finite-prefix safety without a termination claim.
+- `mdtests/infinite_loop_vacuous_ensure.md`: a postcondition is vacuous when a
+  perpetual function has no returning execution.
 
 ## Memory safety and postconditions
 
