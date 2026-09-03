@@ -752,6 +752,10 @@ impl KernelPropositionLowerer {
             }
             CExpression::TypedLoad {
                 pointer,
+                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            } => self.lower_requirement_c_expression(pointer),
+            CExpression::TypedLoad {
+                pointer,
                 value_type,
             } => {
                 let pointer = self.lower_requirement_c_expression(pointer)?;

@@ -123,13 +123,16 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
                     range.element_width,
                 );
                 for field in layout.fields().values() {
-                    let pointer = element_pointer.offset_by_bytes(field.offset_bytes());
-                    let value = symbolic_value_for_element(
-                        &base_memory,
-                        &pointer,
-                        field.c_type().to_kernel_type(),
+                    memory = visit_struct_field_cells(
+                        field,
+                        &element_pointer,
+                        memory,
+                        |memory, pointer, element_type| {
+                            let value =
+                                symbolic_value_for_element(&base_memory, &pointer, element_type);
+                            memory.store(pointer, value)
+                        },
                     );
-                    memory = memory.store(pointer, value);
                 }
                 offset += range.element_width;
             }
@@ -153,6 +156,37 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
             memory = memory.store(pointer, value);
             offset += range.element_width;
         }
+    }
+    memory
+}
+
+fn visit_struct_field_cells(
+    field: &syntax::C0StructField,
+    element_pointer: &Pointer,
+    mut memory: CMemory,
+    mut visit: impl FnMut(CMemory, Pointer, CType) -> CMemory,
+) -> CMemory {
+    let field_pointer = element_pointer.offset_by_bytes(field.offset_bytes());
+    match field.c_type().to_kernel_type() {
+        CType::Int32Array(length) => {
+            for index in 0..length {
+                memory = visit(
+                    memory,
+                    field_pointer.offset_by_bytes(
+                        index.checked_mul(CType::Int32.byte_width()).expect(
+                            "validated int32 array field stride must fit in the pointer offset",
+                        ),
+                    ),
+                    CType::Int32,
+                );
+            }
+        }
+        CType::UInt8Array(length) => {
+            for index in 0..length {
+                memory = visit(memory, field_pointer.offset_by_bytes(index), CType::UInt8);
+            }
+        }
+        element_type => memory = visit(memory, field_pointer, element_type),
     }
     memory
 }
@@ -205,17 +239,22 @@ fn materialize_access_segment_cells(
                 layout.size_bytes(),
             );
             for field in layout.fields().values() {
-                let pointer = element_pointer.offset_by_bytes(field.offset_bytes());
-                if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
-                    continue;
-                }
-                let load = crate::kernel::canonical_form_of_load(
-                    crate::kernel::intern_c_memory(base_memory.clone()),
-                    pointer.clone(),
+                memory = visit_struct_field_cells(
+                    field,
+                    &element_pointer,
+                    memory,
+                    |memory, pointer, element_type| {
+                        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                            return memory;
+                        }
+                        let load = crate::kernel::canonical_form_of_load(
+                            crate::kernel::intern_c_memory(base_memory.clone()),
+                            pointer.clone(),
+                        );
+                        let value = symbolic_value_from_load(&pointer, element_type, load);
+                        memory.store(pointer, value)
+                    },
                 );
-                let value =
-                    symbolic_value_from_load(&pointer, field.c_type().to_kernel_type(), load);
-                memory = memory.store(pointer, value);
             }
         }
         return Ok(memory);
@@ -1046,7 +1085,11 @@ fn contract_expression_element_type(
         CExpression::Add(left, right) => contract_expression_element_type(parameters, left)
             .or_else(|| contract_expression_element_type(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_type(parameters, left),
-        CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
+        CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Int32Array(_) => Some(CType::Int32),
+            CType::UInt8Array(_) => Some(CType::UInt8),
+            value_type => value_type.pointee_type(),
+        },
         _ => None,
     }
 }
@@ -1109,6 +1152,8 @@ pub(in crate::surface) fn contract_expression_element_width_from_array_refs(
         }
         CExpression::TypedLoad { value_type, .. } => match value_type {
             c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
+            CType::Int32Array(_) => Some(4),
+            CType::UInt8Array(_) => Some(1),
             _ => None,
         },
         _ => None,

@@ -2650,6 +2650,26 @@ impl Parser {
         field_name: &str,
         field: &ResolvedField,
     ) -> ContractSegment {
+        if let C0Type::Int32Array(_) | C0Type::UInt8Array(_) = field.c_type {
+            let element_width = match field.c_type {
+                C0Type::Int32Array(_) => 4,
+                C0Type::UInt8Array(_) => 1,
+                _ => unreachable!("validated inline array field"),
+            };
+            let field_base = crate::kernel::c_pointer_offset_bytes(base, field.offset_bytes);
+            return ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::TypedLoad {
+                    pointer: Box::new(field_base),
+                    value_type: field.c_type.to_kernel_type(),
+                },
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(
+                    (field.slot_end_bytes - field.offset_bytes) / element_width,
+                )),
+                surface: ContractSegmentSurface::Field(field_name.to_string()),
+            };
+        }
         ContractSegment {
             state: ContractSegmentState::Current,
             base,
@@ -2747,6 +2767,15 @@ impl Parser {
     }
 
     fn validate_field_place(&self, field: &ResolvedField) -> Result<(), ClickError> {
+        if matches!(field.c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+            if field.slot_end_bytes < field.offset_bytes
+                || (matches!(field.c_type, C0Type::Int32Array(_))
+                    && (field.slot_end_bytes - field.offset_bytes) % 4 != 0)
+            {
+                return Err(self.error("inline array field has an invalid resource extent"));
+            }
+            return Ok(());
+        }
         if field.offset_bytes % 4 != 0 || field.byte_width % 4 != 0 || field.slot_end_bytes % 4 != 0
         {
             return Err(

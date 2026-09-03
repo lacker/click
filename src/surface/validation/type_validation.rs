@@ -580,7 +580,8 @@ fn infer_c_expression_type(
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
             CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
             CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
-            CType::Int32Array(_) | CType::UInt8Array(_) => return None,
+            CType::Int32Array(length) => C0Type::Int32Array(*length),
+            CType::UInt8Array(length) => C0Type::UInt8Array(*length),
         }),
         CExpression::Index(base, _) => {
             infer_c_expression_type(base, variables).and_then(pointer_element_type)

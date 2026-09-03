@@ -355,6 +355,14 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             budget,
             Bitvector32Term::bitwise_not,
         )?,
+        // An inline array field is an lvalue whose value is not represented by
+        // CValue. In an expression context it undergoes C's array-to-pointer
+        // conversion, so evaluate the field's address rather than attempting
+        // to load an aggregate value.
+        CExpression::TypedLoad {
+            pointer,
+            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+        } => evaluate_c_expression_paths(state, pointer, assumptions, budget)?,
         CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
@@ -803,7 +811,11 @@ pub(in crate::kernel) fn c_expression_pointee_type(
         CExpression::PointerOffsetBytes { pointer, .. } => {
             c_expression_pointee_type(state, pointer)
         }
-        CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
+        CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Int32Array(_) => Some(CType::Int32),
+            CType::UInt8Array(_) => Some(CType::UInt8),
+            value_type => value_type.pointee_type(),
+        },
         CExpression::Add(left, right) => c_expression_pointee_type(state, left)
             .or_else(|| c_expression_pointee_type(state, right)),
         CExpression::Subtract(left, _) => c_expression_pointee_type(state, left),

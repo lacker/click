@@ -174,6 +174,10 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
         }
         CExpression::TypedLoad {
             pointer,
+            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+        } => evaluate_c_contract_expression(parameter_values, state, result, assumptions, pointer),
+        CExpression::TypedLoad {
+            pointer,
             value_type,
         } => {
             let pointer = evaluate_c_contract_expression(
@@ -189,6 +193,7 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
             evaluate_contract_memory_load(state, pointer, *value_type, assumptions)
         }
         CExpression::Index(base, index) => {
+            let value_type = c_contract_index_element_type(base);
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
             let index = evaluate_c_contract_expression(
@@ -199,11 +204,35 @@ pub(in crate::surface) fn evaluate_c_contract_expression(
                 index,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
+            evaluate_contract_memory_load(state, pointer, value_type, assumptions)
         }
         _ => Err(format!(
             "unsupported postcondition expression `{expression:?}`"
         )),
+    }
+}
+
+fn c_contract_index_element_type(expression: &CExpression) -> CType {
+    match expression {
+        CExpression::TypedLoad {
+            value_type: CType::Int32Array(_),
+            ..
+        } => CType::Int32,
+        CExpression::TypedLoad {
+            value_type: CType::UInt8Array(_),
+            ..
+        } => CType::UInt8,
+        CExpression::PointerOffsetBytes { pointer, .. } => c_contract_index_element_type(pointer),
+        CExpression::Add(left, right) => {
+            let left = c_contract_index_element_type(left);
+            if left != CType::Int32 {
+                left
+            } else {
+                c_contract_index_element_type(right)
+            }
+        }
+        CExpression::Subtract(left, _) => c_contract_index_element_type(left),
+        _ => CType::Int32,
     }
 }
 

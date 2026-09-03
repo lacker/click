@@ -2644,6 +2644,121 @@ fn c0_struct_layout_uses_lp64_alignment_and_tail_padding() {
 }
 
 #[test]
+fn c0_struct_layout_preserves_inline_scalar_array_shape() {
+    #[repr(C)]
+    struct HostPacket {
+        buf: [u8; 16],
+        values: [i32; 2],
+        count: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 buf[16];
+            int32 values[2];
+            int32 count;
+        };
+
+        int32 read_packet(struct packet* packet) {
+            return packet->buf[2] + packet->count;
+        }
+        "#,
+    )
+    .expect("inline scalar array fields should parse");
+    let layout = function.structs().get("packet").expect("packet layout");
+
+    assert_eq!(
+        layout.field("buf").unwrap().c_type(),
+        syntax::C0Type::UInt8Array(16)
+    );
+    assert_eq!(
+        layout.field("buf").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, buf)
+    );
+    assert_eq!(
+        layout.field("values").unwrap().c_type(),
+        syntax::C0Type::Int32Array(2)
+    );
+    assert_eq!(
+        layout.field("values").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, values)
+    );
+    assert_eq!(
+        layout.field("count").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, count)
+    );
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+}
+
+#[test]
+fn c0_struct_inline_scalar_array_field_supports_indexed_load_and_store() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 buf[16];
+        };
+
+        uint8 write_packet(struct packet* packet) {
+            packet->buf[2] = 7;
+            return packet->buf[2];
+        }
+        "#,
+    )
+    .expect("indexed inline scalar array access should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 4);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 16))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 16)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(2),
+                    },
+                    crate::kernel::uint8(7),
+                ),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("indexed inline scalar array access should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::uint8(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_lp64_layout_matches_the_host_c_abi() {
     #[repr(C)]
     struct HostMixed {

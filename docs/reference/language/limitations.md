@@ -26,16 +26,19 @@ support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
 conversions, allocator declarations, custom allocators, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int32`, `uint8`, and pointer-valued fields, plus chained
-`p->child->field` loads/stores through struct pointers. It retains pointee
-struct names through those chains and models field alignment and tail padding.
-Local arrays of those supported structs are also accepted for indexed
-`items[i].field` loads and stores, using the ABI-sized struct stride. One-
-dimensional function parameters declared as arrays of those structs are
+declarations with `int32`, `uint8`, fixed one-dimensional arrays of those
+scalars, and pointer-valued fields, plus chained `p->child->field`
+loads/stores through struct pointers. Inline scalar arrays retain their element
+width and are accessed through C's array-to-pointer conversion, so
+`uint8 buf[16]` uses byte-width indexing rather than pointer-sized storage. It
+retains pointee struct names through field chains and models field alignment and
+tail padding. Local arrays of the supported structs are also accepted for
+indexed `items[i].field` loads and stores, using the ABI-sized struct stride.
+One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. It still has no struct values, embedded struct
-values, multidimensional struct arrays, unions, bitfields, packed layout, or
-general field-address expressions.
+values, multidimensional inline arrays or struct arrays, unions, bitfields,
+packed layout, or general field-address expressions.
 Click contracts can use field places with `views` and the owned-resource verbs,
 and explicit ranges such as `owns owner[0..3]` remain useful for broader
 footprints. The supported ABI is LP64; other target ABIs are rejected rather

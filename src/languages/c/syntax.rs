@@ -1171,22 +1171,10 @@ impl Parser {
             if is_plain_struct_type(&field_type) {
                 return Err(self.error_here("struct fields cannot contain struct values"));
             }
-            if !matches!(
-                field_type.c_type,
-                C0Type::Int32
-                    | C0Type::UInt8
-                    | C0Type::Int32Pointer
-                    | C0Type::UInt8Pointer
-                    | C0Type::Int32PointerPointer
-                    | C0Type::UInt8PointerPointer
-            ) {
-                return Err(self.error_here(
-                    "struct fields currently support int32, uint8, and pointer fields",
-                ));
-            }
-            let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
             loop {
                 let field_name = self.expect_ident("struct field name")?;
+                let (c_type, field_size, field_alignment) =
+                    self.parse_struct_field_declarator(&field_type, &name)?;
                 offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
                     self.error_here(format!("struct `{name}` layout is too large"))
                 })?;
@@ -1194,8 +1182,10 @@ impl Parser {
                     .insert(
                         field_name.clone(),
                         C0StructField {
-                            c_type: field_type.c_type,
-                            struct_name: field_type.struct_name.clone(),
+                            c_type,
+                            struct_name: (c_type == field_type.c_type)
+                                .then(|| field_type.struct_name.clone())
+                                .flatten(),
                             offset_bytes,
                         },
                     )
@@ -1240,6 +1230,86 @@ impl Parser {
         }
 
         Ok(())
+    }
+
+    fn parse_struct_field_declarator(
+        &mut self,
+        base_type: &ParsedType,
+        struct_name: &str,
+    ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+        let c_type = if self.peek() == Some(&Token::LBracket) {
+            if base_type.struct_name.is_some()
+                || !matches!(base_type.c_type, C0Type::Int32 | C0Type::UInt8)
+            {
+                return Err(self.error_here(
+                    "inline struct arrays currently support only int32 and uint8 elements",
+                ));
+            }
+            self.position += 1;
+            let length = match self.next() {
+                Some(Token::Number(number)) => {
+                    let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                        self.error_here(format!("invalid struct array length `{number}`: {reason}"))
+                    })?;
+                    let length = u32::try_from(length).map_err(|_| {
+                        self.error_here(format!("struct array length `{number}` is out of range"))
+                    })?;
+                    if length == 0 {
+                        return Err(self.error_here("struct arrays must have positive length"));
+                    }
+                    length
+                }
+                Some(token) => {
+                    return Err(self.error_at_previous(format!(
+                        "expected struct array length, got {}",
+                        token.describe()
+                    )));
+                }
+                None => {
+                    return Err(self.error_here("expected struct array length, got end of input"));
+                }
+            };
+            self.expect(Token::RBracket)?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("multidimensional inline arrays in structs are not supported")
+                );
+            }
+            match base_type.c_type {
+                C0Type::Int32 => C0Type::Int32Array(length),
+                C0Type::UInt8 => C0Type::UInt8Array(length),
+                _ => unreachable!("validated scalar struct array element type"),
+            }
+        } else {
+            base_type.c_type
+        };
+
+        if !matches!(
+            c_type,
+            C0Type::Int32
+                | C0Type::UInt8
+                | C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+                | C0Type::Int32Array(_)
+                | C0Type::UInt8Array(_)
+        ) {
+            return Err(self.error_here(format!(
+                "struct `{struct_name}` fields currently support int32, uint8, fixed scalar arrays, and pointer fields",
+            )));
+        }
+        let (field_size, field_alignment) = match c_type {
+            C0Type::Int32Array(length) => (
+                length.checked_mul(4).ok_or_else(|| {
+                    self.error_here(format!("struct `{struct_name}` layout is too large"))
+                })?,
+                4,
+            ),
+            C0Type::UInt8Array(length) => (length, 1),
+            _ => self.abi.size_and_alignment(c_type),
+        };
+        Ok((c_type, field_size, field_alignment))
     }
 
     fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {

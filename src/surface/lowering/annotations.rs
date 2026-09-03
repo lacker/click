@@ -1748,6 +1748,10 @@ impl AnnotationLowerer<'_> {
             }
             CExpression::TypedLoad {
                 pointer,
+                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            } => self.lower_c_fragment_to_spec(pointer, environment),
+            CExpression::TypedLoad {
+                pointer,
                 value_type,
             } => Ok(SpecExpression::MemoryLoad {
                 memory: environment.current_memory.clone(),
@@ -2030,7 +2034,11 @@ impl AnnotationLowerer<'_> {
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
                 .or_else(|| self.parameter_array_element_types.get(name).copied()),
-            CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
+            CExpression::TypedLoad { value_type, .. } => match value_type {
+                CType::Int32Array(_) => Some(CType::Int32),
+                CType::UInt8Array(_) => Some(CType::UInt8),
+                value_type => value_type.pointee_type(),
+            },
             CExpression::PointerOffsetBytes { pointer, .. } => {
                 self.c_expression_array_element_type(pointer, environment)
             }
