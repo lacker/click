@@ -1,108 +1,136 @@
 use super::*;
+use std::fmt::Write;
 
 fn memory_havoc_write_set_identity(mutable_ranges: &[CMemoryRange]) -> Vec<String> {
     let mut identity = mutable_ranges
         .iter()
         .map(|range| {
-            format!(
-                "range({}, {}, {}, {})",
-                havoc_pointer_identity(range.base(), 0),
-                havoc_bitvector_identity(range.start(), 0),
-                havoc_bitvector_identity(range.end(), 0),
-                range.element_width(),
-            )
+            let mut identity = String::new();
+            identity.push_str("range(");
+            havoc_pointer_identity(&mut identity, range.base(), 0);
+            identity.push_str(", ");
+            havoc_bitvector_identity(&mut identity, range.start(), 0);
+            identity.push_str(", ");
+            havoc_bitvector_identity(&mut identity, range.end(), 0);
+            let _ = write!(identity, ", {})", range.element_width());
+            identity
         })
         .collect::<Vec<_>>();
     identity.sort();
     identity
 }
 
-fn havoc_pointer_identity(pointer: &Pointer, depth: usize) -> String {
+fn havoc_pointer_identity(identity: &mut String, pointer: &Pointer, depth: usize) {
     if depth >= 64 {
-        return "depth-limit".to_string();
+        identity.push_str("depth-limit");
+        return;
     }
-    format!(
-        "pointer({:?}, {})",
-        pointer.block,
-        havoc_pointer_offset_identity(&pointer.offset, depth + 1),
-    )
+    let _ = write!(identity, "pointer({:?}, ", pointer.block);
+    havoc_pointer_offset_identity(identity, &pointer.offset, depth + 1);
+    identity.push(')');
 }
 
-fn havoc_pointer_offset_identity(offset: &PointerOffsetTerm, depth: usize) -> String {
+fn havoc_pointer_offset_identity(identity: &mut String, offset: &PointerOffsetTerm, depth: usize) {
     if depth >= 64 {
-        return "depth-limit".to_string();
+        identity.push_str("depth-limit");
+        return;
     }
     match offset {
-        PointerOffsetTerm::Constant(value) => format!("constant({value})"),
+        PointerOffsetTerm::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
         PointerOffsetTerm::Variable(variable) => {
             if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
             {
-                format!("load({})", havoc_pointer_identity(&pointer, depth + 1))
+                identity.push_str("load(");
+                havoc_pointer_identity(identity, &pointer, depth + 1);
+                identity.push(')');
             } else {
-                format!("variable({})", variable.0)
+                let _ = write!(identity, "variable({})", variable.0);
             }
         }
-        PointerOffsetTerm::Add(left, right) => format!(
-            "add({}, {})",
-            havoc_pointer_offset_identity(left, depth + 1),
-            havoc_pointer_offset_identity(right, depth + 1),
-        ),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => format!(
-            "scaled({}, {byte_width})",
-            havoc_bitvector_identity(value, depth + 1),
-        ),
+        PointerOffsetTerm::Add(left, right) => {
+            identity.push_str("add(");
+            havoc_pointer_offset_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_offset_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let _ = write!(identity, "scaled(");
+            havoc_bitvector_identity(identity, value, depth + 1);
+            let _ = write!(identity, ", {byte_width})");
+        }
     }
 }
 
-fn havoc_bitvector_identity(term: &Bitvector32Term, depth: usize) -> String {
+fn havoc_bitvector_identity(identity: &mut String, term: &Bitvector32Term, depth: usize) {
     if depth >= 64 {
-        return "depth-limit".to_string();
+        identity.push_str("depth-limit");
+        return;
     }
-    let binary = |name: &str, left: &Bitvector32Term, right: &Bitvector32Term| {
-        format!(
-            "{name}({}, {})",
-            havoc_bitvector_identity(left, depth + 1),
-            havoc_bitvector_identity(right, depth + 1),
-        )
-    };
     match term {
-        Bitvector32Term::Constant(value) => format!("constant({value})"),
+        Bitvector32Term::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
         Bitvector32Term::Variable(variable) => {
             if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
             {
-                format!("load({})", havoc_pointer_identity(&pointer, depth + 1))
+                identity.push_str("load(");
+                havoc_pointer_identity(identity, &pointer, depth + 1);
+                identity.push(')');
             } else {
-                format!("variable({})", variable.0)
+                let _ = write!(identity, "variable({})", variable.0);
             }
         }
-        Bitvector32Term::Add(left, right) => binary("add", left, right),
-        Bitvector32Term::Subtract(left, right) => binary("subtract", left, right),
-        Bitvector32Term::Multiply(left, right) => binary("multiply", left, right),
-        Bitvector32Term::Divide(left, right) => binary("divide", left, right),
-        Bitvector32Term::Remainder(left, right) => binary("remainder", left, right),
-        Bitvector32Term::ShiftLeft(left, right) => binary("shift-left", left, right),
-        Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            binary("arithmetic-shift-right", left, right)
+        Bitvector32Term::Add(left, right) => {
+            havoc_bitvector_binary_identity(identity, "add", left, right, depth)
         }
-        Bitvector32Term::BitwiseAnd(left, right) => binary("bitwise-and", left, right),
-        Bitvector32Term::BitwiseOr(left, right) => binary("bitwise-or", left, right),
-        Bitvector32Term::BitwiseXor(left, right) => binary("bitwise-xor", left, right),
+        Bitvector32Term::Subtract(left, right) => {
+            havoc_bitvector_binary_identity(identity, "subtract", left, right, depth)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            havoc_bitvector_binary_identity(identity, "multiply", left, right, depth)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            havoc_bitvector_binary_identity(identity, "divide", left, right, depth)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            havoc_bitvector_binary_identity(identity, "remainder", left, right, depth)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            havoc_bitvector_binary_identity(identity, "shift-left", left, right, depth)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            havoc_bitvector_binary_identity(identity, "arithmetic-shift-right", left, right, depth)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-and", left, right, depth)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-or", left, right, depth)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            havoc_bitvector_binary_identity(identity, "bitwise-xor", left, right, depth)
+        }
         Bitvector32Term::BitwiseNot(value) => {
-            format!(
-                "bitwise-not({})",
-                havoc_bitvector_identity(value, depth + 1)
-            )
+            identity.push_str("bitwise-not(");
+            havoc_bitvector_identity(identity, value, depth + 1);
+            identity.push(')');
         }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
-        } => format!(
-            "if({}, {}, {})",
-            havoc_condition_identity(condition, depth + 1),
-            havoc_bitvector_identity(then_term, depth + 1),
-            havoc_bitvector_identity(else_term, depth + 1),
-        ),
+        } => {
+            identity.push_str("if(");
+            havoc_condition_identity(identity, condition, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, then_term, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, else_term, depth + 1);
+            identity.push(')');
+        }
         Bitvector32Term::RangeFold {
             start,
             end,
@@ -110,78 +138,123 @@ fn havoc_bitvector_identity(term: &Bitvector32Term, depth: usize) -> String {
             accumulator,
             item,
             body,
-        } => format!(
-            "range-fold({}, {}, {}, {}, {}, {})",
-            havoc_bitvector_identity(start, depth + 1),
-            havoc_bitvector_identity(end, depth + 1),
-            havoc_bitvector_identity(initial, depth + 1),
-            accumulator.0,
-            item.0,
-            havoc_bitvector_identity(body, depth + 1),
-        ),
-        Bitvector32Term::PureFunctionApplication { name, arguments } => format!(
-            "pure({name:?}, [{}])",
-            arguments
-                .iter()
-                .map(|argument| havoc_bitvector_identity(argument, depth + 1))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        } => {
+            identity.push_str("range-fold(");
+            havoc_bitvector_identity(identity, start, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, end, depth + 1);
+            identity.push_str(", ");
+            havoc_bitvector_identity(identity, initial, depth + 1);
+            let _ = write!(identity, ", {}, ", accumulator.0);
+            let _ = write!(identity, "{}, ", item.0);
+            havoc_bitvector_identity(identity, body, depth + 1);
+            identity.push(')');
+        }
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            let _ = write!(identity, "pure({name:?}, [");
+            for (index, argument) in arguments.iter().enumerate() {
+                if index > 0 {
+                    identity.push_str(", ");
+                }
+                havoc_bitvector_identity(identity, argument, depth + 1);
+            }
+            identity.push_str("])");
+        }
         Bitvector32Term::MemoryLoad(_, pointer) => {
-            format!("load({})", havoc_pointer_identity(pointer, depth + 1))
+            identity.push_str("load(");
+            havoc_pointer_identity(identity, pointer, depth + 1);
+            identity.push(')');
         }
     }
 }
 
-fn havoc_condition_identity(condition: &ConditionTerm, depth: usize) -> String {
+fn havoc_bitvector_binary_identity(
+    identity: &mut String,
+    name: &str,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    depth: usize,
+) {
+    identity.push_str(name);
+    identity.push('(');
+    havoc_bitvector_identity(identity, left, depth + 1);
+    identity.push_str(", ");
+    havoc_bitvector_identity(identity, right, depth + 1);
+    identity.push(')');
+}
+
+fn havoc_condition_identity(identity: &mut String, condition: &ConditionTerm, depth: usize) {
     if depth >= 64 {
-        return "depth-limit".to_string();
+        identity.push_str("depth-limit");
+        return;
     }
-    let binary = |name: &str, left: &Bitvector32Term, right: &Bitvector32Term| {
-        format!(
-            "{name}({}, {})",
-            havoc_bitvector_identity(left, depth + 1),
-            havoc_bitvector_identity(right, depth + 1),
-        )
-    };
     match condition {
-        ConditionTerm::Constant(value) => format!("constant({value})"),
-        ConditionTerm::Variable(variable) => format!("variable({})", variable.0),
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => binary("less-than", left, right),
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => binary("less-equal", left, right),
+        ConditionTerm::Constant(value) => {
+            let _ = write!(identity, "constant({value})");
+        }
+        ConditionTerm::Variable(variable) => {
+            let _ = write!(identity, "variable({})", variable.0);
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            havoc_condition_binary_identity(identity, "less-than", left, right, depth)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            havoc_condition_binary_identity(identity, "less-equal", left, right, depth)
+        }
         ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            binary("greater-than", left, right)
+            havoc_condition_binary_identity(identity, "greater-than", left, right, depth)
         }
         ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            binary("greater-equal", left, right)
+            havoc_condition_binary_identity(identity, "greater-equal", left, right, depth)
         }
-        ConditionTerm::Bitvector32Equal(left, right) => binary("equal", left, right),
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            havoc_condition_binary_identity(identity, "equal", left, right, depth)
+        }
         ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
-            binary("add-overflows", left, right)
+            havoc_condition_binary_identity(identity, "add-overflows", left, right, depth)
         }
         ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
-            binary("subtract-overflows", left, right)
+            havoc_condition_binary_identity(identity, "subtract-overflows", left, right, depth)
         }
         ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
-            binary("multiply-overflows", left, right)
+            havoc_condition_binary_identity(identity, "multiply-overflows", left, right, depth)
         }
         ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
-            binary("divide-overflows", left, right)
+            havoc_condition_binary_identity(identity, "divide-overflows", left, right, depth)
         }
         ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            binary("shift-left-overflows", left, right)
+            havoc_condition_binary_identity(identity, "shift-left-overflows", left, right, depth)
         }
-        ConditionTerm::PointerOffsetEqual(left, right) => format!(
-            "offset-equal({}, {})",
-            havoc_pointer_offset_identity(left, depth + 1),
-            havoc_pointer_offset_identity(right, depth + 1),
-        ),
-        ConditionTerm::PointerEqual(left, right) => format!(
-            "pointer-equal({}, {})",
-            havoc_pointer_identity(left, depth + 1),
-            havoc_pointer_identity(right, depth + 1),
-        ),
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            identity.push_str("offset-equal(");
+            havoc_pointer_offset_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_offset_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            identity.push_str("pointer-equal(");
+            havoc_pointer_identity(identity, left, depth + 1);
+            identity.push_str(", ");
+            havoc_pointer_identity(identity, right, depth + 1);
+            identity.push(')');
+        }
     }
+}
+
+fn havoc_condition_binary_identity(
+    identity: &mut String,
+    name: &str,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    depth: usize,
+) {
+    identity.push_str(name);
+    identity.push('(');
+    havoc_bitvector_identity(identity, left, depth + 1);
+    identity.push_str(", ");
+    havoc_bitvector_identity(identity, right, depth + 1);
+    identity.push(')');
 }
 
 fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
