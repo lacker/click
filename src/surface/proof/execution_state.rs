@@ -823,6 +823,7 @@ pub(super) fn synthesize_surface_paths(
 #[derive(Clone)]
 pub(super) enum PostExecutionTactic {
     Fold(ResourceClause),
+    Construct(ResourceClause),
     CloseOpen {
         resource: ResourceClause,
         preserve_exposed_body: bool,
@@ -1118,6 +1119,7 @@ pub(super) fn post_execution_tactic_timing(
         ),
         PostExecutionTactic::Simp => ("simp", "smart"),
         PostExecutionTactic::Fold(_) => ("fold", "simple"),
+        PostExecutionTactic::Construct(_) => ("construct", "simple"),
         PostExecutionTactic::CloseOpen { .. } => ("open", "control"),
         PostExecutionTactic::UnfoldPredicate(_) => ("unfold", "simple"),
         PostExecutionTactic::ApplyUsing { .. } => ("apply", "simple"),

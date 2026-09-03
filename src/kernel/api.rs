@@ -1,4 +1,7 @@
-use super::functions::apply_verified_contract_resource_transition;
+use super::functions::{
+    apply_verified_contract_resource_transition,
+    construct_c_function_resource as construct_c_function_resource_checked,
+};
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
 use crate::instrumentation::ContractFallback;
@@ -998,6 +1001,32 @@ pub fn apply_c_function_contract_resource_transition(
         Ok(Err(error)) => Err(format!("contract resource transition failed: {error:?}")),
         Err(limit) => Err(format!(
             "contract resource transition hit execution limit {limit:?}"
+        )),
+    }
+}
+
+/// Applies a kernel-checked, zero-source construction of one abstract token
+/// to a function outcome state.
+pub fn construct_c_function_resource(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    result: &CValue,
+    constructed: &CResourceFact,
+    assumptions: &PureFactContext,
+) -> Result<CState, String> {
+    match construct_c_function_resource_checked(
+        state,
+        function,
+        arguments,
+        result,
+        constructed,
+        assumptions,
+    ) {
+        Ok(Ok(state)) => Ok(state),
+        Ok(Err(error)) => Err(format!("resource construction failed: {error:?}")),
+        Err(limit) => Err(format!(
+            "resource construction hit execution limit {limit:?}"
         )),
     }
 }

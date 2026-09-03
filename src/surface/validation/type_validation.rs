@@ -207,6 +207,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
+            | ProofTactic::ConstructResource(_)
             | ProofTactic::Witness(_)
             | ProofTactic::Choose(_) => {
                 return Err(ClickError::new(format!(
@@ -232,6 +233,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         | ProofTactic::UnfoldFunction(_)
         | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
+        ProofTactic::ConstructResource(_) => "construct",
         ProofTactic::Induct { .. } => "induct",
         ProofTactic::ApplyInduction { .. } => "apply",
         ProofTactic::ApplyInductionUsing { .. } => "apply",

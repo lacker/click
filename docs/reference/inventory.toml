@@ -423,6 +423,14 @@ id = "language.word.conjunction"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.construct"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.constructs"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.consumes"
 path = "reference/language/grammar.md#word-index"
 
@@ -1144,6 +1152,10 @@ id = "tactic.fold"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 
 [[item]]
+id = "tactic.construct"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
 id = "tactic.observe"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 
@@ -1228,6 +1240,9 @@ id = "tactic-form.unfold-resource"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 [[item]]
 id = "tactic-form.fold-resource"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.construct-resource"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 [[item]]
 id = "tactic-form.induct"

@@ -32,6 +32,7 @@ impl CFunction {
             body,
             resource_requires: Vec::new(),
             resource_ensures: Vec::new(),
+            resource_constructors: Vec::new(),
             contract_requires: Vec::new(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
@@ -55,6 +56,11 @@ impl CFunction {
     ) -> Self {
         self.resource_requires = requires;
         self.resource_ensures = ensures;
+        self
+    }
+
+    pub fn with_resource_constructors(mut self, constructors: Vec<CResourceSpec>) -> Self {
+        self.resource_constructors = constructors;
         self
     }
 
@@ -124,6 +130,10 @@ impl CFunction {
 
     pub fn resource_ensures(&self) -> &[CResourceSpec] {
         &self.resource_ensures
+    }
+
+    pub fn resource_constructors(&self) -> &[CResourceSpec] {
+        &self.resource_constructors
     }
 
     pub fn contract_requires(&self) -> &[SpecProposition] {

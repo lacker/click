@@ -481,6 +481,10 @@ An abstract resource has no locally visible body and must use the explicit
 `views open_fd(fd)`, `consumes open_fd(fd)`, and `produces open_fd(fd)` use the
 same resource context. Arguments are type checked. Repeated equal owned units
 form a quantity; a requirement for two units cannot be satisfied by one.
+The function-level clause `constructs open_fd(result);` authorizes one
+post-execution `construct(open_fd(result));` step to create exactly one owned
+abstract token without consuming an input resource. The constructed token must
+also be named by the function's `produces` contract.
 
 An ordinary resource declaration requires a body shared by all equal units:
 

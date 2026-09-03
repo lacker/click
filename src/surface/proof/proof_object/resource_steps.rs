@@ -783,4 +783,67 @@ impl<'a> Proof<'a> {
             checked_facts: Vec::new(),
         })
     }
+
+    /// Applies one kernel-checked, zero-source construction to the focused
+    /// function outcome. The retained `ProofStep` is the certificate event;
+    /// the kernel checks its authorization and exact one-token delta.
+    pub(super) fn apply_outcome_resource_construction(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("outcome resource `construct` requires an execution proof"));
+        };
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(
+                self.step_error("outcome resource `construct` requires a focused outcome goal")
+            );
+        };
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let execution = branch_state
+            .execution
+            .as_deref()
+            .ok_or_else(|| self.step_error("resource `construct` lost its execution snapshot"))?;
+        let value = (*goal.data.core.result).clone();
+        let state = (*goal.data.core.state).clone();
+        let fact = lower_resource_clause_at_state_with_result(
+            resource,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &state,
+            &value,
+        )?;
+        let mut assumptions = self.facts().assumptions().clone();
+        for execution_fact in goal.data.core.execution_pure_facts.iter() {
+            assumptions = assumptions.assume_proposition(execution_fact.proposition().clone());
+        }
+        let state = crate::kernel::construct_c_function_resource(
+            &state,
+            context.function,
+            context.arguments,
+            &value,
+            &fact,
+            &assumptions,
+        )
+        .map_err(|message| {
+            self.step_error(format!(
+                "kernel rejected checked resource `construct`: {message}"
+            ))
+        })?;
+        let mut data = (*goal.data).clone();
+        data.core.state = state.into();
+        let mut updated = goal.clone();
+        updated.data = Arc::new(data);
+        let state = BranchState {
+            facts: self.facts().clone(),
+            unfolded_predicates: branch_state.unfolded_predicates.clone(),
+            execution: Some(Arc::new(execution.clone())),
+        };
+        Ok(CheckedFocusedTransition {
+            locals: self.state().locals().clone(),
+            branch: Some(OpenBranch::function_outcome(updated, state)),
+            added_facts: Vec::new(),
+            checked_facts: Vec::new(),
+        })
+    }
 }

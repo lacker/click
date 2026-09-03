@@ -1663,6 +1663,7 @@ pub(in crate::surface) fn build_function_environment(
             Some(function_block) => {
                 let (resource_requires, resource_ensures) =
                     function_resource_summary(function_block, resource_environment)?;
+                let resource_constructors = function_resource_constructors(function_block)?;
                 let (
                     contract_requires,
                     contract_ensures,
@@ -1680,6 +1681,7 @@ pub(in crate::surface) fn build_function_environment(
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
+                    .with_resource_constructors(resource_constructors)
                     .with_composite_resource_definitions(composite_resource_definitions(
                         resource_environment,
                         predicate_environment,
@@ -1726,6 +1728,16 @@ pub(in crate::surface) fn function_resource_summary(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((requires, ensures))
+}
+
+pub(in crate::surface) fn function_resource_constructors(
+    function_block: &FunctionBlock,
+) -> Result<Vec<CResourceSpec>, ClickError> {
+    function_block
+        .constructs()
+        .iter()
+        .map(resource_clause_to_resource_spec)
+        .collect()
 }
 
 pub(in crate::surface) fn composite_resource_definitions(

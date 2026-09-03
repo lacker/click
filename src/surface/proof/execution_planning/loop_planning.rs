@@ -468,6 +468,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::UnfoldFunction(_)
         | ProofStep::UnfoldResource(_)
         | ProofStep::FoldResource(_)
+        | ProofStep::ConstructResource(_)
         | ProofStep::ObserveResource(_)
         | ProofStep::Choose(_)
         | ProofStep::Witness(_)

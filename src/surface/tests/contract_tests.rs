@@ -26,6 +26,61 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 }
 
 #[test]
+fn abstract_resource_construction_adds_one_authorized_token() {
+    let c_source = r#"
+            int32 open_thing() {
+                return 7;
+            }
+        "#;
+    let click_source = r#"
+            abstract resource open_fd(fd: int32);
+
+            verifying "open_thing.c";
+
+            int32 open_thing() {
+                constructs open_fd(result);
+                produces open_fd(result) by {
+                    execute();
+                    construct(open_fd(result));
+                }
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("open_thing.c", c_source)])
+        .expect("an authorized abstract resource construction should verify");
+}
+
+#[test]
+fn abstract_resource_construction_requires_function_authorization() {
+    let c_source = r#"
+            int32 fake_open() {
+                return 7;
+            }
+        "#;
+    let click_source = r#"
+            abstract resource open_fd(fd: int32);
+
+            verifying "fake_open.c";
+
+            int32 fake_open() {
+                produces open_fd(result) by {
+                    execute();
+                    construct(open_fd(result));
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("fake_open.c", c_source)])
+        .expect_err("an unauthorized abstract resource construction must fail");
+    assert!(
+        error
+            .message
+            .contains("resource construction is not authorized"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn contradiction_closes_an_impossible_concrete_outcome() {
     let c_source = r#"
             int32 always_zero(int32* data) {

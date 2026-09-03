@@ -54,7 +54,6 @@ Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
-- [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 

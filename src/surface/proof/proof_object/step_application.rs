@@ -119,6 +119,13 @@ impl<'a> Proof<'a> {
                     self.apply_execution_resource_fold(resource)
                 }
             }
+            ProofStep::ConstructResource(resource) => {
+                if self.focused_outcome_data().is_some() {
+                    self.apply_outcome_resource_construction(resource)
+                } else {
+                    Err(self.step_error("resource `construct` requires a function-outcome proof"))
+                }
+            }
             ProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }

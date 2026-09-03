@@ -411,6 +411,9 @@ fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
 fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTactic> {
     match tactic {
         ProofTactic::FoldResource(resource) => Some(PostExecutionTactic::Fold(resource.clone())),
+        ProofTactic::ConstructResource(resource) => {
+            Some(PostExecutionTactic::Construct(resource.clone()))
+        }
         ProofTactic::UnfoldPredicate(name) => {
             Some(PostExecutionTactic::UnfoldPredicate(name.clone()))
         }

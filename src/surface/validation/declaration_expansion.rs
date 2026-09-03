@@ -100,6 +100,11 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             .drain(..)
             .map(|clause| expand_declared_resource_effect_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
+        function.constructs = function
+            .constructs
+            .drain(..)
+            .map(|resource| expand_declared_resource_clause(resource, &resource_definitions))
+            .collect::<Result<Vec<_>, _>>()?;
         function.structural_clauses = function
             .structural_clauses
             .drain(..)
@@ -333,6 +338,9 @@ fn expand_declared_resource_tactic(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         ProofTactic::FoldResource(resource) => Ok(ProofTactic::FoldResource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
+        ProofTactic::ConstructResource(resource) => Ok(ProofTactic::ConstructResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
