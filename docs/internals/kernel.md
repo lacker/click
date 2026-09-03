@@ -222,12 +222,13 @@ In `src/kernel/`:
 - `Bitvector32Term`: symbolic 32-bit integer terms, including arithmetic,
   `If`, `RangeFold`, and memory loads.
 - `PointerOffsetTerm`: pointer-offset expressions.
-- `ConditionTerm`: proof-level truth-valued conditions such as signed order,
-  equality, overflow, and pointer-offset equality.
+- `ConditionTerm`: proof-level truth-valued conditions such as signed and
+  unsigned order, equality, overflow, and pointer-offset equality.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
-  including the non-object `Void` return value, `int32`, `uint8`, pointers, and
-  typed memory loads/stores. Kernel execution reports `TypeMismatch` if `Void`
-  is used as a condition or object type; it never erases that execution path.
+  including the non-object `Void` return value, `int32`, scalar `uint8` and
+  `uint32`, pointers, and typed memory loads/stores. Kernel execution reports
+  `TypeMismatch` if `Void` is used as a condition or object type; it never
+  erases that execution path.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax. Calls have
   distinct assigned-result and discarded-result statements; a normal
   fallthrough from a `void` body completes with `CValue::Void`.
@@ -254,15 +255,19 @@ In `src/kernel/`:
 The current integer conversion slice is deliberately small. `eval.rs` promotes
 `uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,
 and bitwise operators, assignments, and returns, adding internal byte-range
-facts for the promoted term when an expression needs them. Stores and function
-returns also accept this `uint8`-to-`int32` widening. The same boundaries use
-checked `int32`-to-`uint8` narrowing; the coercion adds proof obligations for
-`0 <= value <= 255` unless the current path already proves them.
+facts for the promoted term when an expression needs them. Scalar `uint32`
+addition and subtraction use the same 32-bit term representation without signed
+overflow obligations, while its equality and ordered comparisons select the
+unsigned conditions. Stores and function returns preserve the `uint32` type
+tag. The existing boundaries still use checked `int32`-to-`uint8` narrowing;
+the coercion adds proof obligations for `0 <= value <= 255` unless the current
+path already proves them.
 
 ## C ABI and memory layout
 
 The C0 importer models one explicit ABI: LP64. In that ABI, `int32` has size
-and alignment 4, `uint8` has size and alignment 1, and every supported pointer
+and alignment 4, `uint8` has size and alignment 1, `uint32` has size and
+alignment 4, and every supported pointer
 has size and alignment 8. Struct fields are aligned individually and the
 struct size includes the tail padding required by its maximum field alignment.
 Named enum fields use the supported four-byte `int32` representation. The C0

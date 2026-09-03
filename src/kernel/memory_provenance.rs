@@ -250,6 +250,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::Void => CValue::Void,
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
+            CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::typed_pointer(
                 canonicalize_pointer_loads(pointer.pointer()),
                 pointer.c_type(),
@@ -2862,7 +2863,7 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
         .filter_map(|fact| {
             let store = fact.certified_store_data()?;
             let value = match &store.value {
-                CValue::Int32(term) | CValue::UInt8(term) => term.clone(),
+                CValue::Int32(term) | CValue::UInt8(term) | CValue::UInt32(term) => term.clone(),
                 CValue::Void | CValue::Pointer(_) => return None,
             };
             Some(Proposition::ConditionIs(
@@ -2887,7 +2888,7 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
             let byte_width = match store.value {
                 CValue::Void => return None,
                 CValue::UInt8(_) => 1,
-                CValue::Int32(_) | CValue::Pointer(_) => 4,
+                CValue::Int32(_) | CValue::UInt32(_) | CValue::Pointer(_) => 4,
             };
             Some(Proposition::CMemoryLoadable {
                 memory: store.after.clone(),

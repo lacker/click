@@ -470,6 +470,38 @@ impl PointerOffsetTerm {
 }
 
 impl ConditionTerm {
+    pub(crate) fn unsigned_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        let sign_bit = Bitvector32Term::Constant(0x8000_0000);
+        Self::signed_less_than(
+            Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
+            Bitvector32Term::bitwise_xor(right, sign_bit),
+        )
+    }
+
+    pub(crate) fn unsigned_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        let sign_bit = Bitvector32Term::Constant(0x8000_0000);
+        Self::signed_less_equal(
+            Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
+            Bitvector32Term::bitwise_xor(right, sign_bit),
+        )
+    }
+
+    pub(crate) fn unsigned_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        let sign_bit = Bitvector32Term::Constant(0x8000_0000);
+        Self::signed_greater_than(
+            Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
+            Bitvector32Term::bitwise_xor(right, sign_bit),
+        )
+    }
+
+    pub(crate) fn unsigned_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        let sign_bit = Bitvector32Term::Constant(0x8000_0000);
+        Self::signed_greater_equal(
+            Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
+            Bitvector32Term::bitwise_xor(right, sign_bit),
+        )
+    }
+
     pub(in crate::kernel) fn signed_less_than(
         left: Bitvector32Term,
         right: Bitvector32Term,
@@ -611,10 +643,11 @@ impl CType {
                 CType::Void => 0,
                 CType::Int32 => 1,
                 CType::UInt8 => 2,
-                CType::Int32Pointer => 3,
-                CType::UInt8Pointer => 4,
-                CType::Int32PointerPointer => 5,
-                CType::UInt8PointerPointer => 6,
+                CType::UInt32 => 3,
+                CType::Int32Pointer => 4,
+                CType::UInt8Pointer => 5,
+                CType::Int32PointerPointer => 6,
+                CType::UInt8PointerPointer => 7,
                 CType::FunctionPointer(_) | CType::Int32Array(_) | CType::UInt8Array(_) => {
                     return None;
                 }
@@ -645,6 +678,7 @@ impl CType {
         match self {
             Self::Int32 => Some(Self::Int32Pointer),
             Self::UInt8 => Some(Self::UInt8Pointer),
+            Self::UInt32 => None,
             Self::Int32Pointer => Some(Self::Int32PointerPointer),
             Self::UInt8Pointer => Some(Self::UInt8PointerPointer),
             Self::Void
@@ -660,7 +694,8 @@ impl CType {
         match (self, value) {
             (Self::Void, CValue::Void)
             | (Self::Int32, CValue::Int32(_))
-            | (Self::UInt8, CValue::UInt8(_)) => true,
+            | (Self::UInt8, CValue::UInt8(_))
+            | (Self::UInt32, CValue::UInt32(_)) => true,
             (target, CValue::Pointer(pointer)) if target.is_pointer() => {
                 pointer.is_null()
                     || (pointer.c_type() == target
@@ -679,6 +714,7 @@ impl CType {
             Self::Void => 0,
             Self::Int32 => 4,
             Self::UInt8 => 1,
+            Self::UInt32 => 4,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
@@ -725,6 +761,7 @@ impl CValue {
             Self::Void => CType::Void,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
+            Self::UInt32(_) => CType::UInt32,
             Self::Pointer(pointer) => pointer.c_type(),
         }
     }
@@ -734,6 +771,7 @@ impl CValue {
             Self::Void => 0,
             Self::Int32(_) => 4,
             Self::UInt8(_) => 1,
+            Self::UInt32(_) => 4,
             Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
         }
     }

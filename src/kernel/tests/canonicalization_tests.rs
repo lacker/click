@@ -18,7 +18,7 @@ fn collect_offset_load_variables_from_value(
 ) {
     match value {
         CValue::Void => {}
-        CValue::Int32(term) | CValue::UInt8(term) => {
+        CValue::Int32(term) | CValue::UInt8(term) | CValue::UInt32(term) => {
             collect_offset_load_variables_from_term(term, load_variables);
         }
         CValue::Pointer(pointer) => {

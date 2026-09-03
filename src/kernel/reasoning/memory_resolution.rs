@@ -1243,6 +1243,7 @@ fn cell_disjoint_from_load_by_constant_offset(
         CValue::Void => return false,
         CValue::Int32(_) => 4,
         CValue::UInt8(_) => 1,
+        CValue::UInt32(_) => 4,
         CValue::Pointer(_) => return false,
     };
     cell_shift + cell_width <= load_shift || load_shift + MAX_SCALAR_LOAD_BYTES <= cell_shift
@@ -1269,7 +1270,11 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
                 crate::kernel::eval::registered_load_for_variable(variable)?;
             (&source_pointer == cell_pointer).then_some(source)
         }
-        CValue::Void | CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::Int32(_)
+        | CValue::UInt8(_)
+        | CValue::UInt32(_)
+        | CValue::Pointer(_) => None,
     }
 }
 

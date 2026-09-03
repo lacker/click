@@ -93,6 +93,11 @@ pub(in crate::surface) fn initial_call_state(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
+            C0Type::UInt32 => {
+                arguments.push(CExpression::Value(CValue::UInt32(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
             C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
                 return Err(ClickError::new(format!(
                     "array parameter `{}` should have lowered to a pointer",

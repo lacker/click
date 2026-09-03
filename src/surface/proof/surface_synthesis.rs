@@ -1101,7 +1101,9 @@ fn synthesize_local_aggregate_field(
                         return None;
                     };
                     let value_term = match value {
-                        CValue::Int32(value) | CValue::UInt8(value) => value,
+                        CValue::Int32(value) | CValue::UInt8(value) | CValue::UInt32(value) => {
+                            value
+                        }
                         CValue::Pointer(_) | CValue::Void => return None,
                     };
                     if value_term != *term {

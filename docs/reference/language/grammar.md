@@ -30,7 +30,7 @@ documentation inventory keep the following accepted words synchronized.
 | `predicate`, `function`, `theorem` | Top-level logic declarations; `function` also starts a C contract. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
-| `int32`, `uint8`, `int`, `int32_t`, `unsigned char`, `uint8_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
+| `int32`, `uint8`, `uint32`, `int`, `int32_t`, `unsigned char`, `uint8_t`, `uint32_t`, `unsigned int`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |
@@ -45,7 +45,7 @@ documentation inventory keep the following accepted words synchronized.
 | `defined`, `loadable`, `separate` | Definedness, readable-memory, and resource-separation propositions. |
 | `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
 | `sizeof`, `byte_offset` | Supported scalar, pointer, and struct-layout sizes plus byte-granularity pointer-offset expressions. |
-| `load_int32`, `load_uint8`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
+| `load_int32`, `load_uint8`, `load_uint32`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |

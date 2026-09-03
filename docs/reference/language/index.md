@@ -35,18 +35,22 @@ parameters, pure-function and predicate parameters, typed `let` bindings, and
 `forall`/`exists` variables.
 
 Click signatures currently understand `void` C return types, `int32`/`int`/
-`int32_t`, `uint8`/`unsigned char`/`uint8_t`, their pointer forms, pilot
+`int32_t`, `uint8`/`unsigned char`/`uint8_t`, and scalar `uint32`/
+`unsigned int`/`uint32_t` forms, plus the existing pointer forms, pilot
 `struct name*` parameters, and array-parameter spellings such as `int32 p[]`
-and `uint8 bytes[]`. C typedefs may alias these modeled types. `void` is not
-an object or parameter type. A `void` contract has no `result` binding; it may
-still state resource transfer, memory effects, and return-state propositions
-that do not mention a result.
+and `uint8 bytes[]`. C typedefs may alias these modeled types. `uint32` is
+currently scalar-only: pointers, arrays, and struct fields of that type remain
+unsupported. `void` is not an object or parameter type. A `void` contract has
+no `result` binding; it may still state resource transfer, memory effects, and
+return-state propositions that do not mention a result.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
 promote to `int32` for arithmetic, ordered comparisons, shifts, and bitwise
-operators, assignments, and returns. Assigning or returning an `int32` into `uint8` is checked narrowing:
-the current pure facts must prove `0 <= value <= 255`.
+operators, assignments, and returns. `uint32` addition and subtraction wrap at
+2^32, and its equality and ordered comparisons use unsigned order. Assigning
+or returning an `int32` into `uint8` is checked narrowing: the current pure
+facts must prove `0 <= value <= 255`.
 
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.

@@ -1598,6 +1598,7 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Expression::Variable(_)
             | syntax::C0Expression::Int32Literal(_)
             | syntax::C0Expression::UInt8Literal(_)
+            | syntax::C0Expression::UInt32Literal(_)
             | syntax::C0Expression::SizeOfStruct { .. }
             | syntax::C0Expression::SizeOfUnion { .. }
             | syntax::C0Expression::SizeOfType { .. } => {}

@@ -322,6 +322,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::Void => "void".to_string(),
         C0Type::Int32 => "int32".to_string(),
         C0Type::UInt8 => "uint8".to_string(),
+        C0Type::UInt32 => "uint32".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
@@ -336,6 +337,7 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
         (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
         | (C0Type::UInt8Pointer, C0Type::UInt8Array(_)) => true,
+        (C0Type::Int32 | C0Type::UInt8, C0Type::UInt32) => true,
         _ => actual == expected,
     }
 }
@@ -390,7 +392,7 @@ fn infer_contract_expression_type(
             let right = infer_contract_expression_type(right, variables, click_functions, context)?;
             Ok(match (left, right) {
                 (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-                    Some(C0Type::Int32)
+                    Some(scalar_arithmetic_result_type(left, right))
                 }
                 _ => None,
             })
@@ -502,6 +504,7 @@ fn infer_c_expression_type(
         CExpression::Value(CValue::Void) => Some(C0Type::Void),
         CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
+        CExpression::Value(CValue::UInt32(_)) => Some(C0Type::UInt32),
         CExpression::Value(CValue::Pointer(_)) => None,
         CExpression::Variable(name) => variables.get(name).copied(),
         CExpression::Cast {
@@ -510,6 +513,7 @@ fn infer_c_expression_type(
         } => match target_type {
             CType::Int32 => Some(C0Type::Int32),
             CType::UInt8 => Some(C0Type::UInt8),
+            CType::UInt32 => Some(C0Type::UInt32),
             CType::Int32Pointer => Some(C0Type::Int32Pointer),
             CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
             CType::Int32PointerPointer => Some(C0Type::Int32PointerPointer),
@@ -528,7 +532,7 @@ fn infer_c_expression_type(
             match (then_type, else_type) {
                 (Some(left), Some(right)) if left == right => Some(left),
                 (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-                    Some(C0Type::Int32)
+                    Some(scalar_arithmetic_result_type(left, right))
                 }
                 _ => None,
             }
@@ -560,14 +564,14 @@ fn infer_c_expression_type(
             let right = infer_c_expression_type(right, variables);
             match (left, right) {
                 (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-                    Some(C0Type::Int32)
+                    Some(scalar_arithmetic_result_type(left, right))
                 }
                 _ => None,
             }
         }
         CExpression::BitwiseNot(expression) => infer_c_expression_type(expression, variables)
             .filter(|c_type| type_is_scalar(*c_type))
-            .map(|_| C0Type::Int32),
+            .map(|c_type| scalar_arithmetic_result_type(c_type, c_type)),
         CExpression::Load(pointer) => {
             infer_c_expression_type(pointer, variables).and_then(pointer_element_type)
         }
@@ -575,6 +579,7 @@ fn infer_c_expression_type(
             CType::Void => return None,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,
+            CType::UInt32 => C0Type::UInt32,
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
@@ -658,14 +663,22 @@ fn pointer_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Optio
 fn scalar_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
     match (left, right) {
         (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-            Some(C0Type::Int32)
+            Some(scalar_arithmetic_result_type(left, right))
         }
         _ => None,
     }
 }
 
 fn type_is_scalar(c_type: C0Type) -> bool {
-    matches!(c_type, C0Type::Int32 | C0Type::UInt8)
+    matches!(c_type, C0Type::Int32 | C0Type::UInt8 | C0Type::UInt32)
+}
+
+fn scalar_arithmetic_result_type(left: C0Type, right: C0Type) -> C0Type {
+    if matches!(left, C0Type::UInt32) || matches!(right, C0Type::UInt32) {
+        C0Type::UInt32
+    } else {
+        C0Type::Int32
+    }
 }
 
 fn type_is_data_pointer(c_type: C0Type) -> bool {

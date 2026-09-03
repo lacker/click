@@ -155,7 +155,9 @@ pub(super) fn apply_choose_tactic(
         CValue::Pointer(pointer) => {
             crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
         }
-        CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
+        CValue::Void | CValue::UInt8(_) | CValue::UInt32(_) => {
+            unreachable!("unsupported choice sort above")
+        }
     };
     values.insert(choice.name.clone(), chosen);
     available_pure_facts.push(chosen_fact);
@@ -306,13 +308,42 @@ pub(super) fn comparison_condition(
     actual: Bitvector32Term,
     operator: ComparisonOperator,
     expected: Bitvector32Term,
+    unsigned: bool,
 ) -> Option<(ConditionTerm, bool)> {
     match operator {
         ComparisonOperator::Equal => Some((bitvector32_equal(actual, expected), true)),
         ComparisonOperator::NotEqual => Some((bitvector32_equal(actual, expected), false)),
-        ComparisonOperator::LessThan => Some((signed_less_than(actual, expected), true)),
-        ComparisonOperator::LessEqual => Some((signed_less_equal(actual, expected), true)),
-        ComparisonOperator::GreaterThan => Some((signed_greater_than(actual, expected), true)),
-        ComparisonOperator::GreaterEqual => Some((signed_greater_equal(actual, expected), true)),
+        ComparisonOperator::LessThan => Some((
+            if unsigned {
+                ConditionTerm::unsigned_less_than(actual, expected)
+            } else {
+                signed_less_than(actual, expected)
+            },
+            true,
+        )),
+        ComparisonOperator::LessEqual => Some((
+            if unsigned {
+                ConditionTerm::unsigned_less_equal(actual, expected)
+            } else {
+                signed_less_equal(actual, expected)
+            },
+            true,
+        )),
+        ComparisonOperator::GreaterThan => Some((
+            if unsigned {
+                ConditionTerm::unsigned_greater_than(actual, expected)
+            } else {
+                signed_greater_than(actual, expected)
+            },
+            true,
+        )),
+        ComparisonOperator::GreaterEqual => Some((
+            if unsigned {
+                ConditionTerm::unsigned_greater_equal(actual, expected)
+            } else {
+                signed_greater_equal(actual, expected)
+            },
+            true,
+        )),
     }
 }

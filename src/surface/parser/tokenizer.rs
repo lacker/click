@@ -181,6 +181,21 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                     })?;
                     tokens.push(Token::UInt8Number(value));
                     index += 2;
+                } else if chars.get(index) == Some(&'u')
+                    && chars.get(index + 1) == Some(&'3')
+                    && chars.get(index + 2) == Some(&'2')
+                {
+                    if chars
+                        .get(index + 3)
+                        .is_some_and(|next| is_ident_continue(*next))
+                    {
+                        return Err(ClickError::new(format!(
+                            "{position}: invalid uint32 literal `{form}u32{}`",
+                            chars[index + 3]
+                        )));
+                    }
+                    tokens.push(Token::UInt32Number(value));
+                    index += 3;
                 } else {
                     tokens.push(Token::Number(value));
                 }

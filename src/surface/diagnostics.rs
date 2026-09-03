@@ -663,7 +663,11 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
     match parameter.c_type() {
         C0Type::Void => 0,
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
-        C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::Int32Array(_) => 4,
+        C0Type::Int32
+        | C0Type::UInt8
+        | C0Type::UInt32
+        | C0Type::Int32Pointer
+        | C0Type::Int32Array(_) => 4,
         C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => 8,
         C0Type::FunctionPointer(_) => 8,
     }
@@ -748,6 +752,12 @@ pub(super) fn describe_c_value(
         CValue::UInt8(value) => {
             format!(
                 "{}u8",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        CValue::UInt32(value) => {
+            format!(
+                "{}u32",
                 describe_bitvector_with_context(value, parameters, arguments)
             )
         }
@@ -857,6 +867,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::Void => "load_void",
                 CType::Int32 => "load_int32",
                 CType::UInt8 => "load_uint8",
+                CType::UInt32 => "load_uint32",
                 CType::Int32Pointer => "load_int32_pointer",
                 CType::UInt8Pointer => "load_uint8_pointer",
                 CType::Int32PointerPointer => "load_int32_pointer_pointer",

@@ -1,4 +1,4 @@
-use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
+use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8, uint32};
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution,
@@ -268,6 +268,7 @@ pub enum CValue {
     Void,
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
+    UInt32(Bitvector32Term),
     Pointer(CPointerValue),
 }
 
@@ -276,6 +277,7 @@ pub enum CType {
     Void,
     Int32,
     UInt8,
+    UInt32,
     Int32Pointer,
     UInt8Pointer,
     Int32PointerPointer,

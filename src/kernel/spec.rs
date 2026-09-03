@@ -2089,24 +2089,51 @@ pub(super) fn c_value_comparison_proposition(
         return Some(Proposition::ConditionIs(condition, value));
     }
 
+    let unsigned = matches!(left, CValue::UInt32(_)) || matches!(right, CValue::UInt32(_));
     let left = c_value_int32_term(left)?;
     let right = c_value_int32_term(right)?;
     let (condition, value) = match operator {
         CComparisonOperator::Equal => (ConditionTerm::equal(left, right), true),
         CComparisonOperator::NotEqual => (ConditionTerm::equal(left, right), false),
-        CComparisonOperator::LessThan => (ConditionTerm::signed_less_than(left, right), true),
-        CComparisonOperator::LessEqual => (ConditionTerm::signed_less_equal(left, right), true),
-        CComparisonOperator::GreaterThan => (ConditionTerm::signed_greater_than(left, right), true),
-        CComparisonOperator::GreaterEqual => {
-            (ConditionTerm::signed_greater_equal(left, right), true)
-        }
+        CComparisonOperator::LessThan => (
+            if unsigned {
+                ConditionTerm::unsigned_less_than(left, right)
+            } else {
+                ConditionTerm::signed_less_than(left, right)
+            },
+            true,
+        ),
+        CComparisonOperator::LessEqual => (
+            if unsigned {
+                ConditionTerm::unsigned_less_equal(left, right)
+            } else {
+                ConditionTerm::signed_less_equal(left, right)
+            },
+            true,
+        ),
+        CComparisonOperator::GreaterThan => (
+            if unsigned {
+                ConditionTerm::unsigned_greater_than(left, right)
+            } else {
+                ConditionTerm::signed_greater_than(left, right)
+            },
+            true,
+        ),
+        CComparisonOperator::GreaterEqual => (
+            if unsigned {
+                ConditionTerm::unsigned_greater_equal(left, right)
+            } else {
+                ConditionTerm::signed_greater_equal(left, right)
+            },
+            true,
+        ),
     };
     Some(Proposition::ConditionIs(condition, value))
 }
 
 fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
-        CValue::Int32(value) | CValue::UInt8(value) => Some(value.clone()),
+        CValue::Int32(value) | CValue::UInt8(value) | CValue::UInt32(value) => Some(value.clone()),
         CValue::Void | CValue::Pointer(_) => None,
     }
 }

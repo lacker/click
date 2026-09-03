@@ -3,18 +3,13 @@
 Found by the 2026-09-01 kernel audit at cb034b21 as the most frequently
 reported functionality gap.
 
-The kernel type universe is closed: `CType` is `Void`, `Int32`, `UInt8`,
-`Int32Pointer`, `UInt8Pointer`, `Int32Array`, `UInt8Array`
-(`src/kernel/primitives.rs:207-216`). Every arithmetic term is
-`Bitvector32Term` (`primitives.rs:82-116`); every scalar comparison and
-overflow condition in `ConditionTerm` is the signed variant
-(`primitives.rs:133-143`); `uint8` is carried as an int32 term plus range
-facts (`src/kernel/eval/expression.rs:45-48`). Conversion support now includes
-uint8 rvalue promotion, uint8-to-int32 widening, and checked int32-to-uint8
-narrowing. The Click parser accepts only the `int32` and `uint8` type
-keywords (`src/surface/parser.rs:960-961`). `docs/internals/roadmap.md:83-86`
-lists `int`, `size_t`, signed sizes, `uint32`, `uint64`, and well-specified
-casts and promotions as remaining work.
+The kernel type universe originally stopped at `CType::UInt8`; every scalar
+comparison and overflow condition was signed, and `uint8` was carried as an
+int32 term plus range facts. The first integer conversion slice added uint8
+rvalue promotion, uint8-to-int32 widening, and checked int32-to-uint8
+narrowing. The current slice adds scalar `CType::UInt32` with 32-bit storage,
+`uint32`/`uint32_t`/`unsigned int` spellings, modular addition and subtraction,
+and unsigned ordered comparisons.
 
 Real C uses `size_t` in essentially every length and index computation,
 `uint32_t`/`uint64_t` for bit manipulation, `long`/`int64_t` for offsets, and
@@ -34,6 +29,14 @@ to `int32` at assignment and function-return boundaries. The conversion keeps
 the underlying checked 32-bit term while changing its C type tag; the existing
 checked `int32`-to-`uint8` narrowing rule remains unchanged. The regression is
 `mdtests/uint8_widening.md`.
+
+The second slice now supports scalar `uint32` values in parameters, returns,
+locals, assignments, and Click contracts. `uint32`/`uint32_t`/`unsigned int`
+source declarations share a four-byte LP64 representation. Addition and
+subtraction wrap modulo 2^32; equality compares the bit pattern and ordered
+comparisons use unsigned order. Pointers, arrays, struct fields, and the
+remaining arithmetic operators are intentionally still outside this slice. The
+regression is `mdtests/uint32_arithmetic.md`.
 
 ## Intended regression
 

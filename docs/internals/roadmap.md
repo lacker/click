@@ -47,7 +47,7 @@ Current status: mostly done, but this remains a maintenance milestone.
 
 What exists today:
 
-- C0 symbolic execution for `int32`, `uint8`, named enum fields, pointers, local
+- C0 symbolic execution for `int32`, `uint8`, scalar `uint32`, named enum fields, pointers, local
   arrays, memory, function calls, annotated loops, and exact struct or
   runtime-sized `int32` allocation lifetimes.
 - Surface Click contracts, loop invariants, memory effects, predicates, pure
@@ -81,7 +81,7 @@ Likely additions:
   ternary expressions, value-producing update expressions, and broader `for`
   forms beyond the current assignment/update lowering.
 - More integer types:
-  `int`, `size_t`, `ssize_t`-like signed sizes, `uint32`, `uint64`, and
+  `size_t`, `ssize_t`-like signed sizes, `uint64`, and
   well-specified casts/promotions.
 - `char` and string literal support:
   null-terminated byte arrays, read-only static storage, and byte/string
@@ -338,10 +338,11 @@ Good next tasks from the current state:
    package structural memory loadability instead of requiring separate
    `loadable` facts.
 5. Extend the integer-promotion/conversion slice beyond the current `uint8`
-   rvalue promotion, `uint8`-to-`int32` widening, and checked
-   `int32`-to-`uint8` narrowing rules. The open design question is how much of
-   C's usual arithmetic conversions Click should model next versus reject in
-   C0 until the integer story is broader.
+   rvalue promotion, scalar `uint32` modular arithmetic and unsigned order,
+   `uint8`-to-`int32` widening, and checked `int32`-to-`uint8` narrowing rules.
+   The open design question is how much of C's usual arithmetic conversions
+   Click should model next versus reject in C0 until the integer story is
+   broader.
 6. Use the allocated examples to guide broader allocator support beyond the
    current runtime-sized `int32` slice: retain definitional lifetime matching,
    separated survivors across `free`, and proof-local branching as explicit

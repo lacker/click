@@ -44,6 +44,10 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+pub fn uint32(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::UInt32(bits.into())
+}
+
 /// True when `pointer` addresses within a live heap allocation of `memory`,
 /// matching allocation keys either structurally or up to exact
 /// materialization of the loads embedded in the key and pointer forms.
@@ -534,6 +538,7 @@ fn abstract_c_state_for_join_across_with_policy(
             match c_type {
                 CType::Void => continue,
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
+                CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
                 CType::Int32Pointer
                 | CType::UInt8Pointer
@@ -645,6 +650,10 @@ pub fn c_int32_literal(value: u32) -> CExpression {
 
 pub fn c_uint8_literal(value: u8) -> CExpression {
     CExpression::Value(uint8(Bitvector32Term::Constant(u32::from(value))))
+}
+
+pub fn c_uint32_literal(value: u32) -> CExpression {
+    CExpression::Value(uint32(Bitvector32Term::Constant(value)))
 }
 
 pub fn c_pointer_value(pointer: Pointer) -> CExpression {
@@ -5139,7 +5148,7 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             pointer_depth_exceeds(pointer, remaining - 1)
                 || match value {
                     CValue::Void => false,
-                    CValue::Int32(term) | CValue::UInt8(term) => {
+                    CValue::Int32(term) | CValue::UInt8(term) | CValue::UInt32(term) => {
                         term_depth_exceeds(term, remaining - 1)
                     }
                     CValue::Pointer(pointer) => pointer_depth_exceeds(pointer, remaining - 1),

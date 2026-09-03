@@ -14,6 +14,10 @@ id = "c0.type.uint8"
 path = "reference/language/c0.md#supported-types"
 
 [[item]]
+id = "c0.type.uint32"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
 id = "c0.type.standard-spellings"
 path = "reference/language/c0.md#supported-types"
 

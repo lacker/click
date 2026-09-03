@@ -153,6 +153,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   and returns.
 - `mdtests/uint8_loop_invariant_pure_function.md`: `uint8[]` pure function
   calls inside loop invariants and `old(...)`.
+- `mdtests/uint32_arithmetic.md`: scalar `uint32` aliases, modular addition and
+  subtraction, and unsigned ordered comparisons.
 
 ## Loops and invariants
 

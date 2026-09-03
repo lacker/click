@@ -1476,6 +1476,7 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::Void => None,
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
+        CType::UInt32 => Some(memory.symbolic_uint32_load(pointer)),
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer

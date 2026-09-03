@@ -128,7 +128,10 @@ fn execute_c_lvalue_update_paths(
             });
             continue;
         };
-        if !matches!(lvalue.value_type, CType::Int32 | CType::UInt8) {
+        if !matches!(
+            lvalue.value_type,
+            CType::Int32 | CType::UInt8 | CType::UInt32
+        ) {
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -2273,6 +2276,7 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Int32 => 4,
         CType::UInt8 => 1,
+        CType::UInt32 => 4,
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer

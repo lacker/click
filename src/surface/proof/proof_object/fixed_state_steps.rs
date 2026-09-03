@@ -267,7 +267,9 @@ impl<'a> Proof<'a> {
                 var,
                 pointer.pointer(),
             ),
-            CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
+            CValue::Void | CValue::UInt8(_) | CValue::UInt32(_) => {
+                unreachable!("unsupported choice sort above")
+            }
         };
         let mut locals = self.state().locals().clone();
         locals.values = locals.values.with_inserted(

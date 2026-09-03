@@ -11,6 +11,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.void",
     "type.int32",
     "type.uint8",
+    "type.uint32",
     "type.standard-spellings",
     "type.typedef",
     "type.enum",
@@ -191,6 +192,7 @@ pub enum C0Type {
     Void,
     Int32,
     UInt8,
+    UInt32,
     Int32Pointer,
     UInt8Pointer,
     Int32PointerPointer,
@@ -216,6 +218,7 @@ impl CAbi {
             (Self::Lp64, C0Type::Void) => (0, 1),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
+            (Self::Lp64, C0Type::UInt32) => (4, 4),
             (
                 Self::Lp64,
                 C0Type::Int32Pointer
@@ -368,6 +371,7 @@ pub enum C0Expression {
     },
     Int32Literal(u32),
     UInt8Literal(u8),
+    UInt32Literal(u32),
     SizeOfStruct {
         name: String,
         bytes: u32,
@@ -699,7 +703,9 @@ impl C0Type {
             Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
-            Self::Void | Self::Int32 | Self::UInt8 | Self::FunctionPointer(_) => None,
+            Self::Void | Self::Int32 | Self::UInt8 | Self::UInt32 | Self::FunctionPointer(_) => {
+                None
+            }
         }
     }
 
@@ -708,6 +714,7 @@ impl C0Type {
             Self::Void => crate::kernel::CType::Void,
             Self::Int32 => crate::kernel::CType::Int32,
             Self::UInt8 => crate::kernel::CType::UInt8,
+            Self::UInt32 => crate::kernel::CType::UInt32,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
@@ -892,6 +899,7 @@ impl C0Expression {
             }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
+            Self::UInt32Literal(value) => crate::kernel::c_uint32_literal(*value),
             Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
                 crate::kernel::c_int32_literal(*bytes)
             }
@@ -1206,6 +1214,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         | C0Expression::FunctionAddress(_)
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
+        | C0Expression::UInt32Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => false,
@@ -1224,6 +1233,8 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "int32_t"
             | "uint8"
             | "uint8_t"
+            | "uint32"
+            | "uint32_t"
             | "unsigned"
             | "signed"
             | "char"
@@ -1233,7 +1244,6 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "int16_t"
             | "int64_t"
             | "uint16_t"
-            | "uint32_t"
             | "uint64_t"
             | "float"
             | "double"
@@ -2490,6 +2500,11 @@ impl Parser {
             c_type = match c_type {
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
+                C0Type::UInt32 => {
+                    return Err(
+                        self.error_at_previous("pointers to uint32 values are not supported yet")
+                    );
+                }
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
                 C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
@@ -2601,13 +2616,17 @@ impl Parser {
             "void" => C0Type::Void,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,
+            "uint32" | "uint32_t" => C0Type::UInt32,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
                     C0Type::UInt8
+                } else if self.peek_ident() == Some("int") {
+                    self.position += 1;
+                    C0Type::UInt32
                 } else {
                     return Err(self.error_at_previous(
-                        "unsupported integer width `unsigned`; only `unsigned char` is modeled",
+                        "unsupported integer width `unsigned`; only `unsigned char` and `unsigned int` are modeled",
                     ));
                 }
             }
@@ -2627,8 +2646,7 @@ impl Parser {
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
             }
-            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint32_t"
-            | "uint64_t" => {
+            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint64_t" => {
                 return Err(self.error_at_previous(format!(
                     "unsupported integer width `{name}`: see the integer-types issue"
                 )));
@@ -2815,6 +2833,7 @@ impl Parser {
                     let value = match expression {
                         C0Expression::Int32Literal(value) => value,
                         C0Expression::UInt8Literal(value) => u32::from(value),
+                        C0Expression::UInt32Literal(value) => value,
                         _ => {
                             return Err(self.error_here(
                                 "`case` labels currently require an integer or character literal",
@@ -4657,10 +4676,10 @@ impl Parser {
                 parsed_type.struct_name,
                 parsed_type.union_name,
             ) {
-                (C0Type::Int32 | C0Type::UInt8, None, None) => parsed_type.c_type,
+                (C0Type::Int32 | C0Type::UInt8 | C0Type::UInt32, None, None) => parsed_type.c_type,
                 _ => {
                     return Err(self.error_at_previous(
-                        "casts currently support only `int32` and `uint8` scalar values",
+                        "casts currently support only `int32`, `uint8`, and `uint32` scalar values",
                     ));
                 }
             };
@@ -5044,10 +5063,13 @@ impl Parser {
                 let value = parse_integer_literal_magnitude(&number).map_err(|reason| {
                     at.error(format!("invalid integer literal `{number}`: {reason}"))
                 })?;
-                if value > i32::MAX as u64 {
-                    return Err(at.error(format!("int32 literal `{number}` is out of range")));
+                if value <= i32::MAX as u64 {
+                    Ok(C0Expression::Int32Literal(value as u32))
+                } else if integer_literal_has_unsigned_suffix(&number) && value <= u32::MAX as u64 {
+                    Ok(C0Expression::UInt32Literal(value as u32))
+                } else {
+                    Err(at.error(format!("int32 literal `{number}` is out of range")))
                 }
-                Ok(C0Expression::Int32Literal(value as u32))
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
@@ -5225,6 +5247,15 @@ fn parse_integer_literal_magnitude(literal: &str) -> Result<u64, &'static str> {
         16 => "digits are not valid for a hexadecimal literal or the value is too large",
         _ => "the value is too large",
     })
+}
+
+fn integer_literal_has_unsigned_suffix(literal: &str) -> bool {
+    literal
+        .chars()
+        .skip_while(|character| {
+            character.is_ascii_hexdigit() || *character == 'x' || *character == 'X'
+        })
+        .any(|character| character.eq_ignore_ascii_case(&'u'))
 }
 
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
@@ -5640,6 +5671,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::FunctionAddress(_)
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
+        | C0Expression::UInt32Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
@@ -5700,6 +5732,7 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
             | C0Expression::FunctionAddress(_)
             | C0Expression::Int32Literal(_)
             | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
             | C0Expression::SizeOfStruct { .. }
             | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. } => {}

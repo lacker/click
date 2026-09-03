@@ -46,10 +46,16 @@ pub(in crate::surface) fn comparison_proposition(
             value,
         ));
     }
+    let unsigned = matches!(
+        (&left, &right),
+        (CValue::UInt32(_), _) | (_, CValue::UInt32(_))
+    );
     if let (Some(left_term), Some(right_term)) =
         (promoted_int32_term(&left), promoted_int32_term(&right))
     {
-        let Some((condition, value)) = comparison_condition(left_term, operator, right_term) else {
+        let Some((condition, value)) =
+            comparison_condition(left_term, operator, right_term, unsigned)
+        else {
             return Err(ClickError::new("unsupported proposition comparison"));
         };
         Ok(Proposition::ConditionIs(condition, value))
@@ -81,7 +87,9 @@ pub(in crate::surface) fn spec_range_membership_proposition(
 
 pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
-        CValue::Int32(bits) | CValue::UInt8(bits) => Some(simp_bitvector(bits)),
+        CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt32(bits) => {
+            Some(simp_bitvector(bits))
+        }
         CValue::Void | CValue::Pointer(_) => None,
     }
 }

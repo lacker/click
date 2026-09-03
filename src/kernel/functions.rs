@@ -1568,6 +1568,7 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         CType::Void => CValue::Void,
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
+        CType::UInt32 => CValue::UInt32(Bitvector32Term::Variable(variable)),
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer
@@ -1747,7 +1748,10 @@ pub(super) fn bind_c_function_arguments(
         // callee stack slot here.
         .filter(|parameter| {
             address_taken.contains(parameter.name())
-                && matches!(parameter.c_type(), CType::Int32 | CType::UInt8)
+                && matches!(
+                    parameter.c_type(),
+                    CType::Int32 | CType::UInt8 | CType::UInt32
+                )
         })
         .map(|parameter| parameter.name())
         .collect::<BTreeSet<_>>();

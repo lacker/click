@@ -1010,7 +1010,9 @@ pub(in crate::kernel) fn collect_c_value_bitvector_variables(
 ) {
     match value {
         CValue::Void => {}
-        CValue::Int32(bits) | CValue::UInt8(bits) => collect_bitvector_variables(bits, variables),
+        CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt32(bits) => {
+            collect_bitvector_variables(bits, variables)
+        }
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
     }
 }

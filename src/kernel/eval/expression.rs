@@ -46,7 +46,23 @@ pub(in crate::kernel) fn promote_c_int32_path_value(
             add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
+        CValue::UInt32(_) => None,
         CValue::Pointer(_) => None,
+    }
+}
+
+pub(in crate::kernel) fn promote_c_uint32_path_value(
+    value: CValue,
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int32(value) | CValue::UInt32(value) => Some(value),
+        CValue::UInt8(value) => {
+            add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
+        CValue::Void | CValue::Pointer(_) => None,
     }
 }
 
@@ -62,6 +78,7 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
 
     match (target_type, value) {
         (CType::Int32, CValue::UInt8(value)) => Some(CValue::Int32(value)),
+        (CType::UInt32, CValue::Int32(value) | CValue::UInt8(value)) => Some(CValue::UInt32(value)),
         (CType::UInt8, CValue::Int32(value)) => {
             add_proof_obligation_with_context(
                 obligations,
@@ -1003,7 +1020,7 @@ pub(in crate::kernel) fn c_truthiness_paths(
 ) -> Vec<CTruthinessPath> {
     match value {
         CValue::Void => unreachable!("void truthiness must be rejected by the caller"),
-        CValue::Int32(bits) | CValue::UInt8(bits) => {
+        CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt32(bits) => {
             let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
                 Some(true) => vec![CTruthinessPath {

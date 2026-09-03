@@ -23,6 +23,10 @@ fn pointer_types_compatible(left: &CPointerValue, right: &CPointerValue) -> bool
     left.c_type() == right.c_type() || left.is_null() || right.is_null()
 }
 
+fn scalar_uses_uint32(left: &CValue, right: &CValue) -> bool {
+    matches!(left, CValue::UInt32(_)) || matches!(right, CValue::UInt32(_))
+}
+
 pub(in crate::kernel) fn evaluate_c_add_paths(
     state: &CState,
     left: &CExpression,
@@ -121,6 +125,23 @@ pub(in crate::kernel) fn apply_c_add(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+        ) if scalar_uses_uint32(&left, &right) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_uint32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_uint32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(uint32(Bitvector32Term::add(left, right))),
+                facts,
+                obligations,
+            }]
+        }
         (
             left @ (CValue::Int32(_) | CValue::UInt8(_)),
             right @ (CValue::Int32(_) | CValue::UInt8(_)),
@@ -387,6 +408,22 @@ pub(in crate::kernel) fn pointer_order_condition(
     }
 }
 
+fn uint32_order_condition(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    operator: CComparisonOperator,
+) -> ConditionTerm {
+    match operator {
+        CComparisonOperator::LessThan => ConditionTerm::unsigned_less_than(left, right),
+        CComparisonOperator::LessEqual => ConditionTerm::unsigned_less_equal(left, right),
+        CComparisonOperator::GreaterThan => ConditionTerm::unsigned_greater_than(left, right),
+        CComparisonOperator::GreaterEqual => ConditionTerm::unsigned_greater_equal(left, right),
+        CComparisonOperator::Equal | CComparisonOperator::NotEqual => {
+            unreachable!("uint32 order condition received equality operator")
+        }
+    }
+}
+
 fn apply_same_block_pointer_operation(
     left: Pointer,
     right: Pointer,
@@ -483,6 +520,24 @@ fn apply_c_comparison(
             )
         }
         (
+            left @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+        ) if scalar_uses_uint32(&left, &right) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_uint32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_uint32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_paths(
+                uint32_order_condition(left, right, operator),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        (
             left @ (CValue::Int32(_) | CValue::UInt8(_)),
             right @ (CValue::Int32(_) | CValue::UInt8(_)),
         ) => {
@@ -527,6 +582,23 @@ pub(in crate::kernel) fn apply_c_subtract(
                 return Vec::new();
             };
             apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+        }
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+        ) if scalar_uses_uint32(&left, &right) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_uint32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_uint32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(uint32(Bitvector32Term::subtract(left, right))),
+                facts,
+                obligations,
+            }]
         }
         (CValue::Pointer(pointer), right @ (CValue::Int32(_) | CValue::UInt8(_))) => {
             let mut facts = facts;
@@ -1473,6 +1545,24 @@ pub(in crate::kernel) fn apply_c_equal(
             )
         }
         (
+            left @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+        ) if scalar_uses_uint32(&left, &right) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_uint32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_uint32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_paths(
+                ConditionTerm::equal(left, right),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        (
             left @ (CValue::Int32(_) | CValue::UInt8(_)),
             right @ (CValue::Int32(_) | CValue::UInt8(_)),
         ) => {
@@ -1539,6 +1629,24 @@ pub(in crate::kernel) fn apply_c_not_equal(
         {
             condition_as_c_int32_not_paths(
                 pointer_is_null_condition(pointer.into_pointer()),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_)),
+        ) if scalar_uses_uint32(&left, &right) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_uint32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_uint32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_not_paths(
+                ConditionTerm::equal(left, right),
                 facts,
                 obligations,
                 assumptions,
