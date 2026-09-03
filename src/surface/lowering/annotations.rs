@@ -1077,20 +1077,25 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
             )),
             ClickProposition::ForAll { c_type, name, body } => {
-                if *c_type != C0Type::Int32 {
-                    return Err("only `forall (...: int32)` is supported".to_string());
-                }
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
+                let c_type = c_type.to_kernel_type();
+                let value = match c_type {
+                    CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
+                    c_type if c_type.is_pointer() => {
+                        if matches!(c_type, CType::FunctionPointer(_)) {
+                            CValue::Pointer(Pointer::symbolic_function(variable))
+                        } else {
+                            CValue::Pointer(Pointer::symbolic(variable))
+                        }
+                    }
+                    _ => return Err("only int32 and pointer binders are supported".to_string()),
+                };
                 let mut body_environment = environment.clone();
-                body_environment.values.insert(
-                    name.clone(),
-                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
-                );
-                let previous = self.quantified_values.insert(
-                    name.clone(),
-                    CValue::Int32(Bitvector32Term::Variable(variable)),
-                );
+                body_environment
+                    .values
+                    .insert(name.clone(), SpecExpression::Value(value.clone()));
+                let previous = self.quantified_values.insert(name.clone(), value);
                 let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
                 match previous {
                     Some(value) => {
@@ -1100,27 +1105,41 @@ impl AnnotationLowerer<'_> {
                         self.quantified_values.remove(name);
                     }
                 }
-                Ok(SpecProposition::ForAllInt32 {
-                    name: name.clone(),
-                    variable,
-                    body: Box::new(body),
-                })
+                if c_type == CType::Int32 {
+                    Ok(SpecProposition::ForAllInt32 {
+                        name: name.clone(),
+                        variable,
+                        body: Box::new(body),
+                    })
+                } else {
+                    Ok(SpecProposition::ForAllPointer {
+                        name: name.clone(),
+                        variable,
+                        c_type,
+                        body: Box::new(body),
+                    })
+                }
             }
             ClickProposition::Exists { c_type, name, body } => {
-                if *c_type != C0Type::Int32 {
-                    return Err("only `exists (...: int32)` is supported".to_string());
-                }
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
+                let c_type = c_type.to_kernel_type();
+                let value = match c_type {
+                    CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
+                    c_type if c_type.is_pointer() => {
+                        if matches!(c_type, CType::FunctionPointer(_)) {
+                            CValue::Pointer(Pointer::symbolic_function(variable))
+                        } else {
+                            CValue::Pointer(Pointer::symbolic(variable))
+                        }
+                    }
+                    _ => return Err("only int32 and pointer binders are supported".to_string()),
+                };
                 let mut body_environment = environment.clone();
-                body_environment.values.insert(
-                    name.clone(),
-                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
-                );
-                let previous = self.quantified_values.insert(
-                    name.clone(),
-                    CValue::Int32(Bitvector32Term::Variable(variable)),
-                );
+                body_environment
+                    .values
+                    .insert(name.clone(), SpecExpression::Value(value.clone()));
+                let previous = self.quantified_values.insert(name.clone(), value);
                 let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
                 match previous {
                     Some(value) => {
@@ -1130,11 +1149,20 @@ impl AnnotationLowerer<'_> {
                         self.quantified_values.remove(name);
                     }
                 }
-                Ok(SpecProposition::ExistsInt32 {
-                    name: name.clone(),
-                    variable,
-                    body: Box::new(body),
-                })
+                if c_type == CType::Int32 {
+                    Ok(SpecProposition::ExistsInt32 {
+                        name: name.clone(),
+                        variable,
+                        body: Box::new(body),
+                    })
+                } else {
+                    Ok(SpecProposition::ExistsPointer {
+                        name: name.clone(),
+                        variable,
+                        c_type,
+                        body: Box::new(body),
+                    })
+                }
             }
             ClickProposition::RangeAll {
                 start,

@@ -845,14 +845,14 @@ impl PureFactContext {
                         }
                         let Some(renamed) =
                             crate::kernel::api::substitute_quantified_body_capture_free(
-                                fact_body, *fact_var, *var,
+                                fact_body, *fact_var, *var, sort,
                             )
                         else {
                             return false;
                         };
                         renamed == **body
                             || crate::kernel::api::propositions_alpha_equivalent_under_binders(
-                                *fact_var, fact_body, *var, body,
+                                sort, *fact_var, fact_body, *var, body,
                             )
                             || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
                     })
@@ -980,7 +980,7 @@ impl PureFactContext {
             };
             fact_sort == sort
                 && crate::kernel::api::substitute_quantified_body_capture_free(
-                    fact_body, *fact_var, var,
+                    fact_body, *fact_var, var, sort,
                 )
                 .is_some_and(|renamed| {
                     crate::kernel::api::propositions_alpha_equivalent(&renamed, body)

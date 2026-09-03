@@ -641,7 +641,7 @@ impl CType {
         self.pointee_type().is_some() || matches!(self, Self::FunctionPointer(_))
     }
 
-    pub(in crate::kernel) fn accepts(self, value: &CValue) -> bool {
+    pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
             (Self::Void, CValue::Void)
             | (Self::Int32, CValue::Int32(_))

@@ -241,17 +241,28 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("`choose` source is not an existential proposition"));
         };
-        if sort != Sort::CInt32 {
-            return Err(self.step_error("only int32 existential choices are supported"));
-        }
-
-        let chosen =
-            Bitvector32Term::Variable(Variable(self.state().locals().next_choice_variable));
-        let chosen_fact = substitute_int32_variable_in_proposition(&body, var, chosen.clone());
+        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen = match sort {
+            Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
+            Sort::CPointer(CType::FunctionPointer(_)) => {
+                CValue::Pointer(Pointer::symbolic_function(chosen_variable))
+            }
+            Sort::CPointer(_) => CValue::Pointer(Pointer::symbolic(chosen_variable)),
+            _ => return Err(self.step_error("unsupported existential choice sort")),
+        };
+        let chosen_fact = match &chosen {
+            CValue::Int32(value) => {
+                substitute_int32_variable_in_proposition(&body, var, value.clone())
+            }
+            CValue::Pointer(pointer) => {
+                crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer)
+            }
+            CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
+        };
         let mut locals = self.state().locals().clone();
         locals.values = locals.values.with_inserted(
             choice.name.clone(),
-            ContractExpression::CFragment(CExpression::Value(CValue::Int32(chosen))),
+            ContractExpression::CFragment(CExpression::Value(chosen)),
         );
         locals.next_choice_variable += 1;
         let added_facts = (!self.facts().contains_top_level(&chosen_fact))

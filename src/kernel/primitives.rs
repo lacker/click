@@ -70,7 +70,7 @@ pub enum Sort {
     PointerOffset,
     CType,
     CInt32,
-    CPointer,
+    CPointer(CType),
     CValue,
     CMemory,
     CState,
@@ -443,9 +443,21 @@ pub enum SpecProposition {
         variable: Variable,
         body: Box<SpecProposition>,
     },
+    ForAllPointer {
+        name: String,
+        variable: Variable,
+        c_type: CType,
+        body: Box<SpecProposition>,
+    },
     ExistsInt32 {
         name: String,
         variable: Variable,
+        body: Box<SpecProposition>,
+    },
+    ExistsPointer {
+        name: String,
+        variable: Variable,
+        c_type: CType,
         body: Box<SpecProposition>,
     },
     Predicate {

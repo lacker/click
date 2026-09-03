@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn pointer_substitution_replaces_the_block_and_preserves_the_offset() {
+    let from = Variable(90_100);
+    let replacement = Pointer {
+        block: PointerBlock::Symbolic(Variable(90_101)),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let occurrence = Pointer {
+        block: PointerBlock::Symbolic(from),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(occurrence, Pointer::null()),
+        true,
+    );
+
+    let substituted =
+        crate::kernel::substitute_pointer_variable_in_proposition(&proposition, from, &replacement);
+    let Proposition::ConditionIs(ConditionTerm::PointerEqual(left, _), true) = substituted else {
+        panic!("pointer substitution changed the proposition shape");
+    };
+    assert_eq!(
+        *left,
+        Pointer {
+            block: PointerBlock::Symbolic(Variable(90_101)),
+            offset: PointerOffsetTerm::Constant(12),
+        }
+    );
+}
+
+#[test]
 fn atomic_derivation_evidence_does_not_inline_multi_premise_payloads() {
     let one_step_envelope = std::mem::size_of::<SignedOrderDerivationStep>()
         + std::mem::align_of::<SignedOrderDerivationStep>();

@@ -431,7 +431,8 @@ fn quantified_load_fact_certifies_loadable(
         if fact_sort != sort {
             return false;
         }
-        let Some(fact_body) = substitute_quantified_body_capture_free(fact_body, *fact_var, *var)
+        let Some(fact_body) =
+            substitute_quantified_body_capture_free(fact_body, *fact_var, *var, sort)
         else {
             return false;
         };
@@ -671,9 +672,12 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                     if crate::instrumentation::deadline_exceeded() {
                         return false;
                     }
-                    let Some(instantiated) =
-                        substitute_quantified_body_capture_free(body, *fact_var, target_var)
-                    else {
+                    let Some(instantiated) = substitute_quantified_body_capture_free(
+                        body,
+                        *fact_var,
+                        target_var,
+                        &Sort::CInt32,
+                    ) else {
                         return false;
                     };
                     let (premises, conclusion) = implication_parts(&instantiated);
@@ -924,7 +928,8 @@ fn certification_proves_exists_obligation_from_facts(
         if fact_sort != sort {
             return false;
         }
-        let Some(renamed) = substitute_quantified_body_capture_free(fact_body, *fact_var, *var)
+        let Some(renamed) =
+            substitute_quantified_body_capture_free(fact_body, *fact_var, *var, sort)
         else {
             return false;
         };
@@ -1868,34 +1873,48 @@ fn fresh_alpha_comparison_variable(
 }
 
 fn freshen_proposition_bodies(
+    sort: &Sort,
     left_binder: Variable,
     left_body: &Proposition,
     right_binder: Variable,
     right_body: &Proposition,
 ) -> (Proposition, Proposition) {
     let fresh = fresh_alpha_comparison_variable(left_body, right_body, left_binder, right_binder);
-    (
-        substitute_bitvector_variable_in_proposition(
-            left_body,
-            left_binder,
-            &Bitvector32Term::Variable(fresh),
-        ),
-        substitute_bitvector_variable_in_proposition(
-            right_body,
-            right_binder,
-            &Bitvector32Term::Variable(fresh),
-        ),
-    )
+    if matches!(sort, Sort::CPointer(_)) {
+        let pointer = match sort {
+            Sort::CPointer(CType::FunctionPointer(_)) => Pointer::symbolic_function(fresh),
+            Sort::CPointer(_) => Pointer::symbolic(fresh),
+            _ => unreachable!("pointer freshening only handles pointer sorts"),
+        };
+        (
+            substitute_pointer_variable_in_proposition(left_body, left_binder, &pointer),
+            substitute_pointer_variable_in_proposition(right_body, right_binder, &pointer),
+        )
+    } else {
+        (
+            substitute_bitvector_variable_in_proposition(
+                left_body,
+                left_binder,
+                &Bitvector32Term::Variable(fresh),
+            ),
+            substitute_bitvector_variable_in_proposition(
+                right_body,
+                right_binder,
+                &Bitvector32Term::Variable(fresh),
+            ),
+        )
+    }
 }
 
 pub(crate) fn propositions_alpha_equivalent_under_binders(
+    sort: &Sort,
     left_binder: Variable,
     left_body: &Proposition,
     right_binder: Variable,
     right_body: &Proposition,
 ) -> bool {
     let (left_body, right_body) =
-        freshen_proposition_bodies(left_binder, left_body, right_binder, right_body);
+        freshen_proposition_bodies(sort, left_binder, left_body, right_binder, right_body);
     propositions_alpha_equivalent(&left_body, &right_body)
 }
 
@@ -1906,15 +1925,25 @@ pub(crate) fn substitute_quantified_body_capture_free(
     body: &Proposition,
     binder: Variable,
     target: Variable,
+    sort: &Sort,
 ) -> Option<Proposition> {
     if binder != target && proposition_variables(body).contains(&target) {
         return None;
     }
-    Some(substitute_bitvector_variable_in_proposition(
-        body,
-        binder,
-        &Bitvector32Term::Variable(target),
-    ))
+    Some(if matches!(sort, Sort::CPointer(_)) {
+        let pointer = match sort {
+            Sort::CPointer(CType::FunctionPointer(_)) => Pointer::symbolic_function(target),
+            Sort::CPointer(_) => Pointer::symbolic(target),
+            _ => unreachable!("pointer substitution only handles pointer sorts"),
+        };
+        substitute_pointer_variable_in_proposition(body, binder, &pointer)
+    } else {
+        substitute_bitvector_variable_in_proposition(
+            body,
+            binder,
+            &Bitvector32Term::Variable(target),
+        )
+    })
 }
 
 pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposition) -> bool {
@@ -1937,8 +1966,9 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
             },
         ) => {
             left_sort == right_sort && {
-                let (left_body, right_body) =
-                    freshen_proposition_bodies(*left_var, left_body, *right_var, right_body);
+                let (left_body, right_body) = freshen_proposition_bodies(
+                    left_sort, *left_var, left_body, *right_var, right_body,
+                );
                 propositions_alpha_equivalent(&left_body, &right_body)
             }
         }
@@ -1955,8 +1985,9 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
             },
         ) => {
             left_sort == right_sort && {
-                let (left_body, right_body) =
-                    freshen_proposition_bodies(*left_var, left_body, *right_var, right_body);
+                let (left_body, right_body) = freshen_proposition_bodies(
+                    left_sort, *left_var, left_body, *right_var, right_body,
+                );
                 propositions_alpha_equivalent(&left_body, &right_body)
             }
         }
@@ -2523,7 +2554,7 @@ pub(super) fn certification_proves_proposition(
         }
         Proposition::Exists {
             var,
-            sort: sort @ (Sort::CInt32 | Sort::Bitvector32),
+            sort: sort @ (Sort::CInt32 | Sort::Bitvector32 | Sort::CPointer(_)),
             body,
             ..
         } => {
@@ -2544,7 +2575,7 @@ pub(super) fn certification_proves_proposition(
                     return false;
                 }
                 let (renamed, goal_body) =
-                    freshen_proposition_bodies(*fact_var, fact_body, *var, body);
+                    freshen_proposition_bodies(sort, *fact_var, fact_body, *var, body);
                 if propositions_alpha_equivalent(&renamed, &goal_body) {
                     return true;
                 }
@@ -2938,7 +2969,7 @@ fn certification_proves_forall_from_quantified_facts(
             continue;
         }
         let (fact_body, goal_body) =
-            freshen_proposition_bodies(*fact_var, fact_body, *goal_var, goal_body);
+            freshen_proposition_bodies(goal_sort, *fact_var, fact_body, *goal_var, goal_body);
         let (fact_premises, fact_conclusion) = implication_parts(&fact_body);
         let (goal_premises, _) = implication_parts(&goal_body);
         if fact_premises.len() != goal_premises.len()

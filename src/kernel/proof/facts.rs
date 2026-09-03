@@ -271,6 +271,38 @@ impl ProofFacts {
         (fresh, body)
     }
 
+    pub(crate) fn freshen_pointer_forall_body(
+        &self,
+        binder: Variable,
+        c_type: CType,
+        body: &Proposition,
+    ) -> (Variable, Proposition) {
+        if !self.reserved_variables.contains(&binder) {
+            return (binder, body.clone());
+        }
+        let body_variables = crate::kernel::proposition_variables(body);
+        let start = Variable(0);
+        let mut fresh = start;
+        loop {
+            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
+                break;
+            }
+            fresh = Variable(fresh.0.wrapping_add(1));
+            assert_ne!(
+                fresh, start,
+                "all symbolic variable identifiers are already reserved"
+            );
+        }
+        let pointer = if matches!(c_type, CType::FunctionPointer(_)) {
+            Pointer::symbolic_function(fresh)
+        } else {
+            Pointer::symbolic(fresh)
+        };
+        let body =
+            crate::kernel::substitute_pointer_variable_in_proposition(body, binder, &pointer);
+        (fresh, body)
+    }
+
     pub(crate) fn with_predicate_unfold_fact(&self, fact: Proposition) -> Self {
         let is_universal = matches!(fact, Proposition::ForAll { .. });
         let mut successor = self.with_fact(fact.clone());

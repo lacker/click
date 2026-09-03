@@ -9,7 +9,7 @@ use super::{
     OutcomeProofState, PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches,
     ProofExecutionState, ProofFacts, ProofObligation,
 };
-use crate::kernel::Proposition;
+use crate::kernel::{Proposition, Sort};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -629,8 +629,13 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 Some(antecedent.as_ref().clone()),
                 PropositionIntroduction::Implication,
             ),
-            Proposition::ForAll { var, body, .. } => {
-                let (variable, body) = facts.freshen_int32_forall_body(*var, body);
+            Proposition::ForAll { var, sort, body } => {
+                let (variable, body) = match sort {
+                    Sort::CPointer(c_type) => {
+                        facts.freshen_pointer_forall_body(*var, *c_type, body)
+                    }
+                    _ => facts.freshen_int32_forall_body(*var, body),
+                };
                 (body, None, PropositionIntroduction::Universal { variable })
             }
             Proposition::Not(body) => (

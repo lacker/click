@@ -17,7 +17,7 @@ pub(in crate::kernel) mod variable_collection;
 pub(super) use memory_resolution::*;
 pub(super) use order_reasoning::*;
 pub(super) use path_facts::*;
-pub(super) use substitution::*;
+pub(crate) use substitution::*;
 pub(crate) use variable_collection::resource_context_has_read;
 pub(super) use variable_collection::*;
 

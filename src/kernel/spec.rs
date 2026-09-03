@@ -203,6 +203,48 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
             })
             .collect())
         }
+        SpecProposition::ForAllPointer {
+            name,
+            variable,
+            c_type,
+            body,
+        } => {
+            let mut state = state.clone();
+            let value = if matches!(c_type, CType::FunctionPointer(_)) {
+                CValue::Pointer(Pointer::symbolic_function(*variable))
+            } else {
+                CValue::Pointer(Pointer::symbolic(*variable))
+            };
+            state.locals.set_typed(name.clone(), value, *c_type);
+            Ok(lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                body,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPropositionPath {
+                proposition: Proposition::ForAll {
+                    var: *variable,
+                    sort: Sort::CPointer(*c_type),
+                    body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
+                },
+                facts: Vec::new(),
+                obligations: path
+                    .obligations
+                    .into_iter()
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::ForAll {
+                            var: *variable,
+                            sort: Sort::CPointer(*c_type),
+                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                        })
+                    })
+                    .collect(),
+            })
+            .collect())
+        }
         SpecProposition::ExistsInt32 {
             name,
             variable,
@@ -236,6 +278,50 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                             name: name.clone(),
                             var: *variable,
                             sort: Sort::CInt32,
+                            body: Box::new(proposition),
+                        })
+                    })
+                    .collect(),
+            })
+            .collect())
+        }
+        SpecProposition::ExistsPointer {
+            name,
+            variable,
+            c_type,
+            body,
+        } => {
+            let mut state = state.clone();
+            let value = if matches!(c_type, CType::FunctionPointer(_)) {
+                CValue::Pointer(Pointer::symbolic_function(*variable))
+            } else {
+                CValue::Pointer(Pointer::symbolic(*variable))
+            };
+            state.locals.set_typed(name.clone(), value, *c_type);
+            Ok(lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                body,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPropositionPath {
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::CPointer(*c_type),
+                    body: Box::new(path.proposition),
+                },
+                facts: path.facts,
+                obligations: path
+                    .obligations
+                    .into_iter()
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::Exists {
+                            name: name.clone(),
+                            var: *variable,
+                            sort: Sort::CPointer(*c_type),
                             body: Box::new(proposition),
                         })
                     })

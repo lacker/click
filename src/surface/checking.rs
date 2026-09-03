@@ -260,16 +260,29 @@ pub(super) fn apply_choose_tactic(
             "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: source is not an existential proposition"
         )));
     };
-    if sort != Sort::CInt32 {
-        return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: only int32 existential choices are supported"
-        )));
-    }
-
-    let chosen = Bitvector32Term::Variable(Variable(*next_choice_variable));
+    let chosen_variable = Variable(*next_choice_variable);
     *next_choice_variable += 1;
-    values.insert(choice.name.clone(), CValue::Int32(chosen.clone()));
-    available_pure_facts.push(substitute_int32_variable_in_proposition(&body, var, chosen));
+    let chosen = match sort {
+        Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
+        Sort::CPointer(CType::FunctionPointer(_)) => {
+            CValue::Pointer(Pointer::symbolic_function(chosen_variable))
+        }
+        Sort::CPointer(_) => CValue::Pointer(Pointer::symbolic(chosen_variable)),
+        _ => {
+            return Err(ClickError::new(format!(
+                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unsupported existential sort"
+            )));
+        }
+    };
+    let chosen_fact = match &chosen {
+        CValue::Int32(value) => substitute_int32_variable_in_proposition(&body, var, value.clone()),
+        CValue::Pointer(pointer) => {
+            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer)
+        }
+        CValue::Void | CValue::UInt8(_) => unreachable!("unsupported choice sort above"),
+    };
+    values.insert(choice.name.clone(), chosen);
+    available_pure_facts.push(chosen_fact);
     Ok(())
 }
 
@@ -287,7 +300,7 @@ pub(super) fn evaluate_witness_tactic_value(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     recorded_snapshots: &RecordedSnapshots,
-) -> Result<Bitvector32Term, ClickError> {
+) -> Result<CValue, ClickError> {
     let mut active_functions = BTreeSet::new();
     let value = evaluate_contract_expression_with_environment(
         values,
@@ -308,18 +321,12 @@ pub(super) fn evaluate_witness_tactic_value(
             witness.name
         ))
     })?;
-    let CValue::Int32(value) = value else {
-        return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: witness `{}` did not evaluate to int32",
-            witness.name
-        )));
-    };
     Ok(value)
 }
 
 pub(super) fn apply_witness_tactic(
     witness: &ProofWitness,
-    witness_value: Bitvector32Term,
+    witness_value: CValue,
     goal: Proposition,
     claim_label: &str,
     path_index: usize,
@@ -336,11 +343,6 @@ pub(super) fn apply_witness_tactic(
             "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: goal is not an existential proposition"
         )));
     };
-    if sort != Sort::CInt32 {
-        return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: only int32 existential witnesses are supported"
-        )));
-    }
     if name != witness.name {
         return Err(ClickError::new(format!(
             "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: goal binds `{name}`, but proof provided witness `{}`",
@@ -348,11 +350,35 @@ pub(super) fn apply_witness_tactic(
         )));
     }
 
-    Ok(substitute_int32_variable_in_proposition(
-        &body,
-        var,
-        witness_value,
-    ))
+    let result = match (sort, witness_value) {
+        (Sort::CInt32, CValue::Int32(value)) => {
+            substitute_int32_variable_in_proposition(&body, var, value)
+        }
+        (Sort::CPointer(expected), CValue::Pointer(pointer))
+            if expected.accepts(&CValue::Pointer(pointer.clone())) =>
+        {
+            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, &pointer)
+        }
+        (Sort::CPointer(_), CValue::Pointer(_)) => {
+            return Err(ClickError::new(format!(
+                "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: witness `{}` has the wrong pointer kind",
+                witness.name
+            )));
+        }
+        (Sort::CInt32, _) => {
+            return Err(ClickError::new(format!(
+                "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: witness `{}` did not evaluate to int32",
+                witness.name
+            )));
+        }
+        _ => {
+            return Err(ClickError::new(format!(
+                "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unsupported existential witness sort for `{}`",
+                witness.name
+            )));
+        }
+    };
+    Ok(result)
 }
 
 pub(super) fn prove_ensure_proposition_by_simp(
