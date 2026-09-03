@@ -1012,6 +1012,17 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
+    // The checked Proof object currently owns the fixed-state and execution
+    // instantiation paths, but pure theorem scripts still use the legacy
+    // pure driver for this operation. Do not send an unsupported certificate
+    // through the authoritative pure Proof path: that would turn a valid
+    // script into a shape error before the pure driver can check it.
+    if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
+        && !proof_supports_pure_certificate(&certificate)
+    {
+        return Ok(None);
+    }
+
     let checked = if tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::ArithmeticUsing(_)))
@@ -3190,6 +3201,108 @@ fn prove_pure_theorem_tactics(
                     }
                 }
                 available = applied;
+            }
+            ProofTactic::InstantiateUsing {
+                quantified: surface_quantified,
+                argument,
+                premises: surface_premises,
+            } => {
+                let explicit_premises = surface_premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `instantiate using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available)
+                        && quantified_equivalent_available_fact(premise, &available).is_none()
+                    {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `instantiate using` requires an exact available premise"
+                        )));
+                    }
+                }
+
+                let lowered_quantified = lower_pure_theorem_proposition(
+                    claim_label,
+                    surface_quantified,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not lower `instantiate` quantified fact: {message}"
+                    ))
+                })?;
+                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available) {
+                    lowered_quantified
+                } else if let Some(matched) =
+                    quantified_equivalent_available_fact(&lowered_quantified, &available)
+                {
+                    matched
+                } else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `instantiate` quantified fact is not exactly available: {}",
+                        describe_click_proposition(surface_quantified)
+                    )));
+                };
+
+                let assumptions = assumptions_from_propositions(&available);
+                let mut active_functions = BTreeSet::new();
+                let state = CState::new().with_memory(context.memory.clone());
+                let argument_value = evaluate_contract_expression_with_environment(
+                    &context.values,
+                    &context.array_refs,
+                    &state,
+                    &state,
+                    None,
+                    &assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    &recorded_snapshots,
+                    &mut active_functions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not evaluate `instantiate` argument: {message}"
+                    ))
+                })?;
+                let CValue::Int32(argument_term) = argument_value else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `instantiate` argument did not evaluate to int32"
+                    )));
+                };
+
+                let conclusion = check_forall_int32_instantiation(
+                    &quantified_fact,
+                    argument_term,
+                    &explicit_premises,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `instantiate` failed: {message}"
+                    ))
+                })?;
+                if !available.contains(&conclusion) {
+                    available.push(conclusion);
+                }
             }
             ProofTactic::Assumption => {
                 if !available.contains(&goal)
