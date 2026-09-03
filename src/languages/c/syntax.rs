@@ -45,6 +45,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.free",
     "statement.increment",
     "statement.decrement",
+    "statement.prefix-increment",
+    "statement.prefix-decrement",
     "statement.add-assign",
     "statement.subtract-assign",
     "statement.multiply-assign",
@@ -1482,6 +1484,11 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
+            Some(Token::PlusPlus | Token::MinusMinus) => {
+                let statement = self.parse_scalar_update_statement("statement")?;
+                self.expect(Token::Semicolon)?;
+                Ok(statement)
+            }
             Some(Token::Ident(_)) if self.is_type_start() => {
                 let parsed_type = self.parse_type()?;
                 if parsed_type.c_type == C0Type::Void {
@@ -1848,6 +1855,10 @@ impl Parser {
         &mut self,
         context: &str,
     ) -> Result<C0Statement, C0SyntaxError> {
+        let prefix_operator = match self.peek() {
+            Some(Token::PlusPlus | Token::MinusMinus) => self.next(),
+            _ => None,
+        };
         let name = match self.next() {
             Some(Token::Ident(name)) if name != "int32" && name != "uint8" => name,
             Some(Token::Ident(name)) => {
@@ -1867,11 +1878,14 @@ impl Parser {
                 )));
             }
         };
-        let operator = self.next().ok_or_else(|| {
-            self.error_here(format!(
-                "expected scalar update operator in {context}, got end of input"
-            ))
-        })?;
+        let operator = match prefix_operator {
+            Some(operator) => operator,
+            None => self.next().ok_or_else(|| {
+                self.error_here(format!(
+                    "expected scalar update operator in {context}, got end of input"
+                ))
+            })?,
+        };
         let expression = match operator {
             Token::Equal => {
                 if matches!(self.peek(), Some(Token::Ident(_)))

@@ -19,7 +19,8 @@ existing terms; none needs new kernel state.
   from C's octal.
 - **Increment and compound assignment.** Scalar compound assignment now
   supports the arithmetic, shift, and bitwise forms `++ -- += -= *= /= %= <<=
-  >>= &= |= ^=`. It remains statement-only and only applies to plain scalars:
+  >>= &= |= ^=`; both prefix and postfix increment/decrement are accepted. It
+  remains statement-only and only applies to plain scalars:
   `a[i] += 1` and `p->f++` fail because indexed and field targets require bare
   `=` (`:1098-1119`).
 - **For-loop forms.** Declarations require initializers, the condition is

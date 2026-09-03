@@ -361,6 +361,23 @@ fn c0_syntax_accepts_a_do_while_loop_with_an_unbraced_body() {
 }
 
 #[test]
+fn c0_syntax_accepts_prefix_scalar_updates() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i = 0;
+            ++i;
+            --i;
+            for (; i < 3; ++i) {
+            }
+            return i;
+        }
+        "#,
+    )
+    .expect("prefix scalar updates should parse as standalone statements and for steps");
+}
+
+#[test]
 fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
     syntax::parse_function(
         r#"
