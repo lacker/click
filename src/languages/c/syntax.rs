@@ -945,6 +945,13 @@ pub fn parse_functions_for_abi(source: &str, abi: CAbi) -> Result<Vec<C0Function
     Parser::new(source, abi)?.parse_functions()
 }
 
+/// Validates a declaration-only C header after its includes have been
+/// expanded. Headers may contain type declarations and function prototypes,
+/// but never executable function definitions.
+pub fn validate_header(source: &str) -> Result<(), C0SyntaxError> {
+    Parser::new(source, CAbi::SUPPORTED)?.parse_header()
+}
+
 fn validate_function_returns(
     statement: &C0Statement,
     return_type: C0Type,
@@ -1549,6 +1556,36 @@ impl Parser {
             ));
         }
         Ok(functions)
+    }
+
+    fn parse_header(mut self) -> Result<(), C0SyntaxError> {
+        self.parse_declarations()?;
+        while self.peek().is_some() {
+            if self.peek_ident() == Some("extern") {
+                self.position += 1;
+            }
+            if !self.is_type_start() {
+                return Err(self.error_here(format!(
+                    "expected a header declaration, got {}",
+                    self.peek()
+                        .map(Token::describe)
+                        .unwrap_or_else(|| "end of input".to_string())
+                )));
+            }
+            let header = self.parse_function_header()?;
+            if self.peek() != Some(&Token::Semicolon) {
+                self.pop_scope();
+                return Err(self.error_here(format!(
+                    "function definitions are not allowed in headers; `{}` has a body",
+                    header.name
+                )));
+            }
+            self.pop_scope();
+            self.expect(Token::Semicolon)?;
+            self.register_function_declaration(&header, false)?;
+            self.parse_declarations()?;
+        }
+        Ok(())
     }
 
     fn parse_function_definition(&mut self) -> Result<C0Function, C0SyntaxError> {

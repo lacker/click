@@ -166,7 +166,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let layouts = parse_c_struct_layouts(&sources)?;
+    let layouts = parse_c_struct_layouts(click_source, &sources)?;
     let file = parser::parse_with_struct_layouts(click_source, layouts)?;
     verify_click_file_theorems(&file)
 }
@@ -176,7 +176,7 @@ pub(in crate::surface) fn parse_c0_click_file(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let struct_layouts = parse_c_struct_layouts(&sources)?;
+    let struct_layouts = parse_c_struct_layouts(click_source, &sources)?;
     parser::parse_with_struct_layouts(click_source, struct_layouts)
 }
 
@@ -561,7 +561,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
-        let struct_layouts = parse_c_struct_layouts(&c_sources)?;
+        let struct_layouts = parse_c_struct_layouts(click_source, &c_sources)?;
         let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
         let expansion_functions = expansion_capture
@@ -1813,14 +1813,40 @@ pub(in crate::surface) fn c_function_termination_plans(
     Ok((plans, requested))
 }
 
+fn parse_c_source_functions(
+    source_path: &str,
+    c_sources: &BTreeMap<&str, &str>,
+) -> Result<Vec<syntax::C0Function>, ClickError> {
+    let expanded =
+        crate::languages::c::source::expand_includes(source_path, c_sources).map_err(|error| {
+            ClickError::new(format!(
+                "failed to resolve includes for C source `{source_path}`: {error}"
+            ))
+        })?;
+    for header_path in expanded.dependencies() {
+        let header = crate::languages::c::source::expand_includes(header_path, c_sources).map_err(
+            |error| {
+                ClickError::new(format!(
+                    "failed to resolve includes for C header `{header_path}`: {error}"
+                ))
+            },
+        )?;
+        syntax::validate_header(header.source()).map_err(|error| {
+            ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
+        })?;
+    }
+    syntax::parse_functions(expanded.source()).map_err(|error| {
+        ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
+    })
+}
+
 pub(in crate::surface) fn parse_c_struct_layouts(
+    click_source: &str,
     c_sources: &BTreeMap<&str, &str>,
 ) -> Result<BTreeMap<String, syntax::C0StructLayout>, ClickError> {
     let mut layouts = BTreeMap::new();
-    for (source_path, c_source) in c_sources {
-        let functions = syntax::parse_functions(c_source).map_err(|error| {
-            ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
-        })?;
+    for source_path in super::verifying_source_paths(click_source)? {
+        let functions = parse_c_source_functions(&source_path, c_sources)?;
         for function in functions {
             for (name, layout) in function.structs() {
                 if let Some(previous) = layouts.insert(name.clone(), layout.clone())
@@ -1855,14 +1881,7 @@ pub(in crate::surface) fn parse_verified_sources(
 
     let mut parsed = BTreeMap::new();
     for source_path in &file.verifying_sources {
-        let c_source = *c_sources.get(source_path.as_str()).ok_or_else(|| {
-            ClickError::new(format!(
-                "`verifying` refers to missing C source `{source_path}`"
-            ))
-        })?;
-        let functions = syntax::parse_functions(c_source).map_err(|error| {
-            ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
-        })?;
+        let functions = parse_c_source_functions(source_path, c_sources)?;
         for function in functions {
             let function_name = function.name().to_string();
             let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));

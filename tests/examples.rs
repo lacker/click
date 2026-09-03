@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use click::cli::{files_with_extension, read_verifying_sources, source_refs};
+use click::cli::{
+    files_with_extension, read_declared_sources, read_verifying_sources, source_refs,
+};
 use click::instrumentation::{self, ContractFallback};
 use click::surface::verify_c0_sources;
 
@@ -136,11 +138,21 @@ fn run_example_project(project: &Path) -> Result<(), String> {
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-        let c_sources = read_verifying_sources(&click_path, &click_source)?;
+        let c_sources = match source_status {
+            Some(SourceFixtureStatus::ParserOnly) => {
+                read_declared_sources(&click_path, &click_source)?
+            }
+            Some(SourceFixtureStatus::Verified) | None => {
+                read_verifying_sources(&click_path, &click_source)?
+            }
+        };
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
                 match verify_c0_sources(&click_source, &source_refs(&c_sources)) {
-                    Err(error) if error.message().starts_with("failed to parse C source") => {
+                    Err(error)
+                        if error.message().starts_with("failed to parse C source")
+                            || error.message().starts_with("failed to resolve includes") =>
+                    {
                         eprintln!(
                             "parser status for `{}`: parser-only as expected: {}",
                             click_path.display(),

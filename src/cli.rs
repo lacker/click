@@ -81,6 +81,7 @@ pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
 ];
 
 use crate::instrumentation::{TacticEvent, VerificationEvent};
+use crate::languages::c::source as c_source;
 use crate::surface::verifying_source_paths;
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
@@ -323,7 +324,7 @@ pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<
 
 /// Reads the C sources a sidecar declares with `verifying`, relative to the
 /// sidecar's directory.
-pub fn read_verifying_sources(
+pub fn read_declared_sources(
     click_path: &Path,
     click_source: &str,
 ) -> Result<Vec<(String, String)>, String> {
@@ -337,6 +338,42 @@ pub fn read_verifying_sources(
             Ok((name, source))
         })
         .collect()
+}
+
+/// Reads the C sources a sidecar declares with `verifying`, plus all
+/// recursively included project-local headers, relative to the sidecar's
+/// directory.
+pub fn read_verifying_sources(
+    click_path: &Path,
+    click_source: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let declared = read_declared_sources(click_path, click_source)?;
+    let mut pending: Vec<String> = declared.iter().map(|(name, _)| name.clone()).collect();
+    let mut loaded = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = 0;
+    while next < pending.len() {
+        let name = pending[next].clone();
+        next += 1;
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let source = if let Some((_, source)) = declared
+            .iter()
+            .find(|(declared_name, _)| declared_name == &name)
+        {
+            source.clone()
+        } else {
+            fs::read_to_string(parent.join(&name))
+                .map_err(|error| format!("failed to read `{name}`: {error}"))?
+        };
+        let includes = c_source::local_include_paths(&name, &source)
+            .map_err(|error| format!("failed to process C source includes: {error}"))?;
+        pending.extend(includes);
+        loaded.push((name, source));
+    }
+    Ok(loaded)
 }
 
 /// Borrows owned `(name, source)` pairs as the `&str` pairs the verification
@@ -989,6 +1026,42 @@ mod tests {
                 "../actual.c".to_string(),
                 "int32 actual() { return 1; }".to_string()
             )]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sidecars_load_transitive_local_headers_after_declared_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "click-source-header-loading-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let project = root.join("project");
+        fs::create_dir_all(project.join("include")).unwrap();
+        fs::write(
+            project.join("main.c"),
+            "#include \"include/types.h\"\nint32 main() { return 1; }\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("include/types.h"),
+            "#include \"common.h\"\ntypedef int32 index_t;\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("include/common.h"),
+            "struct pair { int32 value; };\n",
+        )
+        .unwrap();
+        let click_path = project.join("proof.click");
+        let sources = read_verifying_sources(&click_path, "verifying \"main.c\";\n").unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["main.c", "include/types.h", "include/common.h"]
         );
         fs::remove_dir_all(root).unwrap();
     }

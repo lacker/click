@@ -1557,7 +1557,7 @@ fn parse_source_with_c_layouts(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let layouts = parse_c_struct_layouts(&sources)?;
+    let layouts = parse_c_struct_layouts(click_source, &sources)?;
     parser::parse_with_struct_layouts(click_source, layouts)
 }
 

@@ -241,6 +241,27 @@ fn c0_rejects_conflicting_function_prototypes() {
 }
 
 #[test]
+fn c0_headers_accept_declarations_but_reject_function_bodies() {
+    syntax::validate_header(
+        r#"
+        typedef int32 index_t;
+        struct pair { index_t value; };
+        int32 helper(int32 value);
+        extern int32 other(int32 value);
+        "#,
+    )
+    .expect("headers should accept supported declarations and prototypes");
+
+    let error = syntax::validate_header("int32 helper() { return 1; }")
+        .expect_err("headers must not contain function definitions");
+    assert!(
+        error
+            .message()
+            .contains("function definitions are not allowed in headers")
+    );
+}
+
+#[test]
 fn c0_syntax_reports_unterminated_block_comments() {
     let error = syntax::parse_function("/* never closed")
         .expect_err("an unterminated block comment should be rejected");

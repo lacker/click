@@ -11,9 +11,11 @@ declarations must be re-pasted per file (see `examples/jsonc-refcount/*.c`,
 each redeclaring `struct json_object`). `docs/internals/roadmap.md:264-272`
 lists the preprocessor as deferred.
 
-The first implementation slice now accepts multiple function definitions and
-compatible forward prototypes in one source. Header lookup, preprocessor
-handling, and declaration sharing remain open here.
+The first implementation slice accepts multiple function definitions and
+compatible forward prototypes in one source. The next slice now resolves
+quoted project-local includes from the named source bundle, recursively expands
+their declaration text, and rejects function bodies in headers. System headers,
+macros, conditional compilation, and other preprocessor handling remain open.
 
 ## Violated invariant
 
@@ -37,12 +39,14 @@ construct rather than "unexpected character".
   of them and sidecar contracts attach by name.
 - Function prototypes and forward references parse and resolve.
 - `#include "local.h"` is resolved relative to the source and parsed for
-  declarations; `#include <std.h>` for a documented allowlist is accepted
-  without expansion; other preprocessor directives are rejected with a
-  diagnostic (object-like `#define` constants may be supported as a
-  documented subset).
-- Shared struct declarations are parsed once and reused across functions and
-  files, replacing the per-file re-declaration in examples.
+  declarations; headers are supplied as named source-bundle dependencies and
+  may not contain function definitions. Missing headers and include cycles
+  receive source-named diagnostics.
+- System headers, macros, conditional compilation, and other preprocessor
+  directives remain explicitly unsupported until a documented allowlist or
+  preprocessor subset is implemented.
+- Shared struct declarations are reused across functions and files, replacing
+  the per-file re-declaration in examples.
 - `scripts/check.sh` passes.
 
 Related: [global-variables.md](global-variables.md) for file-scope objects;
