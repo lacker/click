@@ -440,8 +440,12 @@ pub(super) fn execute_c_heap_allocate_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    let Some(target_type @ (CType::Int32Pointer | CType::UInt8Pointer)) =
-        state.local_object_type(target)
+    let Some(
+        target_type @ (CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer),
+    ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -454,7 +458,7 @@ pub(super) fn execute_c_heap_allocate_paths(
         .expect("heap allocation target has a pointee type")
         .byte_width();
 
-    let element_count_expression = if element_width == CType::Int32.byte_width() {
+    let element_count_expression = if element_width != CType::UInt8.byte_width() {
         match bytes_expression {
             CExpression::Multiply(left, right)
                 if right.as_ref() == &CExpression::Value(int32(element_width)) =>
@@ -514,8 +518,8 @@ pub(super) fn execute_c_heap_allocate_paths(
                 positive && fits,
             )
         } else {
-            let valid = (element_width != CType::Int32.byte_width()
-                || int32_element_count_from_bytes(&size).is_some())
+            let valid = crate::kernel::reasoning::element_count_from_bytes(&size, element_width)
+                .is_some()
                 && effective_assumptions.decide(&ConditionTerm::signed_greater_than(
                     size.clone(),
                     Bitvector32Term::Constant(0),

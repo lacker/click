@@ -21,6 +21,9 @@ pointer-valued return, initialization, assignment, argument, and comparison
 contexts. This narrow conversion does not identify pointers with integers:
 nonzero integers still cannot be used as pointers.
 
+For `int32**` and `uint8**`, pointer arithmetic advances by the eight-byte
+ABI width of each pointer-valued cell.
+
 ## Heap blocks and lifetimes
 
 The supported `malloc`, `calloc`, and `realloc` forms have a null outcome and a
@@ -30,6 +33,10 @@ the exact LP64 size of `struct T` or a verified runtime extent such as
 identities are not reused within a proof. Fresh `malloc` bytes are
 uninitialized, so ownership permits stores but does not make an unstored cell
 readable; successful `calloc` cells read as zero or null until overwritten.
+Pointer-array `malloc` uses `count * sizeof(int32*)` or
+`count * sizeof(uint8*)` with the eight-byte LP64 pointer stride; pointer cells
+are uninitialized until stored, and the complete pointer-array range is
+reclaimed by `free`.
 
 A pending `realloc` keeps its old live block and resources in place until the
 result is refined. Failure removes only the pending result. Success records a

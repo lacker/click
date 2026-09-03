@@ -874,6 +874,12 @@ pub(in crate::kernel) fn c_expression_pointee_type(
         CExpression::Add(left, right) => c_expression_pointee_type(state, left)
             .or_else(|| c_expression_pointee_type(state, right)),
         CExpression::Subtract(left, _) => c_expression_pointee_type(state, left),
+        // An indexed pointer expression is itself the value stored in the
+        // selected cell. For `slots[0]` where `slots` is `int32**`, the
+        // lvalue type is `int32*`, so its pointee type is `int32`.
+        CExpression::Index(base, _) => {
+            c_expression_pointee_type(state, base).and_then(CType::pointee_type)
+        }
         _ => None,
     }
 }

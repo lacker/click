@@ -685,26 +685,21 @@ fn pointer_index_from_offset_term(
     offset: &PointerOffsetTerm,
     byte_width: u32,
 ) -> Option<Bitvector32Term> {
-    match byte_width {
-        4 => int32_element_index_from_offset(offset),
-        1 => byte_offset_from_pointer_offset(offset),
-        _ => None,
+    if byte_width == 1 {
+        byte_offset_from_pointer_offset(offset)
+    } else {
+        element_index_from_offset(offset, byte_width)
     }
 }
 
 fn pointer_index_from_concrete_offset(offset: i64, byte_width: u32) -> Option<Bitvector32Term> {
-    match byte_width {
-        4 if offset % 4 == 0 => {
-            let index = offset / 4;
-            (i32::MIN as i64..=i32::MAX as i64)
-                .contains(&index)
-                .then_some(Bitvector32Term::Constant((index as i32) as u32))
-        }
-        1 if (i32::MIN as i64..=i32::MAX as i64).contains(&offset) => {
-            Some(Bitvector32Term::Constant((offset as i32) as u32))
-        }
-        _ => None,
+    if byte_width == 0 || offset % i64::from(byte_width) != 0 {
+        return None;
     }
+    let index = offset / i64::from(byte_width);
+    (i32::MIN as i64..=i32::MAX as i64)
+        .contains(&index)
+        .then_some(Bitvector32Term::Constant((index as i32) as u32))
 }
 
 fn pointer_arithmetic_index(
@@ -750,23 +745,19 @@ fn pointer_block_bounds(
         return Vec::new();
     }
 
-    let (offset, size) = match byte_width {
-        4 => {
-            let Some(offset) = int32_element_index_from_offset(&pointer.offset) else {
-                return Vec::new();
-            };
-            let Some(size) = int32_element_count_from_bytes(&block_size) else {
-                return Vec::new();
-            };
-            (offset, size)
-        }
-        1 => {
-            let Some(offset) = byte_offset_from_pointer_offset(&pointer.offset) else {
-                return Vec::new();
-            };
-            (offset, block_size)
-        }
-        _ => return Vec::new(),
+    let (offset, size) = if byte_width == 1 {
+        let Some(offset) = byte_offset_from_pointer_offset(&pointer.offset) else {
+            return Vec::new();
+        };
+        (offset, block_size)
+    } else {
+        let Some(offset) = element_index_from_offset(&pointer.offset, byte_width) else {
+            return Vec::new();
+        };
+        let Some(size) = element_count_from_bytes(&block_size, byte_width) else {
+            return Vec::new();
+        };
+        (offset, size)
     };
 
     vec![

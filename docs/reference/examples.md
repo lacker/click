@@ -100,6 +100,12 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/write_second_old_keeps_first.md`: old-value frame fact.
 - `mdtests/write_second_old_rejects_overwritten_cell.md`: overwritten old-value
   rejection.
+- `mdtests/malloc_pointer_arrays.md`: heap allocation, pointer-cell stores and
+  loads, and complete `free` for `int32**` and `uint8**`.
+- `mdtests/malloc_pointer_array_bounds.md`: one-past pointer-array access is
+  rejected without authorization.
+- `mdtests/heap_pointer_array_uninitialized.md`: fresh pointer-array cells
+  cannot be read before they are initialized.
 
 ## Aliasing and separation
 
