@@ -551,9 +551,6 @@ fn load_unchanged_along_memory_derivations(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    if memory_dag_disabled() {
-        return false;
-    }
     thread_local! {
         static DERIVATION_WALK_ACTIVE: std::cell::Cell<bool> =
             const { std::cell::Cell::new(false) };
@@ -1494,9 +1491,6 @@ pub(crate) fn cell_epoch_for_load_variable(
     memory: &SharedCMemory,
     pointer: &Pointer,
 ) -> Option<SharedCMemory> {
-    if memory_dag_disabled() {
-        return None;
-    }
     // Assumption-free and a function of the interned snapshot, the pointer,
     // and the recorded edges (a havoc edge's frozen context included), so
     // the answer is memoized per query.
@@ -1893,9 +1887,6 @@ pub(super) fn memory_load_equality_evidence_at(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> Option<MemoryDagLoadEqualityEvidence> {
-    if memory_dag_disabled() {
-        return None;
-    }
     if left_memory == right_memory {
         let cell = MemoryDagCell::Unwritten {
             node: left_memory.clone(),
@@ -1981,9 +1972,6 @@ pub(super) fn atomic_memory_load_equality_evidence(
     if left_pointer != right_pointer {
         return None;
     }
-    if memory_dag_disabled() {
-        return None;
-    }
     if !extended_dag_bridging_active() {
         // Pre-arc behavior outside the loadable prover: node-identity
         // comparison only, no memo, no value pinning.
@@ -2005,7 +1993,6 @@ pub(super) fn atomic_memory_load_equality_evidence(
     // depth cutoff and its weaker answer must not shadow the full one.
     let memo_key = (CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0)
         .then(|| super::assumptions::dag_memo_assumptions_id(assumptions))
-        .flatten()
         .map(|assumptions_id| DagLoadEqualityMemoKey {
             assumptions_id,
             left_memory: left_memory.arena_id(),

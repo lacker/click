@@ -48,21 +48,7 @@ explicit filter also selects its matching quarantined fixture.
 Set `CLICK_DISABLE_TACTIC_BUDGETS=1` to disable per-tactic budget enforcement
 for reduction and archaeology. Outer command limits still apply.
 
-### `CLICK_DISABLE_DECIDE_MEMO`
-
-Set `CLICK_DISABLE_DECIDE_MEMO=1` to disable assumption-decision and
-equality-graph memoization.
-
-### `CLICK_DISABLE_CERT_ARMS`
-
-Set `CLICK_DISABLE_CERT_ARMS=1` to restore the pre-feature
-contract-certification arm path.
-
-### `CLICK_DISABLE_MEMORY_DAG`
-
-Set `CLICK_DISABLE_MEMORY_DAG=1` to disable memory derivation DAG storage and
-use the fallback path.
-
-These variables are internal experiment handles, not stable user features.
-Use them only for an A/B regression that names the expected invariant. Remove a
-handle when the corresponding fallback is no longer intentionally maintained.
+This variable is an internal experiment handle, not a stable user feature.
+Use it only for an A/B regression that names the expected invariant. The
+kernel reads no environment variable: its behaviour is fixed, and its
+test-only audits are switched on by the tests that run them.

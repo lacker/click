@@ -69,16 +69,14 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
         success.memory().live_heap_block_size(pointer),
         Some(&Bitvector32Term::Constant(16))
     );
-    if !skip_without_memory_dag() {
-        let derivation = intern_c_memory_ref(success.memory())
-            .derivation()
-            .expect("successful allocation should record a memory edge");
-        assert!(matches!(
-            derivation.as_ref(),
-            CMemoryDerivation::HeapAllocated { block, bytes, .. }
-                if block == &pointer.block && *bytes == Bitvector32Term::Constant(16)
-        ));
-    }
+    let derivation = intern_c_memory_ref(success.memory())
+        .derivation()
+        .expect("successful allocation should record a memory edge");
+    assert!(matches!(
+        derivation.as_ref(),
+        CMemoryDerivation::HeapAllocated { block, bytes, .. }
+            if block == &pointer.block && *bytes == Bitvector32Term::Constant(16)
+    ));
     assert!(
         success
             .resources()
@@ -323,10 +321,6 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
 
 #[test]
 fn pending_and_failed_heap_allocation_preserve_existing_memory() {
-    if skip_without_memory_dag() {
-        return;
-    }
-
     let existing = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -537,16 +531,14 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
             && allocation_base == pointer.pointer()
             && *bytes == Bitvector32Term::Constant(16)
     ));
-    if !skip_without_memory_dag() {
-        let derivation = intern_c_memory_ref(freed.memory())
-            .derivation()
-            .expect("free should record a memory edge");
-        assert!(matches!(
-            derivation.as_ref(),
-            CMemoryDerivation::HeapFreed { allocation_base, bytes, .. }
-                if allocation_base == pointer.pointer() && *bytes == Bitvector32Term::Constant(16)
-        ));
-    }
+    let derivation = intern_c_memory_ref(freed.memory())
+        .derivation()
+        .expect("free should record a memory edge");
+    assert!(matches!(
+        derivation.as_ref(),
+        CMemoryDerivation::HeapFreed { allocation_base, bytes, .. }
+            if allocation_base == pointer.pointer() && *bytes == Bitvector32Term::Constant(16)
+    ));
 
     let double = execute_c_statement_paths(
         freed,

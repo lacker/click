@@ -64,6 +64,39 @@ fn certify_contract_with_kernel_artifacts(
     )
 }
 
+/// The kernel reads no environment variable: its behaviour is fixed, and
+/// its test-only audits are switched on by the tests that run them. Every
+/// A/B handle it once read kept a second code path alive.
+#[test]
+fn kernel_source_reads_no_environment_variable() {
+    fn source_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("kernel source directory is readable") {
+            let path = entry.expect("kernel source entry is readable").path();
+            if path.is_dir() {
+                source_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel");
+    let mut files = Vec::new();
+    source_files(&kernel, &mut files);
+    assert!(files.len() > 20, "the kernel source tree was not found");
+    let offenders = files
+        .iter()
+        .filter(|path| {
+            let source = std::fs::read_to_string(path).expect("kernel source is readable");
+            source.contains(&["env", "::var"].concat())
+        })
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        offenders.is_empty(),
+        "kernel sources read an environment variable: {offenders:?}"
+    );
+}
+
 fn memory_range(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
@@ -113,12 +146,6 @@ fn assert_checkable_derivation(assumptions: &PureFactContext, proposition: &Prop
         derivation.check(assumptions),
         "explicit proposition derivation must check"
     );
-}
-
-/// Tests of behavior added by the memory DAG have nothing to assert when its
-/// A/B switch disables that machinery.
-fn skip_without_memory_dag() -> bool {
-    memory_dag_disabled()
 }
 
 fn arc_pointer(offset: i64) -> Pointer {

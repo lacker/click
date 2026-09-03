@@ -37,9 +37,6 @@ fn reinterning_retained_memory_uses_shallow_component_identity() {
 
 #[test]
 fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let base = CMemory::new().with_block("arg-memory", 16);
     let after = base
         .clone()
@@ -65,9 +62,6 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
 
 #[test]
 fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let base = CMemory::new().with_block("arg-memory", 32);
     let root = Pointer {
         block: "arg-memory".into(),
@@ -193,9 +187,6 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
 
 #[test]
 fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
-    if skip_without_memory_dag() {
-        return;
-    }
     // Storing a value and then storing it back re-interns the original
     // snapshot, which is the shortest cycle the DAG could otherwise grow.
     // First-wins recording keeps the older edge, so following `base` still
@@ -226,10 +217,6 @@ fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
 
 #[test]
 fn call_havoc_marker_identity_includes_symbolic_write_set() {
-    if skip_without_memory_dag() {
-        return;
-    }
-
     let base = CMemory::new().with_block("arg-memory", 32);
     let first_range = CMemoryRange::new(
         arc_pointer(0),
@@ -277,9 +264,6 @@ fn call_havoc_marker_identity_includes_symbolic_write_set() {
 
 #[test]
 fn a_store_that_changes_nothing_records_no_edge_to_itself() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let base = CMemory::new()
         .with_block("arg-memory", 16)
         .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(3)));
@@ -300,9 +284,6 @@ fn a_store_that_changes_nothing_records_no_edge_to_itself() {
 
 #[test]
 fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let base = CMemory::new()
         .with_block("arg-memory", 16)
         .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(5)));
@@ -344,31 +325,29 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
     let base = CMemory::new().with_block("arg-memory", 16);
     let read = arc_pointer(0);
 
-    if !skip_without_memory_dag() {
-        // A call havoc changes the block set (it adds its marker block), so
-        // the snapshot-diff matcher refuses to look at the cells at all. The
-        // recorded edge carries the call's mutable ranges, so the walk can
-        // still cross it for a pointer provably outside them. This is the
-        // case the DAG answers and value bridging cannot.
-        let called = base.clone().with_call_memory_havoc(
-            Variable(3),
-            &[memory_range(arc_pointer(8), 0, 8)],
-            &PureFactContext::new(),
-        );
-        assert!(
-            !memories_match_for_pointer_load_under_assumptions(
-                &base,
-                &called,
-                &read,
-                &PureFactContext::new()
-            ),
-            "the snapshot-diff matcher is expected not to cross the marker block"
-        );
-        assert!(
-            c_memory_load_is_unchanged(&base, &called, &read, &PureFactContext::new()),
-            "a call that may only write a disjoint range preserves the load"
-        );
-    }
+    // A call havoc changes the block set (it adds its marker block), so
+    // the snapshot-diff matcher refuses to look at the cells at all. The
+    // recorded edge carries the call's mutable ranges, so the walk can
+    // still cross it for a pointer provably outside them. This is the
+    // case the DAG answers and value bridging cannot.
+    let called = base.clone().with_call_memory_havoc(
+        Variable(3),
+        &[memory_range(arc_pointer(8), 0, 8)],
+        &PureFactContext::new(),
+    );
+    assert!(
+        !memories_match_for_pointer_load_under_assumptions(
+            &base,
+            &called,
+            &read,
+            &PureFactContext::new()
+        ),
+        "the snapshot-diff matcher is expected not to cross the marker block"
+    );
+    assert!(
+        c_memory_load_is_unchanged(&base, &called, &read, &PureFactContext::new()),
+        "a call that may only write a disjoint range preserves the load"
+    );
 
     let havoced = base
         .clone()
@@ -389,9 +368,6 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
 
 #[test]
 fn loop_havoc_carries_a_verified_write_set_for_disjoint_loads() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let base = CMemory::new().with_block("arg-memory", 16);
     let read = arc_pointer(0);
     let ranges = [memory_range(arc_pointer(8), 0, 8)];
@@ -479,70 +455,68 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     );
     assert_eq!(
         PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
-        !skip_without_memory_dag(),
+        true,
         "the common-ancestor lookup is exactly what the DAG adds here"
     );
-    if !skip_without_memory_dag() {
-        let evidence = memory_load_equality_evidence_at(
-            &crate::kernel::intern_c_memory_ref(&left),
-            &crate::kernel::intern_c_memory_ref(&right),
-            &read,
+    let evidence = memory_load_equality_evidence_at(
+        &crate::kernel::intern_c_memory_ref(&left),
+        &crate::kernel::intern_c_memory_ref(&right),
+        &read,
+        &PureFactContext::new(),
+    )
+    .expect("a successful equality decision retains both traversed walks");
+    assert_eq!(evidence.reason, MemoryDagLoadEqualityReason::CommonSource);
+    assert_eq!(retained_memory_dag_path(&evidence.left).len(), 1);
+    assert_eq!(retained_memory_dag_path(&evidence.right).len(), 1);
+    assert_eq!(
+        retained_memory_dag_path(&evidence.left)[0].derived.as_ref(),
+        &left,
+        "the left proof names the exact derived snapshot"
+    );
+    assert_eq!(
+        retained_memory_dag_path(&evidence.right)[0]
+            .derived
+            .as_ref(),
+        &right,
+        "the right proof names the exact derived snapshot"
+    );
+    assert_eq!(
+        evidence.left.node(),
+        evidence.right.node(),
+        "both retained walks end at their common source"
+    );
+    let first = with_extended_dag_bridging(|| {
+        atomic_memory_load_equality_evidence(
+            &load_in(&left),
+            &load_in(&right),
             &PureFactContext::new(),
         )
-        .expect("a successful equality decision retains both traversed walks");
-        assert_eq!(evidence.reason, MemoryDagLoadEqualityReason::CommonSource);
-        assert_eq!(retained_memory_dag_path(&evidence.left).len(), 1);
-        assert_eq!(retained_memory_dag_path(&evidence.right).len(), 1);
-        assert_eq!(
-            retained_memory_dag_path(&evidence.left)[0].derived.as_ref(),
-            &left,
-            "the left proof names the exact derived snapshot"
-        );
-        assert_eq!(
-            retained_memory_dag_path(&evidence.right)[0]
-                .derived
-                .as_ref(),
-            &right,
-            "the right proof names the exact derived snapshot"
-        );
-        assert_eq!(
-            evidence.left.node(),
-            evidence.right.node(),
-            "both retained walks end at their common source"
-        );
-        let first = with_extended_dag_bridging(|| {
-            atomic_memory_load_equality_evidence(
-                &load_in(&left),
-                &load_in(&right),
-                &PureFactContext::new(),
-            )
-        })
-        .expect("the atomic decision returns retained evidence");
-        let cached = with_extended_dag_bridging(|| {
-            atomic_memory_load_equality_evidence(
-                &load_in(&left),
-                &load_in(&right),
-                &PureFactContext::new(),
-            )
-        })
-        .expect("a positive memo hit returns the retained evidence");
-        assert_eq!(cached, first);
-        assert!(first.is_fully_typed());
-        let goal =
-            Proposition::ConditionIs(ConditionTerm::equal(load_in(&left), load_in(&right)), true);
-        assert!(first.checks(&goal, &PureFactContext::new()));
-        let derivation =
-            with_extended_dag_bridging(|| PureFactContext::new().derive_atomic_proposition(&goal))
-                .expect("call-havoc range evidence flows out of the original decision");
-        assert!(matches!(
-            &derivation.rule,
-            PropositionDerivationRule::ContextualAtomic {
-                evidence: AtomicPropositionDerivationEvidence::MemoryDag(_),
-                ..
-            }
-        ));
-        assert!(derivation.check(&PureFactContext::new()));
-    }
+    })
+    .expect("the atomic decision returns retained evidence");
+    let cached = with_extended_dag_bridging(|| {
+        atomic_memory_load_equality_evidence(
+            &load_in(&left),
+            &load_in(&right),
+            &PureFactContext::new(),
+        )
+    })
+    .expect("a positive memo hit returns the retained evidence");
+    assert_eq!(cached, first);
+    assert!(first.is_fully_typed());
+    let goal =
+        Proposition::ConditionIs(ConditionTerm::equal(load_in(&left), load_in(&right)), true);
+    assert!(first.checks(&goal, &PureFactContext::new()));
+    let derivation =
+        with_extended_dag_bridging(|| PureFactContext::new().derive_atomic_proposition(&goal))
+            .expect("call-havoc range evidence flows out of the original decision");
+    assert!(matches!(
+        &derivation.rule,
+        PropositionDerivationRule::ContextualAtomic {
+            evidence: AtomicPropositionDerivationEvidence::MemoryDag(_),
+            ..
+        }
+    ));
+    assert!(derivation.check(&PureFactContext::new()));
 
     // Soundness, and so asserted in both modes: an intervening loop havoc has
     // no write set, so no walk may resolve through one.
@@ -557,9 +531,6 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
 
 #[test]
 fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let owner = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Int32Scaled {
@@ -664,9 +635,6 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 /// the byte-identical check of the certified corpus).
 #[test]
 fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let entry = CMemory::new().with_block("arg-memory", 64);
     let len_pointer = arc_pointer(0);
     let len_at_entry = Bitvector32Term::MemoryLoad(
@@ -881,9 +849,6 @@ fn symbolic_element_pointer(index: &Bitvector32Term) -> Pointer {
 
 #[test]
 fn a_store_at_a_symbolic_index_keeps_a_cell_its_frozen_order_separates() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let index = Bitvector32Term::Variable(Variable(91_001));
     let length = Bitvector32Term::Variable(Variable(91_002));
     let written = symbolic_element_pointer(&index);
@@ -951,9 +916,6 @@ fn direct_strict_order_is_an_indexed_lookup() {
 
 #[test]
 fn frozen_order_store_crossing_ignores_unrelated_order_facts() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let samples = [16_u64, 64, 256, 1024, 4096]
         .into_iter()
         .map(|size| {

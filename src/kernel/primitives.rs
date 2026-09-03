@@ -1254,14 +1254,10 @@ impl SharedCMemory {
     /// thread's and an edge producer recorded one.
     ///
     /// `None` is always a legitimate answer — for entry states, for
-    /// snapshots built by paths that record no edge, for handles that
-    /// crossed a thread, and for every snapshot when
-    /// `CLICK_DISABLE_MEMORY_DAG` is set. Consumers fall back rather than
-    /// conclude anything from the absence.
+    /// snapshots built by paths that record no edge, and for handles that
+    /// crossed a thread. Consumers fall back rather than conclude anything
+    /// from the absence.
     pub(crate) fn derivation(&self) -> Option<std::sync::Arc<CMemoryDerivation>> {
-        if memory_dag_disabled() {
-            return None;
-        }
         C_MEMORY_ARENA.with(|arena| {
             let arena = arena.borrow();
             if arena.0 != self.arena {
@@ -1357,8 +1353,7 @@ impl From<&CMemory> for SharedCMemory {
 /// A derivation is **advisory**. It only ever states a true fact about how a
 /// snapshot arose, so every consumer must fall back to its previous
 /// reasoning when none is present; nothing may depend on one existing. That
-/// is what lets `CLICK_DISABLE_MEMORY_DAG` restore the pre-arc path exactly,
-/// and why a snapshot interned on another thread (the arena is thread-local)
+/// is why a snapshot interned on another thread (the arena is thread-local)
 /// is merely slower to reason about rather than wrong.
 ///
 /// `LoopHavoc` is deliberately its own edge kind rather than a bulk store.
@@ -1474,14 +1469,6 @@ impl CMemoryDerivation {
     }
 }
 
-/// True when `CLICK_DISABLE_MEMORY_DAG` is set: derivations are neither
-/// recorded nor reported, so every consumer takes its pre-arc path. The A/B
-/// handle for the named-memory-states arc.
-pub(crate) fn memory_dag_disabled() -> bool {
-    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *DISABLED.get_or_init(|| std::env::var_os("CLICK_DISABLE_MEMORY_DAG").is_some())
-}
-
 static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[derive(Default)]
@@ -1555,9 +1542,6 @@ pub(super) fn c_memory_derivation_generation() -> u64 {
 /// that node's older derivation). Callers may rely on any walk over `base`
 /// terminating; a hop cap still depth-gates them, per conventions.md.
 pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDerivation) {
-    if memory_dag_disabled() {
-        return;
-    }
     // Interning borrows the arena, so it has to finish before the write.
     let derived = intern_c_memory_ref(result);
     C_MEMORY_ARENA.with(|arena| {

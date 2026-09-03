@@ -511,16 +511,9 @@ fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
 
 /// Memo identity for the DAG-walk memo tables in api.rs: the ambient scope's
 /// id when one is live (no hashing), the content-derived id otherwise.
-/// `None` when memoization is disabled, so `CLICK_DISABLE_DECIDE_MEMO`
-/// bypasses those tables too.
-pub(super) fn dag_memo_assumptions_id(assumptions: &PureFactContext) -> Option<u64> {
-    if decide_memo_disabled() {
-        return None;
-    }
-    Some(
-        ambient_assumptions_memo_id(assumptions)
-            .unwrap_or_else(|| apply_attempt_salt(assumptions_memo_id(assumptions))),
-    )
+pub(super) fn dag_memo_assumptions_id(assumptions: &PureFactContext) -> u64 {
+    ambient_assumptions_memo_id(assumptions)
+        .unwrap_or_else(|| apply_attempt_salt(assumptions_memo_id(assumptions)))
 }
 
 thread_local! {
@@ -630,18 +623,6 @@ fn apply_attempt_salt(id: u64) -> u64 {
         // unsalted ids drawn from the small dense counter space.
         id ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)
     }
-}
-
-/// True when CLICK_DISABLE_DECIDE_MEMO is set: decision and equality-graph
-/// memoization is bypassed so behavior can be compared against the
-/// unmemoized prover. Checked once per thread.
-pub(super) fn decide_memo_disabled() -> bool {
-    thread_local! {
-        static DISABLED: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
-    }
-    DISABLED.with(|disabled| {
-        *disabled.get_or_init(|| std::env::var_os("CLICK_DISABLE_DECIDE_MEMO").is_some())
-    })
 }
 
 /// Records that a reasoning search was cut short by ambient thread-local

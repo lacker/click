@@ -49,7 +49,12 @@ complete. Slice 3 is built: certification no longer executes a body for a
 caller that supplies no artifact (`ContractFallback::NoArtifact` and the
 artifact-less entry point are gone); the kernel tests that certified a
 contract from nothing now build one checked execution per resource-guard
-case and certify from those.
+case and certify from those. Slice 4 is built: the kernel reads no
+environment variable. `CLICK_DISABLE_CERT_ARMS`, `CLICK_DISABLE_MEMORY_DAG`,
+and `CLICK_DISABLE_DECIDE_MEMO` are deleted with the pre-feature paths they
+switched to (`CLICK_DBG_SEP_PARITY` was already gone); the
+canonical-at-creation audit is switched on only by the test that counts
+its violations, and reports each rewrite kind and creator to stderr there.
 
 ## Violated invariant
 

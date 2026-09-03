@@ -74,9 +74,6 @@ pub(crate) fn clear_canonical_memory_cache() {
 /// caching, and a positive answer is found evidence that remains valid
 /// outside the weakened context.
 fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)> {
-    if crate::kernel::assumptions::decide_memo_disabled() {
-        return None;
-    }
     if MEMORY_RESOLUTION_FUEL.with(|fuel| fuel.get().is_some()) {
         return None;
     }

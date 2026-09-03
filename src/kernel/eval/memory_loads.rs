@@ -294,7 +294,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     let mut memory = memory.clone();
-    let reduction_base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&memory));
+    let reduction_base = Some(intern_c_memory_ref(&memory));
     let cells_before_reduction = memory.cells.len();
     std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
         !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
@@ -824,25 +824,22 @@ pub(crate) fn canonical_form_of_load(memory: SharedCMemory, pointer: Pointer) ->
     }
 }
 
-/// Debug-only check of the creation-time invariant (see
-/// `docs/internals/canonicalization.md`): with
-/// `CLICK_CHECK_CANONICAL_AT_CREATION=1`, every condition fact entering a
-/// `PureFactContext` is compared with its canonical form. Each distinct
-/// (rewrite kind, creating module) pair is reported once on stderr with an
-/// example, where the creating module is the innermost `click::` frame
-/// outside the generic context-construction and reasoning layers. Defining
-/// facts are exempt: they are the base of the construction. The report is
-/// the work list for establishing the invariant at every creation point.
+/// The test-only audit of the creation-time invariant (see
+/// `docs/internals/canonicalization.md`): while
+/// `count_canonical_at_creation_violations` is counting on this thread,
+/// every condition fact entering a `PureFactContext` is compared with its
+/// canonical form. Each distinct (rewrite kind, creating module) pair is
+/// reported once on stderr with an example, where the creating module is
+/// the innermost `click::` frame outside the generic context-construction
+/// and reasoning layers. Defining facts are exempt: they are the base of
+/// the construction. The report is the work list for establishing the
+/// invariant at every creation point. Off, this is one thread-local read.
 pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool) {
     thread_local! {
-        static ENABLED: bool =
-            std::env::var("CLICK_CHECK_CANONICAL_AT_CREATION").is_ok_and(|v| v == "1");
         static SEEN: std::cell::RefCell<std::collections::BTreeSet<(String, String)>> =
             std::cell::RefCell::new(std::collections::BTreeSet::new());
     }
-    if !ENABLED.with(|enabled| *enabled)
-        && !CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.get().is_some())
-    {
+    if !CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.get().is_some()) {
         return;
     }
     let proposition = Proposition::ConditionIs(condition.clone(), value);
@@ -858,9 +855,6 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
             count.set(Some(seen + 1));
         }
     });
-    if !ENABLED.with(|enabled| *enabled) {
-        return;
-    }
     let kind = if !condition_mentions_a_memory_load(&canonical) {
         let mut variables = std::collections::BTreeSet::new();
         crate::kernel::reasoning::variable_collection::collect_condition_bitvector_variables(
@@ -912,10 +906,7 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
     if !first_time {
         return;
     }
-    let width = std::env::var("CLICK_CHECK_CANONICAL_AT_CREATION_WIDTH")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(240usize);
+    let width = 240usize;
     let shown = format!("{condition:?}");
     let shown = &shown[..shown.len().min(width)];
     eprintln!("CANONICAL-AT-CREATION violation [{kind}] created in {creator}\n  example: {shown}");

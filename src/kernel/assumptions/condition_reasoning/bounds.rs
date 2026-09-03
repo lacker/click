@@ -23,9 +23,7 @@ impl PureFactContext {
         // Each hit saves a full fact-set scan, so the collection stays
         // cheaper than the hash only for fact sets never queried twice.
         let memo_id = super::super::dag_memo_assumptions_id(self);
-        if let Some(memo_id) = memo_id
-            && let Some(hit) = ORDER_FACTS_MEMO.with(|memo| memo.borrow().get(&memo_id).cloned())
-        {
+        if let Some(hit) = ORDER_FACTS_MEMO.with(|memo| memo.borrow().get(&memo_id).cloned()) {
             // One checkpoint keeps a run of memo hits responsive to the
             // cooperative deadline without rescanning the fact set.
             crate::instrumentation::deadline_exceeded();
@@ -45,7 +43,7 @@ impl PureFactContext {
         let facts = std::rc::Rc::new(facts);
         // A scan cut short by the deadline is not this fact set's collection;
         // only complete scans are shared.
-        if complete && let Some(memo_id) = memo_id {
+        if complete {
             ORDER_FACTS_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= ORDER_FACTS_MEMO_LIMIT {

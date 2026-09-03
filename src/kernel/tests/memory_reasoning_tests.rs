@@ -651,9 +651,6 @@ fn direct_resource_match_uses_exact_field_load_equalities() {
 
 #[test]
 fn direct_composite_resource_match_checks_pointer_load_across_block_declaration() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let entry = CMemory::new().with_block("arg-memory", 32);
     let field = arc_pointer(16);
     let later = entry.clone().with_block("local:pivot", 4);

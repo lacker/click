@@ -1271,8 +1271,8 @@ fn example_project_creates_only_canonical_terms(project: &str, sidecar: &str) {
     assert_eq!(
         violations,
         0,
-        "`{}` created {violations} non-canonical condition fact(s); run it with \
-         CLICK_CHECK_CANONICAL_AT_CREATION=1 to see each rewrite kind and creator",
+        "`{}` created {violations} non-canonical condition fact(s); each rewrite kind \
+         and creator is reported on stderr above",
         path.display()
     );
 }

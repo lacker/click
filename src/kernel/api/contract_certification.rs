@@ -2343,34 +2343,30 @@ pub(super) fn certification_proves_proposition(
         // Both sides resolve to one known constant through equality facts
         // and per-load snapshot bridging (deterministic and fuel-free).
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
-                && assumptions.constants_known_equal_after_normalization(left, right) =>
+            if assumptions.constants_known_equal_after_normalization(left, right) =>
         {
             true
         }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
-                && assumptions
-                    .exact_signed_intervals_equal(left, right)
-                    .is_some_and(|equal| equal) =>
+            if assumptions
+                .exact_signed_intervals_equal(left, right)
+                .is_some_and(|equal| equal) =>
         {
             true
         }
         // A signed comparison whose sides both resolve to known constants
         // through equality facts and per-load snapshot bridging.
         Proposition::ConditionIs(condition, value)
-            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
-                && assumptions
-                    .signed_comparison_by_constant_normalization(condition)
-                    .is_some_and(|known| known == *value) =>
+            if assumptions
+                .signed_comparison_by_constant_normalization(condition)
+                .is_some_and(|known| known == *value) =>
         {
             true
         }
         // One side equals a recorded load term by an equality fact and
         // the two loads denote the same framed cell.
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
-                && certification_proves_equality_via_load_fact(assumptions, left, right) =>
+            if certification_proves_equality_via_load_fact(assumptions, left, right) =>
         {
             true
         }

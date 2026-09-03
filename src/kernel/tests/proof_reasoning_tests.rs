@@ -2462,9 +2462,6 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
 
 #[test]
 fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
-    if skip_without_memory_dag() {
-        return;
-    }
     let entry_memory = CMemory::new();
     let owner = Pointer {
         block: PointerBlock::ExternalArgument,

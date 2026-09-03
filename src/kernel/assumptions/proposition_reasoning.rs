@@ -1109,14 +1109,12 @@ impl PureFactContext {
     ) -> (Option<AtomicPropositionDerivationEvidence>, u64) {
         let id_scope = PureFactContextIdScope::enter(self);
         let premises_id = id_scope.id;
-        if !decide_memo_disabled()
-            && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
-                memo.borrow()
-                    .get(&(premises_id, for_simp))
-                    .and_then(|entries| entries.get(proposition))
-                    .cloned()
-            })
-        {
+        if let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
+            memo.borrow()
+                .get(&(premises_id, for_simp))
+                .and_then(|entries| entries.get(proposition))
+                .cloned()
+        }) {
             return (result, premises_id);
         }
         let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
@@ -1688,9 +1686,7 @@ impl PureFactContext {
                 };
                 proved.then_some(AtomicPropositionDerivationEvidence::Legacy)
             });
-        if !decide_memo_disabled()
-            && (result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
-        {
+        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
             ATOMIC_DERIVATION_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= ASSUMPTIONS_MEMO_ID_LIMIT {
@@ -2341,14 +2337,12 @@ impl PureFactContext {
                 && self.contains_assumed_exact(&evidence.less_equal)
                 && self.contains_assumed_exact(&evidence.not_equal);
         }
-        if !decide_memo_disabled()
-            && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
-                memo.borrow()
-                    .get(&(premises_id, for_simp))
-                    .and_then(|entries| entries.get(proposition))
-                    .cloned()
-            })
-        {
+        if let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
+            memo.borrow()
+                .get(&(premises_id, for_simp))
+                .and_then(|entries| entries.get(proposition))
+                .cloned()
+        }) {
             return result.is_some();
         }
         self.proves_atomic_for_derivation(proposition, for_simp)
@@ -3473,11 +3467,7 @@ impl PureFactContext {
         if left == right {
             return true;
         }
-        let memo_id = if decide_memo_disabled() {
-            None
-        } else {
-            ambient_assumptions_memo_id(self)
-        };
+        let memo_id = ambient_assumptions_memo_id(self);
         let memo_key = memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
         if let Some(memo_key) = &memo_key
             && let Some(hit) =

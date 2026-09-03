@@ -728,12 +728,12 @@ mod tests {
     fn environment_switches_are_sorted_and_limited_to_click_variables() {
         let switches = environment_switches_from([
             ("PATH".to_string(), "x".to_string()),
-            ("CLICK_DISABLE_MEMORY_DAG".to_string(), "1".to_string()),
-            ("CLICK_DISABLE_CERT_ARMS".to_string(), "1".to_string()),
+            ("CLICK_TIMINGS".to_string(), "1".to_string()),
+            ("CLICK_DISABLE_TACTIC_BUDGETS".to_string(), "1".to_string()),
         ]);
         assert_eq!(
             switches,
-            "env=CLICK_DISABLE_CERT_ARMS=1\nenv=CLICK_DISABLE_MEMORY_DAG=1\n"
+            "env=CLICK_DISABLE_TACTIC_BUDGETS=1\nenv=CLICK_TIMINGS=1\n"
         );
     }
 

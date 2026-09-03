@@ -633,8 +633,7 @@ impl CMemory {
         // evidence`). The havoc producers insert their markers directly,
         // but tests and any future caller may write them through this
         // constructor, so the refusal lives here.
-        if memory_dag_disabled() || block.starts_with("havoc:") || block.starts_with("call-havoc:")
-        {
+        if block.starts_with("havoc:") || block.starts_with("call-havoc:") {
             std::sync::Arc::make_mut(&mut self.blocks).insert(block, CBlock::new(size));
             return self;
         }
@@ -681,7 +680,7 @@ impl CMemory {
                 },
             );
         };
-        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let base = Some(intern_c_memory_ref(&self));
         if pointer.block != PointerBlock::ExternalArgument {
             std::sync::Arc::make_mut(&mut self.blocks).remove(&pointer.block);
         }
@@ -810,7 +809,7 @@ impl CMemory {
             Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
-                let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+                let prior = Some(intern_c_memory_ref(&self));
                 std::sync::Arc::make_mut(&mut self.heap)
                     .live_allocations
                     .insert(base, bytes);
@@ -836,7 +835,7 @@ impl CMemory {
         mut self,
         base: &Pointer,
     ) -> Self {
-        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let prior = Some(intern_c_memory_ref(&self));
         let removed_live = std::sync::Arc::make_mut(&mut self.heap)
             .live_allocations
             .remove(base);
@@ -866,7 +865,7 @@ impl CMemory {
         bytes: Bitvector32Term,
         zeroed: bool,
     ) -> Self {
-        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let prior = Some(intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .insert(base.clone(), bytes.clone());
@@ -936,7 +935,7 @@ impl CMemory {
         base: &Pointer,
         succeeds: bool,
     ) -> Option<(Self, Bitvector32Term, Pointer)> {
-        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let prior = Some(intern_c_memory_ref(&self));
         let bytes = std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .remove(base)?;
@@ -1043,7 +1042,7 @@ impl CMemory {
         // reads do not observe stale pre-loop values. A checked footprint is
         // retained on the derivation edge for disjoint-load transport; the
         // marker block still distinguishes this havoc from ordinary memory.
-        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let base = Some(intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         std::sync::Arc::make_mut(&mut self.blocks).insert(
@@ -1214,7 +1213,7 @@ impl CMemory {
         mutable_ranges: &[CMemoryRange],
         assumptions: &PureFactContext,
     ) -> Self {
-        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let base = Some(intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, _| {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
@@ -1317,10 +1316,6 @@ impl CMemory {
         value: CValue,
         context: &PureFactContext,
     ) -> Self {
-        if memory_dag_disabled() {
-            std::sync::Arc::make_mut(&mut self.cells).insert(pointer, value);
-            return self;
-        }
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
         record_c_memory_derivation(
@@ -1370,7 +1365,7 @@ impl CMemory {
             block: pointer.block.clone(),
             offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions, 0),
         };
-        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(self));
+        let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
         std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, _| {
             let normalized_cell_pointer = Pointer {

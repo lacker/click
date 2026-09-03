@@ -26,12 +26,6 @@ impl PureFactContext {
         if !consume_simp_reasoning_fuel() {
             return None;
         }
-        // Debugging escape hatch: run every decision unmemoized to compare
-        // against memoized behavior.
-        if decide_memo_disabled() {
-            let _decision_guard = ConditionDecisionGuard::enter(condition)?;
-            return self.decide_inner(condition);
-        }
         // Resolve the memo identity from an enclosing scope, or establish
         // one when this is the outermost decision. Nested decisions on other
         // fact sets (intrinsic decisions on fresh empty sets) run unmemoized.
@@ -334,11 +328,7 @@ impl PureFactContext {
         // Memoized only under an enclosing id scope; this search is called
         // from deep memory-resolution recursions where hashing the fact set
         // per call would cost more than the search itself.
-        let memo_id = if decide_memo_disabled() {
-            None
-        } else {
-            ambient_assumptions_memo_id(self)
-        };
+        let memo_id = ambient_assumptions_memo_id(self);
         let memo_key = memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
         if let Some(memo_key) = &memo_key
             && let Some(hit) =
@@ -741,9 +731,6 @@ impl PureFactContext {
     ) -> Option<i64> {
         // The walk re-resolves the same subterms across goals and claims;
         // memoize by fact-set content identity exactly like `decide`.
-        if decide_memo_disabled() {
-            return self.signed_constant_after_equality_normalization_unmemoized(term);
-        }
         let _scope = PureFactContextIdScope::enter(self);
         let key = (_scope.id, term.clone());
         if let Some(hit) = CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow().get(&key).copied())

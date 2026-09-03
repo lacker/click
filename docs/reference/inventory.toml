@@ -1594,18 +1594,6 @@ id = "cli.env.CLICK_DISABLE_TACTIC_BUDGETS"
 path = "reference/cli/environment.md#click_disable_tactic_budgets"
 
 [[item]]
-id = "cli.env.CLICK_DISABLE_DECIDE_MEMO"
-path = "reference/cli/environment.md#click_disable_decide_memo"
-
-[[item]]
-id = "cli.env.CLICK_DISABLE_CERT_ARMS"
-path = "reference/cli/environment.md#click_disable_cert_arms"
-
-[[item]]
-id = "cli.env.CLICK_DISABLE_MEMORY_DAG"
-path = "reference/cli/environment.md#click_disable_memory_dag"
-
-[[item]]
 id = "cli.behavior.shared.duration-syntax"
 path = "reference/cli/index.md#duration-syntax"
 

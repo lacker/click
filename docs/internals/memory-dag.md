@@ -97,10 +97,6 @@ it is an abstract-state optimization, not the soundness source for post-loop
 load transport. If a footprint cannot be evaluated, the edge retains the
 unconditional barrier semantics.
 
-`CLICK_DISABLE_MEMORY_DAG=1` disables recording and DAG consumers for an A/B
-experiment. It is a contributor control, not a supported proof technique; a
-correct proof must not rely on toggling it.
-
 ## Source and tests
 
 The representation and edge producers live in
