@@ -319,10 +319,12 @@ pub enum C0Expression {
     /// A C function call that is still embedded in an expression. The
     /// parser lowers these to `CallAssign` statements before the AST reaches
     /// the kernel, so the kernel continues to execute calls only as checked
-    /// statement transitions.
+    /// statement transitions. The position identifies the source call site
+    /// for diagnostics emitted while performing that lowering.
     Call {
         function_name: String,
         arguments: Vec<C0Expression>,
+        position: Option<SourcePosition>,
     },
     FunctionAddress(String),
     Cast {
@@ -1440,6 +1442,19 @@ impl Parser {
         match self.positions.get(index).or_else(|| self.positions.last()) {
             Some(position) => C0SyntaxError::at(*position, message),
             None => C0SyntaxError::new(message),
+        }
+    }
+
+    /// Uses a captured expression position when a lowering error is reported
+    /// after parsing has advanced past the original source token.
+    fn error_at_position(
+        &self,
+        position: Option<SourcePosition>,
+        message: impl Into<String>,
+    ) -> C0SyntaxError {
+        match position {
+            Some(position) => C0SyntaxError::at(position, message),
+            None => self.error_here(message),
         }
     }
 
@@ -3601,10 +3616,13 @@ impl Parser {
         let mut prefix = Vec::new();
         let mut lowered_arguments = Vec::with_capacity(arguments.len());
         for argument in arguments {
+            let argument_position = first_embedded_call_position(&argument);
             let (argument_prefix, argument) = self.lower_expression_calls(argument)?;
             if !prefix.is_empty() && !argument_prefix.is_empty() {
-                return Err(self
-                    .error_here("multiple unsequenced calls in one expression are not supported"));
+                return Err(self.error_at_position(
+                    argument_position,
+                    "multiple unsequenced calls in one expression are not supported",
+                ));
             }
             prefix.extend(argument_prefix);
             lowered_arguments.push(argument);
@@ -3617,12 +3635,14 @@ impl Parser {
         left: C0Expression,
         right: C0Expression,
     ) -> Result<(Vec<C0Statement>, C0Expression, C0Expression), C0SyntaxError> {
+        let right_position = first_embedded_call_position(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
         if !left_prefix.is_empty() && !right_prefix.is_empty() {
-            return Err(
-                self.error_here("multiple unsequenced calls in one expression are not supported")
-            );
+            return Err(self.error_at_position(
+                right_position,
+                "multiple unsequenced calls in one expression are not supported",
+            ));
         }
         let mut prefix = left_prefix;
         prefix.extend(right_prefix);
@@ -3637,12 +3657,14 @@ impl Parser {
             C0Expression::Call {
                 function_name,
                 arguments,
+                position,
             } => {
                 if matches!(
                     function_name.as_str(),
                     "malloc" | "calloc" | "realloc" | "free"
                 ) {
-                    return Err(self.error_here(
+                    return Err(self.error_at_position(
+                        position,
                         "allocation and deallocation builtins must be used in statement form",
                     ));
                 }
@@ -3845,12 +3867,14 @@ impl Parser {
         right: C0Expression,
         constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        let right_position = first_embedded_call_position(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
         if !right_prefix.is_empty() {
-            return Err(
-                self.error_here("calls in the short-circuit right operand are not supported")
-            );
+            return Err(self.error_at_position(
+                right_position,
+                "calls in the short-circuit right operand are not supported",
+            ));
         }
         Ok((left_prefix, constructor(Box::new(left), Box::new(right))))
     }
@@ -4145,6 +4169,8 @@ impl Parser {
         loop {
             match self.peek() {
                 Some(Token::LParen) => {
+                    let call_position =
+                        self.positions.get(self.position.saturating_sub(1)).copied();
                     let function_name = match &expression {
                         C0Expression::Variable(name) => name.clone(),
                         _ => {
@@ -4157,6 +4183,7 @@ impl Parser {
                     expression = C0Expression::Call {
                         function_name,
                         arguments,
+                        position: call_position,
                     };
                 }
                 Some(Token::LBracket) => {
@@ -4908,6 +4935,63 @@ fn statement_contains_embedded_call(statement: &C0Statement) -> bool {
         }
     }
     false
+}
+
+fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosition> {
+    match expression {
+        C0Expression::Call {
+            position,
+            arguments,
+            ..
+        } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
+        C0Expression::Cast { expression, .. }
+        | C0Expression::AddressOf(expression)
+        | C0Expression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | C0Expression::Not(expression)
+        | C0Expression::BitwiseNot(expression)
+        | C0Expression::Load(expression) => first_embedded_call_position(expression),
+        C0Expression::AggregateAddress { pointer, .. } | C0Expression::Field { pointer, .. } => {
+            first_embedded_call_position(pointer)
+        }
+        C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => first_embedded_call_position(condition)
+            .or_else(|| first_embedded_call_position(then_branch))
+            .or_else(|| first_embedded_call_position(else_branch)),
+        C0Expression::LessThan(left, right)
+        | C0Expression::LessEqual(left, right)
+        | C0Expression::GreaterThan(left, right)
+        | C0Expression::GreaterEqual(left, right)
+        | C0Expression::Equal(left, right)
+        | C0Expression::NotEqual(left, right)
+        | C0Expression::And(left, right)
+        | C0Expression::Or(left, right)
+        | C0Expression::Add(left, right)
+        | C0Expression::Subtract(left, right)
+        | C0Expression::Multiply(left, right)
+        | C0Expression::Divide(left, right)
+        | C0Expression::Remainder(left, right)
+        | C0Expression::ShiftLeft(left, right)
+        | C0Expression::ShiftRight(left, right)
+        | C0Expression::BitwiseAnd(left, right)
+        | C0Expression::BitwiseOr(left, right)
+        | C0Expression::BitwiseXor(left, right)
+        | C0Expression::Index(left, right) => {
+            first_embedded_call_position(left).or_else(|| first_embedded_call_position(right))
+        }
+        C0Expression::Void
+        | C0Expression::Variable(_)
+        | C0Expression::FunctionAddress(_)
+        | C0Expression::Int32Literal(_)
+        | C0Expression::UInt8Literal(_)
+        | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfType { .. } => None,
+    }
 }
 
 fn expression_contains_embedded_call(expression: &C0Expression) -> bool {

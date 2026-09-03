@@ -229,6 +229,42 @@ fn c0_syntax_positions_point_at_the_offending_token() {
 }
 
 #[test]
+fn c0_call_lowering_diagnostics_preserve_original_call_positions() {
+    for (source, expected_message, expected_position) in [
+        (
+            "int32 caller() {\n    return malloc(1);\n}\n",
+            "allocation and deallocation builtins must be used in statement form",
+            crate::source::SourcePosition::new(2, 12),
+        ),
+        (
+            "int32 caller() {\n    return left() + right();\n}\n",
+            "multiple unsequenced calls in one expression are not supported",
+            crate::source::SourcePosition::new(2, 21),
+        ),
+        (
+            "int32 caller() {\n    return ready() && later();\n}\n",
+            "calls in the short-circuit right operand are not supported",
+            crate::source::SourcePosition::new(2, 23),
+        ),
+        (
+            "int32 caller() {\n    return outer(left(), right());\n}\n",
+            "multiple unsequenced calls in one expression are not supported",
+            crate::source::SourcePosition::new(2, 26),
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported call lowering should be rejected");
+
+        assert_eq!(error.message(), expected_message);
+        assert_eq!(error.position(), Some(expected_position));
+        assert_eq!(
+            error.to_string(),
+            format!("{expected_position}: {expected_message}")
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_lowers_scalar_declaration_initializers_in_source_order() {
     let function = syntax::parse_function(
         r#"
