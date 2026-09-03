@@ -30,6 +30,9 @@ existing terms; none needs new kernel state.
   condition remains required. Scalar assignment initializers and same-type
   declaration initializers may be comma-separated; every declaration
   declarator requires its own initializer.
+- **Do-while loops.** There is no `do ... while` production. A post-tested
+  loop should lower to one initial body execution followed by the existing
+  `while` form, including the mandatory trailing semicolon.
 
 ## Violated invariant
 

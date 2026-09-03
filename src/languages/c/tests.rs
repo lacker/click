@@ -345,6 +345,22 @@ fn c0_syntax_accepts_multiple_declarations_in_a_for_initializer() {
 }
 
 #[test]
+fn c0_syntax_accepts_a_do_while_loop_with_an_unbraced_body() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i = 0;
+            do
+                i++;
+            while (i < 3);
+            return i;
+        }
+        "#,
+    )
+    .expect("a do-while loop may control one statement without braces");
+}
+
+#[test]
 fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
     syntax::parse_function(
         r#"

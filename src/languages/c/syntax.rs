@@ -32,6 +32,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.else-if",
     "statement.unbraced-body",
     "statement.while",
+    "statement.do-while",
     "statement.for",
     "statement.for-step-list",
     "statement.for-omitted-clause",
@@ -1594,6 +1595,25 @@ impl Parser {
                     self.expect(Token::RParen)?;
                     let body = Box::new(self.parse_controlled_statement("while")?);
                     Ok(C0Statement::While { condition, body })
+                }
+                Some("do") => {
+                    self.position += 1;
+                    let body = self.parse_controlled_statement("do")?;
+                    if self.peek_ident() != Some("while") {
+                        return Err(self.error_here("expected `while` after `do` body"));
+                    }
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let condition = self.parse_expression()?;
+                    self.expect(Token::RParen)?;
+                    self.expect(Token::Semicolon)?;
+                    Ok(C0Statement::Seq(
+                        Box::new(body.clone()),
+                        Box::new(C0Statement::While {
+                            condition,
+                            body: Box::new(body),
+                        }),
+                    ))
                 }
                 Some("for") => {
                     self.position += 1;
