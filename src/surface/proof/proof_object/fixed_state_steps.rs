@@ -179,6 +179,7 @@ impl<'a> Proof<'a> {
         &self,
         choice: &ProofChoice,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        let frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A choice on a judgment stated at a function outcome selects
@@ -186,6 +187,9 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
                 .outcome_fixed_state_view()
                 .expect("a focused outcome judgment resolves its fixed-state view"),
+            ProofContext::Execution(_) if frontier => self
+                .execution_frontier_fixed_state_view()
+                .expect("a focused execution frontier resolves its fixed-state view"),
             ProofContext::Execution(_) => self
                 .execution_proposition_fixed_state_view()
                 .ok_or_else(|| {
@@ -193,7 +197,9 @@ impl<'a> Proof<'a> {
                 })?,
             _ => return Err(self.step_error("`choose` requires a fixed-state proposition proof")),
         };
-        self.proposition_goal("`choose` requires a proposition goal")?;
+        if !frontier {
+            self.proposition_goal("`choose` requires a proposition goal")?;
+        }
         if choice.name == "result"
             || view.state.locals().contains_name(&choice.name)
             || self.state().locals().values.contains_key(&choice.name)
@@ -690,18 +696,10 @@ impl<'a> Proof<'a> {
     /// frontier snapshot solely for lowering and requirement selection;
     /// checked fixed-state steps can refine only that proposition and proof-local
     /// bindings.
-    pub(in crate::surface::proof) fn execution_proposition_fixed_state_view(
-        &self,
-    ) -> Option<FixedStateOperationView<'_>> {
+    fn execution_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let Obligation::Proposition(goal) = self.focused_obligation()? else {
-            return None;
-        };
-        if goal.outcome.is_some() {
-            return None;
-        }
         let execution = self.focused_branch()?.state.execution.as_deref()?;
         Some(FixedStateOperationView {
             claim_label: context.claim_label,
@@ -721,6 +719,30 @@ impl<'a> Proof<'a> {
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
             requirement_facts: &context.constants.execution_start_facts,
         })
+    }
+
+    pub(in crate::surface::proof) fn execution_proposition_fixed_state_view(
+        &self,
+    ) -> Option<FixedStateOperationView<'_>> {
+        let Obligation::Proposition(goal) = self.focused_obligation()? else {
+            return None;
+        };
+        if goal.outcome.is_some() {
+            return None;
+        }
+        self.execution_fixed_state_view()
+    }
+
+    /// Fixed-state data for a top-level `choose` on the execution frontier.
+    /// Unlike a nested proposition proof, this operation refines the entry
+    /// facts and proof-local bindings without needing a proposition goal of
+    /// its own.
+    pub(in crate::surface::proof) fn execution_frontier_fixed_state_view(
+        &self,
+    ) -> Option<FixedStateOperationView<'_>> {
+        matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
+            .then(|| self.execution_fixed_state_view())
+            .flatten()
     }
 
     /// The focused branch judgment's result-aware outcome proof data: a function-outcome

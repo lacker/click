@@ -240,23 +240,6 @@ fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet
     (true, authoritative_haves, authoritative_transport)
 }
 
-fn reject_grouped_top_level_existential_operations(
-    proof_label: &str,
-    tactics: &[ProofTactic],
-) -> Result<(), ClickError> {
-    for (tactic_index, tactic) in tactics.iter().enumerate() {
-        let operation = match tactic {
-            ProofTactic::Witness(_) => "witness",
-            ProofTactic::Choose(_) => "choose",
-            _ => continue,
-        };
-        return Err(ClickError::new(format!(
-            "`{proof_label}` tactic {tactic_index}: top-level `{operation}` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
-        )));
-    }
-    Ok(())
-}
-
 fn apply_checked_contract_resource_transition(
     outcome: &mut CFunctionOutcome,
     pre_state: &CState,
@@ -491,7 +474,6 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             "`{proof_label}` has an empty grouped explicit proof script"
         )));
     }
-    reject_grouped_top_level_existential_operations(&proof_label, tactics)?;
     let program = build_internal_proof_with_source(tactics, &proof_label, tactic_source)?;
     let generated_by_source_index = match tactic_source {
         ProofTacticSource::SourceSyntax => None,

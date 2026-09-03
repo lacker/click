@@ -376,6 +376,7 @@ fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
 
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_proof_step(tactic).is_some()
+        || matches!(tactic, ProofTactic::Choose(_))
         || matches!(
             tactic,
             ProofTactic::Step
@@ -609,6 +610,12 @@ fn advance_checked_linear_continuation<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
+        } else if let ProofTactic::Choose(choice) = &indexed.tactic {
+            proof.apply_step_at(
+                ProofStep::Choose(choice.clone()),
+                indexed.index,
+                indexed.source_index,
+            )?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return decline();
@@ -1741,6 +1748,8 @@ fn advance_focused_execution_arm<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step(step)?
+        } else if let ProofTactic::Choose(choice) = &indexed.tactic {
+            proof.apply_step(ProofStep::Choose(choice.clone()))?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
                 // Exit applications need one fixed-state proof per concrete

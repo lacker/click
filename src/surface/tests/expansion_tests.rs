@@ -10703,7 +10703,6 @@ fn negative_outcome_diagnostic_manifests_have_no_fallbacks() {
                 "contract_let_type_mismatch.md",
                 "max_bad_ensure.md",
                 "grouped_post_tactics_respect_order.md",
-                "grouped_top_level_witness_rejected.md",
             ][..],
         ),
         (

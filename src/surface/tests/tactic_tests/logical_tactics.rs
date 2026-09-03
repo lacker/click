@@ -2236,7 +2236,7 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
 }
 
 #[test]
-fn grouped_top_level_existential_operations_reject_without_check() {
+fn grouped_top_level_existential_operations_verify_without_fallback() {
     let c_source = "int32 identity(int32 x) { return x; }";
     let cases = [
         (
@@ -2252,7 +2252,6 @@ fn grouped_top_level_existential_operations_reject_without_check() {
                     simp();
                 }
             "#,
-            "top-level `witness` is not available in a grouped proof",
         ),
         (
             "choose",
@@ -2268,11 +2267,10 @@ fn grouped_top_level_existential_operations_reject_without_check() {
                     simp();
                 }
             "#,
-            "top-level `choose` is not available in a grouped proof",
         ),
     ];
 
-    for (operation, click_source, expected) in cases {
+    for (operation, click_source) in cases {
         let ((result, certificate_checks), context_exports) = {
             proof::count_execution_context_exports(|| {
                 proof::count_source_certificate_checks(|| {
@@ -2280,18 +2278,14 @@ fn grouped_top_level_existential_operations_reject_without_check() {
                 })
             })
         };
-        let error = result.expect_err("a grouped top-level existential operation must be rejected");
-        assert!(
-            error.message().contains(expected),
-            "unexpected grouped {operation} error: {error:?}"
-        );
+        result.expect("a grouped top-level existential operation should verify");
         assert_eq!(
             context_exports, 0,
-            "grouped top-level {operation} rejection must not export semantic state"
+            "grouped top-level {operation} must not export semantic state"
         );
         assert_eq!(
             certificate_checks, 0,
-            "grouped top-level {operation} rejection must not check a certificate"
+            "grouped top-level {operation} must not check a certificate"
         );
     }
 }
