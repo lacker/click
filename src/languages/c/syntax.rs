@@ -34,6 +34,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.while",
     "statement.for",
     "statement.for-step-list",
+    "statement.for-omitted-clause",
     "statement.store",
     "statement.malloc",
     "statement.calloc",
@@ -1738,6 +1739,9 @@ impl Parser {
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() == Some(&Token::Semicolon) {
+            return Ok(C0Statement::Skip);
+        }
         if self.is_type_start() {
             let parsed_type = self.parse_type()?;
             if parsed_type.c_type == C0Type::Void {
@@ -1845,6 +1849,9 @@ impl Parser {
     }
 
     fn parse_for_step(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() == Some(&Token::RParen) {
+            return Ok(C0Statement::Skip);
+        }
         let mut steps = vec![self.parse_scalar_update_statement("for-loop step")?];
         while self.peek() == Some(&Token::Comma) {
             self.position += 1;

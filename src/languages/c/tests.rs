@@ -296,6 +296,22 @@ fn c0_syntax_accepts_a_comma_separated_for_step() {
 }
 
 #[test]
+fn c0_syntax_accepts_omitted_for_initializer_and_step() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i = 0;
+            for (; i < 3;) {
+                i++;
+            }
+            return i;
+        }
+        "#,
+    )
+    .expect("a for loop may omit its initializer and step");
+}
+
+#[test]
 fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"
