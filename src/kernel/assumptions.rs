@@ -22,7 +22,6 @@ pub(crate) use proposition_reasoning::finite_forall_goal_instances;
 // facts. Two levels retain the framed symbolic-load cases while making failed
 // searches terminate conservatively instead of overflowing the stack.
 const MEMORY_LOAD_EQUALITY_DEPTH_LIMIT: usize = 2;
-const SIGNED_INTERVAL_DEPTH_LIMIT: usize = 32;
 
 thread_local! {
     static MEMORY_LOAD_EQUALITY_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -3322,12 +3321,6 @@ fn atomic_load_equality_resolves(
         static LOAD_EQUALITY_RESOLUTION_ACTIVE: Cell<bool> = const { Cell::new(false) };
     }
     if LOAD_EQUALITY_RESOLUTION_ACTIVE.with(Cell::get) {
-        return false;
-    }
-    const LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT: usize = 64;
-    if super::api::bitvector_term_deeper_than(left, LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT)
-        || super::api::bitvector_term_deeper_than(right, LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT)
-    {
         return false;
     }
     LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(true));

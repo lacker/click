@@ -228,7 +228,7 @@ fn memories_equal_by_execution_provenance(
     right_facts: &[ExecutionPureFact],
     assumptions: &PureFactContext,
 ) -> bool {
-    if memories_equal_by_matching_derivations(left_final, right_final, assumptions, 0) {
+    if memories_equal_by_matching_derivations(left_final, right_final, assumptions) {
         return true;
     }
     let left_stores = left_facts
@@ -273,11 +273,14 @@ fn memories_equal_by_execution_provenance(
         })
 }
 
+/// Two memories are equal when their derivation chains match edge by
+/// edge down to a definitionally equal pair. Each step descends one side's
+/// `base`, whose id is strictly smaller, so the recursion is finite with
+/// no depth cut.
 fn memories_equal_by_matching_derivations(
     left: &CMemory,
     right: &CMemory,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
     fn transparent_base(derivation: &CMemoryDerivation) -> Option<&SharedCMemory> {
         match derivation {
@@ -319,10 +322,6 @@ fn memories_equal_by_matching_derivations(
         load_pointer.as_ref() == pointer
             && intern_c_memory_ref(load_memory).arena_id() == base.arena_id()
     }
-    const DERIVATION_MATCH_LIMIT: usize = 64;
-    if depth >= DERIVATION_MATCH_LIMIT {
-        return false;
-    }
     if c_memories_definitionally_equal(left, right, assumptions) {
         return true;
     }
@@ -331,10 +330,10 @@ fn memories_equal_by_matching_derivations(
     let left_derivation = left.derivation();
     let right_derivation = right.derivation();
     if let Some(base) = left_derivation.as_deref().and_then(transparent_base) {
-        return memories_equal_by_matching_derivations(base, &right, assumptions, depth + 1);
+        return memories_equal_by_matching_derivations(base, &right, assumptions);
     }
     if let Some(base) = right_derivation.as_deref().and_then(transparent_base) {
-        return memories_equal_by_matching_derivations(&left, base, assumptions, depth + 1);
+        return memories_equal_by_matching_derivations(&left, base, assumptions);
     }
     match (left_derivation.as_deref(), right_derivation.as_deref()) {
         (
@@ -350,12 +349,7 @@ fn memories_equal_by_matching_derivations(
             }),
         ) => {
             memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
-                && memories_equal_by_matching_derivations(
-                    left_base,
-                    right_base,
-                    assumptions,
-                    depth + 1,
-                )
+                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
         }
         (
             Some(CMemoryDerivation::LoopHavoc {
@@ -377,12 +371,7 @@ fn memories_equal_by_matching_derivations(
                 _ => false,
             };
             ranges_match
-                && memories_equal_by_matching_derivations(
-                    left_base,
-                    right_base,
-                    assumptions,
-                    depth + 1,
-                )
+                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
         }
         (
             Some(CMemoryDerivation::Store {
@@ -400,12 +389,7 @@ fn memories_equal_by_matching_derivations(
         ) => {
             pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
                 && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
-                && memories_equal_by_matching_derivations(
-                    left_base,
-                    right_base,
-                    assumptions,
-                    depth + 1,
-                )
+                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
         }
         _ => false,
     }

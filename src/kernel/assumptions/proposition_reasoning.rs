@@ -760,8 +760,8 @@ impl PureFactContext {
                         };
                         {
                             let base_match =
-                                crate::kernel::api::canonicalize_pointer_loads(fact_base, 0)
-                                    == crate::kernel::api::canonicalize_pointer_loads(base, 0)
+                                crate::kernel::api::canonicalize_pointer_loads(fact_base)
+                                    == crate::kernel::api::canonicalize_pointer_loads(base)
                                     || crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
                                         fact_base, base, self,
                                     );

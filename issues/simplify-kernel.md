@@ -88,6 +88,19 @@ artifact premise, and counted-population checks that called prover 1
 directly now call the certification prover, and a kernel test pins that
 the certification sources call no general prover. Both harnesses and the
 unit suite pass unchanged.
+Slice 7 is under way from a census of every fuel counter and depth cut
+(examples / mdtests, times fired): the load-equality depth of two
+345,653 / 315,061; the expensive-depth gate 778,289 / 21,182; the
+decision cycle cut 5,902 / 1,634; simp fuel 2,450 / 529; cell-lookup
+depth 1,177 / 40; resolution fuel 598 / 5; constant search 121 / 0;
+context split 8 / 840; upper-split depth 11 / 46; resolution re-entrancy
+2 / 364. Never fired: the alias depth of 64, simp depth of 8, interval
+depth of 32, both DAG hop limits of 64, the canonicalization depth of 24,
+the finite-forall, disjunction, composition, derivation-match,
+fold-unroll, and term-depth limits, and the deadline. The first chunk
+deletes the six never-fired cuts whose inputs already bound the walk
+(the DAG walks and derivation match by strictly decreasing snapshot ids,
+canonicalization and intervals by the term), with scaling regressions.
 
 ## Violated invariant
 

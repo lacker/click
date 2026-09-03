@@ -56,8 +56,13 @@ explicit authorization.
   binary tests, mdtests, and examples, using nextest when available.
 - Probe pattern: env-gated eprintln/file dumps at the failing check,
   run under a filter, strip probes before committing.
-- Guard and depth-gate any new recursive prover arm; structural
-  recursion on deep terms has overflowed the stack before.
+- Bound any new recursive prover arm by the inputs it walks: the term's
+  structure, a strictly decreasing snapshot id, or a cycle check on the
+  query. Never by a count or a depth cut, which turn a slow query into a
+  wrong-shaped answer and defeat memoization. Structural recursion on deep
+  terms has overflowed the stack before; the verifier threads carry the
+  stack for it, and a scaling regression over several input sizes pins the
+  bound.
 - SOUNDNESS TRAP: never drop havoc/call-havoc blocks from canonical
   load memories; kernel test
   `memory_load_equality_does_not_ignore_loop_havoc_identity` guards it.

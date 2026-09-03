@@ -962,3 +962,63 @@ fn frozen_order_store_crossing_ignores_unrelated_order_facts() {
         "crossing a store by its frozen order must not scale with unrelated facts: {samples:?}"
     );
 }
+
+/// The derivation walk has no hop cap: a load of an untouched cell is
+/// framed across any number of stores to other cells, and the walk's work
+/// grows with the chain's length.
+#[test]
+fn memory_dag_walks_follow_chains_of_any_length() {
+    let samples = [32, 64, 128, 256]
+        .into_iter()
+        .map(|size| {
+            let entry = CMemory::new().with_block("arg-memory", 4096);
+            let mut memory = entry.clone();
+            for index in 0..size {
+                memory = memory.store(
+                    arc_pointer(8 + 4 * index),
+                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                );
+            }
+            let read = arc_pointer(0);
+            let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
+                c_memory_load_is_unchanged(&entry, &memory, &read, &PureFactContext::new())
+            });
+            assert!(equal, "the cell is untouched across {size} stores");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    let (small, large) = (samples[0].1.max(1), samples[3].1);
+    assert!(
+        large <= small * 16,
+        "the walk's work should grow linearly with the chain: {samples:?}"
+    );
+}
+
+/// Canonicalization has no depth cut: a materialized cell resolves however
+/// deeply the load sits in the term.
+#[test]
+fn canonical_form_resolves_loads_at_any_depth() {
+    let memory = CMemory::new()
+        .with_block("arg-memory", 16)
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(7)));
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(memory),
+        Box::new(arc_pointer(4)),
+    );
+    for depth in [8, 32, 64, 128] {
+        let mut term = load.clone();
+        for _ in 0..depth {
+            term = Bitvector32Term::Add(Box::new(term), Box::new(Bitvector32Term::Constant(1)));
+        }
+        let canonical = crate::kernel::api::canonicalize_atomic_loads(&term);
+        let mut leaf = &canonical;
+        while let Bitvector32Term::Add(left, _) = leaf {
+            leaf = left;
+        }
+        assert_eq!(
+            leaf,
+            &Bitvector32Term::Constant(7),
+            "the load at depth {depth} should resolve to its cell"
+        );
+    }
+}

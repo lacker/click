@@ -245,13 +245,13 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
     let cells = std::mem::take(&mut canonical.cells);
     for (pointer, value) in cells.iter() {
-        let key = canonicalize_pointer_loads(&pointer, 0);
+        let key = canonicalize_pointer_loads(&pointer);
         let value = match value {
             CValue::Void => CValue::Void,
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::typed_pointer(
-                canonicalize_pointer_loads(pointer.pointer(), 0),
+                canonicalize_pointer_loads(pointer.pointer()),
                 pointer.c_type(),
             ),
         };
@@ -546,9 +546,11 @@ fn memory_derivations_reach(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    const MEMORY_DERIVATION_HOP_LIMIT: usize = 64;
     let mut current = from.clone();
-    for _ in 0..MEMORY_DERIVATION_HOP_LIMIT {
+    // The walk ends at a snapshot with no derivation: ids strictly
+    // decrease along `base` (see `record_c_memory_derivation`), so every
+    // chain is finite and the work is the chain's length.
+    loop {
         if current == *target {
             return true;
         }
@@ -572,7 +574,7 @@ fn memory_derivations_reach(
         // Ids strictly decrease along `base`, so an id at or below the
         // target's can no longer reach the target *object* — but a sibling
         // form of the target on this chain can still match below that
-        // point, so the walk continues under its hop cap instead of exiting.
+        // point, so the walk continues to the chain's end instead of exiting.
         let Some(derivation) = current.derivation() else {
             return false;
         };
@@ -724,7 +726,6 @@ fn memory_derivations_reach(
         }
         current = derivation.base().clone();
     }
-    false
 }
 
 /// Where the memory DAG says the cell at a pointer came from: the
@@ -1539,10 +1540,11 @@ fn memory_dag_cell_source(
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> MemoryDagCell {
-    const MEMORY_DAG_CELL_HOP_LIMIT: usize = 64;
     let mut current = memory.clone();
     let mut path = Vec::new();
-    for _ in 0..MEMORY_DAG_CELL_HOP_LIMIT {
+    // The walk ends at a snapshot with no derivation: ids strictly
+    // decrease along `base`, so every chain is finite.
+    loop {
         // Each hop is one unit of deterministic work, so a scaling
         // regression sees a walk that grows with the proof.
         crate::instrumentation::record_deterministic_work(1);
@@ -1789,10 +1791,6 @@ fn memory_dag_cell_source(
             justification,
         });
         current = derivation.base().clone();
-    }
-    MemoryDagCell::Unwritten {
-        node: current,
-        path,
     }
 }
 
@@ -2630,7 +2628,7 @@ pub(crate) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Te
         "kernel",
         "canonical form",
         "canonicalize atomic loads: miss",
-        || canonicalize_atomic_loads_with_depth(term, 0),
+        || canonicalize_atomic_loads_deep(term),
     );
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().insert(term.clone(), result.clone()));
     result
@@ -2659,41 +2657,35 @@ pub(crate) fn clear_canonical_form_caches() {
     FROZEN_CROSSING_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
-const LOAD_CANONICALIZATION_DEPTH_LIMIT: usize = 24;
-
 /// Deep, assumption-free canonical form for a term: every load resolves its
 /// cached cell or canonicalizes its snapshot and pointer, at every depth,
 /// including inside conditionals, folds, and pointer offsets. Two forms
 /// of the same value produced from different memory snapshots canonicalize
-/// identically whenever the difference is representational.
-pub(super) fn canonicalize_atomic_loads_with_depth(
-    term: &Bitvector32Term,
-    depth: usize,
-) -> Bitvector32Term {
-    if depth >= LOAD_CANONICALIZATION_DEPTH_LIMIT {
-        return term.clone();
-    }
+/// identically whenever the difference is representational. The walk is
+/// over the term and the values its loads resolve to, each recorded before
+/// the snapshot that holds it, so it is finite with no depth cut.
+pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvector32Term {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         (
-            Box::new(canonicalize_atomic_loads_with_depth(left, depth + 1)),
-            Box::new(canonicalize_atomic_loads_with_depth(right, depth + 1)),
+            Box::new(canonicalize_atomic_loads_deep(left)),
+            Box::new(canonicalize_atomic_loads_deep(right)),
         )
     };
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
-            let canonical_pointer = canonicalize_pointer_loads(pointer, depth + 1);
+            let canonical_pointer = canonicalize_pointer_loads(pointer);
             match memory.load(&canonical_pointer) {
                 CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
                     if &value != term =>
                 {
-                    canonicalize_atomic_loads_with_depth(&value, depth + 1)
+                    canonicalize_atomic_loads_deep(&value)
                 }
                 _ => match memory.load(pointer) {
                     CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
                         if &value != term =>
                     {
-                        canonicalize_atomic_loads_with_depth(&value, depth + 1)
+                        canonicalize_atomic_loads_deep(&value)
                     }
                     _ => {
                         // Name the cell by its DAG epoch before restricting
@@ -2755,20 +2747,20 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
             let (left, right) = binary(left, right);
             Bitvector32Term::BitwiseXor(left, right)
         }
-        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::BitwiseNot(Box::new(
-            canonicalize_atomic_loads_with_depth(value, depth + 1),
-        )),
+        Bitvector32Term::BitwiseNot(value) => {
+            Bitvector32Term::BitwiseNot(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => Bitvector32Term::If {
             condition: Box::new(
-                condition_with_canonicalized_loads_with_depth(condition, depth + 1)
+                condition_with_canonicalized_loads(condition)
                     .unwrap_or_else(|| condition.as_ref().clone()),
             ),
-            then_term: Box::new(canonicalize_atomic_loads_with_depth(then_term, depth + 1)),
-            else_term: Box::new(canonicalize_atomic_loads_with_depth(else_term, depth + 1)),
+            then_term: Box::new(canonicalize_atomic_loads_deep(then_term)),
+            else_term: Box::new(canonicalize_atomic_loads_deep(else_term)),
         },
         Bitvector32Term::RangeFold {
             start,
@@ -2778,19 +2770,19 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
             item,
             body,
         } => Bitvector32Term::RangeFold {
-            start: Box::new(canonicalize_atomic_loads_with_depth(start, depth + 1)),
-            end: Box::new(canonicalize_atomic_loads_with_depth(end, depth + 1)),
-            initial: Box::new(canonicalize_atomic_loads_with_depth(initial, depth + 1)),
+            start: Box::new(canonicalize_atomic_loads_deep(start)),
+            end: Box::new(canonicalize_atomic_loads_deep(end)),
+            initial: Box::new(canonicalize_atomic_loads_deep(initial)),
             accumulator: *accumulator,
             item: *item,
-            body: Box::new(canonicalize_atomic_loads_with_depth(body, depth + 1)),
+            body: Box::new(canonicalize_atomic_loads_deep(body)),
         },
         Bitvector32Term::PureFunctionApplication { name, arguments } => {
             Bitvector32Term::PureFunctionApplication {
                 name: name.clone(),
                 arguments: arguments
                     .iter()
-                    .map(|argument| canonicalize_atomic_loads_with_depth(argument, depth + 1))
+                    .map(|argument| canonicalize_atomic_loads_deep(argument))
                     .collect(),
             }
         }
@@ -2798,23 +2790,21 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
 }
 
 /// Canonicalizes the loads inside a pointer's offset.
-pub(super) fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Pointer {
-    fn canonical_offset(offset: &PointerOffsetTerm, depth: usize) -> PointerOffsetTerm {
+pub(super) fn canonicalize_pointer_loads(pointer: &Pointer) -> Pointer {
+    fn canonical_offset(offset: &PointerOffsetTerm) -> PointerOffsetTerm {
         match offset {
             PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
-            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-                canonical_offset(left, depth),
-                canonical_offset(right, depth),
-            ),
-            PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
-                canonicalize_atomic_loads_with_depth(value, depth),
-                *byte_width,
-            ),
+            PointerOffsetTerm::Add(left, right) => {
+                PointerOffsetTerm::add(canonical_offset(left), canonical_offset(right))
+            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::scale_int32(canonicalize_atomic_loads_deep(value), *byte_width)
+            }
         }
     }
     Pointer {
         block: pointer.block.clone(),
-        offset: canonical_offset(&pointer.offset, depth),
+        offset: canonical_offset(&pointer.offset),
     }
 }
 
@@ -3550,17 +3540,10 @@ fn effect_pointer_equality_stops_at_the_verification_deadline() {
 pub(super) fn condition_with_canonicalized_loads(
     condition: &ConditionTerm,
 ) -> Option<ConditionTerm> {
-    condition_with_canonicalized_loads_with_depth(condition, 0)
-}
-
-fn condition_with_canonicalized_loads_with_depth(
-    condition: &ConditionTerm,
-    depth: usize,
-) -> Option<ConditionTerm> {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         (
-            Box::new(canonicalize_atomic_loads_with_depth(left, depth)),
-            Box::new(canonicalize_atomic_loads_with_depth(right, depth)),
+            Box::new(canonicalize_atomic_loads_deep(left)),
+            Box::new(canonicalize_atomic_loads_deep(right)),
         )
     };
     Some(match condition {

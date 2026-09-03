@@ -260,7 +260,7 @@ impl PureFactContext {
                 (fact_base.block == base.block && compatible(fact_memory, fact_base)).then(|| {
                     (
                         Some(fact),
-                        crate::kernel::api::canonicalize_pointer_loads(fact_base, 0),
+                        crate::kernel::api::canonicalize_pointer_loads(fact_base),
                         fact_bytes.clone(),
                         fact_memory == memory
                             || crate::kernel::api::c_memories_canonically_equal(
@@ -279,13 +279,13 @@ impl PureFactContext {
             (byte_width > 0 && memory.is_loadable_concretely(pointer, byte_width)).then(|| {
                 (
                     None,
-                    crate::kernel::api::canonicalize_pointer_loads(pointer, 0),
+                    crate::kernel::api::canonicalize_pointer_loads(pointer),
                     Bitvector32Term::Constant(byte_width),
                     true,
                 )
             })
         }));
-        let base = crate::kernel::api::canonicalize_pointer_loads(base, 0);
+        let base = crate::kernel::api::canonicalize_pointer_loads(base);
         for (prefix_index, (prefix_fact, prefix_base, prefix_bytes, prefix_current)) in
             regions.iter().enumerate()
         {

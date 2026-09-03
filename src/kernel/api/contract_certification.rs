@@ -536,7 +536,7 @@ fn condition_fact_mentions_load_of(
             return false;
         }
         crate::kernel::reasoning::memory_range_still_available(load_memory, memory, pointer)
-            && (canonicalize_pointer_loads(pointer, 0) == canonicalize_pointer_loads(base, 0)
+            && (canonicalize_pointer_loads(pointer) == canonicalize_pointer_loads(base)
                 || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions))
     })
 }
@@ -725,8 +725,8 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                                         memory,
                                         fact_base,
                                     )
-                                    && (canonicalize_pointer_loads(fact_base, 0)
-                                        == canonicalize_pointer_loads(base, 0)
+                                    && (canonicalize_pointer_loads(fact_base)
+                                        == canonicalize_pointer_loads(base)
                                         || pointers_proven_equal_for_memory_resolution(
                                             fact_base,
                                             base,
@@ -1897,7 +1897,7 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
                 bytes: right_bytes,
             },
         ) => {
-            canonicalize_pointer_loads(left_base, 0) == canonicalize_pointer_loads(right_base, 0)
+            canonicalize_pointer_loads(left_base) == canonicalize_pointer_loads(right_base)
                 && canonicalize_atomic_loads(left_bytes)
                     == canonicalize_atomic_loads(right_bytes)
                 // Loadability depends on the snapshot's blocks, not its

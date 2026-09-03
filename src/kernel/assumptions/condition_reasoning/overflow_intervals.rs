@@ -281,9 +281,8 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> Option<bool> {
-        let (left_lower, left_upper) = self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)?;
-        let (right_lower, right_upper) =
-            self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT)?;
+        let (left_lower, left_upper) = self.signed_interval(left)?;
+        let (right_lower, right_upper) = self.signed_interval(right)?;
         (left_lower == left_upper && right_lower == right_upper)
             .then_some(left_lower == right_lower)
     }
@@ -293,8 +292,8 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> Option<bool> {
-        self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
-            .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
+        self.signed_interval(left)
+            .zip(self.signed_interval(right))
             .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
                 let lower = left_lower.checked_add(right_lower)?;
                 let upper = left_upper.checked_add(right_upper)?;
@@ -307,10 +306,10 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> Option<bool> {
-        self.signed_interval(
-            &Bitvector32Term::Multiply(Box::new(left.clone()), Box::new(right.clone())),
-            SIGNED_INTERVAL_DEPTH_LIMIT,
-        )
+        self.signed_interval(&Bitvector32Term::Multiply(
+            Box::new(left.clone()),
+            Box::new(right.clone()),
+        ))
         .map(|_| false)
     }
 
@@ -319,9 +318,9 @@ impl PureFactContext {
     /// `x + 0`. Compound arithmetic is ranged only when its own signed
     /// evaluation is known not to overflow; this makes nested bounds safe to
     /// reuse.
-    fn signed_interval(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
-        // A successfully reconstructed interval is independent of the depth
-        // allowance that happened to find it. Key by fact-set content and
+    fn signed_interval(&self, term: &Bitvector32Term) -> Option<(i64, i64)> {
+        // A successfully reconstructed interval is a function of the fact set
+        // and the term alone. Key by fact-set content and
         // term so a nested arithmetic expression reuses its operands' ranges
         // instead of rescanning every order fact at each tree level.
         let key = ambient_assumptions_memo_id(self).map(|id| (id, term.clone()));
@@ -331,7 +330,7 @@ impl PureFactContext {
         {
             return Some(hit);
         }
-        let result = self.signed_interval_uncached(term, depth);
+        let result = self.signed_interval_uncached(term);
         if let (Some(key), Some(interval)) = (key, result) {
             SIGNED_INTERVAL_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
@@ -344,11 +343,9 @@ impl PureFactContext {
         result
     }
 
-    fn signed_interval_uncached(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
-        if depth == 0 {
-            note_search_truncation();
-            return None;
-        }
+    /// The interval is reconstructed over the term's structure, so the walk
+    /// is finite with no depth cut: each arithmetic node ranges its operands.
+    fn signed_interval_uncached(&self, term: &Bitvector32Term) -> Option<(i64, i64)> {
         if let Some(value) = self.bitvector_constant_from_direct_equalities(term) {
             let value = i64::from(value as i32);
             return Some((value, value));
@@ -401,8 +398,8 @@ impl PureFactContext {
         }
         match term {
             Bitvector32Term::Add(left, right) => {
-                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
-                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let (left_lower, left_upper) = self.signed_interval(left)?;
+                let (right_lower, right_upper) = self.signed_interval(right)?;
                 let lower = left_lower.checked_add(right_lower)?;
                 let upper = left_upper.checked_add(right_upper)?;
                 if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
@@ -411,8 +408,8 @@ impl PureFactContext {
                 return Some((lower, upper));
             }
             Bitvector32Term::Subtract(left, right) => {
-                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
-                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let (left_lower, left_upper) = self.signed_interval(left)?;
+                let (right_lower, right_upper) = self.signed_interval(right)?;
                 let lower = left_lower.checked_sub(right_upper)?;
                 let upper = left_upper.checked_sub(right_lower)?;
                 if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
@@ -421,8 +418,8 @@ impl PureFactContext {
                 return Some((lower, upper));
             }
             Bitvector32Term::Multiply(left, right) => {
-                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
-                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let (left_lower, left_upper) = self.signed_interval(left)?;
+                let (right_lower, right_upper) = self.signed_interval(right)?;
                 let products = [
                     i128::from(left_lower) * i128::from(right_lower),
                     i128::from(left_lower) * i128::from(right_upper),

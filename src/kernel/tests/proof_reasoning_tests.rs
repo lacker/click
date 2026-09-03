@@ -4841,3 +4841,33 @@ fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
     assert!(assumptions.is_inconsistent());
     assert_eq!(PureFactContext::context_inconsistency_full_scans(), 1);
 }
+
+/// Signed intervals are reconstructed over the term's structure with no
+/// depth cut: a sum of any depth over a bounded variable ranges.
+#[test]
+fn signed_intervals_range_sums_of_any_depth() {
+    let x = Bitvector32Term::Variable(Variable(7_200_000));
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(x.clone(), Bitvector32Term::Constant(1)),
+            true,
+        );
+    for depth in [8, 32, 64, 128] {
+        let mut sum = x.clone();
+        for _ in 0..depth {
+            sum = Bitvector32Term::Add(Box::new(sum), Box::new(x.clone()));
+        }
+        assert_eq!(
+            assumptions.decide_from_overflow_facts(&ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(sum),
+                Box::new(x.clone()),
+            )),
+            Some(false),
+            "a {depth}-deep sum of a variable in [0, 1] cannot overflow"
+        );
+    }
+}

@@ -415,7 +415,7 @@ impl PureFactContext {
         right: &Pointer,
     ) -> bool {
         let canonical_pointer =
-            |pointer: &Pointer| crate::kernel::api::canonicalize_pointer_loads(pointer, 0);
+            |pointer: &Pointer| crate::kernel::api::canonicalize_pointer_loads(pointer);
         let matches = |candidate: &Pointer, expected: &Pointer| {
             candidate == expected
                 || candidate.block == expected.block
