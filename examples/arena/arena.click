@@ -1,12 +1,19 @@
 resource arena_metadata(arena: struct arena*) {
     owns arena->data;
+    owns arena->occupied;
     owns arena->capacity;
+    owns arena->live_regions;
     contains allocation(arena->data, arena->capacity * 4);
+    contains allocation(arena->occupied, arena->capacity * 4);
     fact 0 <= arena->capacity;
     fact arena->capacity <= 536870911;
     fact separate(
         memory(object(arena)),
         memory(arena->data[0..arena->capacity])
+    );
+    fact separate(
+        memory(object(arena)),
+        memory(arena->occupied[0..arena->capacity])
     );
 }
 
@@ -14,6 +21,11 @@ resource arena_region(region: struct region*) {
     owns object(region);
     contains arena_metadata(region->arena);
     owns region->arena->data[region->start..region->end];
+    owns region->arena->occupied[region->start..region->end];
+}
+
+resource arena_available(region: struct region*) {
+    owns region->arena->occupied[region->start..region->end];
 }
 
 verifying "arena_init.c";
@@ -153,4 +165,96 @@ void arena_write(struct region* region, int32 index, int32 value) {
             simp();
         }
     }
+}
+
+void arena_free(struct region* region) {
+    requires 0 <= region->start;
+    requires region->start <= region->end;
+    requires region->end <= region->arena->capacity;
+    requires 1 <= region->arena->live_regions;
+    consumes arena_region(region);
+    mutable region->arena->occupied[region->start..region->end],
+        region->arena->live_regions;
+    produces object(region);
+    produces arena_metadata(region->arena);
+    produces arena_available(region);
+} by {
+    unfold(arena_region(region));
+    unfold(arena_metadata(region->arena));
+    step();
+    step();
+    step();
+    step();
+    loop as clear_occupied {
+        invariant region->start <= i and i <= region->end;
+        mutable region->arena->occupied[region->start..region->end] by frame;
+        initialize by {
+            have region->start <= i and i <= region->end by {
+                have i == region->start by {
+                    normalize();
+                }
+                have region->start <= i by {
+                    rewrite(i == region->start);
+                    normalize();
+                }
+                have i <= region->end by {
+                    rewrite(i == region->start);
+                    assumption();
+                }
+                split();
+            }
+        }
+        preserve by {
+            have i < region->end by {
+                assumption();
+            }
+            have i < region->arena->capacity by {
+                apply(int32_lt_le_transitive(
+                    i,
+                    region->end,
+                    region->arena->capacity
+                )) using {
+                    i < region->end;
+                    region->end <= region->arena->capacity;
+                }
+                assumption();
+            }
+            have region->arena->capacity < 2147483647 by {
+                apply(int32_le_lt_transitive(
+                    region->arena->capacity,
+                    536870911,
+                    2147483647
+                )) using {
+                    region->arena->capacity <= 536870911;
+                }
+                assumption();
+            }
+            have i < 2147483647 by {
+                apply(int32_lt_transitive(
+                    i,
+                    region->arena->capacity,
+                    2147483647
+                )) using {
+                    i < region->arena->capacity;
+                    region->arena->capacity < 2147483647;
+                }
+                assumption();
+            }
+            step();
+            step();
+            have region->start <= i by {
+                simp();
+            }
+            have i <= region->end by {
+                simp();
+            }
+            close_invariants();
+        }
+    }
+    step();
+    step();
+    fold(arena_available(region));
+    fold(arena_metadata(region->arena));
+    frame();
+    simp();
 }
