@@ -5,17 +5,9 @@ code defect that an adversarial trace found unreachable from C source or proof
 scripts today. They are grouped because each is a small, self-contained fix
 with its own test; split this file if any of them grows.
 
-1. **Interior heap pointers classified function-fresh.**
-   `is_function_fresh_heap_pointer`
-   (`src/kernel/api/contract_certification/contract_claims.rs:1274-1291`)
-   tests `!matches_allocation(entry_memory) && matches!(block, Heap(_))`,
-   and `matches_allocation` compares whole pointers, so `Heap(id) + 8` into a
-   block live at entry is treated as fresh and skips the mutable-range check.
-   Unreachable because ownership gates every store, but the classification
-   should be block-identity based like `CMemory::is_live_heap_address`
-   (`src/kernel/primitives/memory_state.rs:275`).
-   Test: an effect claim for a function storing through an interior pointer
-   into an entry-live block outside its declared footprint must fail.
+1. **Interior heap pointers classified function-fresh.** Resolved by making
+   `is_function_fresh_heap_pointer` classify entry-live allocations by block
+   identity and adding the requested contract-effect regression.
 2. **Free-variable collection misses symbolic block sizes.**
    `collect_memory_bitvector_variables`
    (`src/kernel/reasoning/variable_collection.rs:948-961`) visits block keys

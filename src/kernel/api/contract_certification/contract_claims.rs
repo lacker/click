@@ -1290,7 +1290,12 @@ fn function_claim_holds_on_prepared_path(
             let is_function_fresh_heap_pointer = |pointer: &Pointer, current: &CMemory| {
                 let matches_allocation = |memory: &CMemory| {
                     memory.heap.live_allocations.keys().any(|base| {
-                        base == pointer
+                        // Freshness is a property of the allocation, not of
+                        // the particular address selected within it. An
+                        // interior pointer into a block live at entry must
+                        // still be covered by the function's mutable frame.
+                        base.block == pointer.block
+                            || base == pointer
                             || crate::kernel::assumptions::pointers_equal_ignoring_memories(
                                 base, pointer,
                             )
