@@ -1,11 +1,196 @@
 use super::*;
 
+fn memory_havoc_write_set_identity(mutable_ranges: &[CMemoryRange]) -> Vec<String> {
+    let mut identity = mutable_ranges
+        .iter()
+        .map(|range| {
+            format!(
+                "range({}, {}, {}, {})",
+                havoc_pointer_identity(range.base(), 0),
+                havoc_bitvector_identity(range.start(), 0),
+                havoc_bitvector_identity(range.end(), 0),
+                range.element_width(),
+            )
+        })
+        .collect::<Vec<_>>();
+    identity.sort();
+    identity
+}
+
+fn havoc_pointer_identity(pointer: &Pointer, depth: usize) -> String {
+    if depth >= 64 {
+        return "depth-limit".to_string();
+    }
+    format!(
+        "pointer({:?}, {})",
+        pointer.block,
+        havoc_pointer_offset_identity(&pointer.offset, depth + 1),
+    )
+}
+
+fn havoc_pointer_offset_identity(offset: &PointerOffsetTerm, depth: usize) -> String {
+    if depth >= 64 {
+        return "depth-limit".to_string();
+    }
+    match offset {
+        PointerOffsetTerm::Constant(value) => format!("constant({value})"),
+        PointerOffsetTerm::Variable(variable) => {
+            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
+            {
+                format!("load({})", havoc_pointer_identity(&pointer, depth + 1))
+            } else {
+                format!("variable({})", variable.0)
+            }
+        }
+        PointerOffsetTerm::Add(left, right) => format!(
+            "add({}, {})",
+            havoc_pointer_offset_identity(left, depth + 1),
+            havoc_pointer_offset_identity(right, depth + 1),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => format!(
+            "scaled({}, {byte_width})",
+            havoc_bitvector_identity(value, depth + 1),
+        ),
+    }
+}
+
+fn havoc_bitvector_identity(term: &Bitvector32Term, depth: usize) -> String {
+    if depth >= 64 {
+        return "depth-limit".to_string();
+    }
+    let binary = |name: &str, left: &Bitvector32Term, right: &Bitvector32Term| {
+        format!(
+            "{name}({}, {})",
+            havoc_bitvector_identity(left, depth + 1),
+            havoc_bitvector_identity(right, depth + 1),
+        )
+    };
+    match term {
+        Bitvector32Term::Constant(value) => format!("constant({value})"),
+        Bitvector32Term::Variable(variable) => {
+            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
+            {
+                format!("load({})", havoc_pointer_identity(&pointer, depth + 1))
+            } else {
+                format!("variable({})", variable.0)
+            }
+        }
+        Bitvector32Term::Add(left, right) => binary("add", left, right),
+        Bitvector32Term::Subtract(left, right) => binary("subtract", left, right),
+        Bitvector32Term::Multiply(left, right) => binary("multiply", left, right),
+        Bitvector32Term::Divide(left, right) => binary("divide", left, right),
+        Bitvector32Term::Remainder(left, right) => binary("remainder", left, right),
+        Bitvector32Term::ShiftLeft(left, right) => binary("shift-left", left, right),
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            binary("arithmetic-shift-right", left, right)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => binary("bitwise-and", left, right),
+        Bitvector32Term::BitwiseOr(left, right) => binary("bitwise-or", left, right),
+        Bitvector32Term::BitwiseXor(left, right) => binary("bitwise-xor", left, right),
+        Bitvector32Term::BitwiseNot(value) => {
+            format!(
+                "bitwise-not({})",
+                havoc_bitvector_identity(value, depth + 1)
+            )
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => format!(
+            "if({}, {}, {})",
+            havoc_condition_identity(condition, depth + 1),
+            havoc_bitvector_identity(then_term, depth + 1),
+            havoc_bitvector_identity(else_term, depth + 1),
+        ),
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => format!(
+            "range-fold({}, {}, {}, {}, {}, {})",
+            havoc_bitvector_identity(start, depth + 1),
+            havoc_bitvector_identity(end, depth + 1),
+            havoc_bitvector_identity(initial, depth + 1),
+            accumulator.0,
+            item.0,
+            havoc_bitvector_identity(body, depth + 1),
+        ),
+        Bitvector32Term::PureFunctionApplication { name, arguments } => format!(
+            "pure({name:?}, [{}])",
+            arguments
+                .iter()
+                .map(|argument| havoc_bitvector_identity(argument, depth + 1))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            format!("load({})", havoc_pointer_identity(pointer, depth + 1))
+        }
+    }
+}
+
+fn havoc_condition_identity(condition: &ConditionTerm, depth: usize) -> String {
+    if depth >= 64 {
+        return "depth-limit".to_string();
+    }
+    let binary = |name: &str, left: &Bitvector32Term, right: &Bitvector32Term| {
+        format!(
+            "{name}({}, {})",
+            havoc_bitvector_identity(left, depth + 1),
+            havoc_bitvector_identity(right, depth + 1),
+        )
+    };
+    match condition {
+        ConditionTerm::Constant(value) => format!("constant({value})"),
+        ConditionTerm::Variable(variable) => format!("variable({})", variable.0),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => binary("less-than", left, right),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => binary("less-equal", left, right),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            binary("greater-than", left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            binary("greater-equal", left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => binary("equal", left, right),
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            binary("add-overflows", left, right)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            binary("subtract-overflows", left, right)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            binary("multiply-overflows", left, right)
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            binary("divide-overflows", left, right)
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            binary("shift-left-overflows", left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => format!(
+            "offset-equal({}, {})",
+            havoc_pointer_offset_identity(left, depth + 1),
+            havoc_pointer_offset_identity(right, depth + 1),
+        ),
+        ConditionTerm::PointerEqual(left, right) => format!(
+            "pointer-equal({}, {})",
+            havoc_pointer_identity(left, depth + 1),
+            havoc_pointer_identity(right, depth + 1),
+        ),
+    }
+}
+
 fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
     use std::hash::{Hash, Hasher};
 
-    // Keep this fingerprint form-invariant across proof execution and
-    // independent certification. It separates alpha-colliding havoc shapes
-    // without making marker identity depend on snapshot-local terms.
+    // This compact marker fingerprint remains form-invariant across proof
+    // execution and independent certification. Call havocs supplement it with
+    // a lossless structural key below; loop markers retain this shape because
+    // their checked write set is already carried by the derivation edge.
     let mut shape = mutable_ranges
         .iter()
         .map(|range| {
@@ -894,13 +1079,18 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        // Marker identity includes the form-invariant shape of the write set
-        // so equal-parent havocs with different footprints cannot share one
-        // first-wins derivation.
-        let write_set_fingerprint = memory_havoc_write_set_fingerprint(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
-            CBlock::new(write_set_fingerprint),
+            CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges)),
+        );
+        // Keep the legacy marker's semantic shape and add a collision-free
+        // structural key for the checked write set. This key is intentionally
+        // not named as a havoc marker: canonical load snapshots must continue
+        // to treat the call-havoc edge as the only global memory barrier.
+        let identity = memory_havoc_write_set_identity(mutable_ranges);
+        std::sync::Arc::make_mut(&mut self.blocks).insert(
+            format!("call-write-set:{}:{}", variable.0, identity.join("|")).into(),
+            CBlock::new(0),
         );
         if let Some(base) = base {
             record_c_memory_derivation(

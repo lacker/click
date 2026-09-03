@@ -225,6 +225,57 @@ fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
 }
 
 #[test]
+fn call_havoc_marker_identity_includes_symbolic_write_set() {
+    if skip_without_memory_dag() {
+        return;
+    }
+
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let first_range = CMemoryRange::new(
+        arc_pointer(0),
+        Bitvector32Term::Variable(Variable(70_001)),
+        Bitvector32Term::Variable(Variable(70_002)),
+    );
+    let second_range = CMemoryRange::new(
+        arc_pointer(0),
+        Bitvector32Term::Variable(Variable(70_003)),
+        Bitvector32Term::Variable(Variable(70_004)),
+    );
+
+    // The marker variable and parent snapshot intentionally match. A
+    // lossy hash of only constant bounds and the base block would make these
+    // two derived memories equal and let first-wins attach the first range
+    // list to the second call.
+    let first = base.clone().with_call_memory_havoc(
+        Variable(70_000),
+        std::slice::from_ref(&first_range),
+        &PureFactContext::new(),
+    );
+    let second = base.with_call_memory_havoc(
+        Variable(70_000),
+        std::slice::from_ref(&second_range),
+        &PureFactContext::new(),
+    );
+    assert_ne!(
+        first, second,
+        "different symbolic write sets need distinct snapshots"
+    );
+
+    let first = crate::kernel::intern_c_memory_ref(&first);
+    let second = crate::kernel::intern_c_memory_ref(&second);
+    assert_ne!(first.arena_id(), second.arena_id());
+    let CMemoryDerivation::CallHavoc { mutable_ranges, .. } = second
+        .derivation()
+        .expect("the second snapshot retains its own call-havoc edge")
+        .as_ref()
+        .clone()
+    else {
+        panic!("expected a call-havoc derivation");
+    };
+    assert_eq!(mutable_ranges, vec![second_range]);
+}
+
+#[test]
 fn a_store_that_changes_nothing_records_no_edge_to_itself() {
     if skip_without_memory_dag() {
         return;
