@@ -1157,14 +1157,14 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::Arithmetic(
                     crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedGoal,
                 ) => self.step_error(
-                    "`arithmetic` requires an atomic signed-affine int32 comparison goal",
+                    "`arithmetic` requires a supported signed int32 comparison or equality goal",
                 ),
                 PropositionCloseError::Arithmetic(
                     crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedPremise(
                         index,
                     ),
                 ) => self.step_error(format!(
-                    "`arithmetic using` premise {index} is not a signed-affine int32 comparison"
+                    "`arithmetic using` premise {index} is not a supported signed int32 comparison"
                 )),
                 PropositionCloseError::Arithmetic(
                     crate::kernel::proof::fact_reasoning::ArithmeticCheckError::GoalMayBeUndefined,

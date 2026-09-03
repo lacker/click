@@ -1,4 +1,4 @@
-# arithmetic rejects nonlinear expressions
+# arithmetic rejects unbounded nonlinear expressions
 
 ```click
 theorem nonlinear_product_is_outside_arithmetic(x: int32, y: int32) {
@@ -15,5 +15,5 @@ theorem nonlinear_product_is_outside_arithmetic(x: int32, y: int32) {
 ```
 
 ```expect
-fail: atomic signed-affine int32 comparison goal
+fail: requires a supported signed int32 comparison or equality goal
 ```

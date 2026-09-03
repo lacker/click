@@ -30,6 +30,206 @@ enum SignedAffineClaim {
     Constant(bool),
 }
 
+const SIGNED_MIN: i64 = i32::MIN as i64;
+const SIGNED_MAX: i64 = i32::MAX as i64;
+const ARITHMETIC_INTERVAL_DEPTH: usize = 32;
+
+fn signed_term_interval(
+    term: &Bitvector32Term,
+    bounds: &BTreeMap<Bitvector32Term, (i64, i64)>,
+    depth: usize,
+) -> Option<(i64, i64)> {
+    crate::instrumentation::record_deterministic_work(1);
+    if depth == 0 {
+        return None;
+    }
+    if let Some(value) = term.as_const() {
+        let value = i64::from(value as i32);
+        return Some((value, value));
+    }
+    match term {
+        Bitvector32Term::Constant(value) => {
+            let value = i64::from(*value as i32);
+            Some((value, value))
+        }
+        Bitvector32Term::Variable(_)
+        | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PureFunctionApplication { .. } => Some(
+            bounds
+                .get(&crate::kernel::eval::canonical_term(term))
+                .copied()
+                .unwrap_or((SIGNED_MIN, SIGNED_MAX)),
+        ),
+        Bitvector32Term::Add(left, right) => {
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            let (right_lower, right_upper) = signed_term_interval(right, bounds, depth - 1)?;
+            let lower = left_lower.checked_add(right_lower)?;
+            let upper = left_upper.checked_add(right_upper)?;
+            (SIGNED_MIN <= lower && upper <= SIGNED_MAX).then_some((lower, upper))
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            let (right_lower, right_upper) = signed_term_interval(right, bounds, depth - 1)?;
+            let lower = left_lower.checked_sub(right_upper)?;
+            let upper = left_upper.checked_sub(right_lower)?;
+            (SIGNED_MIN <= lower && upper <= SIGNED_MAX).then_some((lower, upper))
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            let (right_lower, right_upper) = signed_term_interval(right, bounds, depth - 1)?;
+            let products = [
+                i128::from(left_lower) * i128::from(right_lower),
+                i128::from(left_lower) * i128::from(right_upper),
+                i128::from(left_upper) * i128::from(right_lower),
+                i128::from(left_upper) * i128::from(right_upper),
+            ];
+            let lower = *products.iter().min()?;
+            let upper = *products.iter().max()?;
+            (i128::from(SIGNED_MIN) <= lower && upper <= i128::from(SIGNED_MAX))
+                .then_some((lower as i64, upper as i64))
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let divisor = i64::from(right.as_const()? as i32);
+            if divisor == 0 {
+                return None;
+            }
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            if divisor == -1 && left_lower <= SIGNED_MIN && SIGNED_MIN <= left_upper {
+                return None;
+            }
+            let magnitude = divisor.checked_abs()?.saturating_sub(1).min(SIGNED_MAX);
+            if left_lower >= 0 {
+                Some((0, magnitude))
+            } else if left_upper <= 0 {
+                Some((-magnitude, 0))
+            } else {
+                Some((-magnitude, magnitude))
+            }
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let shift = i64::from(right.as_const()? as i32);
+            if !(0..32).contains(&shift) {
+                return None;
+            }
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            if left_lower < 0 {
+                return None;
+            }
+            let factor = 1_i128.checked_shl(shift as u32)?;
+            let lower = i128::from(left_lower).checked_mul(factor)?;
+            let upper = i128::from(left_upper).checked_mul(factor)?;
+            (i128::from(SIGNED_MIN) <= lower && upper <= i128::from(SIGNED_MAX))
+                .then_some((lower as i64, upper as i64))
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let shift = i64::from(right.as_const()? as i32);
+            if !(0..32).contains(&shift) {
+                return None;
+            }
+            let (left_lower, left_upper) = signed_term_interval(left, bounds, depth - 1)?;
+            Some((
+                i64::from((left_lower as i32) >> shift),
+                i64::from((left_upper as i32) >> shift),
+            ))
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let mask = right.as_const().or_else(|| left.as_const())?;
+            if mask > i32::MAX as u32 {
+                return None;
+            }
+            let operand = if right.as_const().is_some() {
+                left
+            } else {
+                right
+            };
+            signed_term_interval(operand, bounds, depth - 1)?;
+            Some((0, i64::from(mask as i32)))
+        }
+        Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::BitwiseOr(_, _)
+        | Bitvector32Term::BitwiseXor(_, _)
+        | Bitvector32Term::BitwiseNot(_)
+        | Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. } => None,
+    }
+}
+
+fn signed_order_goal(
+    condition: &ConditionTerm,
+    value: bool,
+) -> Option<(&Bitvector32Term, &Bitvector32Term, bool)> {
+    match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => Some((left, right, true)),
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            Some((right, left, false))
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            Some((left, right, false))
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            Some((right, left, true))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            Some((right, left, true))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
+            Some((left, right, false))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
+            Some((right, left, false))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            Some((left, right, true))
+        }
+        _ => None,
+    }
+}
+
+fn non_affine_goal_is_proven(
+    goal: &Proposition,
+    bounds: &BTreeMap<Bitvector32Term, (i64, i64)>,
+) -> Option<bool> {
+    let (condition, value) = match goal {
+        Proposition::ConditionIs(condition, value) => (condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition, !value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if let ConditionTerm::Bitvector32Equal(left, right) = condition {
+        let (left_lower, left_upper) =
+            signed_term_interval(left, bounds, ARITHMETIC_INTERVAL_DEPTH)?;
+        let (right_lower, right_upper) =
+            signed_term_interval(right, bounds, ARITHMETIC_INTERVAL_DEPTH)?;
+        return Some(if value {
+            left_lower == left_upper && right_lower == right_upper && left_lower == right_lower
+        } else {
+            left_upper < right_lower || right_upper < left_lower
+        });
+    }
+    let (left, right, strict) = signed_order_goal(condition, value)?;
+
+    // Arithmetic right shift preserves the order against a nonnegative
+    // operand. An interval comparison cannot see that both sides share the
+    // same operand, so retain this checked algebraic rule explicitly.
+    if let Bitvector32Term::ArithmeticShiftRight(shifted, shift) = left
+        && shifted.as_ref() == right
+        && (0..32).contains(&(shift.as_const()? as i32))
+    {
+        let (lower, _) = signed_term_interval(shifted, bounds, ARITHMETIC_INTERVAL_DEPTH)?;
+        return Some(lower >= 0);
+    }
+
+    let (_, left_upper) = signed_term_interval(left, bounds, ARITHMETIC_INTERVAL_DEPTH)?;
+    let (right_lower, _) = signed_term_interval(right, bounds, ARITHMETIC_INTERVAL_DEPTH)?;
+    Some(if strict {
+        left_upper < right_lower
+    } else {
+        left_upper <= right_lower
+    })
+}
+
 fn collect_signed_affine_terms(
     term: &Bitvector32Term,
     coefficient: i64,
@@ -306,19 +506,21 @@ fn add_inequality(sum: &mut SignedAffineInequality, addend: &SignedAffineInequal
     Some(())
 }
 
-/// Checks one explicit signed-affine arithmetic certificate.
+/// Checks one explicit signed arithmetic certificate.
 ///
 /// The listed propositions are the checker's entire premise universe. A
 /// combined inequality uses each selected inequality with coefficient one, so
 /// repeating a premise explicitly permits a larger positive coefficient.
-/// Checking is one structural pass over the selected propositions; no ambient
-/// facts are searched and no closure is retained after the current goal closes.
+/// Bounded nonlinear and bitwise terms use only intervals reconstructed from
+/// those same premises. Checking is one structural pass over the selected
+/// propositions; no ambient facts are searched and no closure is retained
+/// after the current goal closes.
 pub(crate) fn check_signed_affine_arithmetic(
     goal: &Proposition,
     premises: &[Proposition],
 ) -> Result<(), ArithmeticCheckError> {
     let goal_proposition = goal;
-    let goal = signed_affine_claim(goal).ok_or(ArithmeticCheckError::UnsupportedGoal)?;
+    let affine_goal = signed_affine_claim(goal);
     let mut inequalities = Vec::new();
     let mut equalities = Vec::new();
     for (index, premise) in premises.iter().enumerate() {
@@ -338,47 +540,52 @@ pub(crate) fn check_signed_affine_arithmetic(
             }
         }
     }
-    if !signed_affine_goal_is_defined(goal_proposition, &inequalities) {
-        return Err(ArithmeticCheckError::GoalMayBeUndefined);
-    }
-
-    let proved = match goal {
-        SignedAffineClaim::Constant(value) => value,
-        SignedAffineClaim::Equality(form) => {
-            (form.terms.is_empty() && form.constant == 0)
-                || equalities.iter().any(|available| {
-                    available == &form
-                        || (available.constant == form.constant.checked_neg().unwrap_or(i64::MIN)
-                            && available.terms.len() == form.terms.len()
-                            && available.terms.iter().all(|(term, coefficient)| {
-                                form.terms.get(term) == coefficient.checked_neg().as_ref()
-                            }))
-                })
+    let proved = if let Some(goal) = affine_goal {
+        if !signed_affine_goal_is_defined(goal_proposition, &inequalities) {
+            return Err(ArithmeticCheckError::GoalMayBeUndefined);
         }
-        SignedAffineClaim::Disequality(form) => {
-            form.terms.is_empty() && form.constant.rem_euclid(1i64 << 32) != 0
-        }
-        SignedAffineClaim::Inequality(goal) => {
-            if goal.terms.is_empty() && 0 <= goal.bound {
-                true
-            } else if inequalities
-                .iter()
-                .any(|available| inequality_implies(available, &goal))
-            {
-                true
-            } else if inequalities.is_empty() {
-                false
-            } else {
-                let mut sum = SignedAffineInequality {
-                    terms: BTreeMap::new(),
-                    bound: 0,
-                };
-                inequalities
+        match goal {
+            SignedAffineClaim::Constant(value) => value,
+            SignedAffineClaim::Equality(form) => {
+                (form.terms.is_empty() && form.constant == 0)
+                    || equalities.iter().any(|available| {
+                        available == &form
+                            || (available.constant
+                                == form.constant.checked_neg().unwrap_or(i64::MIN)
+                                && available.terms.len() == form.terms.len()
+                                && available.terms.iter().all(|(term, coefficient)| {
+                                    form.terms.get(term) == coefficient.checked_neg().as_ref()
+                                }))
+                    })
+            }
+            SignedAffineClaim::Disequality(form) => {
+                form.terms.is_empty() && form.constant.rem_euclid(1i64 << 32) != 0
+            }
+            SignedAffineClaim::Inequality(goal) => {
+                if goal.terms.is_empty() && 0 <= goal.bound {
+                    true
+                } else if inequalities
                     .iter()
-                    .all(|inequality| add_inequality(&mut sum, inequality).is_some())
-                    && inequality_implies(&sum, &goal)
+                    .any(|available| inequality_implies(available, &goal))
+                {
+                    true
+                } else if inequalities.is_empty() {
+                    false
+                } else {
+                    let mut sum = SignedAffineInequality {
+                        terms: BTreeMap::new(),
+                        bound: 0,
+                    };
+                    inequalities
+                        .iter()
+                        .all(|inequality| add_inequality(&mut sum, inequality).is_some())
+                        && inequality_implies(&sum, &goal)
+                }
             }
         }
+    } else {
+        non_affine_goal_is_proven(goal_proposition, &signed_affine_atom_bounds(&inequalities))
+            .ok_or(ArithmeticCheckError::UnsupportedGoal)?
     };
     proved
         .then_some(())
@@ -388,6 +595,17 @@ pub(crate) fn check_signed_affine_arithmetic(
 #[cfg(test)]
 mod arithmetic_tests {
     use super::*;
+
+    fn proposition(condition: ConditionTerm) -> Proposition {
+        Proposition::ConditionIs(condition, true)
+    }
+
+    fn nonnegative(term: Bitvector32Term) -> Proposition {
+        proposition(ConditionTerm::signed_greater_equal(
+            term,
+            Bitvector32Term::Constant(0),
+        ))
+    }
 
     fn less_equal(left: u64, right: u64) -> Proposition {
         Proposition::ConditionIs(
@@ -423,6 +641,66 @@ mod arithmetic_tests {
                 .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
             "explicit arithmetic checking grew faster than near-linearly: {samples:?}"
         );
+    }
+
+    #[test]
+    fn arithmetic_proves_nonnegative_remainder_range() {
+        let x = Bitvector32Term::Variable(Variable(94_001));
+        let remainder = Bitvector32Term::remainder(x.clone(), Bitvector32Term::Constant(4));
+        let premises = vec![nonnegative(x)];
+        let lower_bound = proposition(ConditionTerm::signed_greater_equal(
+            remainder.clone(),
+            Bitvector32Term::Constant(0),
+        ));
+        let upper_bound = proposition(ConditionTerm::signed_less_than(
+            remainder,
+            Bitvector32Term::Constant(4),
+        ));
+
+        check_signed_affine_arithmetic(&lower_bound, &premises)
+            .expect("a nonnegative remainder should have a nonnegative lower bound");
+        check_signed_affine_arithmetic(&upper_bound, &premises)
+            .expect("a remainder by four should be less than four");
+    }
+
+    #[test]
+    fn arithmetic_proves_mask_range_without_operand_bounds() {
+        let x = Bitvector32Term::Variable(Variable(94_002));
+        let masked = Bitvector32Term::bitwise_and(x, Bitvector32Term::Constant(0xff));
+        let goal = proposition(ConditionTerm::signed_less_equal(
+            masked,
+            Bitvector32Term::Constant(0xff),
+        ));
+
+        check_signed_affine_arithmetic(&goal, &[])
+            .expect("a nonnegative constant mask bounds a bitwise-and result");
+    }
+
+    #[test]
+    fn arithmetic_proves_right_shift_does_not_increase_nonnegative_value() {
+        let x = Bitvector32Term::Variable(Variable(94_003));
+        let shifted =
+            Bitvector32Term::arithmetic_shift_right(x.clone(), Bitvector32Term::Constant(1));
+        let goal = proposition(ConditionTerm::signed_less_equal(shifted, x.clone()));
+
+        check_signed_affine_arithmetic(&goal, &[nonnegative(x)])
+            .expect("arithmetic right shift should not increase a nonnegative value");
+    }
+
+    #[test]
+    fn arithmetic_rejects_unbounded_product() {
+        let x = Bitvector32Term::Variable(Variable(94_004));
+        let y = Bitvector32Term::Variable(Variable(94_005));
+        let product = Bitvector32Term::multiply(x.clone(), y.clone());
+        let goal = proposition(ConditionTerm::signed_less_equal(
+            product,
+            Bitvector32Term::Constant(100),
+        ));
+
+        assert!(matches!(
+            check_signed_affine_arithmetic(&goal, &[nonnegative(x)]),
+            Err(ArithmeticCheckError::UnsupportedGoal)
+        ));
     }
 }
 

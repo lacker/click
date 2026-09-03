@@ -63,6 +63,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/increment_requires_no_overflow.md`: requirement rules out overflow.
 - `mdtests/increment_without_requires.md`: missing requirement fails.
 - `mdtests/decrement_requires_no_underflow.md`: lower-bound arithmetic safety.
+- `mdtests/pure_arithmetic_bounded_operations.md`: bounded products and
+  constant remainder, shift, and bit-mask consequences.
 - `mdtests/c_multiplication.md`: signed multiplication in C fragments, pure
   Click expressions, precedence, and overflow behavior.
 - `mdtests/c_division_remainder.md`: signed division and remainder in C
