@@ -11,6 +11,10 @@ declarations must be re-pasted per file (see `examples/jsonc-refcount/*.c`,
 each redeclaring `struct json_object`). `docs/internals/roadmap.md:264-272`
 lists the preprocessor as deferred.
 
+The first implementation slice now accepts multiple function definitions and
+compatible forward prototypes in one source. Header lookup, preprocessor
+handling, and declaration sharing remain open here.
+
 ## Violated invariant
 
 Click should verify a translation unit as C sees it: several functions per

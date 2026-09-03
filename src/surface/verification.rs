@@ -1818,16 +1818,18 @@ pub(in crate::surface) fn parse_c_struct_layouts(
 ) -> Result<BTreeMap<String, syntax::C0StructLayout>, ClickError> {
     let mut layouts = BTreeMap::new();
     for (source_path, c_source) in c_sources {
-        let function = syntax::parse_function(c_source).map_err(|error| {
+        let functions = syntax::parse_functions(c_source).map_err(|error| {
             ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
         })?;
-        for (name, layout) in function.structs() {
-            if let Some(previous) = layouts.insert(name.clone(), layout.clone())
-                && previous != *layout
-            {
-                return Err(ClickError::new(format!(
-                    "conflicting declarations for struct `{name}`"
-                )));
+        for function in functions {
+            for (name, layout) in function.structs() {
+                if let Some(previous) = layouts.insert(name.clone(), layout.clone())
+                    && previous != *layout
+                {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for struct `{name}`"
+                    )));
+                }
             }
         }
     }
@@ -1858,15 +1860,17 @@ pub(in crate::surface) fn parse_verified_sources(
                 "`verifying` refers to missing C source `{source_path}`"
             ))
         })?;
-        let function = syntax::parse_function(c_source).map_err(|error| {
+        let functions = syntax::parse_functions(c_source).map_err(|error| {
             ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
         })?;
-        let function_name = function.name().to_string();
-        let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
-        if previous.is_some() {
-            return Err(ClickError::new(format!(
-                "more than one `verifying` source defines function `{function_name}`"
-            )));
+        for function in functions {
+            let function_name = function.name().to_string();
+            let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
+            if previous.is_some() {
+                return Err(ClickError::new(format!(
+                    "more than one `verifying` source defines function `{function_name}`"
+                )));
+            }
         }
     }
 

@@ -67,6 +67,11 @@ is not checked by Click and its preconditions remain caller obligations. The
 standard-library contract catalog and automatic dependency reporting for
 external assumptions are not yet provided.
 
+A verifying source may contain multiple function definitions and compatible
+forward prototypes. C preprocessor directives, header lookup, and shared
+declaration imports remain unsupported; declarations needed by the supported
+C0 model must still appear in the source or be repeated in another source.
+
 ## Type support is still narrow
 
 The verifier supports `void` function returns, `int32`, and a byte-like

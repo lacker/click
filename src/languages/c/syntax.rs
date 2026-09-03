@@ -1,6 +1,6 @@
 //! Tiny C0 syntax import for the executable C model.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{SourcePosition, character_positions};
 
@@ -934,6 +934,17 @@ pub fn parse_function_for_abi(source: &str, abi: CAbi) -> Result<C0Function, C0S
     Parser::new(source, abi)?.parse_function()
 }
 
+/// Parses every function definition in one C source. Prototypes are accepted
+/// as declarations and are used to validate later definitions, but are not
+/// returned as executable functions.
+pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
+    parse_functions_for_abi(source, CAbi::SUPPORTED)
+}
+
+pub fn parse_functions_for_abi(source: &str, abi: CAbi) -> Result<Vec<C0Function>, C0SyntaxError> {
+    Parser::new(source, abi)?.parse_functions()
+}
+
 fn validate_function_returns(
     statement: &C0Statement,
     return_type: C0Type,
@@ -1284,6 +1295,8 @@ struct Parser {
     next_scoped_name: u32,
     next_synthesized_call: u32,
     loop_contexts: Vec<CLoopContext>,
+    function_declarations: BTreeMap<String, C0FunctionHeader>,
+    defined_functions: BTreeSet<String>,
     abi: CAbi,
 }
 
@@ -1291,6 +1304,29 @@ struct Parser {
 struct ScopeBinding {
     source_name: String,
     kernel_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct C0FunctionHeader {
+    return_type: C0Type,
+    return_struct_name: Option<String>,
+    name: String,
+    parameters: Vec<C0Parameter>,
+}
+
+fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader) -> bool {
+    left.return_type == right.return_type
+        && left.return_struct_name == right.return_struct_name
+        && left.parameters.len() == right.parameters.len()
+        && left
+            .parameters
+            .iter()
+            .zip(&right.parameters)
+            .all(|(left, right)| {
+                left.c_type == right.c_type
+                    && left.struct_name == right.struct_name
+                    && left.array_element_width == right.array_element_width
+            })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1320,6 +1356,8 @@ impl Parser {
             next_scoped_name: 0,
             next_synthesized_call: 0,
             loop_contexts: Vec::new(),
+            function_declarations: BTreeMap::new(),
+            defined_functions: BTreeSet::new(),
             abi,
         })
     }
@@ -1460,6 +1498,95 @@ impl Parser {
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_declarations()?;
+        let function = self.parse_function_definition()?;
+        self.parse_declarations()?;
+        self.expect_end(function.name())?;
+        Ok(function)
+    }
+
+    fn parse_functions(mut self) -> Result<Vec<C0Function>, C0SyntaxError> {
+        self.parse_declarations()?;
+        let mut functions = Vec::new();
+        while self.peek().is_some() {
+            let is_extern = if self.peek_ident() == Some("extern") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
+            if !self.is_type_start() {
+                return Err(self.error_here(format!(
+                    "expected function declaration, got {}",
+                    self.peek()
+                        .map(Token::describe)
+                        .unwrap_or_else(|| "end of input".to_string())
+                )));
+            }
+            let header = self.parse_function_header()?;
+            if self.peek() == Some(&Token::LBrace) {
+                if is_extern {
+                    return Err(self.error_here(
+                        "`extern` function definitions are not supported; use `extern` only for prototypes",
+                    ));
+                }
+                functions.push(self.finish_function_definition(header)?);
+            } else {
+                if self.peek() != Some(&Token::Semicolon) {
+                    return Err(self.error_here(format!(
+                        "expected function body or `;` after `{}`",
+                        header.name
+                    )));
+                }
+                self.pop_scope();
+                self.expect(Token::Semicolon)?;
+                self.register_function_declaration(&header, false)?;
+            }
+            self.parse_declarations()?;
+        }
+        if functions.is_empty() {
+            return Err(C0SyntaxError::new(
+                "C source must define at least one function",
+            ));
+        }
+        Ok(functions)
+    }
+
+    fn parse_function_definition(&mut self) -> Result<C0Function, C0SyntaxError> {
+        let header = self.parse_function_header()?;
+        self.register_function_declaration(&header, true)?;
+        if self.peek() != Some(&Token::LBrace) {
+            return Err(self.error_here(format!("expected function body after `{}`", header.name)));
+        }
+        self.finish_function_definition(header)
+    }
+
+    fn finish_function_definition(
+        &mut self,
+        header: C0FunctionHeader,
+    ) -> Result<C0Function, C0SyntaxError> {
+        let mut body = self.parse_block_statement()?;
+        body = self.lower_call_expressions(body)?;
+        self.pop_scope();
+        validate_function_returns(&body, header.return_type)?;
+        if header.return_type == C0Type::Void {
+            body = C0Statement::Seq(
+                Box::new(body),
+                Box::new(C0Statement::Return(C0Expression::Void)),
+            );
+        }
+
+        Ok(C0Function {
+            return_type: header.return_type,
+            return_struct_name: header.return_struct_name,
+            name: header.name,
+            parameters: header.parameters,
+            body,
+            structs: self.structs.clone(),
+            enums: self.enums.clone(),
+        })
+    }
+
+    fn parse_function_header(&mut self) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
         if parsed_return_type.enum_name.is_some() {
             return Err(self.error_here(
@@ -1493,27 +1620,34 @@ impl Parser {
         self.push_scope();
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
-        let mut body = self.parse_block_statement()?;
-        body = self.lower_call_expressions(body)?;
-        self.pop_scope();
-        validate_function_returns(&body, return_type)?;
-        if return_type == C0Type::Void {
-            body = C0Statement::Seq(
-                Box::new(body),
-                Box::new(C0Statement::Return(C0Expression::Void)),
-            );
-        }
-        self.expect_end(&name)?;
-
-        Ok(C0Function {
+        Ok(C0FunctionHeader {
             return_type,
             return_struct_name,
             name,
             parameters,
-            body,
-            structs: self.structs,
-            enums: self.enums,
         })
+    }
+
+    fn register_function_declaration(
+        &mut self,
+        header: &C0FunctionHeader,
+        definition: bool,
+    ) -> Result<(), C0SyntaxError> {
+        if let Some(previous) = self.function_declarations.get(&header.name) {
+            if !function_headers_compatible(previous, header) {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for function `{}`",
+                    header.name
+                )));
+            }
+        } else {
+            self.function_declarations
+                .insert(header.name.clone(), header.clone());
+        }
+        if definition && !self.defined_functions.insert(header.name.clone()) {
+            return Err(self.error_here(format!("duplicate function definition `{}`", header.name)));
+        }
+        Ok(())
     }
 
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {

@@ -195,6 +195,52 @@ fn c0_parses_standalone_calls() {
 }
 
 #[test]
+fn c0_parses_multiple_definitions_and_forward_prototypes() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 helper(int32 value);
+
+        int32 caller(int32 value) {
+            int32 result;
+            result = helper(value);
+            return result;
+        }
+
+        int32 helper(int32 value) {
+            return value + 1;
+        }
+        "#,
+    )
+    .expect("one source may contain prototypes and multiple definitions");
+
+    assert_eq!(
+        functions
+            .iter()
+            .map(syntax::C0Function::name)
+            .collect::<Vec<_>>(),
+        vec!["caller", "helper"]
+    );
+}
+
+#[test]
+fn c0_rejects_conflicting_function_prototypes() {
+    let error = syntax::parse_functions(
+        r#"
+        int32 helper(int32 value);
+        uint8 helper(uint8 value);
+        int32 helper(int32 value) { return value; }
+        "#,
+    )
+    .expect_err("conflicting function declarations should be rejected");
+
+    assert!(
+        error
+            .message()
+            .contains("conflicting declarations for function `helper`")
+    );
+}
+
+#[test]
 fn c0_syntax_reports_unterminated_block_comments() {
     let error = syntax::parse_function("/* never closed")
         .expect_err("an unterminated block comment should be rejected");
