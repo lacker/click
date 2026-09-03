@@ -133,12 +133,14 @@ struct Parser {
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     current_struct_params: BTreeMap<String, String>,
+    current_struct_array_params: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedType {
     c_type: C0Type,
     struct_name: Option<String>,
+    struct_pointer: bool,
 }
 
 fn is_c_type_keyword(name: &str) -> bool {
@@ -173,12 +175,14 @@ struct ParsedParameter {
     parameter: FunctionParameter,
     struct_name: Option<String>,
     declared_bytes: Option<u32>,
+    struct_array: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedParameters {
     parameters: Vec<FunctionParameter>,
     struct_params: BTreeMap<String, String>,
+    struct_array_params: BTreeSet<String>,
     declared_loadable_bytes: Vec<(String, u32)>,
 }
 
@@ -186,6 +190,7 @@ struct ParsedParameters {
 struct ParsedFunctionSignature {
     signature: FunctionSignature,
     struct_params: BTreeMap<String, String>,
+    struct_array_params: BTreeSet<String>,
     return_struct_name: Option<String>,
 }
 
@@ -245,6 +250,7 @@ impl Parser {
             position: 0,
             struct_layouts,
             current_struct_params: BTreeMap::new(),
+            current_struct_array_params: BTreeSet::new(),
         })
     }
 
@@ -312,8 +318,13 @@ impl Parser {
             &mut self.current_struct_params,
             parsed_parameters.struct_params,
         );
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            parsed_parameters.struct_array_params,
+        );
         let body = self.parse_proposition()?;
         self.current_struct_params = previous_struct_params;
+        self.current_struct_array_params = previous_struct_array_params;
         self.expect(Token::RBrace)?;
         Ok(PredicateDefinition {
             name,
@@ -329,7 +340,11 @@ impl Parser {
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
-        let return_type = self.parse_type()?.c_type;
+        let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
+            return Err(self.error("only pointer-to-struct types are supported"));
+        }
+        let return_type = parsed_return_type.c_type;
         if return_type == C0Type::Void {
             return Err(self.error("pure Click functions must return a value"));
         }
@@ -344,8 +359,13 @@ impl Parser {
             &mut self.current_struct_params,
             parsed_parameters.struct_params,
         );
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            parsed_parameters.struct_array_params,
+        );
         let body = self.parse_contract_expression()?;
         self.current_struct_params = previous_struct_params;
+        self.current_struct_array_params = previous_struct_array_params;
         self.expect(Token::RBrace)?;
         Ok(ClickFunctionDefinition {
             name,
@@ -372,6 +392,10 @@ impl Parser {
             &mut self.current_struct_params,
             parsed_parameters.struct_params,
         );
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            parsed_parameters.struct_array_params,
+        );
         let composite_body = match self.peek() {
             Some(Token::Semicolon) if is_abstract => {
                 self.position += 1;
@@ -393,6 +417,7 @@ impl Parser {
             }
         };
         self.current_struct_params = previous_struct_params;
+        self.current_struct_array_params = previous_struct_array_params;
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
@@ -464,11 +489,13 @@ impl Parser {
     fn parse_click_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
         let mut struct_params = BTreeMap::new();
+        let mut struct_array_params = BTreeSet::new();
         let mut declared_loadable_bytes = Vec::new();
         if self.peek() == Some(&Token::RParen) {
             return Ok(ParsedParameters {
                 parameters,
                 struct_params,
+                struct_array_params,
                 declared_loadable_bytes,
             });
         }
@@ -486,6 +513,9 @@ impl Parser {
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
             }
+            if parsed_parameter.struct_array {
+                struct_array_params.insert(parsed_parameter.parameter.name.clone());
+            }
             if let Some(bytes) = parsed_parameter.declared_bytes {
                 declared_loadable_bytes.push((parsed_parameter.parameter.name.clone(), bytes));
             }
@@ -499,6 +529,7 @@ impl Parser {
                     return Ok(ParsedParameters {
                         parameters,
                         struct_params,
+                        struct_array_params,
                         declared_loadable_bytes,
                     });
                 }
@@ -526,6 +557,10 @@ impl Parser {
         let previous_struct_params = std::mem::replace(
             &mut self.current_struct_params,
             parsed_parameters.struct_params,
+        );
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            parsed_parameters.struct_array_params,
         );
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
@@ -650,6 +685,7 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
         self.current_struct_params = previous_struct_params;
+        self.current_struct_array_params = previous_struct_array_params;
 
         Ok(TheoremDefinition {
             name,
@@ -663,6 +699,7 @@ impl Parser {
         let ParsedFunctionSignature {
             signature,
             mut struct_params,
+            struct_array_params,
             return_struct_name,
         } = self.parse_function_signature()?;
         if let Some(struct_name) = return_struct_name {
@@ -684,6 +721,8 @@ impl Parser {
         let mut ensures = Vec::new();
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
+        let previous_struct_array_params =
+            std::mem::replace(&mut self.current_struct_array_params, struct_array_params);
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("let") => {
@@ -868,6 +907,7 @@ impl Parser {
             None
         };
         self.current_struct_params = previous_struct_params;
+        self.current_struct_array_params = previous_struct_array_params;
 
         let requirement_label_indices = requires
             .iter()
@@ -895,7 +935,11 @@ impl Parser {
         let name = self.expect_ident("let binding name")?;
         let c_type = if self.peek() == Some(&Token::Colon) {
             self.position += 1;
-            Some(self.parse_type()?.c_type)
+            let parsed_type = self.parse_type()?;
+            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
+            Some(parsed_type.c_type)
         } else {
             None
         };
@@ -917,12 +961,16 @@ impl Parser {
 
     fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
+            return Err(self.error("only pointer-to-struct types are supported"));
+        }
         let return_type = parsed_return_type.c_type;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         let struct_params = parsed_parameters.struct_params;
+        let struct_array_params = parsed_parameters.struct_array_params;
 
         Ok(ParsedFunctionSignature {
             signature: FunctionSignature {
@@ -932,6 +980,7 @@ impl Parser {
                 declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
             },
             struct_params,
+            struct_array_params,
             return_struct_name: parsed_return_type.struct_name,
         })
     }
@@ -939,11 +988,13 @@ impl Parser {
     fn parse_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
         let mut struct_params = BTreeMap::new();
+        let mut struct_array_params = BTreeSet::new();
         let mut declared_loadable_bytes = Vec::new();
         if self.peek() == Some(&Token::RParen) {
             return Ok(ParsedParameters {
                 parameters,
                 struct_params,
+                struct_array_params,
                 declared_loadable_bytes,
             });
         }
@@ -954,6 +1005,9 @@ impl Parser {
             let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
+            }
+            if parsed_parameter.struct_array {
+                struct_array_params.insert(parsed_parameter.parameter.name.clone());
             }
             if let Some(bytes) = parsed_parameter.declared_bytes {
                 declared_loadable_bytes.push((parsed_parameter.parameter.name.clone(), bytes));
@@ -968,6 +1022,7 @@ impl Parser {
                     return Ok(ParsedParameters {
                         parameters,
                         struct_params,
+                        struct_array_params,
                         declared_loadable_bytes,
                     });
                 }
@@ -988,9 +1043,14 @@ impl Parser {
                 return Ok(ParsedType {
                     c_type: C0Type::Int32Pointer,
                     struct_name: Some(struct_name),
+                    struct_pointer: true,
                 });
             }
-            return Err(self.error("only pointer-to-struct types are supported"));
+            return Ok(ParsedType {
+                c_type: C0Type::Int32Pointer,
+                struct_name: Some(struct_name),
+                struct_pointer: false,
+            });
         }
 
         let scalar_type = match spelling.as_str() {
@@ -1058,6 +1118,7 @@ impl Parser {
         Ok(ParsedType {
             c_type,
             struct_name: None,
+            struct_pointer: false,
         })
     }
 
@@ -1071,6 +1132,9 @@ impl Parser {
         }
         if self.peek() != Some(&Token::LBracket) {
             let struct_name = parsed_type.struct_name;
+            if struct_name.is_some() && !parsed_type.struct_pointer {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
             return Ok(ParsedParameter {
                 parameter: FunctionParameter {
                     c_type: parsed_type.c_type,
@@ -1079,10 +1143,29 @@ impl Parser {
                 },
                 struct_name,
                 declared_bytes: None,
+                struct_array: false,
             });
         }
-        if parsed_type.struct_name.is_some() {
-            return Err(self.error("array parameters of struct type are not supported"));
+        let struct_name = parsed_type.struct_name.clone();
+        if struct_name.is_some() {
+            if parsed_type.struct_pointer {
+                return Err(self.error("only arrays of struct values are supported"));
+            }
+            self.position += 1;
+            if matches!(self.peek(), Some(Token::Number(_))) {
+                self.position += 1;
+            }
+            self.expect(Token::RBracket)?;
+            return Ok(ParsedParameter {
+                parameter: FunctionParameter {
+                    c_type: C0Type::Int32Pointer,
+                    name,
+                    struct_name: struct_name.clone(),
+                },
+                struct_name,
+                declared_bytes: None,
+                struct_array: true,
+            });
         }
         let (pointer_type, element_width) = match parsed_type.c_type {
             C0Type::Int32 => (C0Type::Int32Pointer, 4),
@@ -1107,6 +1190,7 @@ impl Parser {
             },
             struct_name: None,
             declared_bytes,
+            struct_array: false,
         })
     }
 
@@ -1412,7 +1496,11 @@ impl Parser {
                 ));
             }
             self.expect(Token::Colon)?;
-            let c_type = self.parse_type()?.c_type;
+            let parsed_type = self.parse_type()?;
+            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
+            let c_type = parsed_type.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
             let body = self.parse_proposition()?;
@@ -1434,7 +1522,11 @@ impl Parser {
                 ));
             }
             self.expect(Token::Colon)?;
-            let c_type = self.parse_type()?.c_type;
+            let parsed_type = self.parse_type()?;
+            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
+            let c_type = parsed_type.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
             let body = self.parse_proposition()?;
@@ -2402,6 +2494,7 @@ impl Parser {
                 {
                     let field =
                         self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                    self.validate_field_place(&field)?;
                     return Ok(Self::field_segment_from_metadata(base, &field_name, &field));
                 }
                 return self.resolve_field_segment(base, &field_name);
@@ -2465,6 +2558,7 @@ impl Parser {
                 surface: ContractSegmentSurface::Field(field_name.to_string()),
             });
         };
+        self.validate_field_place(&field)?;
         Ok(Self::field_segment_from_metadata(base, field_name, &field))
     }
 
@@ -2550,11 +2644,6 @@ impl Parser {
                 "struct `{struct_name}` has no field `{field_name}`"
             )));
         };
-        if field.offset_bytes() % 4 != 0 || field.byte_width() % 4 != 0 {
-            return Err(
-                self.error("field places currently require int32-aligned offsets and widths")
-            );
-        }
         // A field's resource slot runs to the next field's offset (or the
         // struct's end), so ownership covers trailing alignment padding:
         // padding belongs to the object and no one else can own it.
@@ -2565,11 +2654,6 @@ impl Parser {
             .filter(|offset| *offset > field.offset_bytes())
             .min()
             .unwrap_or_else(|| layout.size_bytes());
-        if slot_end_bytes % 4 != 0 {
-            return Err(
-                self.error("field places currently require int32-aligned offsets and widths")
-            );
-        }
         Ok(ResolvedField {
             c_type: field.c_type(),
             struct_name: field.struct_name().map(str::to_string),
@@ -2577,6 +2661,16 @@ impl Parser {
             byte_width: field.byte_width(),
             slot_end_bytes,
         })
+    }
+
+    fn validate_field_place(&self, field: &ResolvedField) -> Result<(), ClickError> {
+        if field.offset_bytes % 4 != 0 || field.byte_width % 4 != 0 || field.slot_end_bytes % 4 != 0
+        {
+            return Err(
+                self.error("field places currently require int32-aligned offsets and widths")
+            );
+        }
+        Ok(())
     }
 
     fn offset_field_pointer(&self, base: CExpression, offset_bytes: u32) -> CExpression {
@@ -2727,16 +2821,48 @@ impl Parser {
             }
             _ => None,
         };
+        let mut struct_array = match &expression {
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
+                self.current_struct_array_params.contains(name)
+            }
+            _ => false,
+        };
         loop {
             match self.peek() {
                 Some(Token::LBracket) => {
                     self.position += 1;
                     let index = self.parse_contract_expression()?;
                     self.expect(Token::RBracket)?;
-                    expression = ContractExpression::Index(Box::new(expression), Box::new(index));
-                    struct_name = None;
+                    if struct_array
+                        && let Some(base_struct_name) = &struct_name
+                        && let Some(layout) = self.struct_layouts.get(base_struct_name)
+                    {
+                        let base = contract_expression_as_c_fragment(&expression)
+                            .ok_or_else(|| {
+                                self.error(
+                                    "struct array indexing is only supported on current C fragments",
+                                )
+                            })?;
+                        let index = contract_expression_as_c_fragment(&index).ok_or_else(|| {
+                            self.error("struct array indices must be current C expressions")
+                        })?;
+                        let stride = CExpression::Multiply(
+                            Box::new(index),
+                            Box::new(CExpression::Value(int32(layout.size_bytes()))),
+                        );
+                        expression = ContractExpression::CFragment(CExpression::Add(
+                            Box::new(base),
+                            Box::new(stride),
+                        ));
+                        struct_array = false;
+                    } else {
+                        expression =
+                            ContractExpression::Index(Box::new(expression), Box::new(index));
+                        struct_name = None;
+                        struct_array = false;
+                    }
                 }
-                Some(Token::Arrow) => {
+                Some(Token::Arrow | Token::Dot) => {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
                     let surface_base = expression.clone();
@@ -2752,6 +2878,7 @@ impl Parser {
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
                         struct_name = field.struct_name;
+                        struct_array = false;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name,

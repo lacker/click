@@ -155,7 +155,7 @@ pub(in crate::surface) fn annotated_function(
     inherit_function_effects_into_loops: bool,
 ) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures) =
-        function_resource_summary(function_block, resource_environment)?;
+        function_resource_summary(function_block, parsed_function, resource_environment)?;
     let resource_constructors = function_resource_constructors(function_block)?;
     let (
         contract_requires,
@@ -611,6 +611,7 @@ pub(in crate::surface) fn function_contract_summary(
                 collect_owned_resource_memory_segments(
                     resource,
                     resource_environment,
+                    parsed_function.parameters(),
                     &mut lowerer,
                     &mut mutable,
                 )?;
@@ -627,6 +628,10 @@ pub(in crate::surface) fn function_contract_summary(
                         segment.start.clone(),
                         segment.end.clone(),
                     )
+                    .with_element_width(contract_segment_element_width(
+                        parsed_function.parameters(),
+                        segment,
+                    ))
                 }));
             }
         }
@@ -695,12 +700,14 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
 fn collect_owned_resource_memory_segments(
     resource: &ResourceClause,
     resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
     lowerer: &mut AnnotationLowerer<'_>,
     output: &mut Vec<CMemorySegment>,
 ) -> Result<(), ClickError> {
     collect_owned_resource_memory_segments_inner(
         resource,
         resource_environment,
+        parameters,
         lowerer,
         output,
         &mut BTreeSet::new(),
@@ -711,6 +718,7 @@ fn collect_owned_resource_memory_segments(
 fn collect_owned_resource_memory_segments_inner(
     resource: &ResourceClause,
     resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
     lowerer: &mut AnnotationLowerer<'_>,
     output: &mut Vec<CMemorySegment>,
     active_resources: &mut BTreeSet<String>,
@@ -721,6 +729,7 @@ fn collect_owned_resource_memory_segments_inner(
             collect_owned_resource_memory_segments_inner(
                 resource,
                 resource_environment,
+                parameters,
                 lowerer,
                 output,
                 active_resources,
@@ -729,11 +738,13 @@ fn collect_owned_resource_memory_segments_inner(
         }
         ResourceClause::ViewMemory(_) => Ok(()),
         ResourceClause::OwnMemory(segment) => {
+            let element_width = contract_segment_element_width(parameters, segment);
             let mut segment = CMemorySegment::new(
                 segment.base.clone(),
                 segment.start.clone(),
                 segment.end.clone(),
-            );
+            )
+            .with_element_width(element_width);
             if let Some(guard) = active_guard {
                 segment = segment.with_guard(
                     lowerer
@@ -794,6 +805,7 @@ fn collect_owned_resource_memory_segments_inner(
                     collect_owned_resource_memory_segments_inner(
                         &contained,
                         resource_environment,
+                        parameters,
                         lowerer,
                         output,
                         active_resources,

@@ -1876,6 +1876,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_loop_effect(
                     base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
                     start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
                     end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+                    element_width: segment.element_width,
                     guard: segment.guard.as_ref().map(|guard| {
                         substitute_bitvector_variable_in_spec_proposition(guard, from, to)
                     }),
@@ -2119,6 +2120,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
                 start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
                 end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+                element_width: segment.element_width,
                 guard: segment.guard.as_ref().map(|guard| {
                     substitute_bitvector_variable_in_spec_proposition(guard, from, to)
                 }),
@@ -2183,6 +2185,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            element_width: segment.element_width,
             guard: segment
                 .guard
                 .as_ref()
@@ -2192,6 +2195,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            element_width: segment.element_width,
             guard: segment
                 .guard
                 .as_ref()

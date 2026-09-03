@@ -1589,6 +1589,7 @@ fn composite_exposure_finds_held_cells_by_structure_near_linearly() {
             base: c_variable("item"),
             start: c_int32_literal(0),
             end: c_int32_literal(1),
+            element_width: 4,
             guard: None,
         })],
         Vec::new(),

@@ -572,6 +572,10 @@ pub struct CMemorySegment {
     pub(super) base: CExpression,
     pub(super) start: CExpression,
     pub(super) end: CExpression,
+    /// The ABI width of one logical range element. The compatibility
+    /// constructor defaults to the historical int32 width; typed surface
+    /// lowering preserves wider struct-array strides here.
+    pub(super) element_width: u32,
     /// An optional entry-state condition guarding a contract footprint.
     /// Resource and loop segments are normally unconditional.
     pub(super) guard: Option<SpecProposition>,

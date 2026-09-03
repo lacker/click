@@ -358,8 +358,18 @@ impl CMemorySegment {
             base,
             start,
             end,
+            element_width: 4,
             guard: None,
         }
+    }
+
+    pub fn with_element_width(mut self, element_width: u32) -> Self {
+        self.element_width = element_width;
+        self
+    }
+
+    pub fn element_width(&self) -> u32 {
+        self.element_width
     }
 
     pub fn with_guard(mut self, guard: SpecProposition) -> Self {

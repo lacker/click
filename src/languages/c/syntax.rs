@@ -17,6 +17,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.pointer-to-pointer",
     "type.array-parameter",
     "type.local-array",
+    "type.struct-array-parameter",
     "type.struct-pointer",
     "declaration.function",
     "declaration.struct",
@@ -115,6 +116,11 @@ pub struct C0Parameter {
     name: String,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
+    /// The ABI width of one element when the source parameter was declared as
+    /// an array of structs. The public C0 type remains the compatible
+    /// struct-pointer placeholder, while the kernel uses byte addressing for
+    /// the lowered indexed field accesses.
+    array_element_width: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -392,6 +398,7 @@ impl C0Parameter {
             name,
             struct_name,
             struct_layout: None,
+            array_element_width: None,
         }
     }
 
@@ -411,8 +418,16 @@ impl C0Parameter {
         self.struct_layout.as_ref()
     }
 
+    pub fn array_element_width(&self) -> Option<u32> {
+        self.array_element_width
+    }
+
     pub fn to_kernel_parameter(&self) -> crate::kernel::CParameter {
-        crate::kernel::c_parameter(self.name.clone(), self.c_type.to_kernel_type())
+        let c_type = self
+            .array_element_width
+            .map(|_| crate::kernel::CType::UInt8Pointer)
+            .unwrap_or_else(|| self.c_type.to_kernel_type());
+        crate::kernel::c_parameter(self.name.clone(), c_type)
     }
 }
 
@@ -1213,23 +1228,48 @@ impl Parser {
             if parsed_type.c_type == C0Type::Void {
                 return Err(self.error_here("function parameters cannot have type `void`"));
             }
-            if is_plain_struct_type(&parsed_type) {
-                return Err(self.error_here("only pointer-to-struct types are supported"));
-            }
             let name = self.expect_ident("parameter name")?;
             self.declare_name(&name)?;
+            let struct_array =
+                parsed_type.struct_name.is_some() && self.peek() == Some(&Token::LBracket);
+            if is_plain_struct_type(&parsed_type) && !struct_array {
+                return Err(self.error_here("only pointer-to-struct types are supported"));
+            }
             let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
-                if c_type != parsed_type.c_type {
+                if c_type != parsed_type.c_type && !struct_array {
                     return Err(
                         self.error_here("array parameters of struct type are not supported")
                     );
                 }
-                self.variable_structs.insert(
-                    name.clone(),
-                    struct_name.clone().expect("struct_name checked above"),
-                );
+                let struct_name_value = struct_name.clone().expect("struct_name checked above");
+                self.variable_structs
+                    .insert(name.clone(), struct_name_value.clone());
+                if struct_array {
+                    let element_width = self
+                        .structs
+                        .get(&struct_name_value)
+                        .ok_or_else(|| {
+                            self.error_here(format!(
+                                "unknown struct declaration `{struct_name_value}`"
+                            ))
+                        })?
+                        .size_bytes;
+                    self.variable_array_shapes.insert(name.clone(), vec![1]);
+                    parameters.push(C0Parameter {
+                        c_type,
+                        name,
+                        struct_layout: self.structs.get(&struct_name_value).cloned(),
+                        struct_name,
+                        array_element_width: Some(element_width),
+                    });
+                    if self.peek() != Some(&Token::Comma) {
+                        return Ok(parameters);
+                    }
+                    self.position += 1;
+                    continue;
+                }
             }
             parameters.push(C0Parameter {
                 c_type,
@@ -1239,6 +1279,7 @@ impl Parser {
                     .and_then(|name| self.structs.get(name))
                     .cloned(),
                 struct_name,
+                array_element_width: None,
             });
 
             if self.peek() != Some(&Token::Comma) {

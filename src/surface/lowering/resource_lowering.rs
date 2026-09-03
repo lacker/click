@@ -5,7 +5,11 @@ pub(in crate::surface) struct ConcreteMemoryRangeSeed {
     pub(in crate::surface) base: Pointer,
     pub(in crate::surface) bytes: u32,
     pub(in crate::surface) element_width: u32,
-    pub(in crate::surface) element_type: CType,
+    /// `None` denotes a range whose logical elements are aggregates, such as
+    /// C structs. Those ranges are materialized one typed field at a time
+    /// using `struct_layout`.
+    pub(in crate::surface) element_type: Option<CType>,
+    pub(in crate::surface) struct_layout: Option<syntax::C0StructLayout>,
 }
 
 pub(in crate::surface) fn initial_call_state(
@@ -27,11 +31,21 @@ pub(in crate::surface) fn initial_call_state(
             | C0Type::Int32PointerPointer
             | C0Type::UInt8PointerPointer => {
                 let c_type = parameter.c_type();
-                let element_width = c_type
-                    .pointee_type()
-                    .expect("pointer parameter has a pointee")
-                    .to_kernel_type()
-                    .byte_width();
+                // Struct array parameters are lowered to byte pointers in the
+                // kernel, so their symbolic external argument address uses
+                // byte-pointer identity. The struct stride is retained only
+                // when indexing the parameter and lowering its resource
+                // clauses.
+                let element_width = parameter.array_element_width().map_or_else(
+                    || {
+                        c_type
+                            .pointee_type()
+                            .expect("pointer parameter has a pointee")
+                            .to_kernel_type()
+                            .byte_width()
+                    },
+                    |_| 1,
+                );
                 arguments.push(c_pointer_value(Pointer {
                     block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
@@ -92,6 +106,34 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
 ) -> CMemory {
     let base_memory = memory.clone();
     for range in loadable_ranges.values() {
+        if let Some(layout) = &range.struct_layout {
+            let mut offset: u32 = 0;
+            while offset
+                .checked_add(range.element_width)
+                .is_some_and(|end| end <= range.bytes)
+            {
+                let element_pointer = offset_pointer_by_elements(
+                    range.base.clone(),
+                    Bitvector32Term::Constant(offset / range.element_width),
+                    range.element_width,
+                );
+                for field in layout.fields().values() {
+                    let pointer = element_pointer.offset_by_bytes(field.offset_bytes());
+                    let value = symbolic_value_for_element(
+                        &base_memory,
+                        &pointer,
+                        field.c_type().to_kernel_type(),
+                    );
+                    memory = memory.store(pointer, value);
+                }
+                offset += range.element_width;
+            }
+            continue;
+        }
+
+        let Some(element_type) = range.element_type else {
+            continue;
+        };
         let mut offset: u32 = 0;
         while offset
             .checked_add(range.element_width)
@@ -102,7 +144,7 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
                 Bitvector32Term::Constant(offset / range.element_width),
                 range.element_width,
             );
-            let value = symbolic_value_for_element(&base_memory, &pointer, range.element_type);
+            let value = symbolic_value_for_element(&base_memory, &pointer, element_type);
             memory = memory.store(pointer, value);
             offset += range.element_width;
         }
@@ -147,6 +189,31 @@ fn materialize_access_segment_cells(
         return Err(ClickError::new(format!(
             "resource segment has an end before its start: {start}..{end}"
         )));
+    }
+
+    if let Some(layout) = contract_expression_struct_layout(parameters, &segment.source.base) {
+        let base_memory = memory.clone();
+        for index in *start..*end {
+            let element_pointer = offset_pointer_by_elements(
+                segment.base.clone(),
+                Bitvector32Term::Constant(index),
+                layout.size_bytes(),
+            );
+            for field in layout.fields().values() {
+                let pointer = element_pointer.offset_by_bytes(field.offset_bytes());
+                if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                    continue;
+                }
+                let load = crate::kernel::canonical_form_of_load(
+                    crate::kernel::intern_c_memory(base_memory.clone()),
+                    pointer.clone(),
+                );
+                let value =
+                    symbolic_value_from_load(&pointer, field.c_type().to_kernel_type(), load);
+                memory = memory.store(pointer, value);
+            }
+        }
+        return Ok(memory);
     }
 
     let element_type = contract_segment_element_type(parameters, &segment.source);
@@ -787,7 +854,16 @@ pub(in crate::surface) fn concrete_loadable_block(
                     base: segment.base,
                     bytes,
                     element_width,
-                    element_type: contract_segment_element_type(parameters, &segment.source),
+                    element_type: (!contract_expression_is_struct_array(
+                        parameters,
+                        &segment.source.base,
+                    ))
+                    .then(|| contract_segment_element_type(parameters, &segment.source)),
+                    struct_layout: contract_expression_struct_layout(
+                        parameters,
+                        &segment.source.base,
+                    )
+                    .cloned(),
                 },
             )))
         }
@@ -831,7 +907,10 @@ pub(in crate::surface) fn concrete_access_resource_block(
             base: offset_pointer_by_elements(segment.base, segment.start, element_width),
             bytes,
             element_width,
-            element_type: contract_segment_element_type(parameters, &segment.source),
+            element_type: (!contract_expression_is_struct_array(parameters, &segment.source.base))
+                .then(|| contract_segment_element_type(parameters, &segment.source)),
+            struct_layout: contract_expression_struct_layout(parameters, &segment.source.base)
+                .cloned(),
         },
     )))
 }
@@ -909,6 +988,46 @@ fn contract_segment_element_type(
     contract_expression_element_type(parameters, &segment.base).unwrap_or(CType::Int32)
 }
 
+fn contract_expression_is_struct_array(
+    parameters: &[syntax::C0Parameter],
+    expression: &CExpression,
+) -> bool {
+    match expression {
+        CExpression::Variable(name) => parameters
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .is_some_and(|parameter| parameter.array_element_width().is_some()),
+        CExpression::Add(left, right) => {
+            contract_expression_is_struct_array(parameters, left)
+                || contract_expression_is_struct_array(parameters, right)
+        }
+        CExpression::Subtract(left, _) => contract_expression_is_struct_array(parameters, left),
+        _ => false,
+    }
+}
+
+fn contract_expression_struct_layout<'a>(
+    parameters: &'a [syntax::C0Parameter],
+    expression: &CExpression,
+) -> Option<&'a syntax::C0StructLayout> {
+    match expression {
+        CExpression::Variable(name) => parameters
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .and_then(|parameter| {
+                parameter
+                    .array_element_width()
+                    .is_some()
+                    .then(|| parameter.struct_layout())
+                    .flatten()
+            }),
+        CExpression::Add(left, right) => contract_expression_struct_layout(parameters, left)
+            .or_else(|| contract_expression_struct_layout(parameters, right)),
+        CExpression::Subtract(left, _) => contract_expression_struct_layout(parameters, left),
+        _ => None,
+    }
+}
+
 fn contract_expression_element_type(
     parameters: &[syntax::C0Parameter],
     expression: &CExpression,
@@ -935,14 +1054,18 @@ pub(in crate::surface) fn contract_expression_element_width(
         CExpression::Variable(name) => parameters
             .iter()
             .find(|parameter| parameter.name() == name)
-            .and_then(|parameter| match parameter.c_type() {
-                c_type if c_type.is_pointer() => c_type
-                    .pointee_type()
-                    .map(C0Type::to_kernel_type)
-                    .map(CType::byte_width),
-                C0Type::Int32Array(_) => Some(4),
-                C0Type::UInt8Array(_) => Some(1),
-                _ => None,
+            .and_then(|parameter| {
+                parameter
+                    .array_element_width()
+                    .or_else(|| match parameter.c_type() {
+                        c_type if c_type.is_pointer() => c_type
+                            .pointee_type()
+                            .map(C0Type::to_kernel_type)
+                            .map(CType::byte_width),
+                        C0Type::Int32Array(_) => Some(4),
+                        C0Type::UInt8Array(_) => Some(1),
+                        _ => None,
+                    })
             }),
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),

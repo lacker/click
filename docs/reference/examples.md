@@ -126,6 +126,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   explicit ranges rather than ownership sugar.
 - `mdtests/struct_symbolic_pointer_field_load.md`: a pointer-valued field is
   loaded from external memory and used as the base of a write resource.
+- `mdtests/struct_array_parameter_fields.md`: a one-dimensional struct array
+  parameter retains the ABI stride for indexed field loads and stores.
 
 ## Byte values and buffers
 

@@ -38,6 +38,10 @@ id = "c0.type.local-array"
 path = "reference/language/c0.md#supported-types"
 
 [[item]]
+id = "c0.type.struct-array-parameter"
+path = "reference/language/c0.md#struct-subset"
+
+[[item]]
 id = "c0.type.struct-pointer"
 path = "reference/language/c0.md#supported-types"
 

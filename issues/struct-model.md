@@ -10,14 +10,17 @@ Struct fields currently support `int32`, `uint8`, and pointers; struct values
 cannot be parameters, locals, or returns (`syntax.rs:961` "only
 pointer-to-struct types are supported"). Local arrays of those supported
 structs now lower indexed `items[i].field` access with the complete LP64
-stride, but struct array parameters remain unsupported. Embedded structs, byte
-buffers in structs, unions, bitfields, enums, and typedefs do not exist.
+stride. One-dimensional function parameters declared as arrays of those
+supported structs use the same stride; the kernel represents the decayed
+parameter as a byte pointer while retaining the struct layout for indexing and
+resource ranges. Embedded structs, byte buffers in structs, unions, bitfields,
+enums, and typedefs do not exist.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; everything rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists struct values, embedded structs, arrays of structs, and unions as
-remaining. The pilot target json-c's `json_object` uses unions, enums, and
-function pointers.
+lists struct values, embedded structs, multidimensional struct arrays, and
+unions as remaining. The pilot target json-c's `json_object` uses unions,
+enums, and function pointers.
 
 ## Violated invariant
 

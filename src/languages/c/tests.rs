@@ -2449,6 +2449,31 @@ fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
 }
 
 #[test]
+fn c0_syntax_struct_array_parameter_retains_abi_stride() {
+    let function = syntax::parse_function(
+        r#"
+        struct item {
+            uint8 tag;
+            int32 value;
+        };
+
+        int32 read_item(struct item items[2]) {
+            return items[1].value;
+        }
+        "#,
+    )
+    .expect("struct array parameters should parse");
+
+    let parameter = &function.parameters()[0];
+    assert_eq!(parameter.c_type(), syntax::C0Type::Int32Pointer);
+    assert_eq!(parameter.array_element_width(), Some(8));
+    assert_eq!(
+        parameter.to_kernel_parameter().c_type(),
+        crate::kernel::CType::UInt8Pointer
+    );
+}
+
+#[test]
 fn c0_syntax_local_array_decays_to_pointer_argument() {
     let read_first = syntax::parse_function(
         r#"

@@ -294,22 +294,53 @@ pub(in crate::kernel) fn pointer_byte_offset_from_base(
     if pointer.offset == base.offset {
         return Some(Bitvector32Term::Constant(0));
     }
-    match &pointer.offset {
-        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
-            byte_offset_from_pointer_offset(right)
-        }
-        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
-            byte_offset_from_pointer_offset(left)
-        }
-        _ if base.offset == PointerOffsetTerm::Constant(0) => {
-            byte_offset_from_pointer_offset(&pointer.offset)
-        }
-        _ => {
-            let pointer_offset = byte_offset_from_pointer_offset(&pointer.offset)?;
-            let base_offset = byte_offset_from_pointer_offset(&base.offset)?;
-            Some(Bitvector32Term::subtract(pointer_offset, base_offset))
-        }
+    if base.offset == PointerOffsetTerm::Constant(0) {
+        return byte_offset_from_pointer_offset(&pointer.offset);
     }
+
+    // Pointer arithmetic is represented as a binary tree. A field access
+    // after an indexed access therefore has the shape
+    // `((base + stride) + field)`, rather than a single addition whose left
+    // child is exactly `base`. Walk the additive tree so the common base is
+    // cancelled before constructing the byte offset; this keeps resource
+    // checks independent of harmless grouping differences in pointer
+    // arithmetic.
+    fn offset_from_nested_base(
+        offset: &PointerOffsetTerm,
+        base: &PointerOffsetTerm,
+    ) -> Option<Bitvector32Term> {
+        if offset == base {
+            return Some(Bitvector32Term::Constant(0));
+        }
+        let PointerOffsetTerm::Add(left, right) = offset else {
+            return None;
+        };
+        if left.as_ref() == base {
+            return byte_offset_from_pointer_offset(right);
+        }
+        if right.as_ref() == base {
+            return byte_offset_from_pointer_offset(left);
+        }
+        if let Some(left_offset) = offset_from_nested_base(left, base) {
+            return Some(Bitvector32Term::add(
+                left_offset,
+                byte_offset_from_pointer_offset(right)?,
+            ));
+        }
+        if let Some(right_offset) = offset_from_nested_base(right, base) {
+            return Some(Bitvector32Term::add(
+                byte_offset_from_pointer_offset(left)?,
+                right_offset,
+            ));
+        }
+        None
+    }
+
+    offset_from_nested_base(&pointer.offset, &base.offset).or_else(|| {
+        let pointer_offset = byte_offset_from_pointer_offset(&pointer.offset)?;
+        let base_offset = byte_offset_from_pointer_offset(&base.offset)?;
+        Some(Bitvector32Term::subtract(pointer_offset, base_offset))
+    })
 }
 
 pub(in crate::kernel) fn byte_offset_from_pointer_offset(

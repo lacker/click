@@ -1663,7 +1663,7 @@ pub(in crate::surface) fn build_function_environment(
         {
             Some(function_block) => {
                 let (resource_requires, resource_ensures) =
-                    function_resource_summary(function_block, resource_environment)?;
+                    function_resource_summary(function_block, function, resource_environment)?;
                 let resource_constructors = function_resource_constructors(function_block)?;
                 let (
                     contract_requires,
@@ -1711,6 +1711,7 @@ pub(in crate::surface) fn build_function_environment(
 
 pub(in crate::surface) fn function_resource_summary(
     function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
     resource_environment: &ResourceEnvironment,
 ) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
     let mut requires = Vec::new();
@@ -1718,13 +1719,21 @@ pub(in crate::surface) fn function_resource_summary(
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
         };
-        append_entry_resource_specs(resource, resource_environment, &mut requires)?;
+        append_entry_resource_specs(
+            resource,
+            parsed_function.parameters(),
+            resource_environment,
+            &mut requires,
+        )?;
     }
     let ensures = function_block
         .ensures()
         .iter()
         .filter_map(|ensure| match ensure.ensure() {
-            Ensure::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
+            Ensure::Resource(resource) => Some(resource_clause_to_resource_spec_with_parameters(
+                resource,
+                parsed_function.parameters(),
+            )),
             _ => None,
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1811,11 +1820,79 @@ pub(in crate::surface) fn composite_resource_definitions(
 
 pub(in crate::surface) fn append_entry_resource_specs(
     resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
     _resource_environment: &ResourceEnvironment,
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
-    specs.push(resource_clause_to_resource_spec(resource)?);
+    specs.push(resource_clause_to_resource_spec_with_parameters(
+        resource, parameters,
+    )?);
     Ok(())
+}
+
+fn resource_clause_to_resource_spec_with_parameters(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+) -> Result<CResourceSpec, ClickError> {
+    match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
+            quantity: resource_argument_to_c_expression(quantity)?,
+            resource: Box::new(resource_clause_to_resource_spec_with_parameters(
+                resource, parameters,
+            )?),
+        }),
+        ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::ViewMemory(
+            CMemorySegment::new(
+                segment.base.clone(),
+                segment.start.clone(),
+                segment.end.clone(),
+            )
+            .with_element_width(
+                crate::surface::lowering::contract_segment_element_width(parameters, segment),
+            ),
+        )),
+        ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::OwnMemory(
+            CMemorySegment::new(
+                segment.base.clone(),
+                segment.start.clone(),
+                segment.end.clone(),
+            )
+            .with_element_width(
+                crate::surface::lowering::contract_segment_element_width(parameters, segment),
+            ),
+        )),
+        ResourceClause::Declared {
+            access,
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            let access = resource_access_to_kernel(*access);
+            let arguments = arguments
+                .iter()
+                .map(resource_argument_to_c_expression)
+                .collect::<Result<Vec<_>, _>>()?;
+            let parameter_types = parameter_types
+                .iter()
+                .map(|c_type| c_type.to_kernel_type())
+                .collect();
+            Ok(match kind {
+                ResourceKind::Composite => CResourceSpec::Composite {
+                    access,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types,
+                },
+                ResourceKind::Token => CResourceSpec::Token {
+                    access,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types,
+                },
+            })
+        }
+    }
 }
 
 pub(in crate::surface) fn resource_argument_contract_substitutions(

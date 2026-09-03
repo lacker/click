@@ -88,8 +88,10 @@ Likely additions:
   predicates in the standard library.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
-  and field resource places. Remaining work includes struct values, embedded
-  structs, arrays of structs, unions/bitfields, and broader address-taking.
+  and field resource places. One-dimensional function parameters declared as
+  arrays of the supported structs now retain their ABI stride. Remaining work
+  includes struct values, embedded structs, multidimensional struct arrays,
+  unions/bitfields, and broader address-taking.
 - Enums and named constants:
   needed for real error codes and option flags.
 - Globals:

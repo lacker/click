@@ -4033,7 +4033,7 @@ pub(super) fn evaluate_function_resource_spec(
             Ok(Ok(CResourceFact::own_quantity(inner, quantity)))
         }
         CResourceSpec::ViewMemory(segment) => {
-            let element_width = c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+            let element_width = segment.element_width();
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
@@ -4052,7 +4052,7 @@ pub(super) fn evaluate_function_resource_spec(
             )))
         }
         CResourceSpec::OwnMemory(segment) => {
-            let element_width = c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+            let element_width = segment.element_width();
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
