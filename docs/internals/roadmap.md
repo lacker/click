@@ -95,7 +95,7 @@ Likely additions:
   fresh-copy semantics for parameters, locals, assignments, and returns; array
   fields are copied element by element. Remaining work
   includes broader struct values, arrays of embedded structs, multidimensional
-  struct arrays, unions/bitfields, and broader address-taking. Named enum fields
+  struct arrays, bitfields, and broader address-taking. Named enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
   and anonymous declarations remain outside the slice.
 - Globals:

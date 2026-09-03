@@ -1311,6 +1311,137 @@ fn c0_embedded_struct_field_access_lowers_to_nested_scalar_offset() {
 }
 
 #[test]
+fn c0_tagged_union_layout_overlaps_members_and_preserves_member_types() {
+    #[repr(C)]
+    union HostPayload {
+        number: i32,
+        pointer: *mut i32,
+    }
+    #[repr(C)]
+    struct HostPacket {
+        tag: i32,
+        payload: HostPayload,
+        tail: u8,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        union payload {
+            int32 number;
+            int32* pointer;
+        };
+        struct packet {
+            int32 tag;
+            union payload payload;
+            uint8 tail;
+        };
+
+        int32 read_number(struct packet* packet) {
+            return packet->payload.number;
+        }
+        "#,
+    )
+    .expect("named tagged union members should parse");
+
+    let union = function.unions().get("payload").expect("union metadata");
+    assert_eq!(
+        union.size_bytes() as usize,
+        std::mem::size_of::<HostPayload>()
+    );
+    assert_eq!(
+        union.alignment_bytes() as usize,
+        std::mem::align_of::<HostPayload>()
+    );
+    assert_eq!(union.field("number").unwrap().offset_bytes(), 0);
+    assert_eq!(union.field("pointer").unwrap().offset_bytes(), 0);
+    assert_eq!(
+        union.field("pointer").unwrap().byte_width(),
+        std::mem::size_of::<*mut i32>() as u32
+    );
+
+    let packet = function.structs().get("packet").expect("packet metadata");
+    assert_eq!(
+        packet.field("payload").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, payload)
+    );
+    assert_eq!(
+        packet.field("payload").unwrap().union_name(),
+        Some("payload")
+    );
+    assert_eq!(
+        packet.field("tail").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, tail)
+    );
+    assert_eq!(
+        packet.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::UnionField {
+            field_type: syntax::C0Type::Int32,
+            union_name,
+            ..
+        }) if union_name == "payload"
+    ));
+}
+
+#[test]
+fn c0_tagged_union_member_writes_are_rejected() {
+    let error = syntax::parse_function(
+        r#"
+        union payload { int32 number; int32* pointer; };
+        struct packet { int32 tag; union payload payload; };
+
+        int32 write_number(struct packet* packet) {
+            packet->payload.number = 7;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("tagged union members are read-only in the first slice");
+    assert!(
+        error.message().contains("writing tagged union members"),
+        "unexpected diagnostic: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
+    let value_error = syntax::parse_function(
+        r#"
+        union payload { int32 number; int32* pointer; };
+        struct packet { int32 tag; union payload payload; };
+
+        int32 read_union(struct packet* packet) {
+            return packet->payload;
+        }
+        "#,
+    )
+    .expect_err("whole tagged union values should not become scalar loads");
+    assert!(value_error.message().contains("tagged union values"));
+
+    let copy_error = syntax::parse_function(
+        r#"
+        union payload { int32 number; int32* pointer; };
+        struct packet { int32 tag; union payload payload; };
+
+        struct packet copy(struct packet value) {
+            return value;
+        }
+        "#,
+    )
+    .expect_err("structs containing unions are not by-value aggregates yet");
+    assert!(
+        copy_error
+            .message()
+            .contains("contains a pointer, embedded struct, or union field")
+    );
+}
+
+#[test]
 fn c0_rejects_embedded_struct_values_outside_member_access() {
     let error = syntax::parse_function(
         r#"

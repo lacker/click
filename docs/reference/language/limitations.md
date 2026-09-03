@@ -48,7 +48,7 @@ use fresh address-backed copies, with enum fields using the same four-byte
 scalar representation and array fields copied element by element. Struct
 values containing pointers or embedded structs remain unsupported, as do direct
 aggregate loads, aggregate resource segments, arrays of embedded structs,
-multidimensional inline arrays, unions, bitfields, packed layout, or general
+multidimensional inline arrays, bitfields, packed layout, or general
 field-address expressions. Named enums use the four-byte scalar ABI
 representation; their enumerators are resolved to
 int32 values in C expressions, while enum parameters, returns, locals, arrays,

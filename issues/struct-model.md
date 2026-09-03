@@ -8,7 +8,8 @@ Struct pointers are supported: declarations, `->` field access, and
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
 slice now extends this with copies of scalar and fixed-array fields.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
-arrays, embedded structs, named enum fields, and pointers. Structs whose fields
+arrays, embedded structs, named enum fields, pointers, and named read-only
+unions. Structs whose fields
 are only `int32`, `uint8`, named enum fields, or fixed one-dimensional scalar
 arrays can be parameters, locals, assignments, and returns by value; each
 operation uses fresh address-backed storage and copies array cells individually.
@@ -21,16 +22,21 @@ indexing and resource ranges. Fixed one-dimensional `int32` and `uint8` arrays
 are preserved as inline field shapes and indexed through their element-width
 pointer arithmetic. Embedded fields are represented as aggregate places during
 C0 parsing and are lowered to scalar leaf accesses; direct aggregate loads,
-copies, and aggregate resource segments remain unsupported. Unions, bitfields,
-and broader struct-value shapes remain. Enum fields use an explicit four-byte
+copies, and aggregate resource segments remain unsupported. Union members use
+overlapping layout and read-only typed loads; union writes, whole-union values,
+and by-value containers remain rejected. Bitfields and broader struct-value
+shapes remain. Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values, embedded struct arrays, multidimensional struct
-arrays, and unions as remaining. The pilot target json-c's `json_object` uses unions,
+lists broader struct values, embedded struct arrays, and multidimensional struct
+arrays as remaining. The first tagged-union slice is covered by
+`mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
+explicit source-level precondition rather than an inferred rule. The pilot
+target json-c's `json_object` uses unions,
 enums, and function pointers.
 
 ## Violated invariant
@@ -59,8 +65,10 @@ Staged mdtests, each with an unchanged C file:
    are covered by `mdtests/struct_by_value_enum_copy.md` and
    `mdtests/struct_by_value_array_copy.md`; pointer and embedded-field value
    shapes remain open.
-5. A union of `int32` and `int32*` with a tag field, read only through the
-   active member.
+5. ~~A union of `int32` and `int32*` with a tag field, read only through the
+   active member.~~ Covered by `mdtests/struct_tagged_union.md` and the C0
+   union-layout/read-only-boundary tests. Arbitrary tag-to-member mappings are
+   still an explicit source-level precondition; C0 does not infer them.
 
 ## Acceptance criteria
 

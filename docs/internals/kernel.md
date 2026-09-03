@@ -297,7 +297,14 @@ it must not encode a struct offset by pretending that a struct pointer is an
 `int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on
 the supported LP64 host ABI.
 
-This is not a target-independent C model. Packed structs, unions, bitfields,
+Named unions are represented on the C0 side as address-backed layouts. Every
+modeled member has offset zero, and a member read lowers to a kernel typed load
+using that member's scalar or pointer type. The kernel still has no runtime
+union value or active-member tag; C0 therefore rejects union writes and
+whole-union operations, while the tag/member relationship remains an explicit
+source-level precondition or branch.
+
+This is not a target-independent C model. Packed structs, bitfields,
 non-LP64 targets, and field types outside the documented C0 subset are not
 silently approximated; they must remain unsupported until their ABI rules are
 represented explicitly.

@@ -14,11 +14,12 @@ pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
 
-pub(super) fn parse_with_struct_layouts(
+pub(super) fn parse_with_layouts(
     source: &str,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
 ) -> Result<ClickFile, ClickError> {
-    Parser::new_with_struct_layouts(source, struct_layouts)?.parse_file()
+    Parser::new_with_layouts(source, struct_layouts, union_layouts)?.parse_file()
 }
 
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
@@ -132,6 +133,7 @@ struct Parser {
     matching_parentheses: Vec<Option<usize>>,
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
 }
@@ -198,6 +200,7 @@ struct ParsedFunctionSignature {
 struct ResolvedField {
     c_type: C0Type,
     struct_name: Option<String>,
+    union_name: Option<String>,
     offset_bytes: u32,
     byte_width: u32,
     slot_end_bytes: u32,
@@ -234,12 +237,13 @@ impl ContractLetBinding {
 
 impl Parser {
     fn new(source: &str) -> Result<Self, ClickError> {
-        Self::new_with_struct_layouts(source, BTreeMap::new())
+        Self::new_with_layouts(source, BTreeMap::new(), BTreeMap::new())
     }
 
-    fn new_with_struct_layouts(
+    fn new_with_layouts(
         source: &str,
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+        union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
@@ -249,6 +253,7 @@ impl Parser {
             matching_parentheses,
             position: 0,
             struct_layouts,
+            union_layouts,
             current_struct_params: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
         })
@@ -1168,13 +1173,14 @@ impl Parser {
             .ok_or_else(|| self.error(format!("unknown struct declaration `{struct_name}`")))?;
         if layout.fields().values().any(|field| {
             field.struct_name().is_some()
+                || field.union_name().is_some()
                 || !matches!(
                     field.c_type(),
                     C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
                 )
         }) {
             return Err(self.error(format!(
-                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer or embedded struct field"
+                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer, embedded struct, or union field"
             )));
         }
         Ok(C0Type::UInt8Array(layout.size_bytes()))
@@ -2616,6 +2622,7 @@ impl Parser {
             }
             _ => None,
         };
+        let mut union_name: Option<String> = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot)) {
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
@@ -2623,6 +2630,13 @@ impl Parser {
                 self.peek(),
                 Some(Token::Arrow | Token::Dot | Token::LBracket)
             ) {
+                if let Some(base_union_name) = &union_name
+                    && self.union_layouts.contains_key(base_union_name)
+                {
+                    let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
+                    self.validate_field_place(&field)?;
+                    return Ok(Self::field_segment_from_metadata(base, &field_name, &field));
+                }
                 if let Some(base_struct_name) = &struct_name
                     && self.struct_layouts.contains_key(base_struct_name)
                 {
@@ -2633,14 +2647,29 @@ impl Parser {
                 }
                 return self.resolve_field_segment(base, &field_name);
             }
-            let (lowered, next_struct_name) = if let Some(base_struct_name) = &struct_name
+            let (lowered, next_struct_name, next_union_name) = if let Some(base_union_name) =
+                &union_name
+                && self.union_layouts.contains_key(base_union_name)
+            {
+                let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
+                let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                (
+                    lowered_field_expression(pointer, &field),
+                    field.struct_name,
+                    None,
+                )
+            } else if let Some(base_struct_name) = &struct_name
                 && self.struct_layouts.contains_key(base_struct_name)
             {
                 let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                 let pointer = self.offset_field_pointer(base, field.offset_bytes);
-                (lowered_field_expression(pointer, &field), field.struct_name)
+                (
+                    lowered_field_expression(pointer, &field),
+                    field.struct_name,
+                    field.union_name,
+                )
             } else {
-                (self.resolve_field_load(base, &field_name)?, None)
+                (self.resolve_field_load(base, &field_name)?, None, None)
             };
             surface_base = ContractExpression::Field {
                 base: Box::new(surface_base),
@@ -2649,6 +2678,7 @@ impl Parser {
             };
             base = lowered;
             struct_name = next_struct_name;
+            union_name = next_union_name;
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
@@ -2751,31 +2781,45 @@ impl Parser {
             C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name),
             _ => None,
         };
-        let Some(struct_name) = struct_name else {
-            return Ok(None);
-        };
-        let field = self.resolve_struct_field_metadata(struct_name, field_name)?;
-        let pointer = self.offset_c0_field_pointer(base, field.offset_bytes);
-        Ok(Some(if field.c_type == C0Type::Int32 {
-            if let Some(struct_name) = field.struct_name {
-                C0Expression::AggregateAddress {
+        if let Some(struct_name) = struct_name {
+            let field = self.resolve_struct_field_metadata(struct_name, field_name)?;
+            let pointer = self.offset_c0_field_pointer(base.clone(), field.offset_bytes);
+            return Ok(Some(if let Some(union_name) = field.union_name {
+                C0Expression::UnionAddress {
                     pointer: Box::new(pointer),
-                    struct_name,
+                    union_name,
+                }
+            } else if field.c_type == C0Type::Int32 {
+                if let Some(struct_name) = field.struct_name {
+                    C0Expression::AggregateAddress {
+                        pointer: Box::new(pointer),
+                        struct_name,
+                    }
+                } else {
+                    C0Expression::Field {
+                        pointer: Box::new(pointer),
+                        field_type: field.c_type,
+                        field_struct_name: None,
+                    }
                 }
             } else {
                 C0Expression::Field {
                     pointer: Box::new(pointer),
                     field_type: field.c_type,
-                    field_struct_name: None,
+                    field_struct_name: field.struct_name,
                 }
-            }
-        } else {
-            C0Expression::Field {
+            }));
+        }
+        if let C0Expression::UnionAddress { union_name, .. } = &base {
+            let field = self.resolve_union_field_metadata(union_name, field_name)?;
+            let pointer = self.offset_c0_field_pointer(base.clone(), field.offset_bytes);
+            return Ok(Some(C0Expression::UnionField {
                 pointer: Box::new(pointer),
                 field_type: field.c_type,
-                field_struct_name: field.struct_name,
-            }
-        }))
+                union_name: union_name.clone(),
+            }));
+        }
+        Ok(None)
     }
 
     fn resolve_field_metadata(
@@ -2822,16 +2866,40 @@ impl Parser {
         Ok(ResolvedField {
             c_type: field.c_type(),
             struct_name: field.struct_name().map(str::to_string),
+            union_name: field.union_name().map(str::to_string),
             offset_bytes: field.offset_bytes(),
             byte_width: field.byte_width(),
             slot_end_bytes,
         })
     }
 
+    fn resolve_union_field_metadata(
+        &self,
+        union_name: &str,
+        field_name: &str,
+    ) -> Result<ResolvedField, ClickError> {
+        let Some(layout) = self.union_layouts.get(union_name) else {
+            return Err(self.error(format!("unknown union declaration `{union_name}`")));
+        };
+        let Some(field) = layout.field(field_name) else {
+            return Err(self.error(format!("union `{union_name}` has no member `{field_name}`")));
+        };
+        Ok(ResolvedField {
+            c_type: field.c_type(),
+            struct_name: None,
+            union_name: None,
+            offset_bytes: field.offset_bytes(),
+            byte_width: field.byte_width(),
+            slot_end_bytes: layout.size_bytes(),
+        })
+    }
+
     fn validate_field_place(&self, field: &ResolvedField) -> Result<(), ClickError> {
-        if field.c_type == C0Type::Int32 && field.struct_name.is_some() {
+        if field.c_type == C0Type::Int32
+            && (field.struct_name.is_some() || field.union_name.is_some())
+        {
             return Err(self.error(
-                "aggregate struct field places are not supported; name a leaf field instead",
+                "aggregate struct and union field places are not supported; name a leaf field instead",
             ));
         }
         if matches!(field.c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
@@ -3000,6 +3068,7 @@ impl Parser {
             }
             _ => None,
         };
+        let mut union_name: Option<String> = None;
         let mut struct_array = match &expression {
             ContractExpression::CFragment(CExpression::Variable(name)) => {
                 self.current_struct_array_params.contains(name)
@@ -3038,6 +3107,7 @@ impl Parser {
                         expression =
                             ContractExpression::Index(Box::new(expression), Box::new(index));
                         struct_name = None;
+                        union_name = None;
                         struct_array = false;
                     }
                 }
@@ -3050,13 +3120,28 @@ impl Parser {
                             self.error("field access is only supported on current C fragments")
                         );
                     };
-                    if let Some(base_struct_name) = &struct_name
+                    if let Some(base_union_name) = &union_name
+                        && self.union_layouts.contains_key(base_union_name)
+                    {
+                        let field =
+                            self.resolve_union_field_metadata(base_union_name, &field_name)?;
+                        let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                        struct_name = field.struct_name.clone();
+                        union_name = None;
+                        struct_array = false;
+                        expression = ContractExpression::Field {
+                            base: Box::new(surface_base),
+                            field: field_name,
+                            lowered: lowered_field_expression(pointer, &field),
+                        };
+                    } else if let Some(base_struct_name) = &struct_name
                         && self.struct_layouts.contains_key(base_struct_name)
                     {
                         let field =
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
                         struct_name = field.struct_name.clone();
+                        union_name = field.union_name.clone();
                         struct_array = false;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
@@ -3673,7 +3758,8 @@ impl Parser {
 }
 
 fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExpression {
-    if field.c_type == C0Type::Int32 && field.struct_name.is_some() {
+    if field.c_type == C0Type::Int32 && (field.struct_name.is_some() || field.union_name.is_some())
+    {
         pointer
     } else {
         CExpression::TypedLoad {

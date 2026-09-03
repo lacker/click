@@ -166,8 +166,8 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let layouts = parse_c_struct_layouts(click_source, &sources)?;
-    let file = parser::parse_with_struct_layouts(click_source, layouts)?;
+    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
+    let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
     verify_click_file_theorems(&file)
 }
 
@@ -176,8 +176,8 @@ pub(in crate::surface) fn parse_c0_click_file(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let struct_layouts = parse_c_struct_layouts(click_source, &sources)?;
-    parser::parse_with_struct_layouts(click_source, struct_layouts)
+    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
+    parser::parse_with_layouts(click_source, struct_layouts, union_layouts)
 }
 
 pub(in crate::surface) fn proof_unit_erased_click_file(
@@ -561,8 +561,8 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
-        let struct_layouts = parse_c_struct_layouts(click_source, &c_sources)?;
-        let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
+        let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &c_sources)?;
+        let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
         let expansion_functions = expansion_capture
             .as_deref()
@@ -1424,8 +1424,8 @@ pub fn c0_external_dependencies(
     c_sources: &[(&str, &str)],
 ) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let struct_layouts = parse_c_struct_layouts(click_source, &sources)?;
-    let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
+    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
+    let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
     let parsed_sources = parse_verified_sources(&file, &sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
     let external_names = function_blocks
@@ -1530,6 +1530,10 @@ pub(in crate::surface) fn c0_statement_calls(
                 pointer: expression,
                 ..
             }
+            | syntax::C0Expression::UnionAddress {
+                pointer: expression,
+                ..
+            }
             | syntax::C0Expression::PointerOffsetBytes {
                 pointer: expression,
                 ..
@@ -1573,11 +1577,15 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Expression::Field { pointer, .. } => {
                 collect_function_addresses(pointer, names);
             }
+            syntax::C0Expression::UnionField { pointer, .. } => {
+                collect_function_addresses(pointer, names);
+            }
             syntax::C0Expression::Void
             | syntax::C0Expression::Variable(_)
             | syntax::C0Expression::Int32Literal(_)
             | syntax::C0Expression::UInt8Literal(_)
             | syntax::C0Expression::SizeOfStruct { .. }
+            | syntax::C0Expression::SizeOfUnion { .. }
             | syntax::C0Expression::SizeOfType { .. } => {}
         }
     }
@@ -1888,11 +1896,18 @@ fn parse_c_source_functions(
     })
 }
 
-pub(in crate::surface) fn parse_c_struct_layouts(
+pub(in crate::surface) fn parse_c_layouts(
     click_source: &str,
     c_sources: &BTreeMap<&str, &str>,
-) -> Result<BTreeMap<String, syntax::C0StructLayout>, ClickError> {
+) -> Result<
+    (
+        BTreeMap<String, syntax::C0StructLayout>,
+        BTreeMap<String, syntax::C0UnionLayout>,
+    ),
+    ClickError,
+> {
     let mut layouts = BTreeMap::new();
+    let mut union_layouts = BTreeMap::new();
     for source_path in super::verifying_source_paths(click_source)? {
         let functions = parse_c_source_functions(&source_path, c_sources)?;
         for function in functions {
@@ -1905,9 +1920,18 @@ pub(in crate::surface) fn parse_c_struct_layouts(
                     )));
                 }
             }
+            for (name, layout) in function.unions() {
+                if let Some(previous) = union_layouts.insert(name.clone(), layout.clone())
+                    && previous != *layout
+                {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for union `{name}`"
+                    )));
+                }
+            }
         }
     }
-    Ok(layouts)
+    Ok((layouts, union_layouts))
 }
 
 pub(in crate::surface) fn parse_verified_sources(

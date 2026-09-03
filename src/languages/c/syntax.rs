@@ -14,6 +14,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.standard-spellings",
     "type.typedef",
     "type.enum",
+    "type.union",
     "type.pointer",
     "type.pointer-to-pointer",
     "type.array-parameter",
@@ -26,6 +27,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "declaration.struct",
     "declaration.struct-field-list",
     "declaration.enum",
+    "declaration.union",
+    "declaration.union-field-list",
     "declaration.local",
     "statement.struct-value-declaration",
     "statement.empty",
@@ -118,6 +121,7 @@ pub struct C0Function {
     body: C0Statement,
     structs: BTreeMap<String, C0StructLayout>,
     enums: BTreeMap<String, C0EnumDefinition>,
+    unions: BTreeMap<String, C0UnionLayout>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +142,7 @@ struct ParsedType {
     c_type: C0Type,
     struct_name: Option<String>,
     enum_name: Option<String>,
+    union_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,10 +158,26 @@ pub struct C0EnumDefinition {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0UnionLayout {
+    fields: BTreeMap<String, C0UnionField>,
+    size_bytes: u32,
+    alignment_bytes: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0UnionField {
+    c_type: C0Type,
+    enum_name: Option<String>,
+    offset_bytes: u32,
+    byte_width: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
     c_type: C0Type,
     struct_name: Option<String>,
     enum_name: Option<String>,
+    union_name: Option<String>,
     offset_bytes: u32,
     byte_width: u32,
 }
@@ -347,6 +368,10 @@ pub enum C0Expression {
         name: String,
         bytes: u32,
     },
+    SizeOfUnion {
+        name: String,
+        bytes: u32,
+    },
     SizeOfType {
         c_type: C0Type,
         struct_name: Option<String>,
@@ -385,6 +410,18 @@ pub enum C0Expression {
         field_type: C0Type,
         field_struct_name: Option<String>,
     },
+    UnionField {
+        pointer: Box<C0Expression>,
+        field_type: C0Type,
+        union_name: String,
+    },
+    /// Address of an embedded union. Union members overlap at offset zero and
+    /// are selected as typed scalar loads; the union itself has no runtime
+    /// aggregate value.
+    UnionAddress {
+        pointer: Box<C0Expression>,
+        union_name: String,
+    },
     Index(Box<C0Expression>, Box<C0Expression>),
 }
 
@@ -408,6 +445,7 @@ impl C0Function {
             body: C0Statement::Skip,
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
+            unions: BTreeMap::new(),
         }
     }
 
@@ -437,6 +475,10 @@ impl C0Function {
 
     pub fn enums(&self) -> &BTreeMap<String, C0EnumDefinition> {
         &self.enums
+    }
+
+    pub fn unions(&self) -> &BTreeMap<String, C0UnionLayout> {
+        &self.unions
     }
 
     pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
@@ -513,6 +555,42 @@ impl C0EnumDefinition {
     }
 }
 
+impl C0UnionLayout {
+    pub fn fields(&self) -> &BTreeMap<String, C0UnionField> {
+        &self.fields
+    }
+
+    pub fn field(&self, name: &str) -> Option<&C0UnionField> {
+        self.fields.get(name)
+    }
+
+    pub fn size_bytes(&self) -> u32 {
+        self.size_bytes
+    }
+
+    pub fn alignment_bytes(&self) -> u32 {
+        self.alignment_bytes
+    }
+}
+
+impl C0UnionField {
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn enum_name(&self) -> Option<&str> {
+        self.enum_name.as_deref()
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn byte_width(&self) -> u32 {
+        self.byte_width
+    }
+}
+
 impl C0StructField {
     pub fn c_type(&self) -> C0Type {
         self.c_type
@@ -528,6 +606,10 @@ impl C0StructField {
 
     pub fn enum_name(&self) -> Option<&str> {
         self.enum_name.as_deref()
+    }
+
+    pub fn union_name(&self) -> Option<&str> {
+        self.union_name.as_deref()
     }
 
     pub fn byte_width(&self) -> u32 {
@@ -788,12 +870,15 @@ impl C0Expression {
                 else_branch.to_kernel_expression(),
             ),
             Self::AddressOf(target) => match target.as_ref() {
-                Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
+                Self::AggregateAddress { pointer, .. } | Self::UnionAddress { pointer, .. } => {
+                    pointer.to_kernel_expression()
+                }
                 target => {
                     crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
                 }
             },
             Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
+            Self::UnionAddress { pointer, .. } => pointer.to_kernel_expression(),
             Self::PointerOffsetBytes { pointer, bytes } => {
                 crate::kernel::c_pointer_offset_bytes(pointer.to_kernel_expression(), *bytes)
             }
@@ -802,6 +887,7 @@ impl C0Expression {
             Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
                 crate::kernel::c_int32_literal(*bytes)
             }
+            Self::SizeOfUnion { bytes, .. } => crate::kernel::c_int32_literal(*bytes),
             Self::LessThan(left, right) => crate::kernel::c_less_than(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -876,6 +962,14 @@ impl C0Expression {
                 pointer,
                 field_type,
                 field_struct_name: _,
+            } => crate::kernel::c_typed_load(
+                pointer.to_kernel_expression(),
+                field_type.to_kernel_type(),
+            ),
+            Self::UnionField {
+                pointer,
+                field_type,
+                ..
             } => crate::kernel::c_typed_load(
                 pointer.to_kernel_expression(),
                 field_type.to_kernel_type(),
@@ -1027,7 +1121,14 @@ fn field_expression(
     pointer: C0Expression,
     field_type: C0Type,
     field_struct_name: Option<String>,
+    field_union_name: Option<String>,
 ) -> C0Expression {
+    if let Some(union_name) = field_union_name {
+        return C0Expression::UnionAddress {
+            pointer: Box::new(pointer),
+            union_name,
+        };
+    }
     if field_type == C0Type::Int32 {
         if let Some(struct_name) = field_struct_name {
             return C0Expression::AggregateAddress {
@@ -1045,12 +1146,13 @@ fn field_expression(
 
 fn contains_aggregate_value(expression: &C0Expression) -> bool {
     match expression {
-        C0Expression::AggregateAddress { .. } => true,
+        C0Expression::AggregateAddress { .. } | C0Expression::UnionAddress { .. } => true,
         C0Expression::Field {
             field_type,
             field_struct_name,
             ..
         } => *field_type == C0Type::Int32 && field_struct_name.is_some(),
+        C0Expression::UnionField { .. } => false,
         C0Expression::Call { arguments, .. } => arguments.iter().any(contains_aggregate_value),
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
@@ -1097,6 +1199,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
         | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => false,
     }
 }
@@ -1106,6 +1209,7 @@ fn is_builtin_type_start(name: &str) -> bool {
         name,
         "void"
             | "struct"
+            | "union"
             | "enum"
             | "int32"
             | "int"
@@ -1292,6 +1396,7 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
+    unions: BTreeMap<String, C0UnionLayout>,
     /// The names declared in each open lexical scope, innermost last. The
     /// source name is retained for lookup, while `kernel_name` is the
     /// identity emitted into the C0 AST. Click's kernel keys a local by its
@@ -1359,6 +1464,7 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
+            unions: BTreeMap::new(),
             scopes: Vec::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
@@ -1446,13 +1552,14 @@ impl Parser {
         })?;
         if layout.fields.values().any(|field| {
             field.struct_name.is_some()
+                || field.union_name.is_some()
                 || !matches!(
                     field.c_type,
                     C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
                 )
         }) {
             return Err(self.error_here(format!(
-                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer or embedded struct field"
+                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer, embedded struct, or union field"
             )));
         }
         Ok(layout)
@@ -1620,11 +1727,17 @@ impl Parser {
             body,
             structs: self.structs.clone(),
             enums: self.enums.clone(),
+            unions: self.unions.clone(),
         })
     }
 
     fn parse_function_header(&mut self) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.union_name.is_some() {
+            return Err(self.error_here(
+                "tagged union return values are not supported; access an active scalar member",
+            ));
+        }
         if parsed_return_type.enum_name.is_some() {
             return Err(self.error_here(
                 "enum return types are not supported; use enum values in struct fields",
@@ -1696,6 +1809,8 @@ impl Parser {
                 self.parse_struct_declaration()?;
             } else if self.peek_ident() == Some("enum") && self.peek_n(2) == Some(&Token::LBrace) {
                 self.parse_enum_declaration()?;
+            } else if self.peek_ident() == Some("union") && self.peek_n(2) == Some(&Token::LBrace) {
+                self.parse_union_declaration()?;
             } else {
                 break;
             }
@@ -1803,6 +1918,109 @@ impl Parser {
         })
     }
 
+    fn parse_union_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        self.expect_ident_spelling("union")?;
+        let name = self.expect_ident("union name")?;
+        if self.unions.contains_key(&name) {
+            return Err(self.error_at_previous(format!("duplicate union declaration `{name}`")));
+        }
+        self.expect(Token::LBrace)?;
+
+        let mut fields = BTreeMap::new();
+        let mut union_size = 0u32;
+        let mut union_alignment = 1u32;
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek().is_none() {
+                return Err(self.error_here("expected union field or `}`, got end of input"));
+            }
+            let field_type = self.parse_type()?;
+            loop {
+                let field_name = self.expect_ident("union field name")?;
+                let (c_type, field_size, field_alignment) =
+                    self.parse_union_field_declarator(&field_type, &name)?;
+                if fields
+                    .insert(
+                        field_name.clone(),
+                        C0UnionField {
+                            c_type,
+                            enum_name: (c_type == field_type.c_type)
+                                .then(|| field_type.enum_name.clone())
+                                .flatten(),
+                            offset_bytes: 0,
+                            byte_width: field_size,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(self
+                        .error_here(format!("duplicate field `{field_name}` in union `{name}`")));
+                }
+                union_size = union_size.max(field_size);
+                union_alignment = union_alignment.max(field_alignment);
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+            }
+            self.expect(Token::Semicolon)?;
+        }
+
+        self.expect(Token::RBrace)?;
+        self.expect(Token::Semicolon)?;
+        if fields.is_empty() {
+            return Err(self.error_here("union declarations must contain at least one field"));
+        }
+        let size_bytes = align_up(union_size, union_alignment)
+            .ok_or_else(|| self.error_here(format!("union `{name}` layout is too large")))?;
+        self.unions.insert(
+            name,
+            C0UnionLayout {
+                fields,
+                size_bytes,
+                alignment_bytes: union_alignment,
+            },
+        );
+        Ok(())
+    }
+
+    fn parse_union_field_declarator(
+        &mut self,
+        base_type: &ParsedType,
+        union_name: &str,
+    ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+        if base_type.struct_name.is_some() || base_type.union_name.is_some() {
+            return Err(self.error_here(format!(
+                "union `{union_name}` fields may not contain embedded structs or unions"
+            )));
+        }
+        if base_type.enum_name.is_some() {
+            if base_type.c_type != C0Type::Int32 || self.peek() == Some(&Token::LBracket) {
+                return Err(self.error_here(format!(
+                    "union `{union_name}` enum members must be scalar int32 values"
+                )));
+            }
+        }
+        if self.peek() == Some(&Token::LBracket) {
+            return Err(self.error_here(format!("union `{union_name}` members may not be arrays")));
+        }
+        let c_type = base_type.c_type;
+        if !matches!(
+            c_type,
+            C0Type::Int32
+                | C0Type::UInt8
+                | C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+        ) {
+            return Err(self.error_here(format!(
+                "union `{union_name}` members currently support int32, uint8, and pointer fields"
+            )));
+        }
+        let (field_size, field_alignment) = self.abi.size_and_alignment(c_type);
+        Ok((c_type, field_size, field_alignment))
+    }
+
     fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("struct")?;
         let name = self.expect_ident("struct name")?;
@@ -1833,6 +2051,9 @@ impl Parser {
                                 .flatten(),
                             enum_name: (c_type == field_type.c_type)
                                 .then(|| field_type.enum_name.clone())
+                                .flatten(),
+                            union_name: (c_type == field_type.c_type)
+                                .then(|| field_type.union_name.clone())
                                 .flatten(),
                             offset_bytes,
                             byte_width: field_size,
@@ -1897,6 +2118,21 @@ impl Parser {
                 return Err(self.error_here("arrays of enum fields are not supported"));
             }
             return Ok((C0Type::Int32, 4, 4));
+        }
+        if let Some(union_name) = base_type.union_name.as_deref() {
+            let union_layout = self.unions.get(union_name).ok_or_else(|| {
+                self.error_here(format!("unknown embedded union declaration `{union_name}`"))
+            })?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("arrays of embedded unions are not supported in struct fields")
+                );
+            }
+            return Ok((
+                base_type.c_type,
+                union_layout.size_bytes(),
+                union_layout.alignment_bytes(),
+            ));
         }
         if is_plain_struct_type(base_type) {
             let nested_name = base_type
@@ -2001,6 +2237,11 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
+            if parsed_type.union_name.is_some() {
+                return Err(self.error_here(
+                    "tagged union parameters are not supported; use a pointer to the containing struct",
+                ));
+            }
             if parsed_type.enum_name.is_some() {
                 return Err(self.error_here(
                     "enum parameters are not supported; use enum values in struct fields",
@@ -2129,10 +2370,29 @@ impl Parser {
                 c_type: C0Type::Int32,
                 struct_name: Some(self.expect_ident("struct name")?),
                 enum_name: None,
+                union_name: None,
+            },
+            Some(Token::Ident(name)) if name == "union" => ParsedType {
+                // A union has no runtime aggregate value in C0. Keep its tag
+                // on the parsed type while using an int32 placeholder for
+                // the address-backed member-selection path.
+                c_type: C0Type::Int32,
+                struct_name: None,
+                enum_name: None,
+                union_name: {
+                    let union_name = self.expect_ident("union name")?;
+                    if !self.unions.contains_key(&union_name) {
+                        return Err(
+                            self.error_here(format!("unknown union declaration `{union_name}`"))
+                        );
+                    }
+                    Some(union_name)
+                },
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
                 struct_name: None,
+                union_name: None,
                 enum_name: {
                     let enum_name = self.expect_ident("enum name")?;
                     if !self.enums.contains_key(&enum_name) {
@@ -2185,6 +2445,11 @@ impl Parser {
                     self.error_at_previous("pointer depth beyond `struct S*` is not supported")
                 );
             }
+            if parsed.union_name.is_some() {
+                return Err(
+                    self.error_at_previous("pointers to union values are not supported yet")
+                );
+            }
             if parsed.enum_name.is_some() && c_type != C0Type::Int32 {
                 return Err(self.error_at_previous("pointers to enum values are not supported"));
             }
@@ -2193,6 +2458,7 @@ impl Parser {
             c_type,
             struct_name: parsed.struct_name,
             enum_name: parsed.enum_name,
+            union_name: parsed.union_name,
         })
     }
 
@@ -2323,6 +2589,7 @@ impl Parser {
             c_type,
             struct_name: None,
             enum_name: None,
+            union_name: None,
         })
     }
 
@@ -2876,6 +3143,11 @@ impl Parser {
 
     fn parse_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let parsed_type = self.parse_type()?;
+        if parsed_type.union_name.is_some() {
+            return Err(self.error_here(
+                    "tagged union locals are not supported; access an active scalar member through a struct pointer",
+                ));
+        }
         if parsed_type.c_type == C0Type::Void {
             return Err(self.error_here("void local declarations are not supported"));
         }
@@ -3130,6 +3402,11 @@ impl Parser {
 
     fn parse_for_declaration_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let parsed_type = self.parse_type()?;
+        if parsed_type.union_name.is_some() {
+            return Err(self.error_here(
+                "tagged union loop locals are not supported; access an active scalar member through a struct pointer",
+            ));
+        }
         if parsed_type.c_type == C0Type::Void {
             return Err(self.error_here("void for-loop locals are not supported"));
         }
@@ -3361,6 +3638,12 @@ impl Parser {
                 C0Expression::AggregateAddress { .. } => {
                     Err(self.error_here("assigning to an embedded struct value is not supported"))
                 }
+                C0Expression::UnionAddress { .. } => {
+                    Err(self.error_here("assigning to a tagged union value is not supported"))
+                }
+                C0Expression::UnionField { .. } => {
+                    Err(self.error_here("writing tagged union members is not supported"))
+                }
                 C0Expression::Index(base, index) => Ok(C0Statement::Store {
                     pointer: C0Expression::Add(base, index),
                     value,
@@ -3370,6 +3653,12 @@ impl Parser {
                     "expected memory lvalue assignment target in {context}, got {target:?}"
                 ))),
             };
+        }
+
+        if matches!(target, C0Expression::UnionField { .. }) {
+            return Err(self.error_here(
+                "writing tagged union members is not supported; union accesses are read-only",
+            ));
         }
 
         let increment = matches!(operator, Token::PlusPlus | Token::MinusMinus);
@@ -3524,7 +3813,7 @@ impl Parser {
         let expression = self.parse_conditional()?;
         if contains_aggregate_value(&expression) {
             return Err(self.error_here(
-                "embedded struct fields are only supported through member access; struct values are not supported",
+                "embedded struct fields are only supported through member access; struct values are not supported, and tagged union values are not runtime aggregates",
             ));
         }
         Ok(expression)
@@ -3961,6 +4250,21 @@ impl Parser {
                     },
                 ))
             }
+            C0Expression::UnionField {
+                pointer,
+                field_type,
+                union_name,
+            } => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((
+                    prefix,
+                    C0Expression::UnionField {
+                        pointer: Box::new(pointer),
+                        field_type,
+                        union_name,
+                    },
+                ))
+            }
             C0Expression::LessThan(left, right) => {
                 self.lower_binary_calls(*left, *right, C0Expression::LessThan)
             }
@@ -4267,8 +4571,12 @@ impl Parser {
             self.position += 1;
             let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
-            let c_type = match (parsed_type.c_type, parsed_type.struct_name) {
-                (C0Type::Int32 | C0Type::UInt8, None) => parsed_type.c_type,
+            let c_type = match (
+                parsed_type.c_type,
+                parsed_type.struct_name,
+                parsed_type.union_name,
+            ) {
+                (C0Type::Int32 | C0Type::UInt8, None, None) => parsed_type.c_type,
                 _ => {
                     return Err(self.error_at_previous(
                         "casts currently support only `int32` and `uint8` scalar values",
@@ -4416,15 +4724,20 @@ impl Parser {
                 }
                 Some(Token::Dot) | Some(Token::Arrow) => {
                     let dot = self.peek() == Some(&Token::Dot);
+                    let union_base = match &expression {
+                        C0Expression::UnionAddress { union_name, .. } => Some(union_name.clone()),
+                        _ => None,
+                    };
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
-                    let (pointer, field_type, field_struct_name) = if dot {
+                    let (pointer, field_type, field_struct_name, field_union_name) = if dot {
                         let struct_value = matches!(
                             &expression,
                             C0Expression::Variable(name)
                                 if self.variable_struct_values.contains_key(name)
                         );
-                        if struct_value {
+                        if struct_value || matches!(&expression, C0Expression::UnionAddress { .. })
+                        {
                             self.resolve_field_access(&expression, &field_name)?
                         } else {
                             self.resolve_array_struct_field_access(&expression, &field_name)?
@@ -4432,7 +4745,15 @@ impl Parser {
                     } else {
                         self.resolve_field_access(&expression, &field_name)?
                     };
-                    expression = field_expression(pointer, field_type, field_struct_name);
+                    expression = if let Some(union_name) = union_base {
+                        C0Expression::UnionField {
+                            pointer: Box::new(pointer),
+                            field_type,
+                            union_name,
+                        }
+                    } else {
+                        field_expression(pointer, field_type, field_struct_name, field_union_name)
+                    };
                 }
                 _ => return Ok(expression),
             }
@@ -4443,40 +4764,56 @@ impl Parser {
         &self,
         base: &C0Expression,
         field_name: &str,
-    ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
-        let struct_name = match base {
-            C0Expression::Variable(base_name) => self.variable_structs.get(base_name),
+    ) -> Result<(C0Expression, C0Type, Option<String>, Option<String>), C0SyntaxError> {
+        let (struct_name, union_name) = match base {
+            C0Expression::Variable(base_name) => (self.variable_structs.get(base_name), None),
             C0Expression::Field {
                 field_struct_name, ..
-            } => field_struct_name.as_ref(),
-            C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name),
-            _ => None,
+            } => (field_struct_name.as_ref(), None),
+            C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name), None),
+            C0Expression::UnionAddress { union_name, .. } => (None, Some(union_name)),
+            _ => (None, None),
         };
-        let struct_name = struct_name.ok_or_else(|| {
-            self.error_here(format!(
-                "cannot access field `{field_name}` through a non-struct-pointer expression"
-            ))
-        })?;
-        let layout = self.structs.get(struct_name).ok_or_else(|| {
-            self.error_here(format!("unknown struct declaration `{struct_name}`"))
-        })?;
-        let field = layout.fields.get(field_name).ok_or_else(|| {
-            self.error_here(format!(
-                "struct `{struct_name}` has no field `{field_name}`"
-            ))
-        })?;
-        Ok((
-            offset_field_pointer(base.clone(), field.offset_bytes),
-            field.c_type,
-            field.struct_name.clone(),
-        ))
+        if let Some(struct_name) = struct_name {
+            let layout = self.structs.get(struct_name).ok_or_else(|| {
+                self.error_here(format!("unknown struct declaration `{struct_name}`"))
+            })?;
+            let field = layout.fields.get(field_name).ok_or_else(|| {
+                self.error_here(format!(
+                    "struct `{struct_name}` has no field `{field_name}`"
+                ))
+            })?;
+            return Ok((
+                offset_field_pointer(base.clone(), field.offset_bytes),
+                field.c_type,
+                field.struct_name.clone(),
+                field.union_name.clone(),
+            ));
+        }
+        if let Some(union_name) = union_name {
+            let layout = self.unions.get(union_name).ok_or_else(|| {
+                self.error_here(format!("unknown union declaration `{union_name}`"))
+            })?;
+            let field = layout.fields.get(field_name).ok_or_else(|| {
+                self.error_here(format!("union `{union_name}` has no member `{field_name}`"))
+            })?;
+            return Ok((
+                offset_field_pointer(base.clone(), field.offset_bytes),
+                field.c_type,
+                None,
+                None,
+            ));
+        }
+        Err(self.error_here(format!(
+            "cannot access field `{field_name}` through a non-struct-pointer expression"
+        )))
     }
 
     fn resolve_array_struct_field_access(
         &self,
         base: &C0Expression,
         field_name: &str,
-    ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
+    ) -> Result<(C0Expression, C0Type, Option<String>, Option<String>), C0SyntaxError> {
         let (element_pointer, struct_name) = match base {
             C0Expression::Index(array, index) => {
                 let C0Expression::Variable(name) = array.as_ref() else {
@@ -4516,6 +4853,7 @@ impl Parser {
             offset_field_pointer(element_pointer, field.offset_bytes),
             field.c_type,
             field.struct_name.clone(),
+            field.union_name.clone(),
         ))
     }
 
@@ -4533,6 +4871,17 @@ impl Parser {
                     .size_bytes;
                 return Ok(C0Expression::SizeOfStruct { name, bytes });
             }
+            if self.peek_ident() == Some("union") {
+                self.position += 1;
+                let name = self.expect_ident("union name")?;
+                self.expect(Token::RParen)?;
+                let bytes = self
+                    .unions
+                    .get(&name)
+                    .ok_or_else(|| self.error_here(format!("unknown union declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfUnion { name, bytes });
+            }
             let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
             if parsed_type.c_type == C0Type::Void {
@@ -4545,6 +4894,17 @@ impl Parser {
                     .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
                     .size_bytes;
                 return Ok(C0Expression::SizeOfStruct {
+                    name: name.clone(),
+                    bytes,
+                });
+            }
+            if let (C0Type::Int32, Some(name)) = (parsed_type.c_type, &parsed_type.union_name) {
+                let bytes = self
+                    .unions
+                    .get(name)
+                    .ok_or_else(|| self.error_here(format!("unknown union declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfUnion {
                     name: name.clone(),
                     bytes,
                 });
@@ -5124,9 +5484,10 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::Not(expression)
         | C0Expression::BitwiseNot(expression)
         | C0Expression::Load(expression) => first_embedded_call_position(expression),
-        C0Expression::AggregateAddress { pointer, .. } | C0Expression::Field { pointer, .. } => {
-            first_embedded_call_position(pointer)
-        }
+        C0Expression::AggregateAddress { pointer, .. }
+        | C0Expression::Field { pointer, .. }
+        | C0Expression::UnionField { pointer, .. }
+        | C0Expression::UnionAddress { pointer, .. } => first_embedded_call_position(pointer),
         C0Expression::Conditional {
             condition,
             then_branch,
@@ -5161,6 +5522,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
         | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
     }
 }
@@ -5180,7 +5542,9 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
             | C0Expression::BitwiseNot(expression)
             | C0Expression::Load(expression) => expressions.push(expression),
             C0Expression::AggregateAddress { pointer, .. }
-            | C0Expression::Field { pointer, .. } => expressions.push(pointer),
+            | C0Expression::UnionAddress { pointer, .. }
+            | C0Expression::Field { pointer, .. }
+            | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
             C0Expression::Conditional {
                 condition,
                 then_branch,
@@ -5218,6 +5582,7 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
             | C0Expression::Int32Literal(_)
             | C0Expression::UInt8Literal(_)
             | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. } => {}
         }
     }
