@@ -27,7 +27,14 @@ impl PureFactContext {
         // The index keys endpoints by canonical form; canonicalize the query
         // so any term equal to the bounded value finds its bounds.
         let term = crate::kernel::eval::canonical_term(term);
-        self.signed_order_bounds.get(&term).map(|bounds| {
+        self.exact_signed_order_bounds_for_key(&term)
+    }
+
+    fn exact_signed_order_bounds_for_key(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<Vec<SignedOrderBound>> {
+        self.signed_order_bounds.get(term).map(|bounds| {
             bounds
                 .keys()
                 .map(|(_, other, strict, upper)| SignedOrderBound {
@@ -330,20 +337,19 @@ impl PureFactContext {
             let value = i64::from(value as i32);
             return Some((value, value));
         }
-        if let Bitvector32Term::Add(left, right) = term {
-            let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
-            let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
-            let lower = left_lower.checked_add(right_lower)?;
-            let upper = left_upper.checked_add(right_upper)?;
-            if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
-                return None;
-            }
-            return Some((lower, upper));
-        }
-
         let mut lower = i64::from(i32::MIN);
         let mut upper = i64::from(i32::MAX);
-        if let Some(bounds) = self.exact_signed_order_bounds(term) {
+        // Add terms are common in pointer and loop arithmetic. Their direct
+        // fact key is enough for the compound-term regression, while deep
+        // canonicalization of every unbounded Add would turn this interval
+        // fallback into a hot-path tree walk. Non-add terms still use the
+        // canonical alias lookup above.
+        let exact_bounds = if matches!(term, Bitvector32Term::Add(_, _)) {
+            self.exact_signed_order_bounds_for_key(term)
+        } else {
+            self.exact_signed_order_bounds(term)
+        };
+        if let Some(bounds) = exact_bounds {
             for bound in bounds {
                 let Some(value) = signed_bitvector_constant(&bound.other) else {
                     continue;
@@ -372,6 +378,17 @@ impl PureFactContext {
                 return (lower <= upper).then_some((lower, upper));
             }
         }
+        if let Bitvector32Term::Add(left, right) = term {
+            let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
+            let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+            let lower = left_lower.checked_add(right_lower)?;
+            let upper = left_upper.checked_add(right_upper)?;
+            if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
+                return None;
+            }
+            return Some((lower, upper));
+        }
+
         for (condition, value) in self.condition_facts.iter() {
             #[cfg(test)]
             SIGNED_INTERVAL_FALLBACK_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
@@ -484,6 +501,32 @@ mod tests {
             assumptions.decide(&ConditionTerm::signed_add_overflows(
                 once,
                 Bitvector32Term::Constant(1),
+            )),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn compound_add_bounds_are_used_before_reconstruction() {
+        let x = Bitvector32Term::Variable(Variable(93_003));
+        let compound = Bitvector32Term::add(x, Bitvector32Term::Constant(1));
+        let assumptions = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(compound.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    compound.clone(),
+                    Bitvector32Term::Constant(2147483645),
+                ),
+                true,
+            );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_add_overflows(
+                compound,
+                Bitvector32Term::Constant(2),
             )),
             Some(false)
         );
