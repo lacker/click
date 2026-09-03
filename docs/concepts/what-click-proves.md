@@ -58,6 +58,17 @@ can still exhaust the process stack, address space, or available memory; those
 resource limits are outside the current judgment. C constructs outside C0's
 model are rejected with a diagnostic rather than silently approximated.
 
+### Host resource limits
+
+Click has no host-resource budget. It does not predict stack depth, address
+space, operating-system allocation failure, or the amount of local storage a
+machine can provide. The verifier's own worker-stack size and tactic budgets
+are implementation limits, not facts established about the verified program.
+An optional `decreases` clause proves a separate logical termination judgment;
+it does not turn those host limits into modeled C behavior. A future bounded
+mode must introduce explicit kernel-checked limits rather than infer them from
+the verifier process.
+
 For example, a Click contract can say that a function returns a particular
 value, preserves part of memory, writes only a stated range, or maintains an
 array property such as permutation.

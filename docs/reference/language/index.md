@@ -139,6 +139,13 @@ ordinary `ensures` continue to use partial correctness and do not silently
 depend on it. A perpetual service loop should therefore have an invariant but
 no `decreases` clause.
 
+Termination and host capacity are separate judgments. Click does not model
+process stack exhaustion, address-space exhaustion, operating-system
+allocation failure, or local-storage limits. A verified function can still
+run out of those host resources; the worker's stack size and verifier budgets
+are not program guarantees. The perpetual-loop regressions in the [examples
+reference](../examples.md) pin this partial-correctness boundary.
+
 A function with several effect and postcondition clauses may instead use one
 grouped execution proof after the contract block:
 
