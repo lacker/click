@@ -304,7 +304,7 @@ impl<'a> Proof<'a> {
             // checked fixed-state operations that explicitly cross effects.
             let mut facts = self.facts().clone();
             for fact in path.facts() {
-                facts = facts.with_fact(fact.proposition().clone());
+                facts = facts.with_kernel_checked_fact(fact.proposition().clone());
             }
             let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);

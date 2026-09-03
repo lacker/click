@@ -318,7 +318,7 @@ impl<'a> Proof<'a> {
             let added = arm_facts[base_facts..].to_vec();
             let mut facts = self.facts().clone();
             for fact in &added {
-                facts = facts.with_fact(fact.clone());
+                facts = facts.with_kernel_checked_fact(fact.clone());
             }
             arms[usize::from(!value)] = Some((facts, arm_execution, added));
         }
@@ -828,7 +828,7 @@ impl<'a> Proof<'a> {
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();
         for fact in &added {
-            proof_facts = proof_facts.with_fact(fact.clone());
+            proof_facts = proof_facts.with_kernel_checked_fact(fact.clone());
         }
         // Retain the checked `have` as provenance: a smart body keeps the
         // law's selected surface operations; an explicit body keeps its own
@@ -988,7 +988,7 @@ impl<'a> Proof<'a> {
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();
         for fact in &added {
-            proof_facts = proof_facts.with_fact(fact.clone());
+            proof_facts = proof_facts.with_kernel_checked_fact(fact.clone());
         }
         // Retain the expanded loop clause as checked provenance so
         // whole-claim expansion serializes it without consulting the

@@ -2954,6 +2954,25 @@ fn collect_affine_bitvector_terms(
             collect_affine_bitvector_terms(left, coefficient, terms, constant)?;
             collect_affine_bitvector_terms(right, coefficient.checked_neg()?, terms, constant)?;
         }
+        Bitvector32Term::Multiply(left, right) => {
+            if let Some(value) = left.as_const() {
+                collect_affine_bitvector_terms(
+                    right,
+                    coefficient.checked_mul(i64::from(value as i32))?,
+                    terms,
+                    constant,
+                )?;
+            } else if let Some(value) = right.as_const() {
+                collect_affine_bitvector_terms(
+                    left,
+                    coefficient.checked_mul(i64::from(value as i32))?,
+                    terms,
+                    constant,
+                )?;
+            } else {
+                return None;
+            }
+        }
         atom => {
             // Atoms are keyed by their canonical form, so a load term and
             // its load variable cancel affinely; the verdict

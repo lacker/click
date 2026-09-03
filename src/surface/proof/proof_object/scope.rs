@@ -987,7 +987,7 @@ impl<'a> ProofScope<'a> {
                 }
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
-                facts = facts.with_fact(kernel.clone());
+                facts = facts.with_kernel_checked_fact(kernel.clone());
                 let mut obligation =
                     self.root.focused_obligation().cloned().ok_or_else(|| {
                         self.root.step_error("`have` scope goal is no longer open")

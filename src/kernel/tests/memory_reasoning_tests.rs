@@ -101,6 +101,40 @@ fn typed_reads_can_use_a_differently_indexed_byte_footprint() {
 }
 
 #[test]
+fn byte_range_containment_expands_constant_stride_arithmetic() {
+    let index = Bitvector32Term::Variable(Variable(93_506));
+    let repeated = Bitvector32Term::add(
+        Bitvector32Term::add(index.clone(), index.clone()),
+        Bitvector32Term::add(index.clone(), index.clone()),
+    );
+    let scaled = Bitvector32Term::multiply(index, Bitvector32Term::Constant(4));
+    let base = Pointer {
+        block: "strided-byte-buffer".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(repeated),
+            byte_width: 1,
+        },
+    };
+    let pointer = Pointer {
+        block: base.block.clone(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::add(scaled, Bitvector32Term::Constant(3))),
+            byte_width: 1,
+        },
+    };
+
+    assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+        &pointer,
+        &CMemoryRange::new_with_element_width(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        ),
+    ));
+}
+
+#[test]
 fn element_index_and_count_support_nonlegacy_widths() {
     for (element_width, index, byte_count) in
         [(1_u32, 3_u32, 3_u32), (2, 7, 14), (4, 5, 20), (8, 2, 16)]

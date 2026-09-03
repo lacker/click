@@ -1261,7 +1261,7 @@ impl<'a> Proof<'a> {
         if self.facts().contains(&quantified) {
             return Err(self.step_error("induction hypothesis was already introduced"));
         }
-        let facts = self.facts().with_fact(quantified.clone());
+        let facts = self.facts().with_kernel_checked_fact(quantified.clone());
         Ok(self.checked_fact_transition(
             self.state().locals().clone(),
             facts,
@@ -1329,7 +1329,7 @@ impl<'a> Proof<'a> {
                 let added_facts = state.state().checked_facts().to_vec();
                 let mut facts = self.facts().clone();
                 for fact in &added_facts {
-                    facts = facts.with_fact(fact.clone());
+                    facts = facts.with_kernel_checked_fact(fact.clone());
                 }
                 let complete = self.goal().is_some_and(|goal| facts.contains(goal));
                 self.checked_fact_transition(

@@ -72,7 +72,7 @@ pub(in crate::surface::proof) fn certified_proof_condition_split(
             let mut path_facts = Vec::new();
             for fact in path.facts() {
                 let proposition = fact.proposition().clone();
-                successor_facts = successor_facts.with_fact(proposition.clone());
+                successor_facts = successor_facts.with_kernel_checked_fact(proposition.clone());
                 path_facts.push(proposition);
             }
             for obligation in path.obligations() {

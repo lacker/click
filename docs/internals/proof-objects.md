@@ -49,6 +49,12 @@ choose the kernel proposition, introduced fact, or successor state.
 Conjunction extraction and explicit universal instantiation likewise accept
 lowered inputs, then let the kernel validate availability, guards, and the
 resulting fact before it publishes a successor.
+The raw persistent fact insertion and focused-state replacement operations are
+scoped to `src/kernel`; their `with_kernel_checked_fact` and
+`publish_checked_result` language adapters are carry-only seams for results
+already produced by operation-specific checked kernel drivers. They do not
+derive or bless propositions themselves, so keeping raw callers inside the
+kernel is an explicit trusted boundary guarded by a source-scope regression.
 For proposition `if` and `cases`, the kernel allocates the audited split and
 sibling identities, checks complementary or available case facts, and owns the
 closed-arm join. Surface provenance independently proves that serialized arm
