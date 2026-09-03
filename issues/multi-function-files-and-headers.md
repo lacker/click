@@ -19,6 +19,9 @@ macros, conditional compilation, and other preprocessor handling remain open.
 The follow-up slice now recognizes canonical whole-header guards and
 `#pragma once`, suppressing repeated expansion of shared headers while keeping
 arbitrary conditional compilation unsupported.
+The modeled `<stdint.h>` system header is now accepted as a no-op because C0
+already defines the semantics of its supported `int32_t` and `uint8_t` names;
+other system headers remain unsupported.
 
 ## Violated invariant
 
@@ -47,6 +50,8 @@ construct rather than "unexpected character".
   receive source-named diagnostics.
 - Canonical whole-header guards and `#pragma once` prevent repeated expansion
   when a shared header is reached through multiple include paths.
+- `<stdint.h>` is accepted as a modeled no-op for the standard C0 type
+  spellings; unknown system headers receive a source-named diagnostic.
 - System headers, arbitrary macros, conditional compilation, and other
   preprocessor directives remain explicitly unsupported until a documented
   allowlist or preprocessor subset is implemented.

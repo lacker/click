@@ -50,6 +50,7 @@ impl ExpandedCSource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SourceDirective {
     Include(String),
+    SystemInclude(String),
     HeaderGuardStart(String),
     HeaderGuardDefine(String),
     HeaderGuardEnd,
@@ -71,7 +72,7 @@ enum SignificantLine {
 }
 
 /// Returns the normalized project-local headers directly included by a source.
-/// System headers and unsupported preprocessor directives are rejected.
+/// Unsupported system headers and preprocessor directives are rejected.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
     Ok(analyze_source(source_path, source)?.includes)
 }
@@ -167,6 +168,7 @@ fn expand_source<'a>(
                     expanded,
                 )?;
             }
+            SourceDirective::SystemInclude(_) => {}
             SourceDirective::HeaderGuardStart(_)
             | SourceDirective::HeaderGuardDefine(_)
             | SourceDirective::HeaderGuardEnd
@@ -303,10 +305,23 @@ fn parse_directive<'a>(
         let rest = rest.trim_start();
         let Some(rest) = rest.strip_prefix('"') else {
             if rest.starts_with('<') {
+                let Some(end) = rest.find('>') else {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "malformed system include; missing closing `>`",
+                    ));
+                };
+                let header = &rest[1..end];
+                if header == "stdint.h" && trailing_comments_only(&rest[end + 1..]) {
+                    return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
+                }
                 return Err(CSourceError::new(
                     source_path,
                     line_number,
-                    "system header includes are not supported yet; use a quoted project-local header",
+                    format!(
+                        "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                    ),
                 ));
             }
             return Err(CSourceError::new(
@@ -628,6 +643,23 @@ mod tests {
     }
 
     #[test]
+    fn modeled_system_headers_are_ignored_during_expansion() {
+        let sources = BTreeMap::from([(
+            "main.c",
+            "#include <stdint.h>\nint32_t run(uint8_t value) { return value; }\n",
+        )]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(!expanded.source().contains("#include <stdint.h>"));
+        assert!(expanded.source().contains("int32_t run(uint8_t value)"));
+        assert!(expanded.dependencies().is_empty());
+        assert!(
+            local_include_paths("main.c", sources["main.c"])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn malformed_header_guards_are_rejected_but_arbitrary_conditionals_remain_unsupported() {
         let mismatched = BTreeMap::from([(
             "bad.h",
@@ -669,8 +701,8 @@ mod tests {
         let cases = [
             ("#define VALUE 1\n", "unsupported preprocessor directive"),
             (
-                "#include <stdint.h>\n",
-                "system header includes are not supported",
+                "#include <stdio.h>\n",
+                "system header `<stdio.h>` is not supported",
             ),
         ];
         for (source, expected) in cases {
