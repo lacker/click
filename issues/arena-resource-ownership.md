@@ -38,8 +38,11 @@ same scoped opens as `arena_read`; the hidden second whole-function
 execution that used to fail to reproduce its resource path is gone (the
 proof object's typed execution evidence is retained instead; see
 `docs/internals/proof-objects.md`). The footprint evaluation had to learn to
-name a load through a folded contained unit symbolically. The next bounded
-blockers are `arena_free`, `arena_alloc`, `arena_init`, and `arena_destroy`.
+name a load through a folded contained unit symbolically. `arena_free` now
+consumes the live region, clears its occupancy interval with checked loop
+bounds, restores the descriptor and shared metadata, and returns the cleared
+interval as an `arena_available` resource. The next bounded blockers are
+`arena_alloc`, `arena_init`, and `arena_destroy`.
 
 ## Violated invariant
 
