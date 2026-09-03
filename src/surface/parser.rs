@@ -2568,10 +2568,13 @@ impl Parser {
             }
             _ => None,
         };
-        while self.peek() == Some(&Token::Arrow) {
+        while matches!(self.peek(), Some(Token::Arrow | Token::Dot)) {
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
-            if !matches!(self.peek(), Some(Token::Arrow | Token::LBracket)) {
+            if !matches!(
+                self.peek(),
+                Some(Token::Arrow | Token::Dot | Token::LBracket)
+            ) {
                 if let Some(base_struct_name) = &struct_name
                     && self.struct_layouts.contains_key(base_struct_name)
                 {
@@ -2587,13 +2590,7 @@ impl Parser {
             {
                 let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                 let pointer = self.offset_field_pointer(base, field.offset_bytes);
-                (
-                    CExpression::TypedLoad {
-                        pointer: Box::new(pointer),
-                        value_type: field.c_type.to_kernel_type(),
-                    },
-                    field.struct_name,
-                )
+                (lowered_field_expression(pointer, &field), field.struct_name)
             } else {
                 (self.resolve_field_load(base, &field_name)?, None)
             };
@@ -2703,16 +2700,33 @@ impl Parser {
             C0Expression::Field {
                 field_struct_name, ..
             } => field_struct_name.as_ref(),
+            C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name),
             _ => None,
         };
         let Some(struct_name) = struct_name else {
             return Ok(None);
         };
         let field = self.resolve_struct_field_metadata(struct_name, field_name)?;
-        Ok(Some(C0Expression::Field {
-            pointer: Box::new(self.offset_c0_field_pointer(base, field.offset_bytes)),
-            field_type: field.c_type,
-            field_struct_name: field.struct_name,
+        let pointer = self.offset_c0_field_pointer(base, field.offset_bytes);
+        Ok(Some(if field.c_type == C0Type::Int32 {
+            if let Some(struct_name) = field.struct_name {
+                C0Expression::AggregateAddress {
+                    pointer: Box::new(pointer),
+                    struct_name,
+                }
+            } else {
+                C0Expression::Field {
+                    pointer: Box::new(pointer),
+                    field_type: field.c_type,
+                    field_struct_name: None,
+                }
+            }
+        } else {
+            C0Expression::Field {
+                pointer: Box::new(pointer),
+                field_type: field.c_type,
+                field_struct_name: field.struct_name,
+            }
         }))
     }
 
@@ -2767,6 +2781,11 @@ impl Parser {
     }
 
     fn validate_field_place(&self, field: &ResolvedField) -> Result<(), ClickError> {
+        if field.c_type == C0Type::Int32 && field.struct_name.is_some() {
+            return Err(self.error(
+                "aggregate struct field places are not supported; name a leaf field instead",
+            ));
+        }
         if matches!(field.c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
             if field.slot_end_bytes < field.offset_bytes
                 || (matches!(field.c_type, C0Type::Int32Array(_))
@@ -2989,15 +3008,12 @@ impl Parser {
                         let field =
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
-                        struct_name = field.struct_name;
+                        struct_name = field.struct_name.clone();
                         struct_array = false;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name,
-                            lowered: CExpression::TypedLoad {
-                                pointer: Box::new(pointer),
-                                value_type: field.c_type.to_kernel_type(),
-                            },
+                            lowered: lowered_field_expression(pointer, &field),
                         };
                     } else {
                         expression = ContractExpression::Field {
@@ -3389,7 +3405,7 @@ impl Parser {
                     self.expect(Token::RBracket)?;
                     expression = C0Expression::Index(Box::new(expression), Box::new(index));
                 }
-                Some(Token::Arrow) => {
+                Some(Token::Arrow | Token::Dot) => {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
                     let base = expression;
@@ -3605,6 +3621,17 @@ impl Parser {
 
     fn error(&self, message: impl Into<String>) -> ClickError {
         self.error_at(self.here(), message)
+    }
+}
+
+fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExpression {
+    if field.c_type == C0Type::Int32 && field.struct_name.is_some() {
+        pointer
+    } else {
+        CExpression::TypedLoad {
+            pointer: Box::new(pointer),
+            value_type: field.c_type.to_kernel_type(),
+        }
     }
 }
 

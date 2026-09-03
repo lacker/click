@@ -1462,6 +1462,10 @@ pub(in crate::surface) fn c0_statement_calls(
             }
             syntax::C0Expression::Cast { expression, .. }
             | syntax::C0Expression::AddressOf(expression)
+            | syntax::C0Expression::AggregateAddress {
+                pointer: expression,
+                ..
+            }
             | syntax::C0Expression::PointerOffsetBytes {
                 pointer: expression,
                 ..

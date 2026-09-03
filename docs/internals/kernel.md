@@ -268,7 +268,14 @@ For example, `{ uint8 buf[16]; int32 a; int32* p; }` places `buf` at byte
 offset 0, `a` at byte offset 16, and `p` at byte offset 24, and has size 32.
 Inline scalar arrays are retained as aggregate type metadata, but an array
 field used in an expression decays to a pointer to its first element; the
-kernel never represents the aggregate as a runtime `CValue`.
+kernel never represents the aggregate as a runtime `CValue`. Embedded struct
+fields follow the same address-first rule: for `{ uint8 tag; struct inner in;
+int32 tail; }` with `inner` sized at 8 bytes, `in` starts at byte offset 4 and
+`tail` starts at byte offset 12. The C0 surface carries `in` as an aggregate
+place while nested member lowering adds the inner field offset before emitting
+the kernel's scalar load or store. Direct aggregate loads and copies remain
+unsupported; resource clauses currently name nested leaf fields rather than
+the aggregate itself.
 
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an

@@ -145,6 +145,7 @@ pub struct C0StructField {
     c_type: C0Type,
     struct_name: Option<String>,
     offset_bytes: u32,
+    byte_width: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -335,6 +336,13 @@ pub enum C0Expression {
     BitwiseXor(Box<C0Expression>, Box<C0Expression>),
     BitwiseNot(Box<C0Expression>),
     Load(Box<C0Expression>),
+    /// Address of an embedded struct field. Aggregate objects have no
+    /// runtime `CValue`; this node carries the aggregate place through nested
+    /// member selection until a scalar field is selected.
+    AggregateAddress {
+        pointer: Box<C0Expression>,
+        struct_name: String,
+    },
     Field {
         pointer: Box<C0Expression>,
         field_type: C0Type,
@@ -419,7 +427,7 @@ impl C0StructField {
     }
 
     pub fn byte_width(&self) -> u32 {
-        self.c_type.to_kernel_type().byte_width()
+        self.byte_width
     }
 }
 
@@ -632,9 +640,13 @@ impl C0Expression {
                 then_branch.to_kernel_expression(),
                 else_branch.to_kernel_expression(),
             ),
-            Self::AddressOf(target) => {
-                crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
-            }
+            Self::AddressOf(target) => match target.as_ref() {
+                Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
+                target => {
+                    crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
+                }
+            },
+            Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
             Self::PointerOffsetBytes { pointer, bytes } => {
                 crate::kernel::c_pointer_offset_bytes(pointer.to_kernel_expression(), *bytes)
             }
@@ -837,6 +849,83 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
 
 fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
+}
+
+fn field_expression(
+    pointer: C0Expression,
+    field_type: C0Type,
+    field_struct_name: Option<String>,
+) -> C0Expression {
+    if field_type == C0Type::Int32 {
+        if let Some(struct_name) = field_struct_name {
+            return C0Expression::AggregateAddress {
+                pointer: Box::new(pointer),
+                struct_name,
+            };
+        }
+    }
+    C0Expression::Field {
+        pointer: Box::new(pointer),
+        field_type,
+        field_struct_name,
+    }
+}
+
+fn contains_aggregate_value(expression: &C0Expression) -> bool {
+    match expression {
+        C0Expression::AggregateAddress { .. } => true,
+        C0Expression::Field {
+            field_type,
+            field_struct_name,
+            ..
+        } => *field_type == C0Type::Int32 && field_struct_name.is_some(),
+        C0Expression::AddressOf(_) => false,
+        C0Expression::Cast { expression, .. }
+        | C0Expression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | C0Expression::Not(expression)
+        | C0Expression::BitwiseNot(expression)
+        | C0Expression::Load(expression) => contains_aggregate_value(expression),
+        C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            contains_aggregate_value(condition)
+                || contains_aggregate_value(then_branch)
+                || contains_aggregate_value(else_branch)
+        }
+        C0Expression::LessThan(left, right)
+        | C0Expression::LessEqual(left, right)
+        | C0Expression::GreaterThan(left, right)
+        | C0Expression::GreaterEqual(left, right)
+        | C0Expression::Equal(left, right)
+        | C0Expression::NotEqual(left, right)
+        | C0Expression::And(left, right)
+        | C0Expression::Or(left, right)
+        | C0Expression::Add(left, right)
+        | C0Expression::Subtract(left, right)
+        | C0Expression::Multiply(left, right)
+        | C0Expression::Divide(left, right)
+        | C0Expression::Remainder(left, right)
+        | C0Expression::ShiftLeft(left, right)
+        | C0Expression::ShiftRight(left, right)
+        | C0Expression::BitwiseAnd(left, right)
+        | C0Expression::BitwiseOr(left, right)
+        | C0Expression::BitwiseXor(left, right)
+        | C0Expression::Index(left, right) => {
+            contains_aggregate_value(left) || contains_aggregate_value(right)
+        }
+        C0Expression::Void
+        | C0Expression::Variable(_)
+        | C0Expression::FunctionAddress(_)
+        | C0Expression::Int32Literal(_)
+        | C0Expression::UInt8Literal(_)
+        | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfType { .. } => false,
+    }
 }
 
 fn is_builtin_type_start(name: &str) -> bool {
@@ -1203,9 +1292,6 @@ impl Parser {
                 return Err(self.error_here("expected struct field or `}`, got end of input"));
             }
             let field_type = self.parse_type()?;
-            if is_plain_struct_type(&field_type) {
-                return Err(self.error_here("struct fields cannot contain struct values"));
-            }
             loop {
                 let field_name = self.expect_ident("struct field name")?;
                 let (c_type, field_size, field_alignment) =
@@ -1222,6 +1308,7 @@ impl Parser {
                                 .then(|| field_type.struct_name.clone())
                                 .flatten(),
                             offset_bytes,
+                            byte_width: field_size,
                         },
                     )
                     .is_some()
@@ -1272,6 +1359,26 @@ impl Parser {
         base_type: &ParsedType,
         struct_name: &str,
     ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+        if is_plain_struct_type(base_type) {
+            let nested_name = base_type
+                .struct_name
+                .as_deref()
+                .expect("plain struct type carries its name");
+            let nested_layout = self.structs.get(nested_name).ok_or_else(|| {
+                self.error_here(format!(
+                    "unknown embedded struct declaration `{nested_name}`"
+                ))
+            })?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(self
+                    .error_here("arrays of embedded structs are not supported in struct fields"));
+            }
+            return Ok((
+                base_type.c_type,
+                nested_layout.size_bytes(),
+                nested_layout.alignment_bytes(),
+            ));
+        }
         let c_type = if self.peek() == Some(&Token::LBracket) {
             if base_type.struct_name.is_some()
                 || !matches!(base_type.c_type, C0Type::Int32 | C0Type::UInt8)
@@ -2496,6 +2603,9 @@ impl Parser {
                     value,
                     value_type: Some(field_type),
                 }),
+                C0Expression::AggregateAddress { .. } => {
+                    Err(self.error_here("assigning to an embedded struct value is not supported"))
+                }
                 C0Expression::Index(base, index) => Ok(C0Statement::Store {
                     pointer: C0Expression::Add(base, index),
                     value,
@@ -2656,7 +2766,13 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        self.parse_conditional()
+        let expression = self.parse_conditional()?;
+        if contains_aggregate_value(&expression) {
+            return Err(self.error_here(
+                "embedded struct fields are only supported through member access; struct values are not supported",
+            ));
+        }
+        Ok(expression)
     }
 
     fn parse_conditional(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -3014,11 +3130,7 @@ impl Parser {
                     } else {
                         self.resolve_field_access(&expression, &field_name)?
                     };
-                    expression = C0Expression::Field {
-                        pointer: Box::new(pointer),
-                        field_type,
-                        field_struct_name,
-                    };
+                    expression = field_expression(pointer, field_type, field_struct_name);
                 }
                 _ => return Ok(expression),
             }
@@ -3035,6 +3147,7 @@ impl Parser {
             C0Expression::Field {
                 field_struct_name, ..
             } => field_struct_name.as_ref(),
+            C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name),
             _ => None,
         };
         let struct_name = struct_name.ok_or_else(|| {
@@ -3062,24 +3175,33 @@ impl Parser {
         base: &C0Expression,
         field_name: &str,
     ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
-        let C0Expression::Index(array, index) = base else {
-            return Err(
-                self.error_here("`.` currently supports only indexed local arrays of structs")
-            );
+        let (element_pointer, struct_name) = match base {
+            C0Expression::Index(array, index) => {
+                let C0Expression::Variable(name) = array.as_ref() else {
+                    return Err(self.error_here(
+                        "`.` currently supports only indexed local arrays of structs",
+                    ));
+                };
+                if !self.variable_array_shapes.contains_key(name) {
+                    return Err(self.error_here(
+                        "`.` currently supports only indexed local arrays of structs",
+                    ));
+                }
+                let struct_name = self.variable_structs.get(name).ok_or_else(|| {
+                    self.error_here("`.` currently supports only indexed local arrays of structs")
+                })?;
+                (C0Expression::Add(array.clone(), index.clone()), struct_name)
+            }
+            C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } => (pointer.as_ref().clone(), struct_name),
+            _ => {
+                return Err(
+                    self.error_here("`.` currently supports only indexed local arrays of structs")
+                );
+            }
         };
-        let C0Expression::Variable(name) = array.as_ref() else {
-            return Err(
-                self.error_here("`.` currently supports only indexed local arrays of structs")
-            );
-        };
-        if !self.variable_array_shapes.contains_key(name) {
-            return Err(
-                self.error_here("`.` currently supports only indexed local arrays of structs")
-            );
-        }
-        let struct_name = self.variable_structs.get(name).ok_or_else(|| {
-            self.error_here("`.` currently supports only indexed local arrays of structs")
-        })?;
         let layout = self.structs.get(struct_name).ok_or_else(|| {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
@@ -3088,7 +3210,6 @@ impl Parser {
                 "struct `{struct_name}` has no field `{field_name}`"
             ))
         })?;
-        let element_pointer = C0Expression::Add(array.clone(), index.clone());
         Ok((
             offset_field_pointer(element_pointer, field.offset_bytes),
             field.c_type,

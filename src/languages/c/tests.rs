@@ -966,6 +966,158 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
 }
 
 #[test]
+fn c0_struct_layout_preserves_embedded_struct_shape() {
+    #[repr(C)]
+    struct HostInner {
+        value: i32,
+        flag: u8,
+    }
+    #[repr(C)]
+    struct HostOuter {
+        tag: u8,
+        inner: HostInner,
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 flag;
+        };
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+            int32 tail;
+        };
+
+        int32 read_nested(struct outer* packet) {
+            return packet->inner.value;
+        }
+        "#,
+    )
+    .expect("embedded struct fields should parse");
+    let inner = function.structs().get("inner").expect("inner layout");
+    let outer = function.structs().get("outer").expect("outer layout");
+
+    assert_eq!(
+        inner.size_bytes() as usize,
+        std::mem::size_of::<HostInner>()
+    );
+    assert_eq!(
+        inner.alignment_bytes() as usize,
+        std::mem::align_of::<HostInner>()
+    );
+    assert_eq!(outer.field("tag").unwrap().offset_bytes() as usize, 0);
+    assert_eq!(
+        outer.field("inner").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, inner)
+    );
+    assert_eq!(outer.field("inner").unwrap().struct_name(), Some("inner"));
+    assert_eq!(
+        outer.field("inner").unwrap().byte_width() as usize,
+        std::mem::size_of::<HostInner>()
+    );
+    assert_eq!(
+        outer.field("tail").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, tail)
+    );
+    assert_eq!(
+        outer.size_bytes() as usize,
+        std::mem::size_of::<HostOuter>()
+    );
+    assert_eq!(
+        outer.alignment_bytes() as usize,
+        std::mem::align_of::<HostOuter>()
+    );
+}
+
+#[test]
+fn c0_embedded_struct_field_access_lowers_to_nested_scalar_offset() {
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+        };
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+        };
+
+        int32 write_nested(struct outer* packet) {
+            packet->inner.value = 7;
+            return packet->inner.value;
+        }
+        "#,
+    )
+    .expect("nested embedded field access should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 4);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 8))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 8).store(
+            crate::kernel::Pointer {
+                block: "packet".into(),
+                offset: crate::kernel::PointerOffsetTerm::Constant(4),
+            },
+            crate::kernel::int32(7),
+        ))
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("nested embedded field access should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_rejects_embedded_struct_values_outside_member_access() {
+    let error = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+        };
+        struct outer {
+            struct inner inner;
+        };
+
+        int32 invalid(struct outer* packet) {
+            return packet->inner;
+        }
+        "#,
+    )
+    .expect_err("embedded struct values should not be loaded as scalars");
+
+    assert!(
+        error
+            .to_string()
+            .contains("embedded struct fields are only supported through member access")
+    );
+}
+
+#[test]
 fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
     fn contains_heap_operations(statement: &syntax::C0Statement) -> (bool, bool) {
         match statement {

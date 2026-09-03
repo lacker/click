@@ -7,7 +7,7 @@ Struct pointers are supported: declarations, `->` field access, and
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The model stops there.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
-arrays, and pointers; struct values cannot be parameters, locals, or returns
+arrays, embedded structs, and pointers; struct values cannot be parameters, locals, or returns
 (`syntax.rs:961` "only pointer-to-struct types are supported"). Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
@@ -15,11 +15,14 @@ of those supported structs use the same stride; the kernel represents the
 decayed parameter as a byte pointer while retaining the struct layout for
 indexing and resource ranges. Fixed one-dimensional `int32` and `uint8` arrays
 are preserved as inline field shapes and indexed through their element-width
-pointer arithmetic. Embedded structs, unions, bitfields, enums, and broader
-struct-value support remain.
+pointer arithmetic. Embedded fields are represented as aggregate places during
+C0 parsing and are lowered to scalar leaf accesses; direct aggregate loads,
+copies, and aggregate resource segments remain unsupported. Unions, bitfields,
+enums, and broader struct-value support remain.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
-operator; everything rides on pointer offsets. `docs/internals/roadmap.md:89-96`
+operator; the surface aggregate-place node is lowered away and everything
+rides on pointer offsets. `docs/internals/roadmap.md:89-96`
 lists struct values, embedded structs, multidimensional struct arrays, and
 unions as remaining. The pilot target json-c's `json_object` uses unions,
 enums, and function pointers.
@@ -38,8 +41,10 @@ Staged mdtests, each with an unchanged C file:
 1. ~~A struct with a `uint8` field and a fixed `uint8 buf[16]` field, read and
    written through a pointer.~~ Covered by `mdtests/struct_inline_byte_array.md`;
    the field resource uses the array's byte-width shape.
-2. An embedded struct field (`struct inner in;`) accessed as `p->in.x`, and
-   an array of structs indexed as `a[i].x`.
+2. ~~An embedded struct field (`struct inner in;`) accessed as `p->in.x`, and
+   an array of structs indexed as `a[i].x`.~~ Covered by
+   `mdtests/struct_embedded_scalar_field.md`, `mdtests/local_array_of_structs.md`,
+   and `mdtests/struct_array_parameter_fields.md`.
 3. An `enum` used as a field type and in a comparison.
 4. A struct passed and returned by value (copy semantics, no aliasing).
 5. A union of `int32` and `int32*` with a tag field, read only through the
