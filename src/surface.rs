@@ -463,10 +463,25 @@ pub struct EffectClause {
 pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
-    decreases: Option<ContractExpression>,
+    decreases: Option<TerminationMeasure>,
     items: Vec<StructuralItem>,
     initialize_proof: Option<SourceProof>,
     preserve_proof: Option<SourceProof>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminationMeasure {
+    components: Vec<ContractExpression>,
+}
+
+impl TerminationMeasure {
+    pub(crate) fn new(components: Vec<ContractExpression>) -> Self {
+        Self { components }
+    }
+
+    pub fn components(&self) -> &[ContractExpression] {
+        &self.components
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -2301,7 +2316,7 @@ pub enum ProofStep {
 pub struct CertificateStructuralClause {
     region: CodeRegion,
     label: Option<String>,
-    decreases: Option<ContractExpression>,
+    decreases: Option<TerminationMeasure>,
     items: Vec<CertificateStructuralItem>,
     initialize_proof: Option<Box<ProofCertificate>>,
     preserve_proof: Option<Box<ProofCertificate>>,
@@ -3469,7 +3484,7 @@ impl StructuralClause {
         self.label.as_deref()
     }
 
-    pub fn decreases(&self) -> Option<&ContractExpression> {
+    pub fn decreases(&self) -> Option<&TerminationMeasure> {
         self.decreases.as_ref()
     }
 

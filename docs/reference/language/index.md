@@ -120,10 +120,20 @@ This proves descent of the finite resource witness, not descent of a pointer
 value.
 
 The numeric proof shape is deliberately small but loop measures may be
-arbitrary current int32 expressions. A loop back edge must make the expression
-strictly smaller and nonnegative; the kernel checks the expression's C int32
-arithmetic under the loop guard, function preconditions, and loop invariants.
-For example, `decreases n - i` ranks a loop that increments `i` toward `n`.
+arbitrary current int32 expressions or a nonempty lexicographic tuple of
+expressions. A loop back edge must keep every component nonnegative and make
+one component strictly smaller while keeping all earlier components equal; the
+kernel checks each component's C int32 arithmetic under the loop guard,
+function preconditions, and loop invariants. For example, `decreases n - i`
+ranks a loop that increments `i` toward `n`.
+<!-- verified-example: mdtests/c_decreases_lexicographic_loop.md -->
+```click
+loop {
+    decreases (outer, inner);
+    invariant outer >= 0;
+    invariant inner >= 0;
+}
+```
 Function-level numeric measures remain one unchanged `int32` parameter, and a
 recursive edge still passes `measure - K` for a positive constant `K`.
 Mutually recursive functions all declare their corresponding numeric
@@ -131,8 +141,10 @@ parameter. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not yet support
-mutual C recursion. Nested lexicographic rankings and recursion inside loops
-remain rejected rather than guessed.
+mutual C recursion. Loop-local lexicographic tuples are supported; nested-loop
+propagation and recursive calls inside loops remain rejected rather than
+guessed because the current checker cannot summarize an inner loop's effect on
+the enclosing ranking tuple.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked

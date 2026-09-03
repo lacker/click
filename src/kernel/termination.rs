@@ -1388,6 +1388,18 @@ fn termination_measure_display(measure: &CExpression) -> String {
     }
 }
 
+fn termination_measures_display(measures: &[CExpression]) -> String {
+    let components = measures
+        .iter()
+        .map(termination_measure_display)
+        .collect::<Vec<_>>();
+    if components.len() == 1 {
+        components[0].clone()
+    } else {
+        format!("({})", components.join(", "))
+    }
+}
+
 fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpression> {
     match expression {
         SpecExpression::Value(value) => Some(CExpression::Value(value.clone())),
@@ -1545,6 +1557,35 @@ fn ranking_proves(context: &PureFactContext, proposition: &Proposition) -> bool 
         .is_ok()
 }
 
+fn ranking_proves_lexicographic_decrease(
+    context: &PureFactContext,
+    pre_terms: &[Bitvector32Term],
+    post_terms: &[Bitvector32Term],
+) -> bool {
+    if pre_terms.is_empty() || pre_terms.len() != post_terms.len() {
+        return false;
+    }
+    (0..pre_terms.len()).any(|pivot| {
+        let mut pivot_context = context.clone();
+        for index in 0..pivot {
+            pivot_context = pivot_context.assume_condition(
+                ConditionTerm::equal(post_terms[index].clone(), pre_terms[index].clone()),
+                true,
+            );
+        }
+        ranking_proves(
+            &pivot_context,
+            &Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(
+                    post_terms[pivot].clone(),
+                    pre_terms[pivot].clone(),
+                ),
+                true,
+            ),
+        )
+    })
+}
+
 fn ranking_affine_form(term: &Bitvector32Term) -> (BTreeMap<Bitvector32Term, i64>, i64) {
     match term {
         Bitvector32Term::Constant(value) => (BTreeMap::new(), i64::from(*value as i32)),
@@ -1649,7 +1690,7 @@ fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
 
 fn check_loops(
     statement: &CStatement,
-    supplied: &BTreeMap<usize, CExpression>,
+    supplied: &BTreeMap<usize, Vec<CExpression>>,
     entry_conditions: &[CExpression],
     invariants: &BTreeMap<usize, Vec<CExpression>>,
     next_index: &mut usize,
@@ -1685,11 +1726,18 @@ fn check_loops(
             *next_index += 1;
             let nested_terminate =
                 check_loops(body, supplied, entry_conditions, invariants, next_index)?;
-            let Some(measure) = supplied.get(&index) else {
+            let Some(measures) = supplied.get(&index) else {
                 return Ok(false);
             };
+            if measures.is_empty() {
+                return Err(error(format!(
+                    "loop {index} has an empty termination measure"
+                )));
+            }
             let mut measure_variables = BTreeSet::new();
-            collect_c_expression_variables(measure, &mut measure_variables);
+            for measure in measures {
+                collect_c_expression_variables(measure, &mut measure_variables);
+            }
             let paths = loop_paths(
                 body,
                 &measure_variables,
@@ -1702,16 +1750,39 @@ fn check_loops(
                 return Ok(nested_terminate);
             }
             for path in paths {
-                let post_measure = resolve_loop_c_expression_aliases(measure, &path.aliases);
+                let post_measures = measures
+                    .iter()
+                    .map(|measure| resolve_loop_c_expression_aliases(measure, &path.aliases))
+                    .collect::<Vec<_>>();
                 let mut names = measure_variables.clone();
+                for entry_condition in entry_conditions {
+                    collect_c_expression_variables(entry_condition, &mut names);
+                }
+                if let Some(loop_invariants) = invariants.get(&index) {
+                    for invariant in loop_invariants {
+                        collect_c_expression_variables(invariant, &mut names);
+                    }
+                }
                 collect_c_expression_variables(condition, &mut names);
-                collect_c_expression_variables(&post_measure, &mut names);
+                for post_measure in &post_measures {
+                    collect_c_expression_variables(post_measure, &mut names);
+                }
                 for (path_condition, _) in &path.conditions {
                     collect_c_expression_variables(path_condition, &mut names);
                 }
                 let variables = ranking_variable_map(&names);
-                let pre_term = canonical_ranking_term(&ranking_term(measure, &variables)?);
-                let post_term = canonical_ranking_term(&ranking_term(&post_measure, &variables)?);
+                let pre_terms = measures
+                    .iter()
+                    .map(|measure| {
+                        ranking_term(measure, &variables).map(|term| canonical_ranking_term(&term))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let post_terms = post_measures
+                    .iter()
+                    .map(|measure| {
+                        ranking_term(measure, &variables).map(|term| canonical_ranking_term(&term))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let mut context = PureFactContext::new();
                 for entry_condition in entry_conditions {
                     context = assume_ranking_condition(context, entry_condition, true, &variables)?;
@@ -1726,42 +1797,52 @@ fn check_loops(
                     context =
                         assume_ranking_condition(context, path_condition, *value, &variables)?;
                 }
-                let pre_positive = Proposition::ConditionIs(
-                    ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), pre_term.clone()),
-                    true,
-                );
-                if ranking_proves(&context, &pre_positive) {
-                    context = context.assume_condition(
+                for pre_term in &pre_terms {
+                    let pre_positive = Proposition::ConditionIs(
                         ConditionTerm::signed_less_than(
                             Bitvector32Term::Constant(0),
                             pre_term.clone(),
                         ),
                         true,
                     );
+                    if ranking_proves(&context, &pre_positive) {
+                        context = context.assume_condition(
+                            ConditionTerm::signed_less_than(
+                                Bitvector32Term::Constant(0),
+                                pre_term.clone(),
+                            ),
+                            true,
+                        );
+                    }
                 }
-                let pre_nonnegative = Proposition::ConditionIs(
-                    ConditionTerm::signed_less_equal(
-                        Bitvector32Term::Constant(0),
-                        pre_term.clone(),
-                    ),
-                    true,
-                );
-                let post_nonnegative = Proposition::ConditionIs(
-                    ConditionTerm::signed_less_equal(
-                        Bitvector32Term::Constant(0),
-                        post_term.clone(),
-                    ),
-                    true,
-                );
-                let decreases = Proposition::ConditionIs(
-                    ConditionTerm::signed_less_than(post_term, pre_term),
-                    true,
-                );
-                let pre_proved = ranking_proves(&context, &pre_nonnegative);
-                let post_proved = ranking_proves(&context, &post_nonnegative);
-                let decreases_proved = ranking_proves(&context, &decreases);
+                let pre_proved = pre_terms.iter().all(|pre_term| {
+                    ranking_proves(
+                        &context,
+                        &Proposition::ConditionIs(
+                            ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Constant(0),
+                                pre_term.clone(),
+                            ),
+                            true,
+                        ),
+                    )
+                });
+                let post_proved = post_terms.iter().all(|post_term| {
+                    ranking_proves(
+                        &context,
+                        &Proposition::ConditionIs(
+                            ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Constant(0),
+                                post_term.clone(),
+                            ),
+                            true,
+                        ),
+                    )
+                });
+                let decreases_proved =
+                    ranking_proves_lexicographic_decrease(&context, &pre_terms, &post_terms);
                 if !pre_proved || !post_proved || !decreases_proved {
-                    let display = termination_measure_display(measure);
+                    let display = termination_measures_display(measures);
                     return Err(error(format!(
                         "loop {index} does not decrease `{display}` to a nonnegative value on every back edge"
                     )));
@@ -1939,8 +2020,14 @@ pub fn c_verified_function_termination_rules(
             let function = functions[name];
             let empty = BTreeMap::new();
             let loop_measures = plans.get(name).map_or(&empty, |plan| &plan.loop_measures);
-            for measure in loop_measures.values() {
-                reject_address_escaped_expression_measure(name, measure, &function.source_body)?;
+            for measures in loop_measures.values() {
+                for measure in measures {
+                    reject_address_escaped_expression_measure(
+                        name,
+                        measure,
+                        &function.source_body,
+                    )?;
+                }
             }
             let entry_conditions = function
                 .contract_requires()

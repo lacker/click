@@ -292,11 +292,17 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             );
             let body_prefix = "    ".repeat(indent + 1);
             if let Some(decreases) = loop_clause.decreases() {
-                line(
-                    output,
-                    &body_prefix,
-                    &format!("decreases {};", describe_contract_expression(decreases)),
-                );
+                let components = decreases
+                    .components()
+                    .iter()
+                    .map(describe_contract_expression)
+                    .collect::<Vec<_>>();
+                let rendered = if components.len() == 1 {
+                    components[0].clone()
+                } else {
+                    format!("({})", components.join(", "))
+                };
+                line(output, &body_prefix, &format!("decreases {rendered};"));
             }
             for item in loop_clause.items() {
                 match item.kind() {

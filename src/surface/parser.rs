@@ -2077,7 +2077,7 @@ impl Parser {
                     if decreases.is_some() {
                         return Err(self.error("duplicate loop `decreases` clause"));
                     }
-                    decreases = Some(self.parse_contract_expression()?);
+                    decreases = Some(self.parse_termination_measure()?);
                     self.expect(Token::Semicolon)?;
                     continue;
                 }
@@ -2535,6 +2535,25 @@ impl Parser {
 
     fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
         self.parse_contract_bitwise_or()
+    }
+
+    fn parse_termination_measure(&mut self) -> Result<TerminationMeasure, ClickError> {
+        let components = if self.peek() == Some(&Token::LParen) {
+            self.position += 1;
+            if self.peek() == Some(&Token::RParen) {
+                return Err(self.error("termination measure cannot be empty"));
+            }
+            let mut components = vec![self.parse_contract_expression()?];
+            while self.peek() == Some(&Token::Comma) {
+                self.position += 1;
+                components.push(self.parse_contract_expression()?);
+            }
+            self.expect(Token::RParen)?;
+            components
+        } else {
+            vec![self.parse_contract_expression()?]
+        };
+        Ok(TerminationMeasure::new(components))
     }
 
     fn parse_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {

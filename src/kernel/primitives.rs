@@ -937,7 +937,7 @@ pub struct CVerifiedFunctionTerminationRule {
 pub struct CFunctionTerminationPlan {
     pub(super) function_name: String,
     pub(super) recursive_measure: Option<CFunctionTerminationMeasure>,
-    pub(super) loop_measures: BTreeMap<usize, CExpression>,
+    pub(super) loop_measures: BTreeMap<usize, Vec<CExpression>>,
 }
 
 impl CFunctionTerminationPlan {
@@ -947,7 +947,7 @@ impl CFunctionTerminationPlan {
 
     pub fn extend_loop_measures(
         &mut self,
-        measures: impl IntoIterator<Item = (usize, CExpression)>,
+        measures: impl IntoIterator<Item = (usize, Vec<CExpression>)>,
     ) {
         self.loop_measures.extend(measures);
     }

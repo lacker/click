@@ -1071,15 +1071,15 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     let CodeRegion::Loop(loop_index) = clause.region() else {
                         continue;
                     };
-                    let expression = termination_measure_expression(
+                    let expressions = termination_measure_expressions(
                         measure,
                         &format!(
                             "frontier-local loop {loop_index} `decreases` in `{}`",
                             function_block.signature.name()
                         ),
                     )?;
-                    if let Some(previous) = loop_measures.insert(*loop_index, expression.clone())
-                        && previous != expression
+                    if let Some(previous) = loop_measures.insert(*loop_index, expressions.clone())
+                        && previous != expressions
                     {
                         return Err(ClickError::new(format!(
                             "frontier-local proofs for `{}` disagree on loop {loop_index} `decreases`",
@@ -1738,6 +1738,17 @@ pub(in crate::surface) fn termination_measure_expression(
     })
 }
 
+pub(in crate::surface) fn termination_measure_expressions(
+    measure: &TerminationMeasure,
+    context: &str,
+) -> Result<Vec<CExpression>, ClickError> {
+    measure
+        .components()
+        .iter()
+        .map(|expression| termination_measure_expression(expression, context))
+        .collect()
+}
+
 pub(in crate::surface) fn c_function_termination_plans(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
@@ -1841,14 +1852,14 @@ pub(in crate::surface) fn c_function_termination_plans(
                     function.signature().name()
                 )));
             };
-            let expression = termination_measure_expression(
+            let expressions = termination_measure_expressions(
                 measure,
                 &format!(
                     "loop {index} `decreases` in `{}`",
                     function.signature().name()
                 ),
             )?;
-            if loop_measures.insert(*index, expression).is_some() {
+            if loop_measures.insert(*index, expressions).is_some() {
                 return Err(ClickError::new(format!(
                     "duplicate `decreases` measure for loop {index} in `{}`",
                     function.signature().name()

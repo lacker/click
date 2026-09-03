@@ -14,8 +14,8 @@ every finite iteration prefix is safe and that the invariant is available if
 the loop exits. A constant-true service loop can therefore have a useful
 invariant even though it has no exit state.
 
-When termination itself matters, the loop tactic may additionally declare an
-int32 ranking expression:
+When termination itself matters, the loop tactic may additionally declare a
+nonempty int32 ranking expression or lexicographic tuple:
 
 <!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
@@ -25,15 +25,27 @@ loop {
 }
 ```
 
+<!-- verified-example: mdtests/c_decreases_lexicographic_loop.md -->
+```click
+loop {
+    decreases (outer, inner);
+    invariant outer >= 0;
+    invariant inner >= 0;
+}
+```
+
 The expression is checked at each continuing body path: the loop guard and
-the available function preconditions and invariants must establish that it is
-nonnegative, and the post-body expression must be strictly smaller. This
-supports count-up loops as well as countdowns, for example
-`decreases limit - index;` when the body increments `index`. The expression is
+the available function preconditions and invariants must establish that every
+component is nonnegative. A tuple decreases lexicographically: an earlier
+component must remain equal and a later component must be strictly smaller at
+some pivot. This supports count-up loops as well as countdowns, for example
+`decreases limit - index;` when the body increments `index`. Each component is
 checked as C int32 arithmetic, so its arithmetic must also be defined under
 those assumptions. This produces separate termination evidence; it does not
 change what an invariant or a postcondition means. Loops without `decreases`
-remain valid partial-correctness proofs.
+remain valid partial-correctness proofs. Nested-loop propagation and recursive
+calls inside loops remain unsupported until the verifier can summarize their
+effect on the enclosing ranking tuple.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

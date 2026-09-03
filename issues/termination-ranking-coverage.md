@@ -2,18 +2,13 @@
 
 Found by the 2026-09-01 kernel audit at cb034b21.
 
-The loop ranking checker accepts only a measure decremented in place as
-`measure = measure - K` for positive constant `K` (`src/kernel/termination.rs:745-751`;
-`refined_lower_bound` and `check_loops` at `:536-833` track a single
-decremented variable). The canonical `while (i < n) { i = i + 1; }` decrements
-nothing, so the most common loop shape cannot be ranked. Nested loops are
-rejected (`:775-777` "nested loops in one ranking proof are not yet
-supported"); a recursive call inside a loop is rejected (`:445-454`,
-`:719-728` "recursive calls inside a loop require a lexicographic measure");
-the surface accepts only one named int32 variable as a measure
-(`src/surface/verification.rs:1440-1451` "compound ranking expressions are
-not yet supported"); structural-resource termination supports direct,
-simply-guarded recursion only (`termination.rs:477-527`, `:919-921`).
+The original loop ranking checker accepted only a single measure decremented
+in place as `measure = measure - K` for positive constant `K`. That excluded
+count-up loops and phase-style loops whose progress is naturally described by
+more than one value. Nested-loop propagation and recursive calls inside loops
+remain separate unsupported shapes: the current checker does not summarize an
+inner loop's effect on an enclosing ranking measure. Structural-resource
+termination also remains limited to direct, simply-guarded recursion.
 
 ## Violated invariant
 
@@ -28,8 +23,12 @@ variable name. The kernel tracks scalar aliases and update-sugar assignments
 on every back-edge path, checks the expression and its post-body value as
 int32 arithmetic, and uses certified function preconditions and loop
 invariants as ranking assumptions. A count-up regression using `n - i` is in
-`mdtests/c_decreases_count_up.md`; nested-loop and lexicographic propagation
-are still open.
+`mdtests/c_decreases_count_up.md`. Loop-local lexicographic tuples are now
+represented as checked vectors of scalar expressions and are proved by a
+strictly decreasing pivot after equal earlier components; the phase-loop
+regressions are in `mdtests/c_decreases_lexicographic_loop.md` and
+`mdtests/c_decreases_rejects_non_decreasing_lexicographic_loop.md`. Nested-loop
+propagation and recursion inside loops are still open.
 
 ## Intended regression
 
@@ -48,8 +47,9 @@ non-decreasing must expect `fail: ... does not decrease`.
 - Measures are arbitrary int32 expressions over program variables (with the
   measure's well-foundedness checked as `0 <= measure` under the guard), not
   a single decremented variable.
-- Lexicographic tuples of such expressions are supported for nested loops
-  and for recursion inside loops.
+- Lexicographic tuples of such expressions are supported for progress within
+  one loop's back-edge paths. Nested-loop propagation and recursion inside
+  loops still require a separate effect-summary design.
 - The surface plan carries the expression and the kernel re-lowers and checks
   it, in keeping with the untrusted-plan design in `docs/internals/kernel.md`.
 - The mdtests above pass; `scripts/check.sh` passes.
