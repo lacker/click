@@ -400,6 +400,14 @@ fn c0_syntax_accepts_break_and_continue_in_while_bodies() {
                 (breaks + more_breaks, continues + more_continues)
             }
             syntax::C0Statement::While { body, .. } => count_controls(body),
+            syntax::C0Statement::Switch { cases, .. } => {
+                cases.iter().map(|case| count_controls(case.body())).fold(
+                    (0, 0),
+                    |(breaks, continues), (more_breaks, more_continues)| {
+                        (breaks + more_breaks, continues + more_continues)
+                    },
+                )
+            }
             _ => (0, 0),
         }
     }
@@ -408,11 +416,97 @@ fn c0_syntax_accepts_break_and_continue_in_while_bodies() {
 }
 
 #[test]
+fn c0_syntax_accepts_switch_cases_and_nested_loop_control() {
+    let function = syntax::parse_function(
+        r#"
+        int32 choose(int32 kind) {
+            int32 result = 0;
+            while (kind < 2) {
+                switch (kind) {
+                    case 0:
+                        result = 1;
+                    case '1':
+                        result = 2;
+                        continue;
+                    default:
+                        result = 3;
+                        break;
+                }
+                break;
+            }
+            return result;
+        }
+        "#,
+    )
+    .expect("switch cases should parse inside a while body");
+
+    fn find_switch(statement: &syntax::C0Statement) -> Option<&syntax::C0Statement> {
+        match statement {
+            syntax::C0Statement::Switch { .. } => Some(statement),
+            syntax::C0Statement::Seq(first, second) => {
+                find_switch(first).or_else(|| find_switch(second))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => find_switch(then_branch).or_else(|| find_switch(else_branch)),
+            syntax::C0Statement::While { body, .. } => find_switch(body),
+            _ => None,
+        }
+    }
+
+    let Some(syntax::C0Statement::Switch { expression, cases }) = find_switch(function.body())
+    else {
+        panic!("expected native switch statement");
+    };
+    assert!(matches!(expression, syntax::C0Expression::Variable(name) if name == "kind"));
+    assert_eq!(cases.len(), 3);
+    assert_eq!(cases[0].value(), Some(0));
+    assert_eq!(cases[1].value(), Some(u32::from(b'1')));
+    assert_eq!(cases[2].value(), None);
+}
+
+#[test]
+fn c0_syntax_rejects_unsupported_switch_shapes() {
+    for (source, expected) in [
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 1: break; case 1: break; } return 0; }",
+            "duplicate `case` label",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { default: break; default: break; } return 0; }",
+            "only one `default`",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case kind: break; } return 0; }",
+            "integer or character literal",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { kind = 1; case 0: break; } return 0; }",
+            "must begin with a `case` or `default` label",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) {} return 0; }",
+            "must contain a `case` or `default` label",
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported switch shape should be rejected");
+        assert!(
+            error.message().contains(expected),
+            "diagnostic did not contain `{expected}`: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_rejects_loop_control_outside_its_supported_loop() {
     for (source, expected) in [
         (
             "int32 bad() { break; return 0; }",
-            "`break` must be inside a loop",
+            "`break` must be inside a loop or switch",
         ),
         (
             "int32 bad() { continue; return 0; }",
@@ -655,6 +749,9 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
                 ..
             } => contains_skip(then_branch) || contains_skip(else_branch),
             syntax::C0Statement::While { body, .. } => contains_skip(body),
+            syntax::C0Statement::Switch { cases, .. } => {
+                cases.iter().any(|case| contains_skip(case.body()))
+            }
             syntax::C0Statement::Break
             | syntax::C0Statement::Continue
             | syntax::C0Statement::Declare { .. }

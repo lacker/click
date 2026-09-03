@@ -818,6 +818,12 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
             }
             collect_c_statement_bound_variables(body, variables);
         }
+        CStatement::Switch { expression, cases } => {
+            collect_c_expression_bound_variables(expression, variables);
+            for case in cases {
+                collect_c_statement_bound_variables(&case.body, variables);
+            }
+        }
     }
 }
 
@@ -1503,6 +1509,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                 })
                 .collect(),
             body: Box::new(substitute_bitvector_variable_in_c_statement(body, from, to)),
+        },
+        CStatement::Switch { expression, cases } => CStatement::Switch {
+            expression: substitute_bitvector_variable_in_c_expression(expression, from, to),
+            cases: cases
+                .iter()
+                .map(|case| CSwitchCase {
+                    value: case.value,
+                    body: Box::new(substitute_bitvector_variable_in_c_statement(
+                        &case.body, from, to,
+                    )),
+                })
+                .collect(),
         },
     }
 }

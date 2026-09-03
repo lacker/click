@@ -2375,10 +2375,22 @@ impl<'a> Proof<'a> {
 
     pub(super) fn apply_planned_execution_if(
         &self,
-        _condition: &ClickProposition,
+        condition: &ClickProposition,
         then_steps: &[ProofStep],
         else_steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
+        // A native C `switch` is one checked statement, but symbolic dispatch
+        // still needs a proof-level case split so each generated arm can
+        // supply the selected case fact to that statement step. The ordinary
+        // planner `if` below instead enters an actual C `if` arm, including
+        // its branch-entry statement steps.
+        if self.execution_frontier_is_switch()? {
+            return self.clone().apply_execution_if_with(
+                condition.clone(),
+                |proof| proof.apply_planned_execution_steps_inner(then_steps),
+                |proof| proof.apply_planned_execution_steps_inner(else_steps),
+            );
+        }
         let (split, record) = self.split_focused_execution_branch()?;
         let mut advanced = split;
         for (take_then, steps) in [(true, then_steps), (false, else_steps)] {
@@ -2403,6 +2415,26 @@ impl<'a> Proof<'a> {
                 .apply_execution_steps_in_arm(&record, &steps[entry_steps..], false)?;
         }
         advanced.join_focused_execution_split(&record, false, None)
+    }
+
+    fn execution_frontier_is_switch(&self) -> Result<bool, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(false);
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        let statement = match &execution.core.frontier.position {
+            FrontierPosition::FunctionEntry => context.function.body().clone(),
+            FrontierPosition::StatementEntry { remaining } => remaining.as_ref().clone(),
+            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => {
+                return Ok(false);
+            }
+        };
+        Ok(
+            super::super::cursor_execution::split_next_source_operation(&statement)
+                .is_ok_and(|(statement, _)| matches!(statement, CStatement::Switch { .. })),
+        )
     }
 
     /// Applies an already-expanded logical C branch as one audited structural

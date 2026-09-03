@@ -424,7 +424,8 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. }
         | CStatement::If { .. }
-        | CStatement::While { .. } => true,
+        | CStatement::While { .. }
+        | CStatement::Switch { .. } => true,
     }
 }
 
@@ -482,6 +483,9 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
             ..
         } => statement_contains_call(then_branch) || statement_contains_call(else_branch),
         CStatement::While { body, .. } => statement_contains_call(body),
+        CStatement::Switch { cases, .. } => {
+            cases.iter().any(|case| statement_contains_call(&case.body))
+        }
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue

@@ -381,7 +381,11 @@ impl<'a> Proof<'a> {
         let (split, record) = self.split_focused_execution_if(condition.clone())?;
         let then_done = apply_then(split.focus_execution_if_arm(&record, true)?)?;
         let else_done = apply_else(then_done.focus_execution_if_arm(&record, false)?)?;
-        else_done.join_focused_if(&record.marker, record.split, record.arm_branches, condition)
+        if then_done.is_at_function_exit() && else_done.is_at_function_exit() {
+            else_done.join_focused_execution_if_terminal(&record)
+        } else {
+            else_done.join_focused_if(&record.marker, record.split, record.arm_branches, condition)
+        }
     }
 
     /// Joins a completed in-`Proof` `if` split with one structured `If`

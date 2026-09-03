@@ -575,6 +575,12 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
         CStatement::While { condition, .. } => {
             collect_expression_variable_names(condition, names);
         }
+        CStatement::Switch { expression, cases } => {
+            collect_expression_variable_names(expression, names);
+            for case in cases {
+                collect_statement_variable_names(&case.body, names);
+            }
+        }
     }
 }
 

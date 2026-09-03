@@ -13,8 +13,10 @@ contract expressions, calls, and the other parenthesized surface forms.
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
 features include full structs, unsigned integers beyond the narrow `uint8` byte
-type, casts, globals, general allocator compatibility, `switch`, and many
-operators.
+type, casts, globals, general allocator compatibility, and many operators. The
+supported `switch` slice is intentionally narrow: labels must be direct integer
+or character literals in one compound body, with no `goto` or arbitrary
+constant-expression labels yet.
 
 C0 supports `sizeof` for the modeled scalar and pointer types, plus
 `malloc(sizeof(struct T))` into a matching `struct T*` and runtime-sized

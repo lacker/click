@@ -1013,6 +1013,12 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 cost.add_expression(c_expression_source_steps(condition));
                 pending.push(body);
             }
+            CStatement::Switch { expression, cases } => {
+                cost.add_expression(c_expression_source_steps(expression));
+                for case in cases {
+                    pending.push(&case.body);
+                }
+            }
         }
     }
     cost
@@ -1050,6 +1056,12 @@ fn c_statement_verification_source_steps(statement: &CStatement) -> usize {
             } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
                 steps = steps.saturating_add(1);
                 pending.push(body);
+            }
+            CStatement::Switch { cases, .. } => {
+                steps = steps.saturating_add(1);
+                for case in cases {
+                    pending.push(&case.body);
+                }
             }
             // The verification dispatcher charges once, then delegates an
             // ordinary leaf to the shared evaluator, which charges again.

@@ -38,6 +38,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.while",
     "statement.break",
     "statement.continue",
+    "statement.switch",
     "statement.do-while",
     "statement.for",
     "statement.for-step-list",
@@ -197,6 +198,22 @@ impl C0Type {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0SwitchCase {
+    value: Option<u32>,
+    body: Box<C0Statement>,
+}
+
+impl C0SwitchCase {
+    pub fn value(&self) -> Option<u32> {
+        self.value
+    }
+
+    pub fn body(&self) -> &C0Statement {
+        &self.body
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Statement {
     Skip,
     Break,
@@ -246,6 +263,10 @@ pub enum C0Statement {
     While {
         condition: C0Expression,
         body: Box<C0Statement>,
+    },
+    Switch {
+        expression: C0Expression,
+        cases: Vec<C0SwitchCase>,
     },
 }
 
@@ -579,6 +600,16 @@ impl C0Statement {
                 Vec::new(),
                 body.to_kernel_statement(),
             ),
+            Self::Switch { expression, cases } => crate::kernel::c_switch(
+                expression.to_kernel_expression(),
+                cases
+                    .iter()
+                    .map(|case| crate::kernel::CSwitchCase {
+                        value: case.value,
+                        body: Box::new(case.body.to_kernel_statement()),
+                    })
+                    .collect(),
+            ),
         }
     }
 }
@@ -769,6 +800,9 @@ fn validate_function_returns(
             validate_function_returns(else_branch, return_type)
         }
         C0Statement::While { body, .. } => validate_function_returns(body, return_type),
+        C0Statement::Switch { cases, .. } => cases
+            .iter()
+            .try_for_each(|case| validate_function_returns(&case.body, return_type)),
         C0Statement::Skip
         | C0Statement::Break
         | C0Statement::Continue
@@ -1008,6 +1042,7 @@ enum CLoopContext {
     While,
     For,
     DoWhile,
+    Switch,
 }
 
 impl Parser {
@@ -1724,6 +1759,85 @@ impl Parser {
         Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
     }
 
+    /// Parses the first supported C `switch` shape: a compound statement whose
+    /// direct children are `case`/`default` labels and their statement bodies.
+    /// Keeping the cases in source order is what preserves C fallthrough.
+    fn parse_switch_body(&mut self) -> Result<Vec<C0SwitchCase>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        self.push_scope();
+        let mut cases = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek().is_none() {
+                return Err(self.error_here("expected switch case or `}`, got end of input"));
+            }
+            let label = self.peek_ident();
+            let value = match label {
+                Some("case") => {
+                    self.position += 1;
+                    let expression = self.parse_expression()?;
+                    let value = match expression {
+                        C0Expression::Int32Literal(value) => value,
+                        C0Expression::UInt8Literal(value) => u32::from(value),
+                        _ => {
+                            return Err(self.error_here(
+                                "`case` labels currently require an integer or character literal",
+                            ));
+                        }
+                    };
+                    self.expect(Token::Colon)?;
+                    if cases
+                        .iter()
+                        .any(|case: &C0SwitchCase| case.value == Some(value))
+                    {
+                        return Err(
+                            self.error_here(format!("duplicate `case` label value {value}"))
+                        );
+                    }
+                    Some(value)
+                }
+                Some("default") => {
+                    self.position += 1;
+                    self.expect(Token::Colon)?;
+                    if cases.iter().any(|case| case.value.is_none()) {
+                        return Err(self.error_here("a `switch` may have only one `default` label"));
+                    }
+                    None
+                }
+                _ if cases.is_empty() => {
+                    self.pop_scope();
+                    return Err(self.error_here(
+                        "a `switch` body must begin with a `case` or `default` label",
+                    ));
+                }
+                _ => {
+                    self.pop_scope();
+                    return Err(self.error_here(
+                        "statements in a `switch` body must follow a `case` or `default` label",
+                    ));
+                }
+            };
+
+            let mut statements = Vec::new();
+            while self.peek() != Some(&Token::RBrace)
+                && !matches!(self.peek_ident(), Some("case" | "default"))
+            {
+                statements.push(self.parse_statement()?);
+            }
+            cases.push(C0SwitchCase {
+                value,
+                body: Box::new(
+                    balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip),
+                ),
+            });
+        }
+        self.expect(Token::RBrace)?;
+        self.pop_scope();
+        if cases.is_empty() {
+            return Err(self.error_here("a `switch` body must contain a `case` or `default` label"));
+        }
+        Ok(cases)
+    }
+
     /// Parses the statement controlled by `if`, `else`, `while`, or `for`.
     /// C permits a single statement in these positions, while declarations
     /// remain valid only as block items in a compound statement.
@@ -1746,31 +1860,38 @@ impl Parser {
         &mut self,
         continue_statement: bool,
     ) -> Result<C0Statement, C0SyntaxError> {
-        let keyword = if continue_statement {
-            "continue"
-        } else {
-            "break"
-        };
-        let context = self.loop_contexts.last().copied();
-        let supported = match (continue_statement, context) {
-            (false, Some(CLoopContext::While | CLoopContext::For)) => true,
-            (true, Some(CLoopContext::While)) => true,
-            _ => false,
-        };
-        if !supported {
-            let message = match context {
-                None => format!("`{keyword}` must be inside a loop"),
-                Some(CLoopContext::For) if continue_statement => {
-                    "`continue` in a `for` loop is not supported until its step is modeled explicitly"
-                        .to_string()
+        if continue_statement {
+            let loop_context = self.loop_contexts.iter().rev().find(|context| {
+                matches!(
+                    context,
+                    CLoopContext::While | CLoopContext::For | CLoopContext::DoWhile
+                )
+            });
+            match loop_context {
+                Some(CLoopContext::While) => {}
+                Some(CLoopContext::For) => {
+                    return Err(self.error_here(
+                        "`continue` in a `for` loop is not supported until its step is modeled explicitly",
+                    ));
                 }
                 Some(CLoopContext::DoWhile) => {
-                    format!("`{keyword}` in a `do`-`while` loop is not supported yet")
+                    return Err(
+                        self.error_here("`continue` in a `do`-`while` loop is not supported yet")
+                    );
                 }
-                Some(CLoopContext::While) => unreachable!(),
-                Some(CLoopContext::For) => unreachable!(),
-            };
-            return Err(self.error_here(message));
+                None => return Err(self.error_here("`continue` must be inside a loop")),
+                Some(CLoopContext::Switch) => unreachable!(),
+            }
+        } else {
+            match self.loop_contexts.last().copied() {
+                Some(CLoopContext::While | CLoopContext::For | CLoopContext::Switch) => {}
+                Some(CLoopContext::DoWhile) => {
+                    return Err(
+                        self.error_here("`break` in a `do`-`while` loop is not supported yet")
+                    );
+                }
+                None => return Err(self.error_here("`break` must be inside a loop or switch")),
+            }
         }
         self.position += 1;
         self.expect(Token::Semicolon)?;
@@ -1858,6 +1979,16 @@ impl Parser {
                     let body = Box::new(self.parse_controlled_statement("while")?);
                     self.loop_contexts.pop();
                     Ok(C0Statement::While { condition, body })
+                }
+                Some("switch") => {
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let expression = self.parse_expression()?;
+                    self.expect(Token::RParen)?;
+                    self.loop_contexts.push(CLoopContext::Switch);
+                    let cases = self.parse_switch_body()?;
+                    self.loop_contexts.pop();
+                    Ok(C0Statement::Switch { expression, cases })
                 }
                 Some("do") => {
                     self.position += 1;

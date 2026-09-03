@@ -576,6 +576,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::TypedStore { .. } => "verification statement: typed store",
                 CStatement::Update { .. } => "verification statement: update",
                 CStatement::While { .. } => "verification statement: while",
+                CStatement::Switch { .. } => "verification statement: switch",
                 CStatement::Seq(_, _) | CStatement::If { .. } => unreachable!(),
             };
             let paths = crate::instrumentation::measure_operation(
@@ -2318,6 +2319,9 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
             ..
         } => statement_may_write_memory(then_branch) || statement_may_write_memory(else_branch),
         CStatement::While { body, .. } => statement_may_write_memory(body),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| statement_may_write_memory(&case.body)),
     }
 }
 
@@ -2361,6 +2365,11 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         }
         CStatement::While { body, .. } => {
             collect_loop_modified_locals(body, names);
+        }
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                collect_loop_modified_locals(&case.body, names);
+            }
         }
     }
 }
@@ -2451,6 +2460,12 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         } => {
             collect_address_taken_in_expression(condition, names);
             collect_address_taken_locals(body, names);
+        }
+        CStatement::Switch { expression, cases } => {
+            collect_address_taken_in_expression(expression, names);
+            for case in cases {
+                collect_address_taken_locals(&case.body, names);
+            }
         }
     }
 }

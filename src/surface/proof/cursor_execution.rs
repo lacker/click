@@ -2096,7 +2096,9 @@ fn execute_step_from_frontier_position_selecting_path(
             execution.core.frontier.next_statement_index = source_region.continuation_node;
             *state = execution_state;
         }
-        CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => {}
+        CStatementOutcome::Break(next_state) | CStatementOutcome::Continue(next_state) => {
+            *state = next_state;
+        }
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
             append_execution_effect_facts(
@@ -2358,6 +2360,127 @@ pub(super) fn bounded_execute_from_frontier_position(
             continue;
         }
 
+        if matches!(
+            frontier_statement(&frontier.execution, function),
+            Ok(CStatement::Switch { .. })
+        ) {
+            let statement = frontier_statement(&frontier.execution, function).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `execute` could not inspect switch: {error}"
+                ))
+            })?;
+            let mut next_opaque_call = frontier.execution.core.next_opaque_call;
+            let mut next_kernel_variable = frontier.execution.core.next_kernel_variable;
+            let (transitions, _) = certified_statement_transitions(
+                &frontier.execution.core.state,
+                &frontier.pure_facts,
+                &statement,
+                proof_context.function_environment,
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+                "`execute` switch path planning",
+                &mut next_opaque_call,
+                &mut next_kernel_variable,
+                StatementPrerequisitePolicy::Contextual,
+                StatementFactTransportPolicy::Automatic,
+                None,
+            )?;
+            if transitions.len() > 1
+                && !transitions.iter().all(|transition| {
+                    matches!(transition.outcome, CStatementOutcome::Return { .. })
+                })
+            {
+                let path_choices = transitions
+                    .iter()
+                    .map(|transition| {
+                        switch_surface_path_choices(
+                            transition,
+                            &frontier.execution.core.state,
+                            proof_context,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let choice_count = path_choices.iter().map(Vec::len).max().unwrap_or_default();
+                if choice_count == 0 || path_choices.iter().any(Vec::is_empty) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `execute` could not construct checked proof branches for switch paths"
+                    )));
+                }
+                for (transition, choices) in transitions.iter().zip(path_choices) {
+                    if transition.path_facts.is_empty() {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: switch path had no checked path fact"
+                        )));
+                    }
+                    let mut branch = frontier.clone();
+                    if let Some(construction) = construction.as_ref() {
+                        let base_occurrence = branch.execution.core.next_path_choice;
+                        for (choice_index, (condition, value)) in choices.into_iter().enumerate() {
+                            construct_proof_step_for_planned_operation(
+                                &mut branch.execution,
+                                proof_context,
+                                branch
+                                    .sink
+                                    .as_mut()
+                                    .expect("construction implies a branch sink"),
+                                &frontier.execution.core.state,
+                                proof_context.function_block,
+                                proof_context.parsed_function.parameters(),
+                                proof_context.arguments,
+                                construction.environments,
+                                &ConstructionEvidence::CertifiedPathAssumption {
+                                    occurrence: base_occurrence + choice_index,
+                                    condition,
+                                    value,
+                                    facts: transition.path_facts.clone(),
+                                    theorem: transition.theorem.clone(),
+                                },
+                            );
+                        }
+                        for fact in &transition.path_facts {
+                            branch
+                                .execution
+                                .presentation
+                                .surface_record
+                                .certificate_facts
+                                .insert(fact.clone());
+                            if !branch.pure_facts.contains(fact) {
+                                branch.pure_facts.push(fact.clone());
+                            }
+                        }
+                        branch.execution.core.next_path_choice += choice_count;
+                    }
+                    let assumptions = assumptions_from_propositions(&branch.pure_facts);
+                    execute_step_from_frontier_position_selecting_path(
+                        &mut branch.execution,
+                        proof_context,
+                        &mut branch.pure_facts,
+                        &assumptions,
+                        "execute",
+                        prerequisite_policy,
+                        StatementFactTransportPolicy::Automatic,
+                        LoopStepPolicy::EnterBody,
+                        construction.as_ref().map(|construction| Construction {
+                            environments: construction.environments,
+                            sink: branch
+                                .sink
+                                .as_mut()
+                                .expect("construction implies a branch sink"),
+                        }),
+                        None,
+                        None,
+                    )
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `execute` failed after switch path split: {}",
+                            error.message()
+                        ))
+                    })?;
+                    pending.push(branch);
+                }
+                continue;
+            }
+        }
+
         let assumptions = assumptions_from_propositions(&frontier.pure_facts);
         execute_step_from_frontier_position(
             &mut frontier.execution,
@@ -2414,6 +2537,47 @@ pub(super) fn bounded_execute_from_frontier_position(
         }
     }
     Ok(())
+}
+
+fn frontier_statement(
+    execution: &ExecutionProofState,
+    function: &CFunction,
+) -> Result<CStatement, String> {
+    let remaining = match &execution.core.frontier.position {
+        FrontierPosition::FunctionEntry => function.body().clone(),
+        FrontierPosition::StatementEntry { remaining } => remaining.as_ref().clone(),
+        FrontierPosition::FunctionExit { .. } => {
+            return Err("frontier is already at function exit".to_string());
+        }
+        FrontierPosition::RegionBoundary => {
+            return Err("frontier is already at a region boundary".to_string());
+        }
+    };
+    split_next_source_operation(&remaining).map(|(statement, _)| statement)
+}
+
+fn switch_surface_path_choices(
+    transition: &CertifiedStatementTransition,
+    state: &CState,
+    proof_context: &ExecutionProofContext<'_>,
+) -> Result<Vec<(ClickProposition, bool)>, ClickError> {
+    transition
+        .path_facts
+        .iter()
+        .filter_map(|fact| {
+            let Proposition::ConditionIs(condition, value) = fact else {
+                return None;
+            };
+            let positive = Proposition::ConditionIs(condition.clone(), true);
+            let surface = synthesize_surface_proposition(
+                &positive,
+                proof_context.parsed_function.parameters(),
+                proof_context.arguments,
+                state,
+            )?;
+            Some(Ok((surface, *value)))
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2820,6 +2984,9 @@ fn describe_statement_head(statement: &CStatement) -> String {
         CStatement::If { condition, .. } => format!("if ({})", describe_c_expression(condition)),
         CStatement::While { condition, .. } => {
             format!("while ({})", describe_c_expression(condition))
+        }
+        CStatement::Switch { expression, .. } => {
+            format!("switch ({})", describe_c_expression(expression))
         }
     }
 }

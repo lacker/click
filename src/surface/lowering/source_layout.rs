@@ -9,6 +9,9 @@ pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize 
             ..
         } => count_loops(then_branch) + count_loops(else_branch),
         syntax::C0Statement::While { body, .. } => 1 + count_loops(body),
+        syntax::C0Statement::Switch { cases, .. } => {
+            cases.iter().map(|case| count_loops(case.body())).sum()
+        }
         _ => 0,
     }
 }
@@ -24,6 +27,10 @@ pub(in crate::surface) fn count_statements(statement: &syntax::C0Statement) -> u
             ..
         } => 1 + count_statements(then_branch) + count_statements(else_branch),
         syntax::C0Statement::While { body, .. } => 1 + count_statements(body),
+        // A native switch is checked as one source operation; its case bodies
+        // are part of that operation rather than independently addressable
+        // statement regions.
+        syntax::C0Statement::Switch { .. } => 1,
         _ => 1,
     }
 }
@@ -302,6 +309,11 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
         }
         syntax::C0Statement::While { body, .. } => {
             collect_c0_loop_modified_locals(body, names);
+        }
+        syntax::C0Statement::Switch { cases, .. } => {
+            for case in cases {
+                collect_c0_loop_modified_locals(case.body(), names);
+            }
         }
     }
 }

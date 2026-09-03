@@ -2583,9 +2583,12 @@ impl<'a> Proof<'a> {
         if matches!(statement, CStatement::While { .. }) {
             return Ok(None);
         }
-        if matches!(statement, CStatement::If { .. }) {
+        if matches!(statement, CStatement::If { .. } | CStatement::Switch { .. }) {
             // A C `if` the context decides is one step into that arm; one it
-            // cannot decide is a fork for the driver's branch handling.
+            // cannot decide is a fork for the driver's branch handling. A
+            // symbolic switch likewise belongs to the bounded planner, which
+            // materializes its case split before applying one switch theorem
+            // per path.
             return match self.apply_step(ProofStep::Step) {
                 Ok(proof) => Ok(Some(proof)),
                 Err(_) => {

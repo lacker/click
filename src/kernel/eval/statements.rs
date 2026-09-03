@@ -1637,8 +1637,233 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             execution_semantics,
             budget,
         )?,
+        CStatement::Switch { expression, cases } => execute_c_switch_paths(
+            state,
+            expression,
+            cases,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        )?,
     };
     budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_switch_paths(
+    state: &CState,
+    expression: &CExpression,
+    cases: &[CSwitchCase],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for selector_path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            mut facts,
+            obligations,
+        } = selector_path;
+        match outcome {
+            CExpressionOutcome::Value(value) => {
+                let selector_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                let Some(selector) =
+                    promote_c_int32_path_value(value, &mut facts, &selector_assumptions)
+                else {
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                };
+                paths.extend(execute_c_switch_dispatch_paths(
+                    state,
+                    &selector,
+                    cases,
+                    0,
+                    facts,
+                    obligations,
+                    assumptions,
+                    environment,
+                    execution_semantics,
+                    budget,
+                )?);
+            }
+            CExpressionOutcome::UndefinedBehavior(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::UndefinedBehavior(error),
+                facts,
+                obligations,
+            }),
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
+                facts,
+                obligations,
+            }),
+        }
+    }
+    Ok(paths)
+}
+
+fn execute_c_switch_dispatch_paths(
+    state: &CState,
+    selector: &Bitvector32Term,
+    cases: &[CSwitchCase],
+    case_index: usize,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if case_index == cases.len() {
+        let default_index = cases.iter().position(|case| case.value.is_none());
+        return match default_index {
+            Some(default_index) => execute_c_switch_suffix_paths(
+                state,
+                cases,
+                default_index,
+                facts,
+                obligations,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            ),
+            None => Ok(vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state.clone()),
+                facts,
+                obligations,
+            }]),
+        };
+    }
+
+    let case = &cases[case_index];
+    let Some(value) = case.value else {
+        return execute_c_switch_dispatch_paths(
+            state,
+            selector,
+            cases,
+            case_index + 1,
+            facts,
+            obligations,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        );
+    };
+    let condition = ConditionTerm::equal(selector.clone(), Bitvector32Term::Constant(value));
+    let mut paths = Vec::new();
+    for condition_path in condition_as_c_int32_paths(condition, facts, obligations, assumptions) {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = condition_path;
+        let CExpressionOutcome::Value(CValue::Int32(result)) = outcome else {
+            unreachable!("switch case conditions produce promoted int32 values");
+        };
+        if result.as_const() == Some(1) {
+            paths.extend(execute_c_switch_suffix_paths(
+                state,
+                cases,
+                case_index,
+                facts,
+                obligations,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )?);
+        } else {
+            paths.extend(execute_c_switch_dispatch_paths(
+                state,
+                selector,
+                cases,
+                case_index + 1,
+                facts,
+                obligations,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )?);
+        }
+    }
+    Ok(paths)
+}
+
+fn execute_c_switch_suffix_paths(
+    state: &CState,
+    cases: &[CSwitchCase],
+    case_index: usize,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if case_index == cases.len() {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(state.clone()),
+            facts,
+            obligations,
+        }]);
+    }
+    let case_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let mut paths = Vec::new();
+    for case_path in execute_c_statement_paths(
+        state,
+        &cases[case_index].body,
+        &case_assumptions,
+        environment,
+        execution_semantics,
+        budget,
+    )? {
+        let Some((case_facts, case_obligations)) = merge_execution_pure_facts_and_obligations(
+            &facts,
+            &obligations,
+            &case_path.facts,
+            &case_path.obligations,
+            assumptions,
+        ) else {
+            continue;
+        };
+        match case_path.outcome {
+            CStatementOutcome::Normal(next_state) => paths.extend(execute_c_switch_suffix_paths(
+                &next_state,
+                cases,
+                case_index + 1,
+                case_facts,
+                case_obligations,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )?),
+            CStatementOutcome::Break(next_state) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(next_state),
+                facts: case_facts,
+                obligations: case_obligations,
+            }),
+            outcome @ (CStatementOutcome::Continue(_)
+            | CStatementOutcome::Return { .. }
+            | CStatementOutcome::VerificationDiverges
+            | CStatementOutcome::UndefinedBehavior(_)
+            | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                outcome,
+                facts: case_facts,
+                obligations: case_obligations,
+            }),
+        }
+    }
     Ok(paths)
 }
 

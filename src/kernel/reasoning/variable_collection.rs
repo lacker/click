@@ -384,6 +384,12 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             }
             collect_c_statement_bitvector_variables(body, variables);
         }
+        CStatement::Switch { expression, cases } => {
+            collect_c_expression_bitvector_variables(expression, variables);
+            for case in cases {
+                collect_c_statement_bitvector_variables(&case.body, variables);
+            }
+        }
     }
 }
 

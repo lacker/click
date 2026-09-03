@@ -471,6 +471,21 @@ fn structural_recursion_paths(
             }
             Ok(paths)
         }
+        CStatement::Switch { cases, .. } => {
+            let incoming_paths = paths;
+            let mut paths = Vec::new();
+            for case in cases {
+                paths.extend(structural_recursion_paths(
+                    &case.body,
+                    function,
+                    measure_arguments,
+                    child_arguments,
+                    guard,
+                    incoming_paths.clone(),
+                )?);
+            }
+            Ok(paths)
+        }
     }
 }
 
@@ -678,6 +693,12 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::While {
             condition, body, ..
         } => escapes(condition) || statement_takes_address_of(body, name),
+        CStatement::Switch { expression, cases } => {
+            escapes(expression)
+                || cases
+                    .iter()
+                    .any(|case| statement_takes_address_of(&case.body, name))
+        }
     }
 }
 
@@ -716,6 +737,14 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
             statement_calls(else_branch, calls);
         }
         CStatement::While { body, .. } => statement_calls(body, calls),
+        CStatement::Switch {
+            expression: _,
+            cases,
+        } => {
+            for case in cases {
+                statement_calls(&case.body, calls);
+            }
+        }
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -852,6 +881,19 @@ fn recursion_paths(
             }
             Ok(lower_bounds)
         }
+        CStatement::Switch { cases, .. } => {
+            let mut paths = Vec::new();
+            for case in cases {
+                paths.extend(recursion_paths(
+                    &case.body,
+                    measure,
+                    component,
+                    parameter_indices,
+                    lower_bounds.clone(),
+                )?);
+            }
+            Ok(paths)
+        }
     }
 }
 
@@ -903,6 +945,13 @@ fn loop_paths(
         CStatement::While { .. } => Err(error(
             "nested loops in one ranking proof are not yet supported",
         )),
+        CStatement::Switch { cases, .. } => {
+            let mut paths = Vec::new();
+            for case in cases {
+                paths.extend(loop_paths(&case.body, measure, offsets.clone())?);
+            }
+            Ok(paths)
+        }
     }
 }
 
@@ -943,6 +992,13 @@ fn check_loops(
                 return Err(error(format!(
                     "loop {index} does not decrease `{measure}` to a nonnegative value on every back edge"
                 )));
+            }
+            Ok(nested_terminate)
+        }
+        CStatement::Switch { cases, .. } => {
+            let mut nested_terminate = true;
+            for case in cases {
+                nested_terminate &= check_loops(&case.body, supplied, next_index)?;
             }
             Ok(nested_terminate)
         }

@@ -794,6 +794,10 @@ pub fn c_continue() -> CStatement {
     CStatement::Continue
 }
 
+pub fn c_switch(expression: CExpression, cases: Vec<CSwitchCase>) -> CStatement {
+    CStatement::Switch { expression, cases }
+}
+
 pub fn c_return(expression: CExpression) -> CStatement {
     CStatement::Return(expression)
 }

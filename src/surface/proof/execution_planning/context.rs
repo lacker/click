@@ -122,6 +122,9 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
             ..
         } => kernel_loop_by_index(then_branch, target, next_loop_index)
             .or_else(|| kernel_loop_by_index(else_branch, target, next_loop_index)),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .find_map(|case| kernel_loop_by_index(&case.body, target, next_loop_index)),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue

@@ -489,6 +489,14 @@ pub enum SpecResource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CSwitchCase {
+    /// `None` is the default case; integer values are represented in the
+    /// promoted int32 bit pattern used by C0.
+    pub value: Option<u32>,
+    pub body: Box<CStatement>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
     Skip,
     Break,
@@ -556,6 +564,10 @@ pub enum CStatement {
         invariant_checks: Vec<CLoopInvariantCheck>,
         effect_checks: Vec<CLoopEffectCheck>,
         body: Box<CStatement>,
+    },
+    Switch {
+        expression: CExpression,
+        cases: Vec<CSwitchCase>,
     },
 }
 

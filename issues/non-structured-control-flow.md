@@ -2,14 +2,13 @@
 
 Found by the 2026-09-01 kernel audit at cb034b21.
 
-`parse_statement` (`src/languages/c/syntax.rs`) still rejects `break;` as
-"expected statement, got identifier `break`"; `switch (x) {` parses `switch`
-as a call statement and dies on the `{`; and labels are unparseable. The
-parser now lowers `do ... while` to existing statements, but the kernel
-`CStatement` enum (`src/kernel/primitives.rs`) has no Break, Continue, Switch,
-or Goto variants, so a loop that exits early has no faithful representation
-and restructuring it is exactly the source rewrite the project doctrine
-forbids. No mdtest or example uses the remaining forms.
+The initial native control-flow slice now models `break`, `continue`, and a
+bounded `switch` in the kernel and surface proof path. The remaining gap is
+that `do ... while` still has distinct edge semantics that are not preserved by
+the current lowering, and labels/goto are unparseable. The switch slice is
+currently limited to direct integer or character literal labels in one
+compound body; arbitrary constant expressions and nested labels remain future
+work.
 
 ## Violated invariant
 
@@ -25,7 +24,7 @@ Staged mdtests, each an unchanged C function with a sidecar proof:
    postcondition that `result` is the first matching index or `n`.
 2. The same loop using `continue` to skip elements.
 3. `switch (kind) { case 0: ...; break; case 1: ...; break; default: ...; }`
-   including fallthrough between two cases.
+   including fallthrough between two cases (`mdtests/c_switch.md`).
 4. `goto` to a cleanup label at the end of a function (the error-path
    cleanup idiom), with resources released on both the normal and the goto
    path.
@@ -38,9 +37,9 @@ Staged mdtests, each an unchanged C function with a sidecar proof:
   and exit.
 - The surface `loop` tactic and loop summaries accept bodies with `break` and
   `continue`.
-- `switch` lowers with C's fallthrough semantics; `goto` is supported at least
-  for forward jumps to a label at function scope, with a diagnostic for
-  unsupported jump shapes.
+- `switch` has a checked native implementation with C's fallthrough semantics
+  for its supported literal-label shape; the remaining switch extensions and
+  `goto` need explicit diagnostics and regressions.
 - The five mdtests pass; `scripts/check.sh` passes.
 
 Related: [c-syntax-conveniences.md](c-syntax-conveniences.md) for
