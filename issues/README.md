@@ -24,10 +24,11 @@ when evidence exposes one.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 16
+## Functionality gaps: 17
 
 C language coverage:
 
+- [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Extend the integer model beyond int32 and uint8](integer-types.md)
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
