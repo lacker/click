@@ -1559,7 +1559,7 @@ fn lower_pure_arithmetic_from_premise_pool(
         }
     }
     Err(ClickError::new(
-        "no single available signed-affine premise proves the goal",
+        "no single available arithmetic premise proves the goal",
     ))
 }
 

@@ -180,6 +180,9 @@ impl PureFactContext {
                 let right = right.as_ref().clone();
                 self.decide(&ConditionTerm::equal(right, int_min))
             }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+                self.signed_multiplication_interval_nonoverflow(left, right)
+            }
             ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant((-1i32) as u32) =>
             {
@@ -299,10 +302,23 @@ impl PureFactContext {
             })
     }
 
+    fn signed_multiplication_interval_nonoverflow(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        self.signed_interval(
+            &Bitvector32Term::Multiply(Box::new(left.clone()), Box::new(right.clone())),
+            SIGNED_INTERVAL_DEPTH_LIMIT,
+        )
+        .map(|_| false)
+    }
+
     /// Returns a conservative signed range for `term`. Unknown endpoints use
     /// the full int32 range, so callers can still prove identities such as
-    /// `x + 0`. Additions are ranged only when their own signed evaluation is
-    /// known not to overflow; this makes nested-addition bounds safe to reuse.
+    /// `x + 0`. Compound arithmetic is ranged only when its own signed
+    /// evaluation is known not to overflow; this makes nested bounds safe to
+    /// reuse.
     fn signed_interval(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
         // A successfully reconstructed interval is independent of the depth
         // allowance that happened to find it. Key by fact-set content and
@@ -339,12 +355,17 @@ impl PureFactContext {
         }
         let mut lower = i64::from(i32::MIN);
         let mut upper = i64::from(i32::MAX);
-        // Add terms are common in pointer and loop arithmetic. Their direct
-        // fact key is enough for the compound-term regression, while deep
-        // canonicalization of every unbounded Add would turn this interval
-        // fallback into a hot-path tree walk. Non-add terms still use the
+        // Compound terms are common in pointer and loop arithmetic. Their
+        // direct fact key is enough for a recorded bound, while deep
+        // canonicalization of every unresolved term would turn this interval
+        // fallback into a hot-path tree walk. Non-compound atoms still use the
         // canonical alias lookup above.
-        let exact_bounds = if matches!(term, Bitvector32Term::Add(_, _)) {
+        let exact_bounds = if matches!(
+            term,
+            Bitvector32Term::Add(_, _)
+                | Bitvector32Term::Subtract(_, _)
+                | Bitvector32Term::Multiply(_, _)
+        ) {
             self.exact_signed_order_bounds_for_key(term)
         } else {
             self.exact_signed_order_bounds(term)
@@ -378,15 +399,44 @@ impl PureFactContext {
                 return (lower <= upper).then_some((lower, upper));
             }
         }
-        if let Bitvector32Term::Add(left, right) = term {
-            let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
-            let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
-            let lower = left_lower.checked_add(right_lower)?;
-            let upper = left_upper.checked_add(right_upper)?;
-            if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
-                return None;
+        match term {
+            Bitvector32Term::Add(left, right) => {
+                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
+                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let lower = left_lower.checked_add(right_lower)?;
+                let upper = left_upper.checked_add(right_upper)?;
+                if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
+                    return None;
+                }
+                return Some((lower, upper));
             }
-            return Some((lower, upper));
+            Bitvector32Term::Subtract(left, right) => {
+                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
+                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let lower = left_lower.checked_sub(right_upper)?;
+                let upper = left_upper.checked_sub(right_lower)?;
+                if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
+                    return None;
+                }
+                return Some((lower, upper));
+            }
+            Bitvector32Term::Multiply(left, right) => {
+                let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
+                let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+                let products = [
+                    i128::from(left_lower) * i128::from(right_lower),
+                    i128::from(left_lower) * i128::from(right_upper),
+                    i128::from(left_upper) * i128::from(right_lower),
+                    i128::from(left_upper) * i128::from(right_upper),
+                ];
+                let lower = *products.iter().min()?;
+                let upper = *products.iter().max()?;
+                if lower < i128::from(i32::MIN) || upper > i128::from(i32::MAX) {
+                    return None;
+                }
+                return Some((lower as i64, upper as i64));
+            }
+            _ => {}
         }
 
         for (condition, value) in self.condition_facts.iter() {
@@ -550,6 +600,37 @@ mod tests {
             assumptions.decide(&ConditionTerm::signed_add_overflows(
                 once,
                 Bitvector32Term::Constant(1),
+            )),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn bounded_multiplication_uses_operand_intervals() {
+        let x = Bitvector32Term::Variable(Variable(93_004));
+        let y = Bitvector32Term::Variable(Variable(93_005));
+        let assumptions = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(x, Bitvector32Term::Constant(100)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(y.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(y.clone(), Bitvector32Term::Constant(100)),
+                true,
+            );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_multiply_overflows(
+                Bitvector32Term::Variable(Variable(93_004)),
+                Bitvector32Term::Variable(Variable(93_005)),
             )),
             Some(false)
         );
