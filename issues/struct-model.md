@@ -7,7 +7,7 @@ Struct pointers are supported: declarations, `->` field access, and
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The model stops there.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
-arrays, embedded structs, and pointers; struct values cannot be parameters, locals, or returns
+arrays, embedded structs, named enum fields, and pointers; struct values cannot be parameters, locals, or returns
 (`syntax.rs:961` "only pointer-to-struct types are supported"). Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
@@ -18,7 +18,9 @@ are preserved as inline field shapes and indexed through their element-width
 pointer arithmetic. Embedded fields are represented as aggregate places during
 C0 parsing and are lowered to scalar leaf accesses; direct aggregate loads,
 copies, and aggregate resource segments remain unsupported. Unions, bitfields,
-enums, and broader struct-value support remain.
+and broader struct-value support remain. Enum fields use an explicit four-byte
+`int32` ABI representation, with enumerator values retained in C0 metadata and
+lowered as scalar constants in C expressions.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
@@ -45,7 +47,8 @@ Staged mdtests, each with an unchanged C file:
    an array of structs indexed as `a[i].x`.~~ Covered by
    `mdtests/struct_embedded_scalar_field.md`, `mdtests/local_array_of_structs.md`,
    and `mdtests/struct_array_parameter_fields.md`.
-3. An `enum` used as a field type and in a comparison.
+3. ~~An `enum` used as a field type and in a comparison.~~ Covered by
+   `mdtests/struct_enum_field.md` and the C0 enum metadata and lowering tests.
 4. A struct passed and returned by value (copy semantics, no aliasing).
 5. A union of `int32` and `int32*` with a tag field, read only through the
    active member.

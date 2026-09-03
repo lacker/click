@@ -1190,6 +1190,158 @@ fn c0_rejects_embedded_struct_values_outside_member_access() {
 }
 
 #[test]
+fn c0_enum_metadata_preserves_named_values_and_field_shape() {
+    #[repr(C)]
+    struct HostPacket {
+        tag: u8,
+        state: i32,
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        enum packet_state {
+            PACKET_IDLE = -1,
+            PACKET_READY = 7,
+            PACKET_DONE,
+        };
+        typedef enum packet_state packet_state_t;
+        struct packet {
+            uint8 tag;
+            packet_state_t state;
+            int32 tail;
+        };
+
+        int32 read_state(struct packet* packet) {
+            return packet->state == PACKET_READY;
+        }
+        "#,
+    )
+    .expect("named enum fields should parse");
+
+    let enum_definition = function.enums().get("packet_state").expect("enum metadata");
+    assert_eq!(enum_definition.value("PACKET_IDLE"), Some(-1));
+    assert_eq!(enum_definition.value("PACKET_READY"), Some(7));
+    assert_eq!(enum_definition.value("PACKET_DONE"), Some(8));
+
+    let layout = function.structs().get("packet").expect("packet layout");
+    let state = layout.field("state").expect("enum field");
+    assert_eq!(state.c_type(), syntax::C0Type::Int32);
+    assert_eq!(state.enum_name(), Some("packet_state"));
+    assert_eq!(
+        state.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, state)
+    );
+    assert_eq!(state.byte_width() as usize, std::mem::size_of::<i32>());
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+}
+
+#[test]
+fn c0_enum_field_comparison_lowers_named_constant() {
+    let function = syntax::parse_function(
+        r#"
+        enum packet_state {
+            PACKET_IDLE,
+            PACKET_READY = 7,
+        };
+        struct packet {
+            uint8 tag;
+            enum packet_state state;
+        };
+
+        int32 is_ready(struct packet* packet) {
+            return packet->state == PACKET_READY;
+        }
+        "#,
+    )
+    .expect("enum comparison should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 1, 2);
+    let state_pointer = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+    };
+    let state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 8)
+                .store(state_pointer, crate::kernel::int32(7)),
+        )
+        .with_resource_context(resources.clone());
+    let final_state = state.clone();
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("enum comparison should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(1),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_rejects_unsupported_enum_shapes() {
+    let error = syntax::parse_function(
+        r#"
+        enum packet_state { PACKET_IDLE, PACKET_READY };
+        struct packet {
+            enum packet_state states[2];
+        };
+
+        int32 read_state(struct packet* packet) {
+            return packet->states[0];
+        }
+        "#,
+    )
+    .expect_err("enum arrays should remain outside this slice");
+    assert!(
+        error
+            .message()
+            .contains("arrays of enum fields are not supported")
+    );
+
+    let error = syntax::parse_function(
+        r#"
+        enum packet_state { PACKET_IDLE, PACKET_READY };
+
+        enum packet_state read_state() {
+            return PACKET_READY;
+        }
+        "#,
+    )
+    .expect_err("enum return types should remain outside this slice");
+    assert!(
+        error
+            .message()
+            .contains("enum return types are not supported")
+    );
+}
+
+#[test]
 fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
     fn contains_heap_operations(statement: &syntax::C0Statement) -> (bool, bool) {
         match statement {

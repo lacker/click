@@ -22,6 +22,10 @@ id = "c0.type.typedef"
 path = "reference/language/c0.md#supported-types"
 
 [[item]]
+id = "c0.type.enum"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
 id = "c0.type.pointer"
 path = "reference/language/c0.md#supported-types"
 
@@ -59,6 +63,10 @@ path = "reference/language/c0.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.struct-field-list"
+path = "reference/language/c0.md#struct-subset"
+
+[[item]]
+id = "c0.declaration.enum"
 path = "reference/language/c0.md#struct-subset"
 
 [[item]]

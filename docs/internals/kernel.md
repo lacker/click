@@ -264,6 +264,10 @@ The C0 importer models one explicit ABI: LP64. In that ABI, `int32` has size
 and alignment 4, `uint8` has size and alignment 1, and every supported pointer
 has size and alignment 8. Struct fields are aligned individually and the
 struct size includes the tail padding required by its maximum field alignment.
+Named enum fields use the supported four-byte `int32` representation. The C0
+metadata retains the enum declaration and enumerator values, but lowering
+turns an enumerator into its int32 bit pattern and emits the same scalar field
+load or store as an `int32` field.
 For example, `{ uint8 buf[16]; int32 a; int32* p; }` places `buf` at byte
 offset 0, `a` at byte offset 16, and `p` at byte offset 24, and has size 32.
 Inline scalar arrays are retained as aggregate type metadata, but an array

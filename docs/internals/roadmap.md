@@ -47,9 +47,9 @@ Current status: mostly done, but this remains a maintenance milestone.
 
 What exists today:
 
-- C0 symbolic execution for `int32`, `uint8`, pointers, local arrays, memory,
-  function calls, annotated loops, and exact struct or runtime-sized `int32`
-  allocation lifetimes.
+- C0 symbolic execution for `int32`, `uint8`, named enum fields, pointers, local
+  arrays, memory, function calls, annotated loops, and exact struct or
+  runtime-sized `int32` allocation lifetimes.
 - Surface Click contracts, loop invariants, memory effects, predicates, pure
   functions, `if`, `let`, `.fold`, `forall`, and selected range combinators.
 - A small standard library with `count`, `permutation`, and initial byte-slice
@@ -92,9 +92,9 @@ Likely additions:
   aggregate places. One-dimensional function parameters declared as arrays of
   the supported structs now retain their ABI stride. Remaining work includes
   struct values, arrays of embedded structs, multidimensional struct arrays,
-  unions/bitfields, and broader address-taking.
-- Enums and named constants:
-  needed for real error codes and option flags.
+  unions/bitfields, and broader address-taking. Named enum fields and constants
+  are supported, but enum parameters, returns, locals, arrays, and anonymous
+  declarations remain outside the slice.
 - Globals:
   especially immutable global tables and string constants.
 

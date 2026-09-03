@@ -28,8 +28,8 @@ support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
 conversions, allocator declarations, custom allocators, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int32`, `uint8`, fixed one-dimensional arrays of those
-scalars, and pointer-valued fields, plus chained `p->child->field`
+declarations with `int32`, `uint8`, named enum fields, fixed one-dimensional
+arrays of the supported scalars, and pointer-valued fields, plus chained `p->child->field`
 loads/stores through struct pointers. Inline scalar arrays retain their element
 width and are accessed through C's array-to-pointer conversion, so
 `uint8 buf[16]` uses byte-width indexing rather than pointer-sized storage. It
@@ -43,8 +43,11 @@ One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. It still has no struct values, aggregate
 copies, arrays of embedded structs, multidimensional inline arrays, unions,
-bitfields, packed layout, or general field-address expressions. Aggregate
-fields are not resource segments; resource clauses must name a leaf field.
+bitfields, packed layout, or general field-address expressions. Named enums use
+the four-byte scalar ABI representation; their enumerators are resolved to
+int32 values in C expressions, while enum parameters, returns, locals, arrays,
+and anonymous declarations remain unsupported. Aggregate fields are not
+resource segments; resource clauses must name a leaf field.
 Click contracts can use field places with `views` and the owned-resource verbs,
 and explicit ranges such as `owns owner[0..3]` remain useful for broader
 footprints. The supported ABI is LP64; other target ABIs are rejected rather

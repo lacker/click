@@ -13,6 +13,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.uint8",
     "type.standard-spellings",
     "type.typedef",
+    "type.enum",
     "type.pointer",
     "type.pointer-to-pointer",
     "type.array-parameter",
@@ -23,6 +24,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "declaration.function",
     "declaration.struct",
     "declaration.struct-field-list",
+    "declaration.enum",
     "declaration.local",
     "statement.empty",
     "statement.block",
@@ -112,6 +114,7 @@ pub struct C0Function {
     parameters: Vec<C0Parameter>,
     body: C0Statement,
     structs: BTreeMap<String, C0StructLayout>,
+    enums: BTreeMap<String, C0EnumDefinition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,6 +134,7 @@ pub struct C0Parameter {
 struct ParsedType {
     c_type: C0Type,
     struct_name: Option<String>,
+    enum_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,9 +145,15 @@ pub struct C0StructLayout {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0EnumDefinition {
+    values: BTreeMap<String, i32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
     c_type: C0Type,
     struct_name: Option<String>,
+    enum_name: Option<String>,
     offset_bytes: u32,
     byte_width: u32,
 }
@@ -382,6 +392,10 @@ impl C0Function {
         &self.structs
     }
 
+    pub fn enums(&self) -> &BTreeMap<String, C0EnumDefinition> {
+        &self.enums
+    }
+
     pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
         self.body.to_kernel_statement()
     }
@@ -417,6 +431,16 @@ impl C0StructLayout {
     }
 }
 
+impl C0EnumDefinition {
+    pub fn values(&self) -> &BTreeMap<String, i32> {
+        &self.values
+    }
+
+    pub fn value(&self, name: &str) -> Option<i32> {
+        self.values.get(name).copied()
+    }
+}
+
 impl C0StructField {
     pub fn c_type(&self) -> C0Type {
         self.c_type
@@ -428,6 +452,10 @@ impl C0StructField {
 
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
+    }
+
+    pub fn enum_name(&self) -> Option<&str> {
+        self.enum_name.as_deref()
     }
 
     pub fn byte_width(&self) -> u32 {
@@ -943,6 +971,7 @@ fn is_builtin_type_start(name: &str) -> bool {
         name,
         "void"
             | "struct"
+            | "enum"
             | "int32"
             | "int"
             | "int32_t"
@@ -1121,6 +1150,8 @@ struct Parser {
     positions: Vec<SourcePosition>,
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
+    enums: BTreeMap<String, C0EnumDefinition>,
+    enum_constants: BTreeMap<String, i32>,
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
@@ -1152,6 +1183,8 @@ impl Parser {
             positions,
             position: 0,
             structs: BTreeMap::new(),
+            enums: BTreeMap::new(),
+            enum_constants: BTreeMap::new(),
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
@@ -1180,6 +1213,11 @@ impl Parser {
     /// rejects it when the name is still visible from an enclosing scope.
     /// Call right after consuming the name token so the error points at it.
     fn declare_name(&mut self, name: &str) -> Result<(), C0SyntaxError> {
+        if self.enum_constants.contains_key(name) {
+            return Err(
+                self.error_at_previous(format!("`{name}` is already declared as an enum constant"))
+            );
+        }
         if self
             .scopes
             .iter()
@@ -1232,6 +1270,11 @@ impl Parser {
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_declarations()?;
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.enum_name.is_some() {
+            return Err(self.error_here(
+                "enum return types are not supported; use enum values in struct fields",
+            ));
+        }
         if is_plain_struct_type(&parsed_return_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
         }
@@ -1261,6 +1304,7 @@ impl Parser {
             parameters,
             body,
             structs: self.structs,
+            enums: self.enums,
         })
     }
 
@@ -1271,6 +1315,8 @@ impl Parser {
             } else if self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace)
             {
                 self.parse_struct_declaration()?;
+            } else if self.peek_ident() == Some("enum") && self.peek_n(2) == Some(&Token::LBrace) {
+                self.parse_enum_declaration()?;
             } else {
                 break;
             }
@@ -1287,6 +1333,95 @@ impl Parser {
             return Err(self.error_at_previous(format!("duplicate typedef `{alias}`")));
         }
         Ok(())
+    }
+
+    fn parse_enum_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        self.expect_ident_spelling("enum")?;
+        let name = self.expect_ident("enum name")?;
+        if self.enums.contains_key(&name) {
+            return Err(self.error_at_previous(format!("duplicate enum declaration `{name}`")));
+        }
+        self.expect(Token::LBrace)?;
+        if self.peek() == Some(&Token::RBrace) {
+            return Err(self.error_here("enum declarations must contain at least one enumerator"));
+        }
+
+        let mut values = BTreeMap::new();
+        let mut next_value = 0i64;
+        loop {
+            let enumerator = self.expect_ident("enumerator name")?;
+            if self.enum_constants.contains_key(&enumerator) {
+                return Err(self.error_at_previous(format!("duplicate enumerator `{enumerator}`")));
+            }
+            let value = if self.peek() == Some(&Token::Equal) {
+                self.position += 1;
+                self.parse_enum_value(&name)?
+            } else {
+                i32::try_from(next_value).map_err(|_| {
+                    self.error_here(format!("enum `{name}` value is outside the int32 range"))
+                })?
+            };
+            values.insert(enumerator.clone(), value);
+            self.enum_constants.insert(enumerator, value);
+            next_value = i64::from(value)
+                .checked_add(1)
+                .ok_or_else(|| self.error_here(format!("enum `{name}` value is too large")))?;
+
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                    if self.peek() == Some(&Token::RBrace) {
+                        break;
+                    }
+                }
+                Some(Token::RBrace) => break,
+                Some(token) => {
+                    return Err(self.error_here(format!(
+                        "expected `,` or `}}` in enum `{name}`, got {}",
+                        token.describe()
+                    )));
+                }
+                None => {
+                    return Err(self.error_here(format!(
+                        "expected `,` or `}}` in enum `{name}`, got end of input"
+                    )));
+                }
+            }
+        }
+
+        self.expect(Token::RBrace)?;
+        self.expect(Token::Semicolon)?;
+        self.enums.insert(name, C0EnumDefinition { values });
+        Ok(())
+    }
+
+    fn parse_enum_value(&mut self, enum_name: &str) -> Result<i32, C0SyntaxError> {
+        let negative = if self.peek() == Some(&Token::Minus) {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        let Some(Token::Number(number)) = self.next() else {
+            return Err(
+                self.error_here(format!("enum `{enum_name}` values must be int32 literals"))
+            );
+        };
+        let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+            self.error_at_previous(format!("invalid enum value `{number}`: {reason}"))
+        })?;
+        let signed = if negative {
+            -(i64::try_from(magnitude).map_err(|_| {
+                self.error_at_previous(format!("enum value `-{number}` is outside the int32 range"))
+            })?)
+        } else {
+            i64::try_from(magnitude).map_err(|_| {
+                self.error_at_previous(format!("enum value `{number}` is outside the int32 range"))
+            })?
+        };
+        i32::try_from(signed).map_err(|_| {
+            self.error_at_previous(format!("enum value `{number}` is outside the int32 range"))
+        })
     }
 
     fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
@@ -1316,6 +1451,9 @@ impl Parser {
                             c_type,
                             struct_name: (c_type == field_type.c_type)
                                 .then(|| field_type.struct_name.clone())
+                                .flatten(),
+                            enum_name: (c_type == field_type.c_type)
+                                .then(|| field_type.enum_name.clone())
                                 .flatten(),
                             offset_bytes,
                             byte_width: field_size,
@@ -1369,6 +1507,18 @@ impl Parser {
         base_type: &ParsedType,
         struct_name: &str,
     ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+        if let Some(enum_name) = base_type.enum_name.as_deref() {
+            if !self.enums.contains_key(enum_name) {
+                return Err(self.error_here(format!("unknown enum declaration `{enum_name}`")));
+            }
+            if base_type.c_type != C0Type::Int32 {
+                return Err(self.error_here("pointers to enum values are not supported"));
+            }
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(self.error_here("arrays of enum fields are not supported"));
+            }
+            return Ok((C0Type::Int32, 4, 4));
+        }
         if is_plain_struct_type(base_type) {
             let nested_name = base_type
                 .struct_name
@@ -1448,7 +1598,7 @@ impl Parser {
                 | C0Type::UInt8Array(_)
         ) {
             return Err(self.error_here(format!(
-                "struct `{struct_name}` fields currently support int32, uint8, fixed scalar arrays, and pointer fields",
+                "struct `{struct_name}` fields currently support int32, uint8, enum, fixed scalar arrays, and pointer fields",
             )));
         }
         let (field_size, field_alignment) = match c_type {
@@ -1472,6 +1622,11 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
+            if parsed_type.enum_name.is_some() {
+                return Err(self.error_here(
+                    "enum parameters are not supported; use enum values in struct fields",
+                ));
+            }
             if let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
             {
@@ -1564,17 +1719,31 @@ impl Parser {
                 // `struct S*` when the declarator supplies `*`.
                 c_type: C0Type::Int32,
                 struct_name: Some(self.expect_ident("struct name")?),
+                enum_name: None,
+            },
+            Some(Token::Ident(name)) if name == "enum" => ParsedType {
+                c_type: C0Type::Int32,
+                struct_name: None,
+                enum_name: {
+                    let enum_name = self.expect_ident("enum name")?;
+                    if !self.enums.contains_key(&enum_name) {
+                        return Err(
+                            self.error_here(format!("unknown enum declaration `{enum_name}`"))
+                        );
+                    }
+                    Some(enum_name)
+                },
             },
             Some(Token::Ident(name)) => self.parse_named_type(name)?,
             Some(token) => {
                 return Err(self.error_at_previous(format!(
-                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, or `struct`, got {}",
+                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, `enum`, or `struct`, got {}",
                     token.describe()
                 )));
             }
             None => {
                 return Err(self.error_here(
-                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, or `struct`, got end of input",
+                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, `enum`, or `struct`, got end of input",
                 ));
             }
         };
@@ -1607,10 +1776,14 @@ impl Parser {
                     self.error_at_previous("pointer depth beyond `struct S*` is not supported")
                 );
             }
+            if parsed.enum_name.is_some() && c_type != C0Type::Int32 {
+                return Err(self.error_at_previous("pointers to enum values are not supported"));
+            }
         }
         Ok(ParsedType {
             c_type,
             struct_name: parsed.struct_name,
+            enum_name: parsed.enum_name,
         })
     }
 
@@ -1740,6 +1913,7 @@ impl Parser {
         Ok(ParsedType {
             c_type,
             struct_name: None,
+            enum_name: None,
         })
     }
 
@@ -1773,6 +1947,9 @@ impl Parser {
     ) -> Result<(C0Type, Option<Vec<u32>>), C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
             return Ok((parsed_type.c_type, None));
+        }
+        if parsed_type.enum_name.is_some() {
+            return Err(self.error_here("local arrays of enum type are not supported"));
         }
         let (array_type, element_width, element_name, struct_array): (
             fn(u32) -> C0Type,
@@ -2294,6 +2471,11 @@ impl Parser {
         if parsed_type.c_type == C0Type::Void {
             return Err(self.error_here("void local declarations are not supported"));
         }
+        if parsed_type.enum_name.is_some() {
+            return Err(self.error_here(
+                "enum local declarations are not supported; use enum values in struct fields",
+            ));
+        }
         if self.peek() == Some(&Token::LParen) {
             let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
@@ -2407,6 +2589,11 @@ impl Parser {
         let parsed_type = self.parse_type()?;
         if parsed_type.c_type == C0Type::Void {
             return Err(self.error_here("void for-loop locals are not supported"));
+        }
+        if parsed_type.enum_name.is_some() {
+            return Err(self.error_here(
+                "enum local declarations are not supported; use enum values in struct fields",
+            ));
         }
         if is_plain_struct_type(&parsed_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
@@ -3254,7 +3441,10 @@ impl Parser {
         }
         let at = self.error_context();
         match self.next() {
-            Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
+            Some(Token::Ident(name)) => match self.enum_constants.get(&name) {
+                Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
+                None => Ok(C0Expression::Variable(name)),
+            },
             Some(Token::Number(number)) => {
                 let value = parse_integer_literal_magnitude(&number).map_err(|reason| {
                     at.error(format!("invalid integer literal `{number}`: {reason}"))
