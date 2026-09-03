@@ -3892,6 +3892,54 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
 }
 
 #[test]
+fn c0_syntax_lowers_calls_in_expression_position() {
+    let function = syntax::parse_function(
+        r#"
+        int32 caller(int32 x) {
+            int32 result = increment(x) + 1;
+            result = increment(result) + 1;
+            if (increment(x) > 0)
+                return increment(increment(x)) + 1;
+            return values[index_of(x)];
+        }
+        "#,
+    )
+    .expect("calls should be accepted wherever an unconditional expression is expected");
+    let debug = format!("{:?}", function.body());
+    assert!(
+        debug.contains("CallAssign"),
+        "calls lower to call statements"
+    );
+    assert!(
+        debug.contains("__click_call_result0"),
+        "lowering uses a kernel-local temporary"
+    );
+    assert!(
+        !debug.contains("Call {"),
+        "the lowered C0 body contains no expression-level call nodes"
+    );
+}
+
+#[test]
+fn c0_syntax_rejects_multiple_unsequenced_expression_calls() {
+    let error = syntax::parse_function(
+        r#"
+        int32 caller(int32 x) {
+            return increment(x) + increment(x);
+        }
+        "#,
+    )
+    .expect_err("C does not specify the relative order of these calls");
+    assert!(
+        error
+            .message()
+            .contains("multiple unsequenced calls in one expression"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_function_pointers_preserve_signature_and_dispatch_callback() {
     let callback =
         syntax::parse_function("int32 compare(int32 left, int32 right) { return left - right; }")

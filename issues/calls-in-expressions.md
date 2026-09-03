@@ -2,14 +2,22 @@
 
 Found by the 2026-09-01 kernel audit at cb034b21.
 
-Calls exist only as `f(args);` statements or as direct assignments
-`x = f(args);` (`src/languages/c/syntax.rs:1120-1124` dispatching to
-`:1322-1329`, `:1149-1157`, `:1239-1251`). `parse_postfix` handles only `[` and `->` (`:1639-1663`) and
-`parse_primary` maps identifiers to variables (`:1740-1741`), so
-`return f(x);`, `g(f(x))`, `if (f(x))`, and calls in conditions or arguments
-all fail to parse. The workaround, a named temporary, is a source rewrite of
-nearly every real function (`mdtests/c_local_named_result_across_calls.md`
-exercises the required pattern).
+The first implementation slice now accepts calls in unconditional expression
+positions, including return expressions, `if` conditions, nested arguments,
+and array indexes. It lowers each call to a fresh temporary and the existing
+checked `CallAssign` statement. Calls in loop conditions and conditional
+expression branches remain open because they require control-flow-aware
+lowering; multiple calls in one unsequenced expression are rejected instead
+of being silently sequenced.
+
+Before this slice, calls existed only as `f(args);` statements or as direct
+assignments `x = f(args);`. The parser now handles calls in unconditional
+expression positions, but lowering still rejects calls in loop conditions and
+conditional-expression branches because those forms require control-flow-aware
+sequencing. Multiple calls in one unsequenced
+expression are rejected rather than silently choosing an evaluation order.
+The named-temporary workaround remains necessary for those unsupported forms
+(`mdtests/c_local_named_result_across_calls.md` exercises the pattern).
 
 ## Violated invariant
 

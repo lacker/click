@@ -1468,6 +1468,11 @@ pub(in crate::surface) fn c0_statement_calls(
 
     fn collect_function_addresses(expression: &syntax::C0Expression, names: &mut BTreeSet<String>) {
         match expression {
+            syntax::C0Expression::Call { arguments, .. } => {
+                for argument in arguments {
+                    collect_function_addresses(argument, names);
+                }
+            }
             syntax::C0Expression::FunctionAddress(name) => {
                 names.insert(name.clone());
             }

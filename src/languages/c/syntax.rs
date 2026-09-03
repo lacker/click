@@ -316,6 +316,14 @@ pub enum C0UpdateOperator {
 pub enum C0Expression {
     Void,
     Variable(String),
+    /// A C function call that is still embedded in an expression. The
+    /// parser lowers these to `CallAssign` statements before the AST reaches
+    /// the kernel, so the kernel continues to execute calls only as checked
+    /// statement transitions.
+    Call {
+        function_name: String,
+        arguments: Vec<C0Expression>,
+    },
     FunctionAddress(String),
     Cast {
         expression: Box<C0Expression>,
@@ -745,6 +753,9 @@ impl C0Expression {
         match self {
             Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
+            Self::Call { .. } => {
+                unreachable!("call expressions must be lowered before kernel conversion")
+            }
             Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
             Self::Cast { expression, c_type } => {
                 crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type())
@@ -1004,6 +1015,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
             field_struct_name,
             ..
         } => *field_type == C0Type::Int32 && field_struct_name.is_some(),
+        C0Expression::Call { arguments, .. } => arguments.iter().any(contains_aggregate_value),
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
         | C0Expression::PointerOffsetBytes {
@@ -1251,6 +1263,7 @@ struct Parser {
     /// overwrite the outer object; the parser rejects it instead. Sibling
     /// scopes may reuse a name because the earlier object is dead.
     scopes: Vec<Vec<String>>,
+    next_synthesized_call: u32,
     loop_contexts: Vec<CLoopContext>,
     abi: CAbi,
 }
@@ -1279,6 +1292,7 @@ impl Parser {
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             scopes: Vec::new(),
+            next_synthesized_call: 0,
             loop_contexts: Vec::new(),
             abi,
         })
@@ -1412,6 +1426,7 @@ impl Parser {
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         let mut body = self.parse_block_statement()?;
+        body = self.lower_call_expressions(body)?;
         self.pop_scope();
         validate_function_returns(&body, return_type)?;
         if return_type == C0Type::Void {
@@ -2751,11 +2766,21 @@ impl Parser {
                 } else if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
                 {
+                    let call_start = self.position;
                     let function_name = self.expect_ident("function name")?;
                     let arguments = self.parse_call_arguments()?;
-                    let call =
-                        self.call_assignment_statement(name.clone(), function_name, arguments)?;
-                    C0Statement::Seq(Box::new(declaration), Box::new(call))
+                    if matches!(self.peek(), Some(Token::Comma | Token::Semicolon)) {
+                        let call =
+                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                        C0Statement::Seq(Box::new(declaration), Box::new(call))
+                    } else {
+                        self.position = call_start;
+                        let expression = self.parse_expression()?;
+                        C0Statement::Seq(
+                            Box::new(declaration),
+                            Box::new(C0Statement::Assign { name, expression }),
+                        )
+                    }
                 } else {
                     let expression = self.parse_expression()?;
                     C0Statement::Seq(
@@ -2952,9 +2977,13 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
                 {
+                    let call_start = self.position;
                     let function_name = self.expect_ident("function name")?;
                     let arguments = self.parse_call_arguments()?;
-                    return self.call_assignment_statement(name, function_name, arguments);
+                    if self.peek() == Some(&Token::Semicolon) {
+                        return self.call_assignment_statement(name, function_name, arguments);
+                    }
+                    self.position = call_start;
                 }
                 self.parse_expression()?
             }
@@ -3241,6 +3270,451 @@ impl Parser {
             ));
         }
         Ok(expression)
+    }
+
+    fn fresh_synthesized_call_name(&mut self) -> String {
+        loop {
+            let name = format!("__click_call_result{}", self.next_synthesized_call);
+            self.next_synthesized_call = self.next_synthesized_call.saturating_add(1);
+            let already_used = self.variable_types.contains_key(&name)
+                || self
+                    .scopes
+                    .iter()
+                    .any(|scope| scope.iter().any(|known_name| known_name == &name));
+            if !already_used {
+                return name;
+            }
+        }
+    }
+
+    fn lower_call_expressions(
+        &mut self,
+        statement: C0Statement,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        if !statement_contains_embedded_call(&statement) {
+            return Ok(statement);
+        }
+        self.lower_statement_calls(statement)
+    }
+
+    fn lower_statement_calls(
+        &mut self,
+        statement: C0Statement,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        match statement {
+            C0Statement::Skip
+            | C0Statement::Break
+            | C0Statement::Continue
+            | C0Statement::Declare { .. } => Ok(statement),
+            C0Statement::Assign { name, expression } => {
+                let (prefix, expression) = self.lower_expression_calls(expression)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Assign { name, expression },
+                ))
+            }
+            C0Statement::CallAssign {
+                target,
+                function_name,
+                arguments,
+            } => {
+                let (prefix, arguments) = self.lower_call_arguments(arguments)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::CallAssign {
+                        target,
+                        function_name,
+                        arguments,
+                    },
+                ))
+            }
+            C0Statement::Call {
+                function_name,
+                arguments,
+            } => {
+                let (prefix, arguments) = self.lower_call_arguments(arguments)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Call {
+                        function_name,
+                        arguments,
+                    },
+                ))
+            }
+            C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => {
+                let (prefix, bytes) = self.lower_expression_calls(bytes)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::HeapAllocate {
+                        target,
+                        bytes,
+                        zeroed,
+                    },
+                ))
+            }
+            C0Statement::HeapFree { pointer } => {
+                let (prefix, pointer) = self.lower_expression_calls(pointer)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::HeapFree { pointer },
+                ))
+            }
+            C0Statement::Seq(first, second) => Ok(C0Statement::Seq(
+                Box::new(self.lower_statement_calls(*first)?),
+                Box::new(self.lower_statement_calls(*second)?),
+            )),
+            C0Statement::Return(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(expression)?;
+                Ok(prepend_statements(prefix, C0Statement::Return(expression)))
+            }
+            C0Statement::Store {
+                pointer,
+                value,
+                value_type,
+            } => {
+                let (prefix, pointer, value) = self.lower_expression_pair(pointer, value)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Store {
+                        pointer,
+                        value,
+                        value_type,
+                    },
+                ))
+            }
+            C0Statement::Update {
+                target,
+                operator,
+                operand,
+            } => {
+                let (prefix, target, operand) = self.lower_expression_pair(target, operand)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Update {
+                        target,
+                        operator,
+                        operand,
+                    },
+                ))
+            }
+            C0Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let (prefix, condition) = self.lower_expression_calls(condition)?;
+                let then_branch = self.lower_statement_calls(*then_branch)?;
+                let else_branch = self.lower_statement_calls(*else_branch)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::If {
+                        condition,
+                        then_branch: Box::new(then_branch),
+                        else_branch: Box::new(else_branch),
+                    },
+                ))
+            }
+            C0Statement::While { condition, body } => {
+                let (prefix, condition) = self.lower_expression_calls(condition)?;
+                if !prefix.is_empty() {
+                    return Err(self.error_here(
+                        "calls in loop conditions are not supported because the condition is reevaluated",
+                    ));
+                }
+                Ok(C0Statement::While {
+                    condition,
+                    body: Box::new(self.lower_statement_calls(*body)?),
+                })
+            }
+            C0Statement::DoWhile { condition, body } => {
+                let (prefix, condition) = self.lower_expression_calls(condition)?;
+                if !prefix.is_empty() {
+                    return Err(self.error_here(
+                        "calls in loop conditions are not supported because the condition is reevaluated",
+                    ));
+                }
+                Ok(C0Statement::DoWhile {
+                    condition,
+                    body: Box::new(self.lower_statement_calls(*body)?),
+                })
+            }
+            C0Statement::For {
+                initializer,
+                condition,
+                step,
+                body,
+            } => {
+                let (prefix, condition) = self.lower_expression_calls(condition)?;
+                if !prefix.is_empty() {
+                    return Err(self.error_here(
+                        "calls in loop conditions are not supported because the condition is reevaluated",
+                    ));
+                }
+                Ok(C0Statement::For {
+                    initializer: Box::new(self.lower_statement_calls(*initializer)?),
+                    condition,
+                    step: Box::new(self.lower_statement_calls(*step)?),
+                    body: Box::new(self.lower_statement_calls(*body)?),
+                })
+            }
+            C0Statement::Switch { expression, cases } => {
+                let (prefix, expression) = self.lower_expression_calls(expression)?;
+                let cases = cases
+                    .into_iter()
+                    .map(|case| {
+                        Ok(C0SwitchCase {
+                            value: case.value,
+                            body: Box::new(self.lower_statement_calls(*case.body)?),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, C0SyntaxError>>()?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Switch { expression, cases },
+                ))
+            }
+        }
+    }
+
+    fn lower_call_arguments(
+        &mut self,
+        arguments: Vec<C0Expression>,
+    ) -> Result<(Vec<C0Statement>, Vec<C0Expression>), C0SyntaxError> {
+        let mut prefix = Vec::new();
+        let mut lowered_arguments = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let (argument_prefix, argument) = self.lower_expression_calls(argument)?;
+            if !prefix.is_empty() && !argument_prefix.is_empty() {
+                return Err(self
+                    .error_here("multiple unsequenced calls in one expression are not supported"));
+            }
+            prefix.extend(argument_prefix);
+            lowered_arguments.push(argument);
+        }
+        Ok((prefix, lowered_arguments))
+    }
+
+    fn lower_expression_pair(
+        &mut self,
+        left: C0Expression,
+        right: C0Expression,
+    ) -> Result<(Vec<C0Statement>, C0Expression, C0Expression), C0SyntaxError> {
+        let (left_prefix, left) = self.lower_expression_calls(left)?;
+        let (right_prefix, right) = self.lower_expression_calls(right)?;
+        if !left_prefix.is_empty() && !right_prefix.is_empty() {
+            return Err(
+                self.error_here("multiple unsequenced calls in one expression are not supported")
+            );
+        }
+        let mut prefix = left_prefix;
+        prefix.extend(right_prefix);
+        Ok((prefix, left, right))
+    }
+
+    fn lower_expression_calls(
+        &mut self,
+        expression: C0Expression,
+    ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        match expression {
+            C0Expression::Call {
+                function_name,
+                arguments,
+            } => {
+                if matches!(
+                    function_name.as_str(),
+                    "malloc" | "calloc" | "realloc" | "free"
+                ) {
+                    return Err(self.error_here(
+                        "allocation and deallocation builtins must be used in statement form",
+                    ));
+                }
+                let (mut prefix, arguments) = self.lower_call_arguments(arguments)?;
+                let target = self.fresh_synthesized_call_name();
+                prefix.push(C0Statement::CallAssign {
+                    target: target.clone(),
+                    function_name,
+                    arguments,
+                });
+                Ok((prefix, C0Expression::Variable(target)))
+            }
+            C0Expression::Cast { expression, c_type } => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((
+                    prefix,
+                    C0Expression::Cast {
+                        expression: Box::new(expression),
+                        c_type,
+                    },
+                ))
+            }
+            C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let (mut prefix, condition) = self.lower_expression_calls(*condition)?;
+                let (then_prefix, then_branch) = self.lower_expression_calls(*then_branch)?;
+                let (else_prefix, else_branch) = self.lower_expression_calls(*else_branch)?;
+                if !then_prefix.is_empty() || !else_prefix.is_empty() {
+                    return Err(self
+                        .error_here("calls in conditional expression branches are not supported"));
+                }
+                Ok((
+                    {
+                        prefix.extend(then_prefix);
+                        prefix.extend(else_prefix);
+                        prefix
+                    },
+                    C0Expression::Conditional {
+                        condition: Box::new(condition),
+                        then_branch: Box::new(then_branch),
+                        else_branch: Box::new(else_branch),
+                    },
+                ))
+            }
+            C0Expression::AddressOf(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((prefix, C0Expression::AddressOf(Box::new(expression))))
+            }
+            C0Expression::PointerOffsetBytes { pointer, bytes } => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((
+                    prefix,
+                    C0Expression::PointerOffsetBytes {
+                        pointer: Box::new(pointer),
+                        bytes,
+                    },
+                ))
+            }
+            C0Expression::Not(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((prefix, C0Expression::Not(Box::new(expression))))
+            }
+            C0Expression::BitwiseNot(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((prefix, C0Expression::BitwiseNot(Box::new(expression))))
+            }
+            C0Expression::Load(pointer) => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((prefix, C0Expression::Load(Box::new(pointer))))
+            }
+            C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((
+                    prefix,
+                    C0Expression::AggregateAddress {
+                        pointer: Box::new(pointer),
+                        struct_name,
+                    },
+                ))
+            }
+            C0Expression::Field {
+                pointer,
+                field_type,
+                field_struct_name,
+            } => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((
+                    prefix,
+                    C0Expression::Field {
+                        pointer: Box::new(pointer),
+                        field_type,
+                        field_struct_name,
+                    },
+                ))
+            }
+            C0Expression::LessThan(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::LessThan)
+            }
+            C0Expression::LessEqual(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::LessEqual)
+            }
+            C0Expression::GreaterThan(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::GreaterThan)
+            }
+            C0Expression::GreaterEqual(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::GreaterEqual)
+            }
+            C0Expression::Equal(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Equal)
+            }
+            C0Expression::NotEqual(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::NotEqual)
+            }
+            C0Expression::Add(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Add)
+            }
+            C0Expression::Subtract(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Subtract)
+            }
+            C0Expression::Multiply(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Multiply)
+            }
+            C0Expression::Divide(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Divide)
+            }
+            C0Expression::Remainder(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Remainder)
+            }
+            C0Expression::ShiftLeft(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::ShiftLeft)
+            }
+            C0Expression::ShiftRight(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::ShiftRight)
+            }
+            C0Expression::BitwiseAnd(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::BitwiseAnd)
+            }
+            C0Expression::BitwiseOr(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::BitwiseOr)
+            }
+            C0Expression::BitwiseXor(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::BitwiseXor)
+            }
+            C0Expression::And(left, right) => {
+                self.lower_short_circuit_calls(*left, *right, C0Expression::And)
+            }
+            C0Expression::Or(left, right) => {
+                self.lower_short_circuit_calls(*left, *right, C0Expression::Or)
+            }
+            C0Expression::Index(left, right) => {
+                self.lower_binary_calls(*left, *right, C0Expression::Index)
+            }
+            expression => Ok((Vec::new(), expression)),
+        }
+    }
+
+    fn lower_binary_calls(
+        &mut self,
+        left: C0Expression,
+        right: C0Expression,
+        constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
+    ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        let (prefix, left, right) = self.lower_expression_pair(left, right)?;
+        Ok((prefix, constructor(Box::new(left), Box::new(right))))
+    }
+
+    fn lower_short_circuit_calls(
+        &mut self,
+        left: C0Expression,
+        right: C0Expression,
+        constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
+    ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        let (left_prefix, left) = self.lower_expression_calls(left)?;
+        let (right_prefix, right) = self.lower_expression_calls(right)?;
+        if !right_prefix.is_empty() {
+            return Err(
+                self.error_here("calls in the short-circuit right operand are not supported")
+            );
+        }
+        Ok((left_prefix, constructor(Box::new(left), Box::new(right))))
     }
 
     fn parse_conditional(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -3532,6 +4006,21 @@ impl Parser {
         let mut expression = self.parse_primary()?;
         loop {
             match self.peek() {
+                Some(Token::LParen) => {
+                    let function_name = match &expression {
+                        C0Expression::Variable(name) => name.clone(),
+                        _ => {
+                            return Err(self.error_here(
+                                "function calls currently require an identifier or function pointer",
+                            ));
+                        }
+                    };
+                    let arguments = self.parse_call_arguments()?;
+                    expression = C0Expression::Call {
+                        function_name,
+                        arguments,
+                    };
+                }
                 Some(Token::LBracket) => {
                     self.position += 1;
                     let index = self.parse_expression()?;
@@ -4104,6 +4593,162 @@ fn balanced_statement_sequence(mut statements: Vec<C0Statement>) -> Option<C0Sta
         statements = next_level;
     }
     statements.pop()
+}
+
+fn prepend_statements(prefix: Vec<C0Statement>, statement: C0Statement) -> C0Statement {
+    if prefix.is_empty() {
+        return statement;
+    }
+    let mut statements = prefix;
+    statements.push(statement);
+    balanced_statement_sequence(statements).expect("the statement prefix is non-empty")
+}
+
+fn statement_contains_embedded_call(statement: &C0Statement) -> bool {
+    let mut statements = vec![statement];
+    while let Some(statement) = statements.pop() {
+        match statement {
+            C0Statement::Assign { expression, .. }
+            | C0Statement::HeapAllocate {
+                bytes: expression, ..
+            }
+            | C0Statement::HeapFree {
+                pointer: expression,
+            }
+            | C0Statement::Return(expression) => {
+                if expression_contains_embedded_call(expression) {
+                    return true;
+                }
+            }
+            C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
+                if arguments.iter().any(expression_contains_embedded_call) {
+                    return true;
+                }
+            }
+            C0Statement::Store { pointer, value, .. } => {
+                if expression_contains_embedded_call(pointer)
+                    || expression_contains_embedded_call(value)
+                {
+                    return true;
+                }
+            }
+            C0Statement::Update {
+                target, operand, ..
+            } => {
+                if expression_contains_embedded_call(target)
+                    || expression_contains_embedded_call(operand)
+                {
+                    return true;
+                }
+            }
+            C0Statement::Seq(first, second) => {
+                statements.push(first);
+                statements.push(second);
+            }
+            C0Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if expression_contains_embedded_call(condition) {
+                    return true;
+                }
+                statements.push(then_branch);
+                statements.push(else_branch);
+            }
+            C0Statement::While { condition, body } | C0Statement::DoWhile { condition, body } => {
+                if expression_contains_embedded_call(condition) {
+                    return true;
+                }
+                statements.push(body);
+            }
+            C0Statement::For {
+                initializer,
+                condition,
+                step,
+                body,
+            } => {
+                if expression_contains_embedded_call(condition) {
+                    return true;
+                }
+                statements.push(initializer);
+                statements.push(step);
+                statements.push(body);
+            }
+            C0Statement::Switch { expression, cases } => {
+                if expression_contains_embedded_call(expression) {
+                    return true;
+                }
+                for case in cases {
+                    statements.push(&case.body);
+                }
+            }
+            C0Statement::Skip
+            | C0Statement::Break
+            | C0Statement::Continue
+            | C0Statement::Declare { .. } => {}
+        }
+    }
+    false
+}
+
+fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
+    let mut expressions = vec![expression];
+    while let Some(expression) = expressions.pop() {
+        match expression {
+            C0Expression::Call { .. } => return true,
+            C0Expression::Cast { expression, .. }
+            | C0Expression::AddressOf(expression)
+            | C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | C0Expression::Not(expression)
+            | C0Expression::BitwiseNot(expression)
+            | C0Expression::Load(expression) => expressions.push(expression),
+            C0Expression::AggregateAddress { pointer, .. }
+            | C0Expression::Field { pointer, .. } => expressions.push(pointer),
+            C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                expressions.push(condition);
+                expressions.push(then_branch);
+                expressions.push(else_branch);
+            }
+            C0Expression::LessThan(left, right)
+            | C0Expression::LessEqual(left, right)
+            | C0Expression::GreaterThan(left, right)
+            | C0Expression::GreaterEqual(left, right)
+            | C0Expression::Equal(left, right)
+            | C0Expression::NotEqual(left, right)
+            | C0Expression::And(left, right)
+            | C0Expression::Or(left, right)
+            | C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right)
+            | C0Expression::Remainder(left, right)
+            | C0Expression::ShiftLeft(left, right)
+            | C0Expression::ShiftRight(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right)
+            | C0Expression::Index(left, right) => {
+                expressions.push(left);
+                expressions.push(right);
+            }
+            C0Expression::Void
+            | C0Expression::Variable(_)
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfType { .. } => {}
+        }
+    }
+    false
 }
 
 fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {
