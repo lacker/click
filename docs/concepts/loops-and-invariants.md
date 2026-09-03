@@ -14,8 +14,8 @@ every finite iteration prefix is safe and that the invariant is available if
 the loop exits. A constant-true service loop can therefore have a useful
 invariant even though it has no exit state.
 
-When termination itself matters, the loop tactic may additionally declare a
-single-variable ranking proof:
+When termination itself matters, the loop tactic may additionally declare an
+int32 ranking expression:
 
 <!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
@@ -25,12 +25,15 @@ loop {
 }
 ```
 
-In the current first slice, the C loop must guard the back edge so
-`remaining > 0` is known and every continuing body path must execute
-`remaining = remaining - K` for a positive constant `K`. This produces
-separate termination evidence; it does not change what an invariant or a
-postcondition means. Loops without `decreases` remain valid partial-correctness
-proofs.
+The expression is checked at each continuing body path: the loop guard and
+the available function preconditions and invariants must establish that it is
+nonnegative, and the post-body expression must be strictly smaller. This
+supports count-up loops as well as countdowns, for example
+`decreases limit - index;` when the body increments `index`. The expression is
+checked as C int32 arithmetic, so its arithmetic must also be defined under
+those assumptions. This produces separate termination evidence; it does not
+change what an invariant or a postcondition means. Loops without `decreases`
+remain valid partial-correctness proofs.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

@@ -21,6 +21,16 @@ Click's optional termination judgment should cover the loop and recursion
 shapes real C uses: count-up loops with a bounded guard, nested loops,
 lexicographic measures, and recursion mixed with iteration.
 
+## Progress in the first implementation slice
+
+Loop termination plans now carry checked C expressions rather than only a
+variable name. The kernel tracks scalar aliases and update-sugar assignments
+on every back-edge path, checks the expression and its post-body value as
+int32 arithmetic, and uses certified function preconditions and loop
+invariants as ranking assumptions. A count-up regression using `n - i` is in
+`mdtests/c_decreases_count_up.md`; nested-loop and lexicographic propagation
+are still open.
+
 ## Intended regression
 
 Mdtests with `decreases` clauses: `for`-style count-up over `n - i`; a

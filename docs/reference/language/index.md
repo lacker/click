@@ -119,17 +119,20 @@ consume or mutate resources; postorder recursive deallocation is supported.
 This proves descent of the finite resource witness, not descent of a pointer
 value.
 
-The numeric proof shape is also deliberately small. A function measure must be
-one `int32` variable. A recursive edge passes `measure - K`, and a loop back
-edge updates `measure = measure - K`, for a positive constant `K`; the path
-guard must make the resulting value nonnegative. Mutually recursive functions
-all declare their corresponding numeric parameter. A numeric measure must also
-stay a plain variable: if the function takes its address anywhere
-(`&measure`), a store through that pointer, directly or inside a callee,
-could change the measure without a ranked update, so the plan is rejected.
-Structural measures do not yet support mutual C recursion. Nested rankings,
-mixed numeric/structural tuples, and compound expressions are rejected rather
-than guessed.
+The numeric proof shape is deliberately small but loop measures may be
+arbitrary current int32 expressions. A loop back edge must make the expression
+strictly smaller and nonnegative; the kernel checks the expression's C int32
+arithmetic under the loop guard, function preconditions, and loop invariants.
+For example, `decreases n - i` ranks a loop that increments `i` toward `n`.
+Function-level numeric measures remain one unchanged `int32` parameter, and a
+recursive edge still passes `measure - K` for a positive constant `K`.
+Mutually recursive functions all declare their corresponding numeric
+parameter. Every variable mentioned by a numeric measure must also remain
+unaddressed: if its address is taken anywhere (`&measure`), a store through
+that pointer, directly or inside a callee, could change the measure without a
+ranked update, so the plan is rejected. Structural measures do not yet support
+mutual C recursion. Nested lexicographic rankings and recursion inside loops
+remain rejected rather than guessed.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked

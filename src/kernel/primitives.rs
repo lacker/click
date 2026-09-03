@@ -861,13 +861,13 @@ pub struct CVerifiedFunctionTerminationRule {
 }
 
 /// An untrusted surface-language proposal for ranking the cycles in one C
-/// function. The kernel checks every supplied index and variable against the
+/// function. The kernel checks every supplied index and expression against the
 /// exact body before producing termination evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionTerminationPlan {
     pub(super) function_name: String,
     pub(super) recursive_measure: Option<CFunctionTerminationMeasure>,
-    pub(super) loop_measures: BTreeMap<usize, String>,
+    pub(super) loop_measures: BTreeMap<usize, CExpression>,
 }
 
 impl CFunctionTerminationPlan {
@@ -875,7 +875,10 @@ impl CFunctionTerminationPlan {
         &self.function_name
     }
 
-    pub fn extend_loop_measures(&mut self, measures: impl IntoIterator<Item = (usize, String)>) {
+    pub fn extend_loop_measures(
+        &mut self,
+        measures: impl IntoIterator<Item = (usize, CExpression)>,
+    ) {
         self.loop_measures.extend(measures);
     }
 }

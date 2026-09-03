@@ -659,6 +659,57 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
     }
 }
 
+fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet<String>) {
+    use CExpression::*;
+    match expression {
+        Variable(name) => {
+            names.insert(name.clone());
+        }
+        Cast { expression, .. }
+        | AddressOf(expression)
+        | PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | Not(expression)
+        | BitwiseNot(expression)
+        | Load(expression) => collect_c_expression_variables(expression, names),
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_variables(condition, names);
+            collect_c_expression_variables(then_branch, names);
+            collect_c_expression_variables(else_branch, names);
+        }
+        LessThan(left, right)
+        | LessEqual(left, right)
+        | GreaterThan(left, right)
+        | GreaterEqual(left, right)
+        | Equal(left, right)
+        | NotEqual(left, right)
+        | And(left, right)
+        | Or(left, right)
+        | Add(left, right)
+        | Subtract(left, right)
+        | Multiply(left, right)
+        | Divide(left, right)
+        | Remainder(left, right)
+        | ShiftLeft(left, right)
+        | ShiftRight(left, right)
+        | BitwiseAnd(left, right)
+        | BitwiseOr(left, right)
+        | BitwiseXor(left, right)
+        | Index(left, right) => {
+            collect_c_expression_variables(left, names);
+            collect_c_expression_variables(right, names);
+        }
+        TypedLoad { pointer, .. } => collect_c_expression_variables(pointer, names),
+        Value(_) | FunctionAddress(_) => {}
+    }
+}
+
 /// Whether any expression in `statement` takes the address of the local
 /// `name`. A local's cell can be written through a pointer only if its
 /// address was taken somewhere in the function, so this is the complete
@@ -726,6 +777,63 @@ fn reject_address_escaped_measure(
         )));
     }
     Ok(())
+}
+
+fn reject_address_escaped_expression_measure(
+    function_name: &str,
+    measure: &CExpression,
+    body: &CStatement,
+) -> Result<(), CTerminationError> {
+    let mut variables = BTreeSet::new();
+    collect_c_expression_variables(measure, &mut variables);
+    for variable in variables {
+        reject_address_escaped_measure(function_name, &variable, body)?;
+    }
+    Ok(())
+}
+
+fn statement_assigned_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Assign { name, .. }
+        | CStatement::CallAssign { target: name, .. }
+        | CStatement::HeapAllocate { target: name, .. } => {
+            names.insert(name.clone());
+        }
+        CStatement::Update { target, .. } => {
+            if let CExpression::Variable(name) = target {
+                names.insert(name.clone());
+            }
+        }
+        CStatement::Seq(first, second) => {
+            statement_assigned_variables(first, names);
+            statement_assigned_variables(second, names);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_assigned_variables(then_branch, names);
+            statement_assigned_variables(else_branch, names);
+        }
+        CStatement::While { body, .. } => statement_assigned_variables(body, names),
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                statement_assigned_variables(&case.body, names);
+            }
+        }
+        CStatement::ContinueWithStep { step } => statement_assigned_variables(step, names),
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. } => {}
+    }
 }
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
@@ -910,113 +1018,760 @@ fn recursion_paths(
     }
 }
 
+#[derive(Clone)]
+struct LoopRankingPath {
+    aliases: BTreeMap<String, CExpression>,
+    conditions: Vec<(CExpression, bool)>,
+}
+
+fn updated_c_expression(
+    current: CExpression,
+    operator: CUpdateOperator,
+    operand: CExpression,
+) -> CExpression {
+    let current = Box::new(current);
+    let operand = Box::new(operand);
+    match operator {
+        CUpdateOperator::Add => CExpression::Add(current, operand),
+        CUpdateOperator::Subtract => CExpression::Subtract(current, operand),
+        CUpdateOperator::Multiply => CExpression::Multiply(current, operand),
+        CUpdateOperator::Divide => CExpression::Divide(current, operand),
+        CUpdateOperator::Remainder => CExpression::Remainder(current, operand),
+        CUpdateOperator::ShiftLeft => CExpression::ShiftLeft(current, operand),
+        CUpdateOperator::ShiftRight => CExpression::ShiftRight(current, operand),
+        CUpdateOperator::BitwiseAnd => CExpression::BitwiseAnd(current, operand),
+        CUpdateOperator::BitwiseOr => CExpression::BitwiseOr(current, operand),
+        CUpdateOperator::BitwiseXor => CExpression::BitwiseXor(current, operand),
+    }
+}
+
 fn loop_paths(
     statement: &CStatement,
-    measure: &str,
-    offsets: Vec<i64>,
-) -> Result<Vec<i64>, CTerminationError> {
+    measure_variables: &BTreeSet<String>,
+    paths: Vec<LoopRankingPath>,
+) -> Result<Vec<LoopRankingPath>, CTerminationError> {
     match statement {
         CStatement::Skip
-        | CStatement::Continue
-        | CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
-        | CStatement::Update { .. } => Ok(offsets),
-        CStatement::ContinueWithStep { step } => loop_paths(step, measure, offsets),
+        | CStatement::Call { .. } => Ok(paths),
+        CStatement::Continue => Ok(paths),
+        CStatement::ContinueWithStep { step } => loop_paths(step, measure_variables, paths),
         CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
-        CStatement::Assign { name, expression } if name == measure => {
-            let step = variable_minus_positive(expression, measure).ok_or_else(|| {
-                error(format!(
-                    "loop measure `{measure}` must be updated as `{measure} = {measure} - K` for a positive constant K"
-                ))
-            })?;
-            Ok(offsets.into_iter().map(|offset| offset - step).collect())
+        CStatement::Declare { name, .. } => Ok(paths
+            .into_iter()
+            .map(|mut path| {
+                path.aliases.remove(name);
+                path
+            })
+            .collect()),
+        CStatement::Assign { name, expression } => Ok(paths
+            .into_iter()
+            .map(|mut path| {
+                let expression = substitute_c_expression_variables(expression, &path.aliases);
+                path.aliases.insert(name.clone(), expression);
+                path
+            })
+            .collect()),
+        CStatement::Update {
+            target,
+            operator,
+            operand,
+        } => {
+            let CExpression::Variable(name) = target else {
+                return Ok(paths);
+            };
+            Ok(paths
+                .into_iter()
+                .map(|mut path| {
+                    let current = path
+                        .aliases
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| CExpression::Variable(name.clone()));
+                    let operand = substitute_c_expression_variables(operand, &path.aliases);
+                    path.aliases.insert(
+                        name.clone(),
+                        updated_c_expression(current, *operator, operand),
+                    );
+                    path
+                })
+                .collect())
         }
-        CStatement::Assign { .. } => Ok(offsets),
-        CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
-            "loop measure `{measure}` is overwritten by an allocation result"
-        ))),
-        CStatement::HeapAllocate { .. } => Ok(offsets),
-        CStatement::CallAssign { target, .. } if target == measure => Err(error(format!(
-            "loop measure `{measure}` is overwritten by a call result"
-        ))),
-        CStatement::CallAssign { .. } => Ok(offsets),
-        CStatement::Call { .. } => Ok(offsets),
-        CStatement::Seq(first, second) => {
-            loop_paths(second, measure, loop_paths(first, measure, offsets)?)
+        CStatement::HeapAllocate { target, .. } => {
+            if measure_variables.contains(target) {
+                return Err(error(format!(
+                    "loop termination measure variable `{target}` is overwritten by an allocation result"
+                )));
+            }
+            Ok(paths
+                .into_iter()
+                .map(|mut path| {
+                    path.aliases.remove(target);
+                    path
+                })
+                .collect())
         }
+        CStatement::CallAssign { target, .. } => {
+            if measure_variables.contains(target) {
+                return Err(error(format!(
+                    "loop termination measure variable `{target}` is overwritten by a call result"
+                )));
+            }
+            Ok(paths
+                .into_iter()
+                .map(|mut path| {
+                    path.aliases.remove(target);
+                    path
+                })
+                .collect())
+        }
+        CStatement::Seq(first, second) => loop_paths(
+            second,
+            measure_variables,
+            loop_paths(first, measure_variables, paths)?,
+        ),
         CStatement::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } => {
-            let mut paths = loop_paths(then_branch, measure, offsets.clone())?;
-            paths.extend(loop_paths(else_branch, measure, offsets)?);
+            let mut then_paths = Vec::new();
+            let mut else_paths = Vec::new();
+            for path in paths {
+                let condition = substitute_c_expression_variables(condition, &path.aliases);
+                let mut then_path = path.clone();
+                then_path.conditions.push((condition.clone(), true));
+                then_paths.push(then_path);
+                let mut else_path = path;
+                else_path.conditions.push((condition, false));
+                else_paths.push(else_path);
+            }
+            let mut paths = loop_paths(then_branch, measure_variables, then_paths)?;
+            paths.extend(loop_paths(else_branch, measure_variables, else_paths)?);
             Ok(paths)
         }
-        CStatement::While { .. } => Err(error(
-            "nested loops in one ranking proof are not yet supported",
-        )),
+        CStatement::While { body, .. } => {
+            let mut nested_writes = BTreeSet::new();
+            statement_assigned_variables(body, &mut nested_writes);
+            if nested_writes
+                .iter()
+                .any(|name| measure_variables.contains(name))
+            {
+                return Err(error(
+                    "nested loop may change an enclosing termination measure; use a lexicographic ranking measure",
+                ));
+            }
+            Ok(paths)
+        }
         CStatement::Switch { cases, .. } => {
+            let incoming = paths;
             let mut paths = Vec::new();
             for case in cases {
-                paths.extend(loop_paths(&case.body, measure, offsets.clone())?);
+                paths.extend(loop_paths(&case.body, measure_variables, incoming.clone())?);
             }
             Ok(paths)
         }
     }
 }
 
-fn check_loops(
+fn resolve_loop_c_expression_aliases(
+    expression: &CExpression,
+    aliases: &BTreeMap<String, CExpression>,
+) -> CExpression {
+    let mut resolved = expression.clone();
+    let mut blocked = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    seen.insert(resolved.clone());
+    for _ in 0..=aliases.len() {
+        let substitutions = aliases
+            .iter()
+            .filter(|(name, _)| !blocked.contains(*name))
+            .map(|(name, expression)| (name.clone(), expression.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let next = substitute_c_expression_variables(&resolved, &substitutions);
+        if next == resolved || !seen.insert(next.clone()) {
+            break;
+        }
+        for (name, replacement) in aliases {
+            let mut variables = BTreeSet::new();
+            collect_c_expression_variables(replacement, &mut variables);
+            if variables.contains(name) {
+                blocked.insert(name.clone());
+            }
+        }
+        resolved = next;
+    }
+    resolved
+}
+
+fn ranking_variable_map(names: &BTreeSet<String>) -> BTreeMap<String, Variable> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.clone(), Variable(index as u64)))
+        .collect()
+}
+
+fn ranking_term(
+    expression: &CExpression,
+    variables: &BTreeMap<String, Variable>,
+) -> Result<Bitvector32Term, CTerminationError> {
+    use CExpression::*;
+    let binary = |left: &CExpression,
+                  right: &CExpression,
+                  operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term|
+     -> Result<Bitvector32Term, CTerminationError> {
+        Ok(operation(
+            ranking_term(left, variables)?,
+            ranking_term(right, variables)?,
+        ))
+    };
+    match expression {
+        Value(CValue::Int32(value)) | Value(CValue::UInt8(value)) => Ok(value.clone()),
+        Value(_) => Err(error("termination measures must be int32 expressions")),
+        Variable(name) => variables
+            .get(name)
+            .copied()
+            .map(Bitvector32Term::Variable)
+            .ok_or_else(|| {
+                error(format!(
+                    "termination measure references unknown variable `{name}`"
+                ))
+            }),
+        Cast {
+            expression,
+            target_type: CType::Int32 | CType::UInt8,
+        } => ranking_term(expression, variables),
+        Cast { .. }
+        | FunctionAddress(_)
+        | AddressOf(_)
+        | PointerOffsetBytes { .. }
+        | Load(_)
+        | TypedLoad { .. }
+        | Index(_, _) => Err(error(
+            "termination measures may only use scalar int32 expressions",
+        )),
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let (condition, value) = ranking_condition_term(condition, variables)?;
+            let then_term = ranking_term(then_branch, variables)?;
+            let else_term = ranking_term(else_branch, variables)?;
+            let (then_term, else_term) = if value {
+                (then_term, else_term)
+            } else {
+                (else_term, then_term)
+            };
+            Ok(Bitvector32Term::If {
+                condition: Box::new(condition),
+                then_term: Box::new(then_term),
+                else_term: Box::new(else_term),
+            })
+        }
+        Add(left, right) => binary(left, right, Bitvector32Term::add),
+        Subtract(left, right) => binary(left, right, Bitvector32Term::subtract),
+        Multiply(left, right) => binary(left, right, Bitvector32Term::multiply),
+        Divide(left, right) => binary(left, right, Bitvector32Term::divide),
+        Remainder(left, right) => binary(left, right, Bitvector32Term::remainder),
+        ShiftLeft(left, right) => binary(left, right, Bitvector32Term::shift_left),
+        ShiftRight(left, right) => binary(left, right, Bitvector32Term::arithmetic_shift_right),
+        BitwiseAnd(left, right) => binary(left, right, Bitvector32Term::bitwise_and),
+        BitwiseOr(left, right) => binary(left, right, Bitvector32Term::bitwise_or),
+        BitwiseXor(left, right) => binary(left, right, Bitvector32Term::bitwise_xor),
+        BitwiseNot(value) => Ok(Bitvector32Term::bitwise_not(ranking_term(
+            value, variables,
+        )?)),
+        LessThan(_, _)
+        | LessEqual(_, _)
+        | GreaterThan(_, _)
+        | GreaterEqual(_, _)
+        | Equal(_, _)
+        | NotEqual(_, _)
+        | Not(_)
+        | And(_, _)
+        | Or(_, _) => Err(error("termination measures must have an int32 value")),
+    }
+}
+
+fn ranking_condition_term(
+    expression: &CExpression,
+    variables: &BTreeMap<String, Variable>,
+) -> Result<(ConditionTerm, bool), CTerminationError> {
+    use CExpression::*;
+    let binary = |left: &CExpression,
+                  right: &CExpression,
+                  operation: fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm|
+     -> Result<(ConditionTerm, bool), CTerminationError> {
+        Ok((
+            operation(
+                ranking_term(left, variables)?,
+                ranking_term(right, variables)?,
+            ),
+            true,
+        ))
+    };
+    match expression {
+        LessThan(left, right) => binary(left, right, ConditionTerm::signed_less_than),
+        LessEqual(left, right) => binary(left, right, ConditionTerm::signed_less_equal),
+        GreaterThan(left, right) => binary(left, right, ConditionTerm::signed_greater_than),
+        GreaterEqual(left, right) => binary(left, right, ConditionTerm::signed_greater_equal),
+        Equal(left, right) => binary(left, right, ConditionTerm::equal),
+        NotEqual(left, right) => {
+            let (condition, _) = binary(left, right, ConditionTerm::equal)?;
+            Ok((condition, false))
+        }
+        Not(inner) => {
+            let (condition, value) = ranking_condition_term(inner, variables)?;
+            Ok((condition, !value))
+        }
+        And(_, _) | Or(_, _) => Err(error(
+            "compound boolean conditions are not atomic ranking assumptions",
+        )),
+        _ => Ok((
+            ConditionTerm::equal(
+                ranking_term(expression, variables)?,
+                Bitvector32Term::Constant(0),
+            ),
+            false,
+        )),
+    }
+}
+
+fn assume_ranking_condition(
+    context: PureFactContext,
+    expression: &CExpression,
+    value: bool,
+    variables: &BTreeMap<String, Variable>,
+) -> Result<PureFactContext, CTerminationError> {
+    match expression {
+        CExpression::And(left, right) if value => Ok(assume_ranking_condition(
+            assume_ranking_condition(context, left, true, variables)?,
+            right,
+            true,
+            variables,
+        )?),
+        CExpression::Or(left, right) if !value => Ok(assume_ranking_condition(
+            assume_ranking_condition(context, left, false, variables)?,
+            right,
+            false,
+            variables,
+        )?),
+        CExpression::And(_, _) | CExpression::Or(_, _) => Ok(context),
+        _ => {
+            let (condition, condition_value) = ranking_condition_term(expression, variables)?;
+            Ok(context.assume_condition(condition, value == condition_value))
+        }
+    }
+}
+
+fn termination_measure_display(measure: &CExpression) -> String {
+    match measure {
+        CExpression::Variable(name) => name.clone(),
+        _ => format!("{measure:?}"),
+    }
+}
+
+fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpression> {
+    match expression {
+        SpecExpression::Value(value) => Some(CExpression::Value(value.clone())),
+        SpecExpression::CExpression(expression) => Some(expression.clone()),
+        SpecExpression::Add(left, right) => Some(CExpression::Add(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::Subtract(left, right) => Some(CExpression::Subtract(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::Multiply(left, right) => Some(CExpression::Multiply(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::Divide(left, right) => Some(CExpression::Divide(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::Remainder(left, right) => Some(CExpression::Remainder(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::ShiftLeft(left, right) => Some(CExpression::ShiftLeft(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::ShiftRight(left, right) => Some(CExpression::ShiftRight(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::BitwiseAnd(left, right) => Some(CExpression::BitwiseAnd(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::BitwiseOr(left, right) => Some(CExpression::BitwiseOr(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::BitwiseXor(left, right) => Some(CExpression::BitwiseXor(
+            Box::new(spec_expression_to_c_expression(left)?),
+            Box::new(spec_expression_to_c_expression(right)?),
+        )),
+        SpecExpression::BitwiseNot(value) => Some(CExpression::BitwiseNot(Box::new(
+            spec_expression_to_c_expression(value)?,
+        ))),
+        _ => None,
+    }
+}
+
+fn spec_proposition_to_c_expression(proposition: &SpecProposition) -> Option<CExpression> {
+    match proposition {
+        SpecProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = Box::new(spec_expression_to_c_expression(left)?);
+            let right = Box::new(spec_expression_to_c_expression(right)?);
+            Some(match operator {
+                CComparisonOperator::Equal => CExpression::Equal(left, right),
+                CComparisonOperator::NotEqual => CExpression::NotEqual(left, right),
+                CComparisonOperator::LessThan => CExpression::LessThan(left, right),
+                CComparisonOperator::LessEqual => CExpression::LessEqual(left, right),
+                CComparisonOperator::GreaterThan => CExpression::GreaterThan(left, right),
+                CComparisonOperator::GreaterEqual => CExpression::GreaterEqual(left, right),
+            })
+        }
+        SpecProposition::And(left, right) => Some(CExpression::And(
+            Box::new(spec_proposition_to_c_expression(left)?),
+            Box::new(spec_proposition_to_c_expression(right)?),
+        )),
+        SpecProposition::Or(left, right) => Some(CExpression::Or(
+            Box::new(spec_proposition_to_c_expression(left)?),
+            Box::new(spec_proposition_to_c_expression(right)?),
+        )),
+        SpecProposition::Not(body) => Some(CExpression::Not(Box::new(
+            spec_proposition_to_c_expression(body)?,
+        ))),
+        _ => None,
+    }
+}
+
+fn collect_loop_invariants(
     statement: &CStatement,
-    supplied: &BTreeMap<usize, String>,
     next_index: &mut usize,
-) -> Result<bool, CTerminationError> {
+    invariants: &mut BTreeMap<usize, Vec<CExpression>>,
+) {
     match statement {
+        CStatement::While {
+            invariant_checks,
+            body,
+            ..
+        } => {
+            let index = *next_index;
+            *next_index += 1;
+            let conditions = invariant_checks
+                .iter()
+                .filter_map(|check| spec_proposition_to_c_expression(check.proposition()))
+                .collect::<Vec<_>>();
+            if !conditions.is_empty() {
+                invariants.insert(index, conditions);
+            }
+            collect_loop_invariants(body, next_index, invariants);
+        }
         CStatement::Seq(first, second) => {
-            Ok(check_loops(first, supplied, next_index)?
-                && check_loops(second, supplied, next_index)?)
+            collect_loop_invariants(first, next_index, invariants);
+            collect_loop_invariants(second, next_index, invariants);
         }
         CStatement::If {
             then_branch,
             else_branch,
             ..
-        } => Ok(check_loops(then_branch, supplied, next_index)?
-            && check_loops(else_branch, supplied, next_index)?),
+        } => {
+            collect_loop_invariants(then_branch, next_index, invariants);
+            collect_loop_invariants(else_branch, next_index, invariants);
+        }
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                collect_loop_invariants(&case.body, next_index, invariants);
+            }
+        }
+        CStatement::ContinueWithStep { step } => {
+            collect_loop_invariants(step, next_index, invariants)
+        }
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => {}
+    }
+}
+
+fn ranking_proves(context: &PureFactContext, proposition: &Proposition) -> bool {
+    if context.proves(proposition) {
+        return true;
+    }
+    let premises = context
+        .condition_facts
+        .iter()
+        .map(|(condition, value)| Proposition::ConditionIs(condition.clone(), *value))
+        .collect::<Vec<_>>();
+    crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(proposition, &premises)
+        .is_ok()
+}
+
+fn ranking_affine_form(term: &Bitvector32Term) -> (BTreeMap<Bitvector32Term, i64>, i64) {
+    match term {
+        Bitvector32Term::Constant(value) => (BTreeMap::new(), i64::from(*value as i32)),
+        Bitvector32Term::Add(left, right) => {
+            let (mut terms, constant) = ranking_affine_form(left);
+            let (right_terms, right_constant) = ranking_affine_form(right);
+            let constant = constant.saturating_add(right_constant);
+            for (term, coefficient) in right_terms {
+                let updated = terms
+                    .get(&term)
+                    .copied()
+                    .unwrap_or_default()
+                    .saturating_add(coefficient);
+                if updated == 0 {
+                    terms.remove(&term);
+                } else {
+                    terms.insert(term, updated);
+                }
+            }
+            (terms, constant)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (mut terms, constant) = ranking_affine_form(left);
+            let (right_terms, right_constant) = ranking_affine_form(right);
+            let constant = constant.saturating_sub(right_constant);
+            for (term, coefficient) in right_terms {
+                let updated = terms
+                    .get(&term)
+                    .copied()
+                    .unwrap_or_default()
+                    .saturating_sub(coefficient);
+                if updated == 0 {
+                    terms.remove(&term);
+                } else {
+                    terms.insert(term, updated);
+                }
+            }
+            (terms, constant)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let left_constant = left.as_const().map(|value| i64::from(value as i32));
+            let right_constant = right.as_const().map(|value| i64::from(value as i32));
+            if let Some(constant) = left_constant {
+                let (terms, right_constant) = ranking_affine_form(right);
+                (
+                    terms
+                        .into_iter()
+                        .map(|(term, coefficient)| (term, coefficient.saturating_mul(constant)))
+                        .filter(|(_, coefficient)| *coefficient != 0)
+                        .collect(),
+                    right_constant.saturating_mul(constant),
+                )
+            } else if let Some(constant) = right_constant {
+                let (terms, left_constant) = ranking_affine_form(left);
+                (
+                    terms
+                        .into_iter()
+                        .map(|(term, coefficient)| (term, coefficient.saturating_mul(constant)))
+                        .filter(|(_, coefficient)| *coefficient != 0)
+                        .collect(),
+                    left_constant.saturating_mul(constant),
+                )
+            } else {
+                let mut atom = BTreeMap::new();
+                atom.insert(term.clone(), 1);
+                (atom, 0)
+            }
+        }
+        _ => {
+            let mut atom = BTreeMap::new();
+            atom.insert(term.clone(), 1);
+            (atom, 0)
+        }
+    }
+}
+
+fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
+    let (terms, constant) = ranking_affine_form(term);
+    let mut result = Bitvector32Term::Constant(0);
+    for (term, coefficient) in terms {
+        let magnitude = coefficient.unsigned_abs();
+        let factor = if magnitude == 1 {
+            term
+        } else {
+            Bitvector32Term::multiply(Bitvector32Term::Constant(magnitude as u32), term)
+        };
+        result = if coefficient < 0 {
+            Bitvector32Term::subtract(result, factor)
+        } else {
+            Bitvector32Term::add(result, factor)
+        };
+    }
+    if constant < 0 {
+        Bitvector32Term::subtract(
+            result,
+            Bitvector32Term::Constant(constant.unsigned_abs() as u32),
+        )
+    } else {
+        Bitvector32Term::add(result, Bitvector32Term::Constant(constant as u32))
+    }
+}
+
+fn check_loops(
+    statement: &CStatement,
+    supplied: &BTreeMap<usize, CExpression>,
+    entry_conditions: &[CExpression],
+    invariants: &BTreeMap<usize, Vec<CExpression>>,
+    next_index: &mut usize,
+) -> Result<bool, CTerminationError> {
+    match statement {
+        CStatement::Seq(first, second) => {
+            Ok(
+                check_loops(first, supplied, entry_conditions, invariants, next_index)?
+                    && check_loops(second, supplied, entry_conditions, invariants, next_index)?,
+            )
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => Ok(check_loops(
+            then_branch,
+            supplied,
+            entry_conditions,
+            invariants,
+            next_index,
+        )? && check_loops(
+            else_branch,
+            supplied,
+            entry_conditions,
+            invariants,
+            next_index,
+        )?),
         CStatement::While {
             condition, body, ..
         } => {
             let index = *next_index;
             *next_index += 1;
-            let nested_terminate = check_loops(body, supplied, next_index)?;
+            let nested_terminate =
+                check_loops(body, supplied, entry_conditions, invariants, next_index)?;
             let Some(measure) = supplied.get(&index) else {
                 return Ok(false);
             };
-            let lower_bound = refined_lower_bound(condition, measure, true, i64::MIN / 2);
-            let offsets = loop_paths(body, measure, vec![0])?;
-            if offsets.is_empty() {
+            let mut measure_variables = BTreeSet::new();
+            collect_c_expression_variables(measure, &mut measure_variables);
+            let paths = loop_paths(
+                body,
+                &measure_variables,
+                vec![LoopRankingPath {
+                    aliases: BTreeMap::new(),
+                    conditions: Vec::new(),
+                }],
+            )?;
+            if paths.is_empty() {
                 return Ok(nested_terminate);
             }
-            if offsets
-                .iter()
-                .any(|offset| *offset >= 0 || lower_bound.saturating_add(*offset) < 0)
-            {
-                return Err(error(format!(
-                    "loop {index} does not decrease `{measure}` to a nonnegative value on every back edge"
-                )));
+            for path in paths {
+                let post_measure = resolve_loop_c_expression_aliases(measure, &path.aliases);
+                let mut names = measure_variables.clone();
+                collect_c_expression_variables(condition, &mut names);
+                collect_c_expression_variables(&post_measure, &mut names);
+                for (path_condition, _) in &path.conditions {
+                    collect_c_expression_variables(path_condition, &mut names);
+                }
+                let variables = ranking_variable_map(&names);
+                let pre_term = canonical_ranking_term(&ranking_term(measure, &variables)?);
+                let post_term = canonical_ranking_term(&ranking_term(&post_measure, &variables)?);
+                let mut context = PureFactContext::new();
+                for entry_condition in entry_conditions {
+                    context = assume_ranking_condition(context, entry_condition, true, &variables)?;
+                }
+                if let Some(loop_invariants) = invariants.get(&index) {
+                    for invariant in loop_invariants {
+                        context = assume_ranking_condition(context, invariant, true, &variables)?;
+                    }
+                }
+                context = assume_ranking_condition(context, condition, true, &variables)?;
+                for (path_condition, value) in &path.conditions {
+                    context =
+                        assume_ranking_condition(context, path_condition, *value, &variables)?;
+                }
+                let pre_positive = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), pre_term.clone()),
+                    true,
+                );
+                if ranking_proves(&context, &pre_positive) {
+                    context = context.assume_condition(
+                        ConditionTerm::signed_less_than(
+                            Bitvector32Term::Constant(0),
+                            pre_term.clone(),
+                        ),
+                        true,
+                    );
+                }
+                let pre_nonnegative = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        pre_term.clone(),
+                    ),
+                    true,
+                );
+                let post_nonnegative = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        post_term.clone(),
+                    ),
+                    true,
+                );
+                let decreases = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(post_term, pre_term),
+                    true,
+                );
+                let pre_proved = ranking_proves(&context, &pre_nonnegative);
+                let post_proved = ranking_proves(&context, &post_nonnegative);
+                let decreases_proved = ranking_proves(&context, &decreases);
+                if !pre_proved || !post_proved || !decreases_proved {
+                    let display = termination_measure_display(measure);
+                    return Err(error(format!(
+                        "loop {index} does not decrease `{display}` to a nonnegative value on every back edge"
+                    )));
+                }
             }
             Ok(nested_terminate)
         }
         CStatement::Switch { cases, .. } => {
             let mut nested_terminate = true;
             for case in cases {
-                nested_terminate &= check_loops(&case.body, supplied, next_index)?;
+                nested_terminate &= check_loops(
+                    &case.body,
+                    supplied,
+                    entry_conditions,
+                    invariants,
+                    next_index,
+                )?;
             }
             Ok(nested_terminate)
         }
-        CStatement::ContinueWithStep { step } => check_loops(step, supplied, next_index),
+        CStatement::ContinueWithStep { step } => {
+            check_loops(step, supplied, entry_conditions, invariants, next_index)
+        }
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -1171,10 +1926,24 @@ pub fn c_verified_function_termination_rules(
             let empty = BTreeMap::new();
             let loop_measures = plans.get(name).map_or(&empty, |plan| &plan.loop_measures);
             for measure in loop_measures.values() {
-                reject_address_escaped_measure(name, measure, &function.source_body)?;
+                reject_address_escaped_expression_measure(name, measure, &function.source_body)?;
             }
+            let entry_conditions = function
+                .contract_requires()
+                .iter()
+                .filter_map(spec_proposition_to_c_expression)
+                .collect::<Vec<_>>();
+            let mut invariant_index = 0;
+            let mut invariants = BTreeMap::new();
+            collect_loop_invariants(&function.body, &mut invariant_index, &mut invariants);
             let mut next_loop = 0;
-            component_ok &= check_loops(&function.source_body, loop_measures, &mut next_loop)?;
+            component_ok &= check_loops(
+                &function.source_body,
+                loop_measures,
+                &entry_conditions,
+                &invariants,
+                &mut next_loop,
+            )?;
             if loop_measures.keys().any(|index| *index >= next_loop) {
                 return Err(error(format!(
                     "termination plan for `{name}` refers to a nonexistent loop"

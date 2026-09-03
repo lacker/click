@@ -2004,7 +2004,7 @@ pub fn c_verified_function_rule(
 pub fn c_function_termination_plan(
     function_name: impl Into<String>,
     recursive_measure: Option<CFunctionTerminationMeasure>,
-    loop_measures: impl IntoIterator<Item = (usize, String)>,
+    loop_measures: impl IntoIterator<Item = (usize, CExpression)>,
 ) -> CFunctionTerminationPlan {
     CFunctionTerminationPlan {
         function_name: function_name.into(),
