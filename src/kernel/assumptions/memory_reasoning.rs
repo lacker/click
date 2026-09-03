@@ -2212,7 +2212,6 @@ impl PureFactContext {
         {
             return true;
         }
-
         if self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryDisjoint {
                 left_base,
@@ -2244,39 +2243,6 @@ impl PureFactContext {
         }) {
             return true;
         }
-
-        // Direct address arithmetic is both stronger for the common
-        // same-allocation case and bounded independently of the number of
-        // available separation certificates. Keep the recursive certificate
-        // prover below as the fallback for genuinely indirect aliases.
-        if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
-            let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                left.as_ref().clone(),
-            )) == Some(true)
-            {
-                element_index_from_offset(right, range.element_width())
-            } else if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                right.as_ref().clone(),
-            )) == Some(true)
-            {
-                element_index_from_offset(left, range.element_width())
-            } else {
-                None
-            };
-            if let Some(forward_offset) = forward_offset {
-                let range_start = Bitvector32Term::add(forward_offset, range.start.clone());
-                if self.decide(&ConditionTerm::signed_less_than(
-                    Bitvector32Term::Constant(0),
-                    range_start,
-                )) == Some(true)
-                {
-                    return true;
-                }
-            }
-        }
-
         if let Some(index) = self.direct_pointer_element_index_from_base_with_width(
             pointer,
             &range.base,
@@ -2306,16 +2272,48 @@ impl PureFactContext {
                 return true;
             }
         }
-
         let pointer_range = CMemoryRange::new(
             pointer.clone(),
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(1),
         );
-        self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+        if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
             range,
             &pointer_range,
-        )
+        ) {
+            return true;
+        }
+        // Direct address arithmetic on the range's base offset, last: it
+        // decides only what the layers above could not name, and each
+        // attempt costs two decisions.
+        if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
+            let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                left.as_ref().clone(),
+            )) == Some(true)
+            {
+                element_index_from_offset(right, range.element_width())
+            } else if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                right.as_ref().clone(),
+            )) == Some(true)
+            {
+                element_index_from_offset(left, range.element_width())
+            } else {
+                None
+            };
+            if let Some(forward_offset) = forward_offset {
+                let range_start = Bitvector32Term::add(forward_offset, range.start.clone());
+                if self.decide(&ConditionTerm::signed_less_than(
+                    Bitvector32Term::Constant(0),
+                    range_start,
+                )) == Some(true)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub(in crate::kernel) fn range_covered_by_fact_range(

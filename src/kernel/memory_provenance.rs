@@ -109,38 +109,7 @@ fn bitvectors_match_for_resource_check(
     if assumptions.bitvector_terms_equal_from_facts(left, right) {
         return true;
     }
-    if explicit_atomic_equality_from_memory_derivations(left, right, assumptions) {
-        return true;
-    }
-    let transported_matches = |term: &Bitvector32Term, target: &Bitvector32Term| {
-        let mut memories = Vec::new();
-        collect_bitvector_memories(target, &mut memories);
-        memories.into_iter().any(|memory| {
-            let transported = crate::instrumentation::measure_operation(
-                "kernel",
-                "resource context equality",
-                "resource bitvector transport: rewrite",
-                || transport_framed_atomic_bitvector(term, &memory, Some((assumptions, false))),
-            );
-            transported.is_some_and(|transported| {
-                crate::instrumentation::measure_operation(
-                    "kernel",
-                    "resource context equality",
-                    "resource bitvector transport: compare",
-                    || {
-                        bitvector_terms_proven_equal_for_memory_resolution(
-                            &transported,
-                            target,
-                            assumptions,
-                        )
-                    },
-                )
-            })
-        })
-    };
-    // Resource endpoints differ only by a framed load; targeted transport
-    // is the whole rule.
-    transported_matches(left, right) || transported_matches(right, left)
+    false
 }
 
 fn pointer_offsets_match_from_memory_derivations(

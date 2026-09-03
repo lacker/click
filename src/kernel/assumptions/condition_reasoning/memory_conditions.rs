@@ -99,14 +99,6 @@ impl PureFactContext {
         // fanning out into the giant-term recursion that load-variable construction
         // exists to avoid.
         crate::kernel::reasoning::with_isolated_memory_resolution_fuel(8_000, || {
-            if memories_match_for_pointer_load_under_assumptions(
-                left_memory,
-                right_memory,
-                left_pointer,
-                self,
-            ) {
-                return true;
-            }
             // Two forms whose marker sets differ are never syntactically
             // equal and defeat the snapshot comparison's block-set filter,
             // but the load can still be provably unchanged across the marker

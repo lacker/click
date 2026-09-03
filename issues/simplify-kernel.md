@@ -55,6 +55,21 @@ and `CLICK_DISABLE_DECIDE_MEMO` are deleted with the pre-feature paths they
 switched to (`CLICK_DBG_SEP_PARITY` was already gone); the
 canonical-at-creation audit is switched on only by the test that counts
 its violations, and reports each rewrite kind and creator to stderr there.
+Slice 5 is built from a fresh census (examples / mdtests, attempted and
+decided per layer): bitvector equality for memory resolution asks the
+equality facts first (they decided 15,915 / 811 of 2.8 M / 680 k queries),
+then the DAG walk (36 / 60); the canonicalization leg decided nothing once
+facts ran first and is deleted with its 2.8 M attempts. Load equality
+drops the whole-snapshot alias leg (0 / 3 of 2,136 / 997 expensive
+attempts; the framed prover decides those). The direct-arithmetic leg of
+range disjointness (0 / 3 of 5,790 / 983 attempts) runs last, after the
+certificates (4,481 / 29), the index bounds (1,432 / 29), and the
+separation prover. The resource bitvector match's derivation and
+transport legs (0 / 0 of 248 / 107) are deleted. Resource satisfaction's
+normalization retry (46 / 3 of 375 / 241) and the loadability element
+retry (2 of 2) decide and stay. General pointer distinctness never decided
+over either harness (38 / 778 queries) but is pinned by kernel unit tests
+and costs nothing measurable; it is left for slice 7's list.
 
 ## Violated invariant
 

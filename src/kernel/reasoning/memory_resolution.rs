@@ -632,28 +632,16 @@ fn bitvector_terms_equal_for_memory_resolution(
     {
         return true;
     }
-    // Ask the memory DAG before canonicalizing anything. Two loads of one
-    // cell whose derivations resolve to the same source are equal after a
-    // bounded walk over named edges, with no snapshot comparison at all;
-    // canonicalization below is the fallback for everything the walk cannot
-    // reach (see `loads_equal_along_memory_derivations`).
-    if crate::kernel::api::atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
-        return true;
-    }
-    // The full canonical form covers every term variant, including folds
-    // and conditionals the structural arms below do not descend into; two
-    // terms that are equal by definition — a load and the load variable
-    // for it included — compare equal here.
-    // Both stages are memoized. Pathologically deep terms skip this arm:
-    // canonicalization and memo hashing recurse structurally.
-    const CANONICAL_COMPARE_DEPTH_LIMIT: usize = 64;
-    if !crate::kernel::api::bitvector_term_deeper_than(left, CANONICAL_COMPARE_DEPTH_LIMIT)
-        && !crate::kernel::api::bitvector_term_deeper_than(right, CANONICAL_COMPARE_DEPTH_LIMIT)
-        && crate::kernel::eval::canonical_term(left) == crate::kernel::eval::canonical_term(right)
-    {
-        return true;
-    }
+    // Equality facts first: the indexed, memoized walk over the context's
+    // equality graph decides nearly every query any layer here decides.
     if assumptions.bitvector_terms_equal_from_facts(left, right) {
+        return true;
+    }
+    // Two loads of one cell whose derivations resolve to the same source
+    // are equal after a bounded walk over named edges, with no snapshot
+    // comparison at all (see `loads_equal_along_memory_derivations`). The
+    // walk applies only to two load terms of one pointer.
+    if crate::kernel::api::atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
         return true;
     }
     if [1, 4].into_iter().any(|byte_width| {
