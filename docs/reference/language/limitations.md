@@ -28,8 +28,10 @@ Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int32`, `uint8`, and pointer-valued fields, plus chained
 `p->child->field` loads/stores through struct pointers. It retains pointee
 struct names through those chains and models field alignment and tail padding.
-It still has no struct values, embedded struct values, arrays of structs,
-unions, bitfields, packed layout, or general field-address expressions.
+Local arrays of those supported structs are also accepted for indexed
+`items[i].field` loads and stores, using the ABI-sized struct stride. It still
+has no struct values, embedded struct values, struct array parameters, unions,
+bitfields, packed layout, or general field-address expressions.
 Click contracts can use field places with `views` and the owned-resource verbs,
 and explicit ranges such as `owns owner[0..3]` remain useful for broader
 footprints. The supported ABI is LP64; other target ABIs are rejected rather

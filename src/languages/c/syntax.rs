@@ -731,6 +731,7 @@ enum Token {
     PlusEqual,
     Minus,
     Arrow,
+    Dot,
     MinusMinus,
     MinusEqual,
     LessThan,
@@ -786,6 +787,7 @@ impl Token {
             Self::PlusEqual => "+=",
             Self::Minus => "-",
             Self::Arrow => "->",
+            Self::Dot => ".",
             Self::MinusMinus => "--",
             Self::MinusEqual => "-=",
             Self::LessThan => "<",
@@ -1274,17 +1276,43 @@ impl Parser {
 
     fn parse_local_array_shape(
         &mut self,
-        c_type: C0Type,
+        parsed_type: &ParsedType,
     ) -> Result<(C0Type, Option<Vec<u32>>), C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
-            return Ok((c_type, None));
+            return Ok((parsed_type.c_type, None));
         }
-        let (array_type, element_width, element_name): (fn(u32) -> C0Type, u32, &str) = match c_type
-        {
-            C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32"),
-            C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8"),
-            _ => return Err(self.error_here("only scalar local arrays are supported")),
+        let (array_type, element_width, element_name, struct_array): (
+            fn(u32) -> C0Type,
+            u32,
+            String,
+            bool,
+        ) = if let Some(struct_name) = parsed_type.struct_name.as_deref() {
+            let element_width = self
+                .structs
+                .get(struct_name)
+                .ok_or_else(|| {
+                    self.error_here(format!("unknown struct declaration `{struct_name}`"))
+                })?
+                .size_bytes;
+            (
+                C0Type::UInt8Array,
+                element_width,
+                format!("struct {struct_name}"),
+                true,
+            )
+        } else {
+            match parsed_type.c_type {
+                C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32".to_string(), false),
+                C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8".to_string(), false),
+                _ => return Err(self.error_here("only scalar local arrays are supported")),
+            }
         };
+
+        if element_width == 0 {
+            return Err(self.error_here(format!(
+                "{element_name} array elements must have positive size"
+            )));
+        }
 
         let mut dimensions = Vec::new();
         let mut element_count = 1u32;
@@ -1323,8 +1351,17 @@ impl Parser {
                 "array dimensions are too large for {element_name} elements"
             )));
         }
-        let shape = (dimensions.len() > 1).then_some(dimensions);
-        Ok((array_type(element_count), shape))
+        let array_length = if struct_array {
+            element_count.checked_mul(element_width).ok_or_else(|| {
+                self.error_here(format!(
+                    "array dimensions are too large for {element_name} elements"
+                ))
+            })?
+        } else {
+            element_count
+        };
+        let shape = (struct_array || dimensions.len() > 1).then_some(dimensions);
+        Ok((array_type(array_length), shape))
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -1362,14 +1399,14 @@ impl Parser {
                 })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
-                let pointer = self.parse_indexed_lvalue_pointer()?;
+                let (pointer, value_type) = self.parse_postfix_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Store {
                     pointer,
                     value,
-                    value_type: None,
+                    value_type,
                 })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
@@ -1400,7 +1437,7 @@ impl Parser {
                 }
                 let name = self.expect_ident("local name")?;
                 self.declare_name(&name)?;
-                let (c_type, array_shape) = self.parse_local_array_shape(parsed_type.c_type)?;
+                let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
                 if let Some(shape) = array_shape {
                     self.variable_array_shapes.insert(name.clone(), shape);
                 }
@@ -1408,14 +1445,17 @@ impl Parser {
                     if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
                         return Err(self.error_here("only pointer-to-struct types are supported"));
                     }
-                    if c_type != parsed_type.c_type {
+                    if c_type != parsed_type.c_type && !matches!(c_type, C0Type::UInt8Array(_)) {
                         return Err(
                             self.error_here("local arrays of struct type are not supported")
                         );
                     }
                     self.variable_structs.insert(
                         name.clone(),
-                        parsed_type.struct_name.expect("struct_name checked above"),
+                        parsed_type
+                            .struct_name
+                            .clone()
+                            .expect("struct_name checked above"),
                     );
                 }
                 let declaration = C0Statement::Declare {
@@ -1424,6 +1464,11 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+                        if parsed_type.struct_name.is_some() {
+                            return Err(self.error_here(
+                                "local array initializers for struct arrays are not supported",
+                            ));
+                        }
                         if self.variable_array_shapes.contains_key(&name) {
                             return Err(self.error_here(
                                 "multidimensional array initializers are not supported",
@@ -2082,16 +2127,43 @@ impl Parser {
                             )));
                         }
                         let offset = flatten_array_indices(indexes, &shape);
+                        let struct_array = self.variable_structs.contains_key(name);
+                        let offset = if struct_array {
+                            let struct_name = self
+                                .variable_structs
+                                .get(name)
+                                .expect("struct array has a struct name");
+                            let element_width = self
+                                .structs
+                                .get(struct_name)
+                                .expect("struct array has a declaration")
+                                .size_bytes;
+                            C0Expression::Multiply(
+                                Box::new(offset),
+                                Box::new(C0Expression::Int32Literal(element_width)),
+                            )
+                        } else {
+                            offset
+                        };
                         expression = C0Expression::Index(Box::new(expression), Box::new(offset));
+                        if struct_array && self.peek() != Some(&Token::Dot) {
+                            return Err(self.error_here(
+                                "array of struct values are only supported through field access",
+                            ));
+                        }
                     } else {
                         expression = C0Expression::Index(Box::new(expression), Box::new(index));
                     }
                 }
-                Some(Token::Arrow) => {
+                Some(Token::Dot) | Some(Token::Arrow) => {
+                    let dot = self.peek() == Some(&Token::Dot);
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
-                    let (pointer, field_type, field_struct_name) =
-                        self.resolve_field_access(&expression, &field_name)?;
+                    let (pointer, field_type, field_struct_name) = if dot {
+                        self.resolve_array_struct_field_access(&expression, &field_name)?
+                    } else {
+                        self.resolve_field_access(&expression, &field_name)?
+                    };
                     expression = C0Expression::Field {
                         pointer: Box::new(pointer),
                         field_type,
@@ -2100,38 +2172,6 @@ impl Parser {
                 }
                 _ => return Ok(expression),
             }
-        }
-    }
-
-    fn parse_indexed_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut base = self.parse_primary()?;
-        if let C0Expression::Variable(name) = &base
-            && let Some(shape) = self.variable_array_shapes.get(name).cloned()
-        {
-            let mut indexes = Vec::new();
-            while self.peek() == Some(&Token::LBracket) {
-                self.position += 1;
-                indexes.push(self.parse_expression()?);
-                self.expect(Token::RBracket)?;
-            }
-            if indexes.len() != shape.len() {
-                return Err(self.error_here(format!(
-                    "multidimensional array `{name}` requires {} indices, got {}",
-                    shape.len(),
-                    indexes.len()
-                )));
-            }
-            let offset = flatten_array_indices(indexes, &shape);
-            return Ok(C0Expression::Add(Box::new(base), Box::new(offset)));
-        }
-        loop {
-            self.expect(Token::LBracket)?;
-            let index = self.parse_expression()?;
-            self.expect(Token::RBracket)?;
-            if self.peek() != Some(&Token::LBracket) {
-                return Ok(C0Expression::Add(Box::new(base), Box::new(index)));
-            }
-            base = C0Expression::Index(Box::new(base), Box::new(index));
         }
     }
 
@@ -2178,6 +2218,45 @@ impl Parser {
         })?;
         Ok((
             offset_field_pointer(base.clone(), field.offset_bytes),
+            field.c_type,
+            field.struct_name.clone(),
+        ))
+    }
+
+    fn resolve_array_struct_field_access(
+        &self,
+        base: &C0Expression,
+        field_name: &str,
+    ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
+        let C0Expression::Index(array, index) = base else {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        };
+        let C0Expression::Variable(name) = array.as_ref() else {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        };
+        if !self.variable_array_shapes.contains_key(name) {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        }
+        let struct_name = self.variable_structs.get(name).ok_or_else(|| {
+            self.error_here("`.` currently supports only indexed local arrays of structs")
+        })?;
+        let layout = self.structs.get(struct_name).ok_or_else(|| {
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        let field = layout.fields.get(field_name).ok_or_else(|| {
+            self.error_here(format!(
+                "struct `{struct_name}` has no field `{field_name}`"
+            ))
+        })?;
+        let element_pointer = C0Expression::Add(array.clone(), index.clone());
+        Ok((
+            offset_field_pointer(element_pointer, field.offset_bytes),
             field.c_type,
             field.struct_name.clone(),
         ))
@@ -2476,6 +2555,7 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             '<' => Token::LessThan,
             '>' => Token::GreaterThan,
             '*' => Token::Star,
+            '.' => Token::Dot,
             '/' => Token::Slash,
             '%' => Token::Percent,
             '&' => Token::Amp,

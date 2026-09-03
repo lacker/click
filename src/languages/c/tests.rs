@@ -1925,6 +1925,63 @@ fn c0_syntax_flattens_multidimensional_local_array_indices() {
 }
 
 #[test]
+fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
+    let function = syntax::parse_function(
+        r#"
+        struct item {
+            uint8 tag;
+            int32 value;
+        };
+
+        int32 struct_array_roundtrip() {
+            struct item items[2];
+            items[0].tag = 3;
+            items[1].value = 7;
+            return items[0].tag + items[1].value;
+        }
+        "#,
+    )
+    .expect("local arrays of structs should parse")
+    .to_kernel_function();
+
+    let tag = crate::kernel::Pointer {
+        block: "local:items".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let value = crate::kernel::Pointer {
+        block: "local:items".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(12),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:items", 16)
+            .store(tag, crate::kernel::uint8(3))
+            .store(value, crate::kernel::int32(7)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local struct array fields should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(10),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_local_array_decays_to_pointer_argument() {
     let read_first = syntax::parse_function(
         r#"
