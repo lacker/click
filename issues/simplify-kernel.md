@@ -235,9 +235,8 @@ depends on a count.
 
 - Smart tactics and search in the surface; they produce certificates the
   kernel checks, which is where search belongs.
-- The open kernel-API soundness issues
-  (`call-havoc-fingerprint-collision.md`, `kernel-hardening-batch.md`); they
-  are filed separately and may land in any order with this.
+- Completed kernel-API soundness hardening; it is independent of this
+  search-and-fuel cleanup.
 - Performance work on rules that are already exact.
 
 ## Acceptance criteria
