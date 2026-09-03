@@ -3305,7 +3305,8 @@ impl Parser {
             C0Statement::Skip
             | C0Statement::Break
             | C0Statement::Continue
-            | C0Statement::Declare { .. } => Ok(statement),
+            | C0Statement::Declare { .. }
+            | C0Statement::DeclareStructValue { .. } => Ok(statement),
             C0Statement::Assign { name, expression } => {
                 let (prefix, expression) = self.lower_expression_calls(expression)?;
                 Ok(prepend_statements(
@@ -4686,7 +4687,8 @@ fn statement_contains_embedded_call(statement: &C0Statement) -> bool {
             C0Statement::Skip
             | C0Statement::Break
             | C0Statement::Continue
-            | C0Statement::Declare { .. } => {}
+            | C0Statement::Declare { .. }
+            | C0Statement::DeclareStructValue { .. } => {}
         }
     }
     false
