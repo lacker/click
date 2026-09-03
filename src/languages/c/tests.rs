@@ -1925,6 +1925,88 @@ fn c0_syntax_flattens_multidimensional_local_array_indices() {
 }
 
 #[test]
+fn c0_syntax_lowers_nested_multidimensional_array_initializers() {
+    let function = syntax::parse_function(
+        r#"
+        int32 matrix_initializer() {
+            int32 values[2][3] = {{1, 2, 3}, {4, 5, 6}};
+            return values[1][2];
+        }
+        "#,
+    )
+    .expect("nested multidimensional array initializers should parse")
+    .to_kernel_function();
+
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:values", 24)
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                },
+                crate::kernel::int32(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(4),
+                },
+                crate::kernel::int32(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(8),
+                },
+                crate::kernel::int32(3),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(12),
+                },
+                crate::kernel::int32(4),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(16),
+                },
+                crate::kernel::int32(5),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(20),
+                },
+                crate::kernel::int32(6),
+            ),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("nested multidimensional array initializers should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(6),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
     let function = syntax::parse_function(
         r#"

@@ -1438,7 +1438,7 @@ impl Parser {
                 let name = self.expect_ident("local name")?;
                 self.declare_name(&name)?;
                 let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
-                if let Some(shape) = array_shape {
+                if let Some(shape) = array_shape.clone() {
                     self.variable_array_shapes.insert(name.clone(), shape);
                 }
                 if parsed_type.struct_name.is_some() {
@@ -1469,13 +1469,12 @@ impl Parser {
                                 "local array initializers for struct arrays are not supported",
                             ));
                         }
-                        if self.variable_array_shapes.contains_key(&name) {
-                            return Err(self.error_here(
-                                "multidimensional array initializers are not supported",
-                            ));
-                        }
                         self.position += 1;
-                        let initializer = self.parse_local_array_initializer(&name, c_type)?;
+                        let initializer = self.parse_local_array_initializer(
+                            &name,
+                            c_type,
+                            array_shape.as_deref(),
+                        )?;
                         self.expect(Token::Semicolon)?;
                         return Ok(C0Statement::Seq(
                             Box::new(declaration),
@@ -1608,22 +1607,74 @@ impl Parser {
         &mut self,
         name: &str,
         c_type: C0Type,
+        array_shape: Option<&[u32]>,
     ) -> Result<C0Statement, C0SyntaxError> {
         let (length, element_type) = match c_type {
             C0Type::Int32Array(length) => (length, C0Type::Int32),
             C0Type::UInt8Array(length) => (length, C0Type::UInt8),
             _ => unreachable!("array initializer called for a scalar type"),
         };
-        self.expect(Token::LBrace)?;
         let mut values = Vec::new();
+        let dimensions = array_shape
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| vec![length]);
+        self.parse_array_initializer_level(name, &dimensions, 0, &mut values)?;
+
+        let mut stores = Vec::with_capacity(length as usize);
+        for index in 0..length {
+            let value = values
+                .get(index as usize)
+                .cloned()
+                .unwrap_or(C0Expression::Int32Literal(0));
+            stores.push(C0Statement::Store {
+                pointer: C0Expression::Add(
+                    Box::new(C0Expression::Variable(name.to_string())),
+                    Box::new(C0Expression::Int32Literal(index)),
+                ),
+                value,
+                value_type: Some(element_type),
+            });
+        }
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_array_initializer_level(
+        &mut self,
+        name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        values: &mut Vec<C0Expression>,
+    ) -> Result<(), C0SyntaxError> {
+        let child_width = dimensions[depth + 1..]
+            .iter()
+            .copied()
+            .fold(1u32, |width, dimension| {
+                width
+                    .checked_mul(dimension)
+                    .expect("validated array shape has a representable width")
+            });
+        let child_count = dimensions[depth];
+        let start = values.len();
+        self.expect(Token::LBrace)?;
+        let mut children = 0u32;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                if values.len() == length as usize {
-                    return Err(
-                        self.error_here(format!("too many initializers for `{name}[{length}]`"))
-                    );
+                if children == child_count {
+                    return Err(self
+                        .error_here(format!("too many initializers for `{name}[{child_count}]`")));
                 }
-                values.push(self.parse_expression()?);
+                if depth + 1 == dimensions.len() {
+                    values.push(self.parse_expression()?);
+                } else {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(format!(
+                            "nested initializer for `{name}` expects `{}` groups",
+                            dimensions.len() - depth - 1
+                        )));
+                    }
+                    self.parse_array_initializer_level(name, dimensions, depth + 1, values)?;
+                }
+                children += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -1648,22 +1699,14 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        let mut stores = Vec::with_capacity(length as usize);
-        for index in 0..length {
-            let value = values
-                .get(index as usize)
-                .cloned()
-                .unwrap_or(C0Expression::Int32Literal(0));
-            stores.push(C0Statement::Store {
-                pointer: C0Expression::Add(
-                    Box::new(C0Expression::Variable(name.to_string())),
-                    Box::new(C0Expression::Int32Literal(index)),
-                ),
-                value,
-                value_type: Some(element_type),
-            });
+        let present = (values.len() - start) as u32;
+        let expected = child_count
+            .checked_mul(child_width)
+            .expect("validated array shape has a representable length");
+        for _ in present..expected {
+            values.push(C0Expression::Int32Literal(0));
         }
-        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+        Ok(())
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
