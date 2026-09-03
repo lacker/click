@@ -3754,8 +3754,8 @@ fn c0_equality_binds_looser_than_relational_comparison() {
 }
 
 #[test]
-fn c0_syntax_rejects_a_declaration_that_shadows_an_enclosing_local() {
-    let error = syntax::parse_function(
+fn c0_syntax_accepts_a_declaration_that_shadows_an_enclosing_local() {
+    let function = syntax::parse_function(
         r#"
         int32 shadow(int32 c) {
             int32 y = 10;
@@ -3764,23 +3764,20 @@ fn c0_syntax_rejects_a_declaration_that_shadows_an_enclosing_local() {
         }
         "#,
     )
-    .expect_err("an inner `int32 y` shadows the outer local");
+    .expect("an inner `int32 y` gets a distinct kernel identity");
     assert!(
-        error
-            .message()
-            .contains("`y` is already declared in an enclosing scope"),
-        "{}",
-        error.message()
+        format!("{:?}", function.body()).contains("y#scope0"),
+        "the shadowed declaration should be renamed in the lowered C0 body"
     );
     assert!(
-        error.position().is_some(),
-        "the diagnostic names the declaration"
+        format!("{:?}", function.body()).contains("y#scope1"),
+        "sibling shadowed declarations should receive distinct identities"
     );
 }
 
 #[test]
-fn c0_syntax_rejects_a_declaration_that_shadows_a_parameter() {
-    let error = syntax::parse_function(
+fn c0_syntax_accepts_a_declaration_that_shadows_a_parameter() {
+    let function = syntax::parse_function(
         r#"
         struct S { int32 a; int32 b; };
         struct T { int32 b; int32 z; };
@@ -3790,13 +3787,10 @@ fn c0_syntax_rejects_a_declaration_that_shadows_a_parameter() {
         }
         "#,
     )
-    .expect_err("an inner `struct T *p` shadows the parameter");
+    .expect("an inner `struct T *p` gets a distinct kernel identity");
     assert!(
-        error
-            .message()
-            .contains("`p` is already declared in an enclosing scope"),
-        "{}",
-        error.message()
+        format!("{:?}", function.body()).contains("p#scope0"),
+        "the shadowed pointer declaration should be renamed in the lowered C0 body"
     );
 }
 

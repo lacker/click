@@ -39,7 +39,6 @@ C language coverage:
 - [Model variadic functions](variadic-functions.md)
 - [Model volatile objects](volatile-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
-- [Lift the block-scoped declaration restriction](block-scoped-declarations.md)
 
 Semantics and reasoning:
 

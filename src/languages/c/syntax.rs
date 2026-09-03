@@ -1256,16 +1256,23 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
-    /// The names declared in each open lexical scope, innermost last:
-    /// the function's parameters, then one entry per `{ ... }` block and
-    /// per `for` statement. Click's kernel keys a local by its name alone,
-    /// so a declaration that shadows a name still in scope would silently
-    /// overwrite the outer object; the parser rejects it instead. Sibling
-    /// scopes may reuse a name because the earlier object is dead.
-    scopes: Vec<Vec<String>>,
+    /// The names declared in each open lexical scope, innermost last. The
+    /// source name is retained for lookup, while `kernel_name` is the
+    /// identity emitted into the C0 AST. Click's kernel keys a local by its
+    /// name alone, so a shadowing declaration receives a fresh internal name
+    /// instead of silently overwriting the outer object. Sibling scopes may
+    /// reuse a name because the earlier object is dead.
+    scopes: Vec<Vec<ScopeBinding>>,
+    next_scoped_name: u32,
     next_synthesized_call: u32,
     loop_contexts: Vec<CLoopContext>,
     abi: CAbi,
+}
+
+#[derive(Clone, Debug)]
+struct ScopeBinding {
+    source_name: String,
+    kernel_name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1292,6 +1299,7 @@ impl Parser {
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             scopes: Vec::new(),
+            next_scoped_name: 0,
             next_synthesized_call: 0,
             loop_contexts: Vec::new(),
             abi,
@@ -1305,18 +1313,29 @@ impl Parser {
     /// Closes the innermost scope; its names, and any struct layouts they
     /// carried, are no longer visible.
     fn pop_scope(&mut self) {
-        for name in self.scopes.pop().unwrap_or_default() {
-            self.variable_structs.remove(&name);
-            self.variable_struct_values.remove(&name);
-            self.variable_array_shapes.remove(&name);
-            self.variable_types.remove(&name);
+        for binding in self.scopes.pop().unwrap_or_default() {
+            self.variable_structs.remove(&binding.kernel_name);
+            self.variable_struct_values.remove(&binding.kernel_name);
+            self.variable_array_shapes.remove(&binding.kernel_name);
+            self.variable_types.remove(&binding.kernel_name);
         }
     }
 
-    /// Records a parameter or local declaration in the innermost scope, or
-    /// rejects it when the name is still visible from an enclosing scope.
-    /// Call right after consuming the name token so the error points at it.
-    fn declare_name(&mut self, name: &str) -> Result<(), C0SyntaxError> {
+    fn resolve_name(&self, source_name: &str) -> String {
+        self.scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev())
+            .find(|binding| binding.source_name == source_name)
+            .map(|binding| binding.kernel_name.clone())
+            .unwrap_or_else(|| source_name.to_string())
+    }
+
+    /// Records a parameter or local declaration in the innermost scope. A
+    /// shadowing declaration gets a kernel-only identity; source references
+    /// continue to resolve by their ordinary C spelling. Call right after
+    /// consuming the name token so a duplicate diagnostic points at it.
+    fn declare_name(&mut self, name: &str) -> Result<String, C0SyntaxError> {
         if self.enum_constants.contains_key(name) {
             return Err(
                 self.error_at_previous(format!("`{name}` is already declared as an enum constant"))
@@ -1324,19 +1343,35 @@ impl Parser {
         }
         if self
             .scopes
-            .iter()
-            .any(|scope| scope.iter().any(|known| known == name))
+            .last()
+            .is_some_and(|scope| scope.iter().any(|binding| binding.source_name == name))
         {
-            return Err(self.error_at_previous(format!(
-                "`{name}` is already declared in an enclosing scope; a block-scoped \
-                 declaration may not shadow a parameter or local"
-            )));
+            return Err(
+                self.error_at_previous(format!("`{name}` is already declared in this scope"))
+            );
         }
+        let kernel_name = if self
+            .scopes
+            .iter()
+            .any(|scope| scope.iter().any(|binding| binding.source_name == name))
+        {
+            let kernel_name = format!("{name}#scope{}", self.next_scoped_name);
+            self.next_scoped_name = self.next_scoped_name.saturating_add(1);
+            kernel_name
+        } else {
+            name.to_string()
+        };
         match self.scopes.last_mut() {
-            Some(scope) => scope.push(name.to_string()),
-            None => self.scopes.push(vec![name.to_string()]),
+            Some(scope) => scope.push(ScopeBinding {
+                source_name: name.to_string(),
+                kernel_name: kernel_name.clone(),
+            }),
+            None => self.scopes.push(vec![ScopeBinding {
+                source_name: name.to_string(),
+                kernel_name: kernel_name.clone(),
+            }]),
         }
-        Ok(())
+        Ok(kernel_name)
     }
 
     fn scalar_struct_value_layout(
@@ -1768,11 +1803,11 @@ impl Parser {
             if let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
             {
-                self.declare_name(&name)?;
-                self.variable_types.insert(name.clone(), c_type);
+                let kernel_name = self.declare_name(&name)?;
+                self.variable_types.insert(kernel_name.clone(), c_type);
                 parameters.push(C0Parameter {
                     c_type,
-                    name,
+                    name: kernel_name,
                     struct_layout: None,
                     struct_name: None,
                     array_element_width: None,
@@ -1787,7 +1822,7 @@ impl Parser {
                 return Err(self.error_here("function parameters cannot have type `void`"));
             }
             let name = self.expect_ident("parameter name")?;
-            self.declare_name(&name)?;
+            let kernel_name = self.declare_name(&name)?;
             let struct_array =
                 parsed_type.struct_name.is_some() && self.peek() == Some(&Token::LBracket);
             let struct_value = is_plain_struct_type(&parsed_type) && !struct_array;
@@ -1807,7 +1842,7 @@ impl Parser {
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
-            self.variable_types.insert(name.clone(), c_type);
+            self.variable_types.insert(kernel_name.clone(), c_type);
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array && !struct_value {
@@ -1817,13 +1852,13 @@ impl Parser {
                 }
                 let struct_name_value = struct_name.clone().expect("struct_name checked above");
                 self.variable_structs
-                    .insert(name.clone(), struct_name_value.clone());
+                    .insert(kernel_name.clone(), struct_name_value.clone());
                 if struct_value {
                     self.variable_struct_values
-                        .insert(name.clone(), struct_name_value.clone());
+                        .insert(kernel_name.clone(), struct_name_value.clone());
                     parameters.push(C0Parameter {
                         c_type,
-                        name,
+                        name: kernel_name,
                         struct_layout: struct_value_layout,
                         struct_name,
                         array_element_width: None,
@@ -1844,10 +1879,11 @@ impl Parser {
                             ))
                         })?
                         .size_bytes;
-                    self.variable_array_shapes.insert(name.clone(), vec![1]);
+                    self.variable_array_shapes
+                        .insert(kernel_name.clone(), vec![1]);
                     parameters.push(C0Parameter {
                         c_type,
-                        name,
+                        name: kernel_name,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         struct_name,
                         array_element_width: Some(element_width),
@@ -1861,7 +1897,7 @@ impl Parser {
             }
             parameters.push(C0Parameter {
                 c_type,
-                name,
+                name: kernel_name,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
@@ -2648,18 +2684,21 @@ impl Parser {
             else {
                 unreachable!("function-pointer declarator starts with a parenthesis");
             };
-            self.declare_name(&name)?;
-            self.variable_types.insert(name.clone(), c_type);
+            let kernel_name = self.declare_name(&name)?;
+            self.variable_types.insert(kernel_name.clone(), c_type);
             let declaration = C0Statement::Declare {
                 c_type,
-                name: name.clone(),
+                name: kernel_name.clone(),
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
                 let expression = self.parse_expression()?;
                 C0Statement::Seq(
                     Box::new(declaration),
-                    Box::new(C0Statement::Assign { name, expression }),
+                    Box::new(C0Statement::Assign {
+                        name: kernel_name,
+                        expression,
+                    }),
                 )
             } else {
                 declaration
@@ -2671,8 +2710,8 @@ impl Parser {
         let struct_value_candidate = is_plain_struct_type(&parsed_type);
         let mut declarations = Vec::new();
         loop {
-            let name = self.expect_ident("local name")?;
-            self.declare_name(&name)?;
+            let source_name = self.expect_ident("local name")?;
+            let name = self.declare_name(&source_name)?;
             let struct_value_layout =
                 if struct_value_candidate && self.peek() != Some(&Token::LBracket) {
                     Some(
@@ -2886,8 +2925,9 @@ impl Parser {
         }
         let mut initializers = Vec::new();
         loop {
-            let name = self.expect_ident("for-loop local name")?;
-            self.declare_name(&name)?;
+            let source_name = self.expect_ident("for-loop local name")?;
+            let name = self.declare_name(&source_name)?;
+            self.variable_types.insert(name.clone(), parsed_type.c_type);
             if self.peek() != Some(&Token::Equal) {
                 return Err(self.error_here("for-loop declarations require an initializer"));
             }
@@ -2909,11 +2949,12 @@ impl Parser {
     }
 
     fn parse_for_assignment_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
-        let Some(Token::Ident(name)) = self.next() else {
+        let Some(Token::Ident(source_name)) = self.next() else {
             return Err(
                 self.error_here("expected assignment target in for-loop initializer".to_string())
             );
         };
+        let name = self.resolve_name(&source_name);
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
         Ok(C0Statement::Assign { name, expression })
@@ -2927,7 +2968,7 @@ impl Parser {
             Some(Token::PlusPlus | Token::MinusMinus) => self.next(),
             _ => None,
         };
-        let name = match self.next() {
+        let source_name = match self.next() {
             Some(Token::Ident(name)) if name != "int32" && name != "uint8" => name,
             Some(Token::Ident(name)) => {
                 return Err(self.error_here(format!(
@@ -2946,6 +2987,7 @@ impl Parser {
                 )));
             }
         };
+        let name = self.resolve_name(&source_name);
         let operator = match prefix_operator {
             Some(operator) => operator,
             None => self.next().ok_or_else(|| {
@@ -3278,7 +3320,7 @@ impl Parser {
                 || self
                     .scopes
                     .iter()
-                    .any(|scope| scope.iter().any(|known_name| known_name == &name));
+                    .any(|scope| scope.iter().any(|binding| binding.kernel_name == name));
             if !already_used {
                 return name;
             }
@@ -4045,7 +4087,7 @@ impl Parser {
         if self.peek() == Some(&Token::Amp) {
             self.position += 1;
             if let Some(Token::Ident(name)) = self.peek().cloned()
-                && !self.variable_types.contains_key(&name)
+                && !self.variable_types.contains_key(&self.resolve_name(&name))
             {
                 self.position += 1;
                 return Ok(C0Expression::FunctionAddress(name));
@@ -4287,7 +4329,7 @@ impl Parser {
         match self.next() {
             Some(Token::Ident(name)) => match self.enum_constants.get(&name) {
                 Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
-                None => Ok(C0Expression::Variable(name)),
+                None => Ok(C0Expression::Variable(self.resolve_name(&name))),
             },
             Some(Token::Number(number)) => {
                 let value = parse_integer_literal_magnitude(&number).map_err(|reason| {
