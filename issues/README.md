@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 30
+## Functionality gaps: 31
 
 C language coverage:
 
@@ -31,7 +31,8 @@ C language coverage:
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
-- [Model break, continue, do-while, switch, and goto](non-structured-control-flow.md)
+- [Preserve structured loop exits and model do-while](non-structured-control-flow.md)
+- [Model forward and backward goto edges](goto.md)
 - [Allow function calls in expression position](calls-in-expressions.md)
 - [Specify external and libc functions without a body](external-function-contracts.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
