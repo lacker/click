@@ -35,6 +35,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.for",
     "statement.for-step-list",
     "statement.for-omitted-clause",
+    "statement.for-init-list",
     "statement.store",
     "statement.malloc",
     "statement.calloc",
@@ -68,6 +69,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.dereference",
     "expression.pointer-arithmetic",
     "operator.logical-not",
+    "operator.unary-plus",
     "operator.logical-and",
     "operator.logical-or",
     "operator.equal",
@@ -1767,28 +1769,47 @@ impl Parser {
             return Ok(C0Statement::Skip);
         }
         if self.is_type_start() {
-            let parsed_type = self.parse_type()?;
-            if parsed_type.c_type == C0Type::Void {
-                return Err(self.error_here("void for-loop locals are not supported"));
+            let initializer = self.parse_for_declaration_initializer()?;
+            if self.peek() == Some(&Token::Comma) {
+                return Err(self
+                    .error_here("multiple declarations in a `for` initializer are not supported"));
             }
-            if is_plain_struct_type(&parsed_type) {
-                return Err(self.error_here("only pointer-to-struct types are supported"));
-            }
-            let name = self.expect_ident("for-loop local name")?;
-            self.declare_name(&name)?;
-            if self.peek() != Some(&Token::Equal) {
-                return Err(self.error_here("for-loop declarations require an initializer"));
-            }
-            self.position += 1;
-            let expression = self.parse_expression()?;
-            return Ok(C0Statement::Seq(
-                Box::new(C0Statement::Declare {
-                    c_type: parsed_type.c_type,
-                    name: name.clone(),
-                }),
-                Box::new(C0Statement::Assign { name, expression }),
-            ));
+            return Ok(initializer);
         }
+
+        let mut initializers = vec![self.parse_for_assignment_initializer()?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            initializers.push(self.parse_for_assignment_initializer()?);
+        }
+        Ok(balanced_statement_sequence(initializers).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_for_declaration_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        let parsed_type = self.parse_type()?;
+        if parsed_type.c_type == C0Type::Void {
+            return Err(self.error_here("void for-loop locals are not supported"));
+        }
+        if is_plain_struct_type(&parsed_type) {
+            return Err(self.error_here("only pointer-to-struct types are supported"));
+        }
+        let name = self.expect_ident("for-loop local name")?;
+        self.declare_name(&name)?;
+        if self.peek() != Some(&Token::Equal) {
+            return Err(self.error_here("for-loop declarations require an initializer"));
+        }
+        self.position += 1;
+        let expression = self.parse_expression()?;
+        Ok(C0Statement::Seq(
+            Box::new(C0Statement::Declare {
+                c_type: parsed_type.c_type,
+                name: name.clone(),
+            }),
+            Box::new(C0Statement::Assign { name, expression }),
+        ))
+    }
+
+    fn parse_for_assignment_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let Some(Token::Ident(name)) = self.next() else {
             return Err(
                 self.error_here("expected assignment target in for-loop initializer".to_string())
@@ -2208,6 +2229,10 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek() == Some(&Token::Plus) {
+            self.position += 1;
+            return self.parse_unary();
+        }
         if self.peek() == Some(&Token::Minus) {
             self.position += 1;
             if let Some(Token::Number(number)) = self.peek().cloned() {

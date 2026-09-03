@@ -27,7 +27,8 @@ existing terms; none needs new kernel state.
   (`:1206-1224`, `:1266-1291`; mdtest `c_for_loop_rejects_declaration`).
   Comma-separated scalar assignment/update steps are now accepted and lowered
   in source order. The initializer and step may also be omitted; the
-  condition remains required.
+  condition remains required. Scalar assignment initializers may be
+  comma-separated; multiple declaration declarators remain rejected.
 
 ## Violated invariant
 

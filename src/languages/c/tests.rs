@@ -312,6 +312,23 @@ fn c0_syntax_accepts_omitted_for_initializer_and_step() {
 }
 
 #[test]
+fn c0_syntax_accepts_unary_plus_and_a_for_initializer_list() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i;
+            int32 j;
+            for (i = +0, j = +3; i < 3; i++) {
+                j = j + 1;
+            }
+            return j;
+        }
+        "#,
+    )
+    .expect("unary plus and comma-separated scalar for initializers should parse");
+}
+
+#[test]
 fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
     syntax::parse_function(
         r#"
