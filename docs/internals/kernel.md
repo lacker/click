@@ -409,6 +409,16 @@ guard before evaluating the guarded pointer and range, so the empty case does
 not manufacture a null footprint while an active malformed footprint still
 fails locally.
 
+Certification exposes a derived load through the composites the entry
+context holds: it unfolds composites until one holds the cell. That search
+asks each unfolding for the cell by structure alone, an exact entry or a
+range on the same block whose constant bounds cover it at an equal or
+constant-offset base, and unfolds the composite whose pointer argument is the
+cell's base first. Only when no unfolding holds the cell by structure does
+each unfolding, in the same order, answer with the resource algebra's
+reasoning. Reasoning at every unfolding is what once took binary-tree's
+certification from seconds to minutes.
+
 A `CallHavoc` edge carries the callee's checked mutable ranges. Load transport
 may cross that edge only when the loaded address is proved disjoint from every
 range; multiple opaque calls compose by following the corresponding bounded

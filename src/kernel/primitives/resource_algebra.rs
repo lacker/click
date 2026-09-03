@@ -1264,6 +1264,34 @@ impl ResourceContext {
         self.storage.facts.is_empty()
     }
 
+    /// Whether a memory fact is held by structure alone: an exact entry, or
+    /// a fact on the same block whose constant bounds cover the required
+    /// range at an equal or constant-offset base. No reasoning is applied;
+    /// this is the indexed answer a search asks at each context before any
+    /// proof.
+    pub(in crate::kernel) fn satisfies_memory_fact_structurally(
+        &self,
+        fact: &CResourceFact,
+    ) -> bool {
+        if self.storage.index.exact.contains_key(fact) {
+            return true;
+        }
+        let Some(required) = fact.memory_range() else {
+            return false;
+        };
+        self.memory_block_facts(&required.base().block)
+            .any(|available| {
+                let available = if fact.is_own() {
+                    available.memory_own_range().cloned()
+                } else {
+                    resource_fact_read_core_range(available)
+                };
+                available.is_some_and(|available| {
+                    memory_range_structurally_covers(&available, required) == Some(true)
+                })
+            })
+    }
+
     pub(in crate::kernel) fn permits_memory_read(
         &self,
         pointer: &Pointer,

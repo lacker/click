@@ -1570,3 +1570,77 @@ fn symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work() {
         );
     }
 }
+
+/// Exposing a cell that an unfolded composite holds is a structural lookup
+/// at each unfolding, not a proof: with a chain of order facts relating the
+/// composites' pointers, reasoning about every candidate at every unfolding
+/// grows superlinearly, while the structural answer stays near linear in the
+/// number of composites. Regression for the binary-tree slowdown, where
+/// certification exposed each derived load through the resource algebra's
+/// reasoning and took minutes.
+#[test]
+fn composite_exposure_finds_held_cells_by_structure_near_linearly() {
+    let definition = CCompositeResourceDefinition::new(
+        "cell",
+        vec![c_parameter("item", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::OwnMemory(CMemorySegment {
+            base: c_variable("item"),
+            start: c_int32_literal(0),
+            end: c_int32_literal(1),
+            guard: None,
+        })],
+        Vec::new(),
+    );
+    let pointer = |index: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::Variable(Variable(900_000 + index)),
+            4,
+        ),
+    };
+    let samples = [4_u64, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::own_composite(
+                    "cell".to_string(),
+                    vec![CValue::Pointer(pointer(index))],
+                )
+            }));
+            let mut assumptions = PureFactContext::new();
+            for index in 0..size - 1 {
+                assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(900_000 + index)),
+                        Bitvector32Term::Variable(Variable(900_000 + index + 1)),
+                    ),
+                    true,
+                ));
+            }
+            let target = CResourceFact::view_memory(memory_range(pointer(size - 1), 0, 1));
+            let (exposed, work) = crate::instrumentation::measure_deterministic_work(|| {
+                crate::kernel::functions::expose_composite_resource_fact(
+                    &context,
+                    &target,
+                    std::slice::from_ref(&definition),
+                    &CMemory::new(),
+                    &assumptions,
+                )
+            });
+            assert!(
+                exposed.is_some(),
+                "size {size}: the unfolded cell should be exposed"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    eprintln!("composite exposure samples: {samples:?}");
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "composite exposure is superlinear: {samples:?}"
+        );
+    }
+}
