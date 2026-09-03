@@ -2693,13 +2693,16 @@ pub fn prove_owned_resource_count_lower_bound(
         None => {
             let zero = Bitvector32Term::Constant(0);
             let quantity_is_zero = quantity == zero
-                || assumptions.proves(&Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32Equal(
-                        Box::new(quantity.clone()),
-                        Box::new(zero.clone()),
+                || certification_proves_proposition(
+                    assumptions,
+                    &Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(quantity.clone()),
+                            Box::new(zero.clone()),
+                        ),
+                        true,
                     ),
-                    true,
-                ));
+                );
             if !quantity_is_zero {
                 return None;
             }
@@ -2924,13 +2927,16 @@ pub(crate) fn counted_populations_definitionally_equal(
         );
         right_by_identity.get(&identity).is_some_and(|right_count| {
             let exact = population.count == **right_count;
-            let proved = assumptions.proves(&Proposition::ConditionIs(
-                ConditionTerm::Bitvector32Equal(
-                    Box::new(population.count.clone()),
-                    Box::new((*right_count).clone()),
+            let proved = certification_proves_proposition(
+                assumptions,
+                &Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(population.count.clone()),
+                        Box::new((*right_count).clone()),
+                    ),
+                    true,
                 ),
-                true,
-            ));
+            );
             exact || proved
         })
     })
@@ -3300,7 +3306,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             premise,
                             Proposition::CResourceContains { .. }
                                 | Proposition::CResourceSeparate { .. }
-                        ) && !reuse_assumptions.proves(premise)
+                        ) && !certification_proves_proposition(&reuse_assumptions, premise)
                     })
                     .flat_map(|premise| match premise {
                         Proposition::CResourceContains { parent, .. } => vec![parent],
@@ -3349,7 +3355,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         }
         let checked_premise_is_authorized =
             |_checked: &CCheckedFunctionExecution, premise: &Proposition| {
-                reuse_assumptions.proves(premise)
+                certification_proves_proposition(&reuse_assumptions, premise)
             };
         let authorized = |checked: &CCheckedFunctionExecution| {
             checked

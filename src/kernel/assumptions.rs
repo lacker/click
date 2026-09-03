@@ -2090,7 +2090,7 @@ impl PureFactContext {
         facts
     }
 
-    fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
+    pub(in crate::kernel) fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
         let mut assumptions = self.clone();
         assumptions.condition_facts = self
             .condition_facts

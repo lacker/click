@@ -999,7 +999,7 @@ fn function_claim_holds_on_prepared_path(
                         }
                         let requirements_match =
                             proof.specification.requires().iter().all(|requirement| {
-                                let ok = assumptions.proves(requirement)
+                                let ok = certification_proves_proposition(assumptions, requirement)
                                     || match requirement {
                                         Proposition::CResourceComposition(required) => {
                                             resource_context_definitionally_contains(

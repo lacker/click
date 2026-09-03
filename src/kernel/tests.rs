@@ -64,6 +64,32 @@ fn certify_contract_with_kernel_artifacts(
     )
 }
 
+/// Contract certification calls no general prover: every proposition it
+/// certifies is decided by an exact rule of its own, a completion match,
+/// or a kind-specific bounded rule, never by handing the question to
+/// `PureFactContext::proves`.
+#[test]
+fn contract_certification_calls_no_general_prover() {
+    let needle = [".prov", "es("].concat();
+    let sources = [
+        "src/kernel/api/contract_certification.rs",
+        "src/kernel/api/contract_certification/contract_claims.rs",
+    ];
+    let offenders = sources
+        .iter()
+        .filter(|relative| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+            std::fs::read_to_string(path)
+                .expect("certification source is readable")
+                .contains(&needle)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        offenders.is_empty(),
+        "contract certification hands a proposition to the general prover: {offenders:?}"
+    );
+}
+
 /// The kernel reads no environment variable: its behaviour is fixed, and
 /// its test-only audits are switched on by the tests that run them. Every
 /// A/B handle it once read kept a second code path alive.

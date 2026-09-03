@@ -312,32 +312,14 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
             bytes.clone(),
         ));
         let span = assumptions.simplify_bitvector_under_assumptions(fact_bytes);
-        let starts_in_bounds = assumptions.proves(&Proposition::ConditionIs(
-            ConditionTerm::signed_less_equal(start.clone(), delta.clone()),
-            true,
-        )) || assumptions.proves_order_condition_for_memory_resolution(
-            &ConditionTerm::signed_less_equal(start, delta),
-            true,
-        );
-        let ends_in_bounds = assumptions.proves(&Proposition::ConditionIs(
-            ConditionTerm::signed_less_equal(end.clone(), span.clone()),
-            true,
-        )) || assumptions.proves_order_condition_for_memory_resolution(
-            &ConditionTerm::signed_less_equal(end.clone(), span.clone()),
-            true,
-        ) || {
+        let starts_in_bounds = certification_proves_signed_le(assumptions, &start, &delta);
+        let ends_in_bounds = certification_proves_signed_le(assumptions, &end, &span) || {
             // Strip a shared additive constant: `a + b <= x + c` follows
             // from `a <= x` when `b <= c`.
             let (end_base, end_shift) = split_additive_constant(&end);
             let (span_base, span_shift) = split_additive_constant(&span);
             (end_shift as i32) <= (span_shift as i32)
-                && (assumptions.proves(&Proposition::ConditionIs(
-                    ConditionTerm::signed_less_equal(end_base.clone(), span_base.clone()),
-                    true,
-                )) || assumptions.proves_order_condition_for_memory_resolution(
-                    &ConditionTerm::signed_less_equal(end_base, span_base),
-                    true,
-                ))
+                && certification_proves_signed_le(assumptions, &end_base, &span_base)
         };
         if starts_in_bounds && ends_in_bounds {
             return true;
@@ -357,6 +339,50 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         crate::kernel::record_implicit_reasoning_provenance(assumptions, goal);
     }
     covered
+}
+
+/// Certifies that `proposition` is false: a condition is refuted by
+/// certifying its other polarity, a negation by certifying its body, a
+/// conjunction by refuting a conjunct, a disjunction by refuting both
+/// disjuncts, and anything else by an exact assumed negation.
+fn certification_refutes_proposition(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => certification_proves_proposition(
+            assumptions,
+            &Proposition::ConditionIs(condition.clone(), !*value),
+        ),
+        Proposition::Not(body) => certification_proves_proposition(assumptions, body),
+        Proposition::And(left, right) => {
+            certification_refutes_proposition(assumptions, left)
+                || certification_refutes_proposition(assumptions, right)
+        }
+        Proposition::Or(left, right) => {
+            certification_refutes_proposition(assumptions, left)
+                && certification_refutes_proposition(assumptions, right)
+        }
+        _ => assumptions.proves_exact(&Proposition::Not(Box::new(proposition.clone()))),
+    }
+}
+
+/// Certifies `left <= right` by the exact rules: two constants compare,
+/// an exact assumed fact, or the bounded order prover.
+fn certification_proves_signed_le(
+    assumptions: &PureFactContext,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    if let (Some(left), Some(right)) = (
+        signed_bitvector_constant(left),
+        signed_bitvector_constant(right),
+    ) {
+        return left <= right;
+    }
+    let condition = ConditionTerm::signed_less_equal(left.clone(), right.clone());
+    assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
+        || assumptions.proves_order_condition_for_memory_resolution(&condition, true)
 }
 
 /// Certifies a universally-quantified loadability side-obligation from
@@ -2340,6 +2366,14 @@ pub(super) fn certification_proves_proposition(
         {
             true
         }
+        // A definedness condition is certified by the exact overflow rules:
+        // the operands' signed intervals from the context's order facts.
+        Proposition::ConditionIs(
+            condition @ (ConditionTerm::Bitvector32SignedAddOverflows(..)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)),
+            value,
+        ) if assumptions.decide_from_overflow_facts(condition) == Some(*value) => true,
         // Both sides resolve to one known constant through equality facts
         // and per-load snapshot bridging (deterministic and fuel-free).
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
@@ -2467,7 +2501,43 @@ pub(super) fn certification_proves_proposition(
         }
         // A predicate is certified only as an exact assumed fact (above).
         Proposition::Predicate { .. } => false,
-        _ => assumptions.proves(proposition),
+        // Resource separation: the indexed rule over separation facts,
+        // compositions, and constant bounds.
+        Proposition::CResourceSeparate { left, right } => {
+            assumptions.proves_resource_separate(left, right)
+        }
+        // Loadability: the resource-and-fact rule the loadable prover is.
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => assumptions.proves_memory_loadable(memory, base, bytes),
+        // An implication is certified by refuting its premise or by
+        // certifying its conclusion under the premise.
+        Proposition::Implies(premise, conclusion) => {
+            certification_refutes_proposition(assumptions, premise)
+                || certification_proves_proposition(
+                    &assumptions
+                        .clone()
+                        .assume_proposition(premise.as_ref().clone()),
+                    conclusion,
+                )
+        }
+        // A universal is certified by generalization: its body, under the
+        // facts that do not mention the bound variable.
+        Proposition::ForAll {
+            var,
+            sort: Sort::CInt32 | Sort::Bitvector32,
+            body,
+            ..
+        } => certification_proves_proposition(
+            &assumptions.without_free_bitvector_variable(*var),
+            body,
+        ),
+        // Everything else is certified only as an exact assumed fact
+        // (above): a containment fact, a resource composition, a negation,
+        // a memory disjointness.
+        _ => false,
     };
     if directly_proven {
         return true;

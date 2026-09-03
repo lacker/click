@@ -70,6 +70,24 @@ normalization retry (46 / 3 of 375 / 241) and the loadability element
 retry (2 of 2) decide and stay. General pointer distinctness never decided
 over either harness (38 / 778 queries) but is pinned by kernel unit tests
 and costs nothing measurable; it is left for slice 7's list.
+Slice 6 is built. A fresh census of the certification prover's handoff to
+prover 1 (examples / mdtests, attempted and decided): resource separation
+113 / 23 and 69 / 20, resource containment 71 / 23 and never, resource
+compositions 120 / 160 and 10 / 0 (all ten because the context was
+inconsistent, in refcount), universals 0 / 9 and 0 / 1, implications
+2 / 0 and 2 / 0, loadability 0 / 2 and 0 / 1; the loadability bounds
+prover 1 alone decided were constant comparisons (0 / 6); the completion
+requirements it alone proved were `defined(a + b)` premises decided by
+interval arithmetic (0 / 8). The handoff is replaced by exact rules:
+resource separation by the indexed separation rule, loadability by the
+loadable prover, an implication by refuting its premise or certifying its
+conclusion under it, a universal by generalization, an overflow condition
+by the exact interval rules, a bound by constant comparison, and every
+other kind by an exact assumed fact only. The completion requirement,
+artifact premise, and counted-population checks that called prover 1
+directly now call the certification prover, and a kernel test pins that
+the certification sources call no general prover. Both harnesses and the
+unit suite pass unchanged.
 
 ## Violated invariant
 
