@@ -315,12 +315,6 @@ fn resource_is_direct_observed_core(
         let Some(body) = definition.composite_body() else {
             continue;
         };
-        // A guarded composite only exposes its children after the guard has
-        // been selected. A joined interface does not carry enough state into
-        // this syntactic shortcut, so keep guarded children explicit.
-        if body.condition().is_some() {
-            continue;
-        }
         let substitutions =
             resource_argument_substitutions(definition, parent, claim_label, tactic_index)?;
         for child in body.contains() {

@@ -974,14 +974,35 @@ impl CheckedExecutionBranch {
         }
         let mut arm_residuals = Vec::with_capacity(2);
         for (index, (arm, facts)) in arms.iter().zip(arm_facts).enumerate() {
-            let Some(remaining) = arm
-                .state
-                .resources()
-                .clone()
-                .without_facts(&arm_interface_resources[index], facts.assumptions())
-            else {
-                return Err("an interface resource is not owned by one concrete arm");
-            };
+            let mut remaining = arm.state.resources().clone();
+            // Views are non-consuming. Check them while their owned support
+            // is still present, then consume the owned interface facts in
+            // their source order so consuming a parent cannot erase a view
+            // that the same interface has already established.
+            for required in arm_interface_resources[index]
+                .iter()
+                .filter(|fact| fact.is_view())
+            {
+                if remaining
+                    .clone()
+                    .without_facts(std::slice::from_ref(required), facts.assumptions())
+                    .is_none()
+                {
+                    return Err("an interface resource is not owned by one concrete arm");
+                }
+            }
+            for required in arm_interface_resources[index]
+                .iter()
+                .filter(|fact| fact.is_own())
+            {
+                let Some(next) = remaining
+                    .clone()
+                    .without_facts(std::slice::from_ref(required), facts.assumptions())
+                else {
+                    return Err("an interface resource is not owned by one concrete arm");
+                };
+                remaining = next;
+            }
             arm_residuals.push(remaining);
         }
         let common_resources = ResourceContext::common_exact_descendant(

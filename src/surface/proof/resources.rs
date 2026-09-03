@@ -2627,6 +2627,38 @@ fn fold_composite_resources_on_outcome_with_facts(
                 })?;
             post_state = post_state.with_resource_context(resources);
         }
+        if closure == ResourceBodyClosure::Initialize && !lowered_contained.is_empty() {
+            let abstract_resource = lower_resource_clause_at_state_with_result(
+                resource,
+                parameters,
+                arguments,
+                &post_state,
+                &value,
+            )?;
+            let assumptions = pure_facts.assumptions();
+            let Some(authority) = post_state
+                .resources()
+                .directly_supporting_fact(&abstract_resource, assumptions)
+                .cloned()
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` lost its folded authority",
+                    describe_resource_clause(resource)
+                )));
+            };
+            let projections = lowered_contained
+                .iter()
+                .filter_map(|fact| fact.core_with_assumptions(assumptions))
+                .filter(|fact| !post_state.resources().contains_exact_representation(fact))
+                .collect::<BTreeSet<_>>();
+            if !projections.is_empty() {
+                let resources = post_state
+                    .resources()
+                    .clone()
+                    .unchecked_with_supported_facts(&authority, projections);
+                post_state = post_state.with_resource_context(resources);
+            }
+        }
         outcome = CFunctionOutcome::Return {
             value,
             state: post_state,
