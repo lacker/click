@@ -3678,6 +3678,107 @@ fn c0_struct_inline_scalar_array_field_supports_indexed_load_and_store() {
 }
 
 #[test]
+fn c0_embedded_struct_array_field_preserves_stride_and_accesses_leaf() {
+    #[repr(C)]
+    struct HostInner {
+        value: i32,
+        flag: u8,
+    }
+
+    #[repr(C)]
+    struct HostPacket {
+        tag: u8,
+        points: [HostInner; 2],
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 flag;
+        };
+        struct packet {
+            uint8 tag;
+            struct inner points[2];
+            int32 tail;
+        };
+
+        int32 write_point(struct packet* packet) {
+            packet->points[1].value = 7;
+            return packet->points[1].value;
+        }
+        "#,
+    )
+    .expect("one-dimensional arrays of embedded structs should parse");
+
+    let packet_layout = function.structs().get("packet").expect("packet layout");
+    let points = packet_layout
+        .field("points")
+        .expect("embedded struct array field");
+    assert_eq!(points.c_type(), syntax::C0Type::UInt8Array(16));
+    assert_eq!(points.struct_name(), Some("inner"));
+    assert_eq!(points.array_element_width(), Some(8));
+    assert_eq!(points.byte_width(), 16);
+    assert_eq!(
+        points.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, points)
+    );
+    assert_eq!(
+        packet_layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        packet_layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+
+    let function = function.to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 6);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 24))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 24)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(12),
+                    },
+                    crate::kernel::int32(7),
+                ),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("indexed embedded struct fields should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_lp64_layout_matches_the_host_c_abi() {
     #[repr(C)]
     struct HostMixed {

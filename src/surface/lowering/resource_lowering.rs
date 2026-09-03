@@ -1045,6 +1045,9 @@ pub(in crate::surface) fn contract_segment_element_width(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> u32 {
+    if let Some(element_width) = segment.field_element_width() {
+        return element_width;
+    }
     contract_expression_element_width(parameters, &segment.base).unwrap_or(4)
 }
 

@@ -1108,7 +1108,7 @@ fn validate_recursive_calls_in_segment(
 ) -> Result<(), ClickError> {
     let expressions = match &segment.surface {
         ContractSegmentSurface::Range { base, start, end } => vec![base, start, end],
-        ContractSegmentSurface::Field(_) | ContractSegmentSurface::Object(_) => Vec::new(),
+        ContractSegmentSurface::Field { .. } | ContractSegmentSurface::Object(_) => Vec::new(),
     };
     for expression in expressions {
         validate_recursive_calls_in_expression(

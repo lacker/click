@@ -201,6 +201,7 @@ struct ResolvedField {
     c_type: C0Type,
     struct_name: Option<String>,
     union_name: Option<String>,
+    array_element_width: Option<u32>,
     offset_bytes: u32,
     byte_width: u32,
     slot_end_bytes: u32,
@@ -2642,7 +2643,51 @@ impl Parser {
             _ => None,
         };
         let mut union_name: Option<String> = None;
-        while matches!(self.peek(), Some(Token::Arrow | Token::Dot)) {
+        let mut struct_array_element_width = match &surface_base {
+            ContractExpression::CFragment(CExpression::Variable(name))
+                if self.current_struct_array_params.contains(name) =>
+            {
+                struct_name
+                    .as_ref()
+                    .and_then(|name| self.struct_layouts.get(name))
+                    .map(|layout| layout.size_bytes())
+            }
+            _ => None,
+        };
+        while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
+            || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
+        {
+            if self.peek() == Some(&Token::LBracket) {
+                self.position += 1;
+                let index = self.parse_contract_expression()?;
+                self.expect(Token::RBracket)?;
+                let index = contract_expression_as_c_fragment(&index).ok_or_else(|| {
+                    self.error("struct array indices must be current C expressions")
+                })?;
+                let surface_index = ContractExpression::CFragment(index.clone());
+                let surface_base_before_index = surface_base;
+                if let Some(element_width) = struct_array_element_width {
+                    let stride = CExpression::Multiply(
+                        Box::new(index),
+                        Box::new(CExpression::Value(int32(element_width))),
+                    );
+                    base = CExpression::Add(Box::new(base), Box::new(stride));
+                    surface_base = ContractExpression::Index(
+                        Box::new(surface_base_before_index),
+                        Box::new(surface_index),
+                    );
+                    struct_array_element_width = None;
+                } else {
+                    base = CExpression::Index(Box::new(base), Box::new(index));
+                    surface_base = ContractExpression::Index(
+                        Box::new(surface_base_before_index),
+                        Box::new(surface_index),
+                    );
+                    struct_name = None;
+                    union_name = None;
+                }
+                continue;
+            }
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
             if !matches!(
@@ -2666,30 +2711,38 @@ impl Parser {
                 }
                 return self.resolve_field_segment(base, &field_name);
             }
-            let (lowered, next_struct_name, next_union_name) = if let Some(base_union_name) =
-                &union_name
-                && self.union_layouts.contains_key(base_union_name)
-            {
-                let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
-                let pointer = self.offset_field_pointer(base, field.offset_bytes);
-                (
-                    lowered_field_expression(pointer, &field),
-                    field.struct_name,
-                    None,
-                )
-            } else if let Some(base_struct_name) = &struct_name
-                && self.struct_layouts.contains_key(base_struct_name)
-            {
-                let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
-                let pointer = self.offset_field_pointer(base, field.offset_bytes);
-                (
-                    lowered_field_expression(pointer, &field),
-                    field.struct_name,
-                    field.union_name,
-                )
-            } else {
-                (self.resolve_field_load(base, &field_name)?, None, None)
-            };
+            let (lowered, next_struct_name, next_union_name, next_array_element_width) =
+                if let Some(base_union_name) = &union_name
+                    && self.union_layouts.contains_key(base_union_name)
+                {
+                    let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
+                    let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                    (
+                        lowered_field_expression(pointer, &field),
+                        field.struct_name,
+                        None,
+                        None,
+                    )
+                } else if let Some(base_struct_name) = &struct_name
+                    && self.struct_layouts.contains_key(base_struct_name)
+                {
+                    let field =
+                        self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                    let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                    (
+                        lowered_field_expression(pointer, &field),
+                        field.struct_name,
+                        field.union_name,
+                        field.array_element_width,
+                    )
+                } else {
+                    (
+                        self.resolve_field_load(base, &field_name)?,
+                        None,
+                        None,
+                        None,
+                    )
+                };
             surface_base = ContractExpression::Field {
                 base: Box::new(surface_base),
                 field: field_name,
@@ -2698,6 +2751,7 @@ impl Parser {
             base = lowered;
             struct_name = next_struct_name;
             union_name = next_union_name;
+            struct_array_element_width = next_array_element_width;
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
@@ -2732,7 +2786,10 @@ impl Parser {
                 base,
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
-                surface: ContractSegmentSurface::Field(field_name.to_string()),
+                surface: ContractSegmentSurface::Field {
+                    name: field_name.to_string(),
+                    element_width: None,
+                },
             });
         };
         self.validate_field_place(&field)?;
@@ -2761,7 +2818,10 @@ impl Parser {
                 end: CExpression::Value(int32(
                     (field.slot_end_bytes - field.offset_bytes) / element_width,
                 )),
-                surface: ContractSegmentSurface::Field(field_name.to_string()),
+                surface: ContractSegmentSurface::Field {
+                    name: field_name.to_string(),
+                    element_width: Some(element_width),
+                },
             };
         }
         ContractSegment {
@@ -2769,7 +2829,15 @@ impl Parser {
             base,
             start: CExpression::Value(int32(field.offset_bytes / 4)),
             end: CExpression::Value(int32(field.slot_end_bytes / 4)),
-            surface: ContractSegmentSurface::Field(field_name.to_string()),
+            surface: ContractSegmentSurface::Field {
+                name: field_name.to_string(),
+                // Non-array field segments are expressed in the existing
+                // int32-aligned slot units, including padding up to the next
+                // field. Keep that unit width independent of the field's C
+                // value width (a pointer field occupies 8 bytes but its
+                // segment bounds are still int32-indexed).
+                element_width: Some(4),
+            },
         }
     }
 
@@ -2886,6 +2954,7 @@ impl Parser {
             c_type: field.c_type(),
             struct_name: field.struct_name().map(str::to_string),
             union_name: field.union_name().map(str::to_string),
+            array_element_width: field.array_element_width(),
             offset_bytes: field.offset_bytes(),
             byte_width: field.byte_width(),
             slot_end_bytes,
@@ -2907,6 +2976,7 @@ impl Parser {
             c_type: field.c_type(),
             struct_name: None,
             union_name: None,
+            array_element_width: None,
             offset_bytes: field.offset_bytes(),
             byte_width: field.byte_width(),
             slot_end_bytes: layout.size_bytes(),
@@ -2914,6 +2984,11 @@ impl Parser {
     }
 
     fn validate_field_place(&self, field: &ResolvedField) -> Result<(), ClickError> {
+        if field.array_element_width.is_some() {
+            return Err(
+                self.error("arrays of embedded structs require an index before a resource segment")
+            );
+        }
         if field.c_type == C0Type::Int32
             && (field.struct_name.is_some() || field.union_name.is_some())
         {
@@ -3088,11 +3163,18 @@ impl Parser {
             _ => None,
         };
         let mut union_name: Option<String> = None;
-        let mut struct_array = match &expression {
-            ContractExpression::CFragment(CExpression::Variable(name)) => {
-                self.current_struct_array_params.contains(name)
-            }
-            _ => false,
+        let mut struct_array_element_width = match &expression {
+            ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_struct_array_params
+                .contains(name)
+                .then(|| {
+                    struct_name
+                        .as_ref()
+                        .and_then(|name| self.struct_layouts.get(name))
+                        .map(|layout| layout.size_bytes())
+                })
+                .flatten(),
+            _ => None,
         };
         loop {
             match self.peek() {
@@ -3100,9 +3182,9 @@ impl Parser {
                     self.position += 1;
                     let index = self.parse_contract_expression()?;
                     self.expect(Token::RBracket)?;
-                    if struct_array
+                    if let Some(element_width) = struct_array_element_width
                         && let Some(base_struct_name) = &struct_name
-                        && let Some(layout) = self.struct_layouts.get(base_struct_name)
+                        && self.struct_layouts.contains_key(base_struct_name)
                     {
                         let base = contract_expression_as_c_fragment(&expression)
                             .ok_or_else(|| {
@@ -3115,22 +3197,27 @@ impl Parser {
                         })?;
                         let stride = CExpression::Multiply(
                             Box::new(index),
-                            Box::new(CExpression::Value(int32(layout.size_bytes()))),
+                            Box::new(CExpression::Value(int32(element_width))),
                         );
                         expression = ContractExpression::CFragment(CExpression::Add(
                             Box::new(base),
                             Box::new(stride),
                         ));
-                        struct_array = false;
+                        struct_array_element_width = None;
                     } else {
                         expression =
                             ContractExpression::Index(Box::new(expression), Box::new(index));
                         struct_name = None;
                         union_name = None;
-                        struct_array = false;
+                        struct_array_element_width = None;
                     }
                 }
                 Some(Token::Arrow | Token::Dot) => {
+                    if struct_array_element_width.is_some() {
+                        return Err(self.error(
+                            "arrays of embedded structs require an index before field access",
+                        ));
+                    }
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
                     let surface_base = expression.clone();
@@ -3147,7 +3234,7 @@ impl Parser {
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
                         struct_name = field.struct_name.clone();
                         union_name = None;
-                        struct_array = false;
+                        struct_array_element_width = None;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name,
@@ -3161,7 +3248,7 @@ impl Parser {
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
                         struct_name = field.struct_name.clone();
                         union_name = field.union_name.clone();
-                        struct_array = false;
+                        struct_array_element_width = field.array_element_width;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name,
@@ -3173,11 +3260,36 @@ impl Parser {
                             field: field_name.clone(),
                             lowered: self.resolve_field_load(base, &field_name)?,
                         };
+                        struct_array_element_width = None;
                     }
                 }
                 _ => return Ok(expression),
             }
         }
+    }
+
+    fn contract_bracket_is_range(&self) -> bool {
+        if self.peek() != Some(&Token::LBracket) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for token in self.tokens.iter().skip(self.position) {
+            match token {
+                Token::LBracket => depth += 1,
+                Token::DotDot if depth == 1 => return true,
+                Token::RBracket => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {

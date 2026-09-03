@@ -178,6 +178,10 @@ pub struct C0StructField {
     struct_name: Option<String>,
     enum_name: Option<String>,
     union_name: Option<String>,
+    /// The ABI width of one element when this is an inline array of embedded
+    /// structs. The public C0 type remains a byte-array placeholder, while
+    /// member selection uses this metadata to preserve struct indexing.
+    array_element_width: Option<u32>,
     offset_bytes: u32,
     byte_width: u32,
 }
@@ -610,6 +614,10 @@ impl C0StructField {
 
     pub fn union_name(&self) -> Option<&str> {
         self.union_name.as_deref()
+    }
+
+    pub fn array_element_width(&self) -> Option<u32> {
+        self.array_element_width
     }
 
     pub fn byte_width(&self) -> u32 {
@@ -2036,7 +2044,7 @@ impl Parser {
             let field_type = self.parse_type()?;
             loop {
                 let field_name = self.expect_ident("struct field name")?;
-                let (c_type, field_size, field_alignment) =
+                let (c_type, field_size, field_alignment, field_struct_name, array_element_width) =
                     self.parse_struct_field_declarator(&field_type, &name)?;
                 offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
                     self.error_here(format!("struct `{name}` layout is too large"))
@@ -2046,15 +2054,14 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type,
-                            struct_name: (c_type == field_type.c_type)
-                                .then(|| field_type.struct_name.clone())
-                                .flatten(),
+                            struct_name: field_struct_name,
                             enum_name: (c_type == field_type.c_type)
                                 .then(|| field_type.enum_name.clone())
                                 .flatten(),
                             union_name: (c_type == field_type.c_type)
                                 .then(|| field_type.union_name.clone())
                                 .flatten(),
+                            array_element_width,
                             offset_bytes,
                             byte_width: field_size,
                         },
@@ -2106,7 +2113,7 @@ impl Parser {
         &mut self,
         base_type: &ParsedType,
         struct_name: &str,
-    ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+    ) -> Result<(C0Type, u32, u32, Option<String>, Option<u32>), C0SyntaxError> {
         if let Some(enum_name) = base_type.enum_name.as_deref() {
             if !self.enums.contains_key(enum_name) {
                 return Err(self.error_here(format!("unknown enum declaration `{enum_name}`")));
@@ -2117,7 +2124,7 @@ impl Parser {
             if self.peek() == Some(&Token::LBracket) {
                 return Err(self.error_here("arrays of enum fields are not supported"));
             }
-            return Ok((C0Type::Int32, 4, 4));
+            return Ok((C0Type::Int32, 4, 4, None, None));
         }
         if let Some(union_name) = base_type.union_name.as_deref() {
             let union_layout = self.unions.get(union_name).ok_or_else(|| {
@@ -2132,6 +2139,8 @@ impl Parser {
                 base_type.c_type,
                 union_layout.size_bytes(),
                 union_layout.alignment_bytes(),
+                None,
+                None,
             ));
         }
         if is_plain_struct_type(base_type) {
@@ -2139,19 +2148,71 @@ impl Parser {
                 .struct_name
                 .as_deref()
                 .expect("plain struct type carries its name");
-            let nested_layout = self.structs.get(nested_name).ok_or_else(|| {
+            let nested_layout = self.structs.get(nested_name).cloned().ok_or_else(|| {
                 self.error_here(format!(
                     "unknown embedded struct declaration `{nested_name}`"
                 ))
             })?;
             if self.peek() == Some(&Token::LBracket) {
-                return Err(self
-                    .error_here("arrays of embedded structs are not supported in struct fields"));
+                self.position += 1;
+                let length = match self.next() {
+                    Some(Token::Number(number)) => {
+                        let length =
+                            parse_integer_literal_magnitude(&number).map_err(|reason| {
+                                self.error_here(format!(
+                                    "invalid embedded struct array length `{number}`: {reason}"
+                                ))
+                            })?;
+                        let length = u32::try_from(length).map_err(|_| {
+                            self.error_here(format!(
+                                "embedded struct array length `{number}` is out of range"
+                            ))
+                        })?;
+                        if length == 0 {
+                            return Err(
+                                self.error_here("embedded struct arrays must have positive length")
+                            );
+                        }
+                        length
+                    }
+                    Some(token) => {
+                        return Err(self.error_at_previous(format!(
+                            "expected embedded struct array length, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(
+                            "expected embedded struct array length, got end of input",
+                        ));
+                    }
+                };
+                self.expect(Token::RBracket)?;
+                if self.peek() == Some(&Token::LBracket) {
+                    return Err(self.error_here(
+                        "multidimensional arrays of embedded structs are not supported",
+                    ));
+                }
+                let field_size = nested_layout
+                    .size_bytes
+                    .checked_mul(length)
+                    .ok_or_else(|| {
+                        self.error_here(format!("struct `{struct_name}` layout is too large"))
+                    })?;
+                return Ok((
+                    C0Type::UInt8Array(field_size),
+                    field_size,
+                    nested_layout.alignment_bytes(),
+                    Some(nested_name.to_string()),
+                    Some(nested_layout.size_bytes()),
+                ));
             }
             return Ok((
                 base_type.c_type,
                 nested_layout.size_bytes(),
                 nested_layout.alignment_bytes(),
+                Some(nested_name.to_string()),
+                None,
             ));
         }
         let c_type = if self.peek() == Some(&Token::LBracket) {
@@ -2226,7 +2287,13 @@ impl Parser {
             C0Type::UInt8Array(length) => (length, 1),
             _ => self.abi.size_and_alignment(c_type),
         };
-        Ok((c_type, field_size, field_alignment))
+        Ok((
+            c_type,
+            field_size,
+            field_alignment,
+            base_type.struct_name.clone(),
+            None,
+        ))
     }
 
     fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {
@@ -4683,6 +4750,22 @@ impl Parser {
                     self.position += 1;
                     let index = self.parse_expression()?;
                     self.expect(Token::RBracket)?;
+                    if let Some((struct_name, element_width)) =
+                        self.struct_array_field_info(&expression)
+                    {
+                        let stride = C0Expression::Multiply(
+                            Box::new(index),
+                            Box::new(C0Expression::Int32Literal(element_width)),
+                        );
+                        expression = C0Expression::AggregateAddress {
+                            pointer: Box::new(C0Expression::Add(
+                                Box::new(expression),
+                                Box::new(stride),
+                            )),
+                            struct_name,
+                        };
+                        continue;
+                    }
                     let shape = match &expression {
                         C0Expression::Variable(name) => {
                             self.variable_array_shapes.get(name).cloned()
@@ -4774,6 +4857,21 @@ impl Parser {
         }
     }
 
+    fn struct_array_field_info(&self, expression: &C0Expression) -> Option<(String, u32)> {
+        let C0Expression::Field {
+            field_type: C0Type::UInt8Array(_),
+            field_struct_name: Some(struct_name),
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        Some((
+            struct_name.clone(),
+            self.structs.get(struct_name)?.size_bytes,
+        ))
+    }
+
     fn resolve_field_access(
         &self,
         base: &C0Expression,
@@ -4783,7 +4881,14 @@ impl Parser {
             C0Expression::Variable(base_name) => (self.variable_structs.get(base_name), None),
             C0Expression::Field {
                 field_struct_name, ..
-            } => (field_struct_name.as_ref(), None),
+            } => {
+                if self.struct_array_field_info(base).is_some() {
+                    return Err(self.error_here(
+                        "arrays of embedded structs require an index before field access",
+                    ));
+                }
+                (field_struct_name.as_ref(), None)
+            }
             C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name), None),
             C0Expression::UnionAddress { union_name, .. } => (None, Some(union_name)),
             _ => (None, None),

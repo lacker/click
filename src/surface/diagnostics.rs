@@ -766,7 +766,7 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
                 describe_contract_expression(end)
             )
         }
-        ContractSegmentSurface::Field(field) => format!("{base}->{field}"),
+        ContractSegmentSurface::Field { name, .. } => format!("{base}->{name}"),
         ContractSegmentSurface::Object(_) => format!("object({base})"),
     };
     match segment.state {
