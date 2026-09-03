@@ -15,8 +15,7 @@ Found by the 2026-09-01 kernel audit at cb034b21. Each bullet is a place
 where a proof author must restructure a correct proof to satisfy the driver,
 with no semantic reason.
 
-- Several shapes (heap-backed contract predicates, quantified scope bodies)
-  fall to a compatibility path or
+- Quantified scope bodies fall to a compatibility path or
   `unsupported_proof_shape` (`claim_proofs.rs:76-102`, `:429`, `:607`).
 - Contract certification refuses requirements that lower to several paths
   unless one is selected or consistent
@@ -34,7 +33,8 @@ construct and the accepted alternative.
 
 One mdtest per remaining bullet showing the natural shape verifies: a
 contract with a conditional requirement. The nested branch-arm scope shape
-is covered by `proof_branch_nested_resource_scope.md`.
+is covered by `proof_branch_nested_resource_scope.md`, and the heap-backed
+predicate path by `proof_heap_backed_predicate_contract.md`.
 
 ## Acceptance criteria
 

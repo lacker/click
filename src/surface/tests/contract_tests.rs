@@ -1600,6 +1600,42 @@ fn grouped_predicate_contracts_stay_on_one_proof() {
 }
 
 #[test]
+fn heap_backed_predicate_contract_stays_on_checked_proof() {
+    let c_source = r#"
+            int32 read_first(int32 p[2]) {
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "read_first.c";
+
+            predicate ordered_pair(p: int32[2]) {
+                p[0] <= p[1]
+            }
+
+            int32 read_first(int32 p[2]) {
+                requires loadable(p[0..2]);
+                views p[0..2];
+                requires ordered_pair(p);
+                ensures result == p[0];
+                ensures remains_ordered: ordered_pair(p);
+            } by {
+                step();
+                simp();
+            }
+        "#;
+
+    let (verified, explicit_fallbacks) = proof::count_explicit_linear_fallbacks(|| {
+        verify_c0_sources(click_source, &[("read_first.c", c_source)])
+    });
+    verified.expect("heap-backed predicate contract should verify");
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "heap-backed predicate contract should use the checked proof driver"
+    );
+}
+
+#[test]
 fn grouped_leading_resource_relations_stay_on_one_proof() {
     let c_source = r#"
             int32 inspect_pair(int32 left[], int32 right[]) {
