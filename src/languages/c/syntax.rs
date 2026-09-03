@@ -36,6 +36,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.store",
     "statement.malloc",
     "statement.calloc",
+    "statement.realloc",
     "statement.free",
     "statement.increment",
     "statement.decrement",
@@ -1598,7 +1599,7 @@ impl Parser {
                         })
                     } else if self.peek_next() == Some(&Token::LParen) {
                         let function_name = self.expect_ident("function name")?;
-                        if matches!(function_name.as_str(), "malloc" | "calloc") {
+                        if matches!(function_name.as_str(), "malloc" | "calloc" | "realloc") {
                             return Err(
                                 self.error_here("the allocation result may not be discarded")
                             );
@@ -1842,6 +1843,19 @@ impl Parser {
         function_name: String,
         arguments: Vec<C0Expression>,
     ) -> Result<C0Statement, C0SyntaxError> {
+        if function_name == "realloc" {
+            if arguments.len() != 2 {
+                return Err(self.error_here(format!(
+                    "`realloc` expects two arguments, got {}",
+                    arguments.len()
+                )));
+            }
+            return Ok(C0Statement::CallAssign {
+                target,
+                function_name,
+                arguments,
+            });
+        }
         if !matches!(function_name.as_str(), "malloc" | "calloc") {
             return Ok(C0Statement::CallAssign {
                 target,

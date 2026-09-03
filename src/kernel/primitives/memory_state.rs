@@ -512,6 +512,26 @@ impl CMemory {
         self
     }
 
+    pub(in crate::kernel) fn with_pending_heap_reallocation(
+        mut self,
+        base: Pointer,
+        old_pointer: Pointer,
+        old_bytes: Bitvector32Term,
+        copied_cells: Vec<(PointerOffsetTerm, CValue)>,
+    ) -> Self {
+        std::sync::Arc::make_mut(&mut self.heap)
+            .pending_reallocations
+            .insert(
+                base,
+                CPendingReallocation {
+                    old_pointer,
+                    old_bytes,
+                    copied_cells,
+                },
+            );
+        self
+    }
+
     /// Whether execution still owns the unresolved success/failure choice of
     /// a fresh heap allocation. Proof-frontier branch selection uses this
     /// read-only query to avoid duplicating that independent path split.
@@ -585,6 +605,34 @@ impl CMemory {
             }
         }
         Some((self, bytes, resolved_base))
+    }
+
+    pub(in crate::kernel) fn resolve_pending_heap_reallocation(
+        mut self,
+        base: &Pointer,
+        succeeds: bool,
+    ) -> Option<(Self, Bitvector32Term, Pointer, CPendingReallocation)> {
+        let pending = std::sync::Arc::make_mut(&mut self.heap)
+            .pending_reallocations
+            .remove(base)?;
+        let (mut memory, bytes, resolved_base) = if succeeds {
+            self = self.free_heap_block(&pending.old_pointer).ok()?;
+            self.resolve_pending_heap_allocation(base, true)?
+        } else {
+            self.resolve_pending_heap_allocation(base, false)?
+        };
+        if succeeds {
+            for (offset, value) in &pending.copied_cells {
+                memory = memory.store(
+                    Pointer {
+                        block: resolved_base.block.clone(),
+                        offset: offset.clone(),
+                    },
+                    value.clone(),
+                );
+            }
+        }
+        Some((memory, bytes, resolved_base, pending))
     }
 
     pub(in crate::kernel) fn with_loop_memory_havoc(
@@ -682,6 +730,13 @@ impl CMemory {
         {
             return Err("interface arms disagree on pending heap allocations".to_string());
         }
+        let pending_reallocations = first.heap.pending_reallocations.clone();
+        if sibling_memories
+            .iter()
+            .any(|memory| memory.heap.pending_reallocations != pending_reallocations)
+        {
+            return Err("interface arms disagree on pending heap reallocations".to_string());
+        }
 
         let mut uninitialized_allocations = first.heap.uninitialized_allocations.clone();
         for memory in sibling_memories {
@@ -711,6 +766,7 @@ impl CMemory {
             uninitialized_allocations,
             zeroed_allocations,
             zeroed_pending_allocations,
+            pending_reallocations,
         });
         Ok(self)
     }

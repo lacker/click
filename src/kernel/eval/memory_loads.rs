@@ -74,6 +74,18 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
+    if memory
+        .heap
+        .pending_reallocations
+        .values()
+        .any(|pending| pending.old_pointer.block == pointer.block)
+    {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome),
+            facts,
+            obligations,
+        }];
+    }
     let mut alias_cache = MemoryLoadAliasCache::default();
     evaluate_c_memory_load_paths_with_alias_cache(
         memory,

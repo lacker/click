@@ -10,6 +10,10 @@ pub(super) fn execute_c_call_assign_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if function_name == "realloc" {
+        return execute_c_realloc_assign_paths(state, target, arguments, assumptions, budget);
+    }
+
     let Some(function) = environment.get_function(function_name) else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(

@@ -8,7 +8,8 @@ literally be `malloc(sizeof(struct S))` matching the target's type
 (`:1379-1400`); `sizeof` applies only to structs (`:1727-1737`), so
 `n * sizeof(int)` is unwritable and runtime int32 allocation uses the magic
 form `malloc(count * 4)`; broader allocation beyond the supported `calloc`
-forms, `realloc`, and arbitrary byte layouts is unsupported
+forms, bounded nonzero-int32 `realloc`, and arbitrary byte layouts is
+unsupported
 (`docs/concepts/resources.md:590-595`;
 `docs/internals/roadmap.md:142-145`).
 Local arrays take exactly one dimension suffix (`:1025-1064`), initializers
@@ -36,8 +37,10 @@ items[8]` indexed by field.
 - `sizeof` applies to every supported type and evaluates to the documented
   LP64 size; `malloc` accepts any size expression and produces an allocation
   of that symbolic byte size, with typed access obligations at use.
-- `calloc` and `realloc` are modeled builtins with their lifetime
-  transitions recorded in the memory DAG like `malloc` and `free`.
+- `calloc` and the supported bounded `realloc` form are modeled builtins with
+  their lifetime transitions recorded in the memory DAG like `malloc` and
+  `free`; remaining zeroed-prefix and arbitrary-layout realloc cases stay
+  explicit follow-up work.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

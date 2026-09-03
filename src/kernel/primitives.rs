@@ -903,7 +903,14 @@ pub struct CMemory {
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CPendingReallocation {
+    pub(super) old_pointer: Pointer,
+    pub(super) old_bytes: Bitvector32Term,
+    pub(super) copied_cells: Vec<(PointerOffsetTerm, CValue)>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct CHeapMemory {
     /// Live heap blocks are also present in `blocks`; this set distinguishes
     /// them from automatic storage and memory-havoc markers.
@@ -926,6 +933,30 @@ pub(super) struct CHeapMemory {
     /// Pending calloc results whose null/success outcome has not yet been
     /// refined.
     pub(super) zeroed_pending_allocations: BTreeSet<Pointer>,
+    /// Pending reallocations retain the old live block until their result is
+    /// refined. Success then retires it and installs the copied prefix;
+    /// failure simply resolves the new result to null.
+    pub(super) pending_reallocations: BTreeMap<Pointer, CPendingReallocation>,
+}
+
+impl std::hash::Hash for CHeapMemory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Keep the hash of states without an unresolved realloc identical to
+        // the pre-realloc heap shape. CMemory is used as a cache key by proof
+        // search, and adding an empty bookkeeping field must not perturb the
+        // search order for unrelated programs. Nonempty pending state remains
+        // part of the key and is tagged so it cannot alias the legacy shape.
+        std::hash::Hash::hash(&self.live_allocations, state);
+        std::hash::Hash::hash(&self.deallocated_allocations, state);
+        std::hash::Hash::hash(&self.pending_allocations, state);
+        std::hash::Hash::hash(&self.uninitialized_allocations, state);
+        std::hash::Hash::hash(&self.zeroed_allocations, state);
+        std::hash::Hash::hash(&self.zeroed_pending_allocations, state);
+        if !self.pending_reallocations.is_empty() {
+            std::hash::Hash::hash(&true, state);
+            std::hash::Hash::hash(&self.pending_reallocations, state);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1292,7 +1323,8 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
             + memory.heap.pending_allocations.len()
             + memory.heap.uninitialized_allocations.len()
             + memory.heap.zeroed_allocations.len()
-            + memory.heap.zeroed_pending_allocations.len(),
+            + memory.heap.zeroed_pending_allocations.len()
+            + memory.heap.pending_reallocations.len(),
     );
 }
 

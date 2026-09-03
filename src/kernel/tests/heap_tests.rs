@@ -35,6 +35,29 @@ fn successful_heap_allocation_state() -> CState {
 }
 
 #[test]
+fn empty_realloc_bookkeeping_preserves_legacy_heap_hash() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+
+    let heap = CHeapMemory::default();
+    let mut actual = DefaultHasher::new();
+    std::hash::Hash::hash(&heap, &mut actual);
+
+    // CMemory snapshots are cache keys during proof search. An empty pending
+    // realloc map is semantically the old heap shape, so adding the field must
+    // not perturb hashes for programs that never call realloc.
+    let mut legacy = DefaultHasher::new();
+    std::hash::Hash::hash(&heap.live_allocations, &mut legacy);
+    std::hash::Hash::hash(&heap.deallocated_allocations, &mut legacy);
+    std::hash::Hash::hash(&heap.pending_allocations, &mut legacy);
+    std::hash::Hash::hash(&heap.uninitialized_allocations, &mut legacy);
+    std::hash::Hash::hash(&heap.zeroed_allocations, &mut legacy);
+    std::hash::Hash::hash(&heap.zeroed_pending_allocations, &mut legacy);
+
+    assert_eq!(actual.finish(), legacy.finish());
+}
+
+#[test]
 fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     let paths = heap_allocation_paths();
     assert_eq!(paths.len(), 1);
@@ -773,6 +796,106 @@ fn heap_storage_becomes_readable_only_after_a_store() {
             ..
         }] if value == &int32(37)
     ));
+}
+
+#[test]
+fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
+    let state = successful_heap_allocation_state();
+    let stored = execute_c_statement_paths(
+        &state,
+        &c_store(c_variable("p"), c_int32_literal(37)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("the old allocation should be writable");
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(stored),
+            ..
+        },
+    ] = stored.as_slice()
+    else {
+        panic!("heap store should succeed: {stored:?}");
+    };
+    let state = stored
+        .clone()
+        .with_local("q", CValue::Pointer(Pointer::null()));
+    let realloc_paths = execute_c_statement_paths(
+        &state,
+        &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(8)]),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("realloc should leave one pending result");
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(pending),
+            ..
+        },
+    ] = realloc_paths.as_slice()
+    else {
+        panic!("realloc should produce one pending path: {realloc_paths:?}");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("q") else {
+        panic!("realloc should assign its pending result");
+    };
+    let Some(CValue::Pointer(old_pointer)) = pending.locals().get("p") else {
+        panic!("the old pointer should remain available until realloc resolves");
+    };
+    assert!(
+        pending
+            .memory()
+            .heap
+            .pending_reallocations
+            .contains_key(pending_pointer)
+    );
+    assert!(pending.memory().live_heap_block_size(old_pointer).is_some());
+
+    let success_assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        pointer_is_null_condition(pending_pointer.clone()),
+        false,
+    ));
+    let success = resolve_pending_heap_allocations(pending, &success_assumptions);
+    let Some(CValue::Pointer(resized)) = success.locals().get("q") else {
+        panic!("successful realloc should assign a pointer");
+    };
+    assert_eq!(
+        success.memory().live_heap_block_size(resized),
+        Some(&Bitvector32Term::Constant(8))
+    );
+    assert!(success.memory().is_deallocated_heap_address(old_pointer));
+    assert_eq!(success.memory().known_value(resized), Some(int32(37)));
+    assert!(
+        success
+            .resources()
+            .facts()
+            .contains(&CResourceFact::own_allocation(resized.clone(), 8,))
+    );
+    assert!(!success.resources().facts().iter().any(|fact| {
+        fact.allocation()
+            .is_some_and(|(base, _)| base == old_pointer)
+    }));
+
+    let failure_assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        pointer_is_null_condition(pending_pointer.clone()),
+        true,
+    ));
+    let failure = resolve_pending_heap_allocations(pending, &failure_assumptions);
+    assert_eq!(
+        failure.locals().get("q"),
+        Some(&CValue::Pointer(Pointer::null()))
+    );
+    assert!(failure.memory().live_heap_block_size(old_pointer).is_some());
+    assert!(
+        failure
+            .resources()
+            .facts()
+            .contains(&CResourceFact::own_allocation(old_pointer.clone(), 16,))
+    );
 }
 
 #[test]
