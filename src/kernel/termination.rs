@@ -1168,15 +1168,25 @@ fn loop_paths(
         CStatement::While { body, .. } => {
             let mut nested_writes = BTreeSet::new();
             statement_assigned_variables(body, &mut nested_writes);
-            if nested_writes
-                .iter()
-                .any(|name| measure_variables.contains(name))
-            {
-                return Err(error(
-                    "nested loop may change an enclosing termination measure; use a lexicographic ranking measure",
-                ));
-            }
-            Ok(paths)
+            let changed_measure_variables = nested_writes
+                .intersection(measure_variables)
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            Ok(paths
+                .into_iter()
+                .map(|mut path| {
+                    // An independently ranked inner loop is a terminating,
+                    // invariant-preserving phase of the enclosing iteration.
+                    // Its exact final values are intentionally not guessed:
+                    // forget only aliases for variables that can affect the
+                    // enclosing ranking, leaving the outer invariants to
+                    // establish their post-loop well-foundedness.
+                    for name in &changed_measure_variables {
+                        path.aliases.remove(name);
+                    }
+                    path
+                })
+                .collect())
         }
         CStatement::Switch { cases, .. } => {
             let incoming = paths;
@@ -1544,6 +1554,154 @@ fn collect_loop_invariants(
     }
 }
 
+fn loop_at_index<'a>(
+    statement: &'a CStatement,
+    target: usize,
+    next_index: &mut usize,
+) -> Option<&'a CStatement> {
+    match statement {
+        CStatement::While { body, .. } => {
+            let index = *next_index;
+            *next_index += 1;
+            if index == target {
+                Some(statement)
+            } else {
+                loop_at_index(body, target, next_index)
+            }
+        }
+        CStatement::Seq(first, second) => loop_at_index(first, target, next_index)
+            .or_else(|| loop_at_index(second, target, next_index)),
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => loop_at_index(then_branch, target, next_index)
+            .or_else(|| loop_at_index(else_branch, target, next_index)),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .find_map(|case| loop_at_index(&case.body, target, next_index)),
+        CStatement::ContinueWithStep { step } => loop_at_index(step, target, next_index),
+        _ => None,
+    }
+}
+
+/// Compares two C statements while ignoring proof annotations. A verified
+/// frontier rule may carry nested invariant checks that the partial function
+/// used for contract certification intentionally omits; its executable shape
+/// must still be the exact loop shape from the source body.
+fn same_statement_shape(left: &CStatement, right: &CStatement) -> bool {
+    match (left, right) {
+        (CStatement::Seq(left_first, left_second), CStatement::Seq(right_first, right_second)) => {
+            same_statement_shape(left_first, right_first)
+                && same_statement_shape(left_second, right_second)
+        }
+        (
+            CStatement::If {
+                condition: left_condition,
+                then_branch: left_then,
+                else_branch: left_else,
+            },
+            CStatement::If {
+                condition: right_condition,
+                then_branch: right_then,
+                else_branch: right_else,
+            },
+        ) => {
+            left_condition == right_condition
+                && same_statement_shape(left_then, right_then)
+                && same_statement_shape(left_else, right_else)
+        }
+        (
+            CStatement::While {
+                condition: left_condition,
+                do_while: left_do_while,
+                body: left_body,
+                ..
+            },
+            CStatement::While {
+                condition: right_condition,
+                do_while: right_do_while,
+                body: right_body,
+                ..
+            },
+        ) => {
+            left_condition == right_condition
+                && left_do_while == right_do_while
+                && same_statement_shape(left_body, right_body)
+        }
+        (
+            CStatement::Switch {
+                expression: left_expression,
+                cases: left_cases,
+            },
+            CStatement::Switch {
+                expression: right_expression,
+                cases: right_cases,
+            },
+        ) => {
+            left_expression == right_expression
+                && left_cases.len() == right_cases.len()
+                && left_cases.iter().zip(right_cases).all(|(left, right)| {
+                    left.value == right.value && same_statement_shape(&left.body, &right.body)
+                })
+        }
+        (
+            CStatement::ContinueWithStep { step: left_step },
+            CStatement::ContinueWithStep { step: right_step },
+        ) => same_statement_shape(left_step, right_step),
+        _ => left == right,
+    }
+}
+
+fn merge_verified_loop_invariants(
+    function_name: &str,
+    source_body: &CStatement,
+    rules: &[CVerifiedLoopRule],
+    invariants: &mut BTreeMap<usize, Vec<CExpression>>,
+) -> Result<(), CTerminationError> {
+    for rule in rules {
+        let Some(index) = rule.loop_index else {
+            continue;
+        };
+        let mut next_index = 0;
+        let Some(source_loop) = loop_at_index(source_body, index, &mut next_index) else {
+            return Err(error(format!(
+                "verified loop rule for `{function_name}` refers to nonexistent loop {index}"
+            )));
+        };
+        if !same_statement_shape(source_loop, &rule.loop_statement) {
+            return Err(error(format!(
+                "verified loop rule for `{function_name}` does not match loop {index}'s source shape"
+            )));
+        }
+        let CStatement::While {
+            invariant_checks, ..
+        } = &rule.loop_statement
+        else {
+            return Err(error(format!(
+                "verified loop rule for `{function_name}` is not a while loop"
+            )));
+        };
+        let conditions = invariant_checks
+            .iter()
+            .filter_map(|check| spec_proposition_to_c_expression(check.proposition()))
+            .collect::<Vec<_>>();
+        if conditions.is_empty() {
+            continue;
+        }
+        if let Some(existing) = invariants.get(&index) {
+            if existing != &conditions {
+                return Err(error(format!(
+                    "verified loop rules for `{function_name}` disagree on loop {index} invariants"
+                )));
+            }
+        } else {
+            invariants.insert(index, conditions);
+        }
+    }
+    Ok(())
+}
+
 fn ranking_proves(context: &PureFactContext, proposition: &Proposition) -> bool {
     if context.proves(proposition) {
         return true;
@@ -1906,6 +2064,7 @@ fn reachable(start: &str, target: &str, calls: &BTreeMap<String, BTreeSet<String
 pub fn c_verified_function_termination_rules(
     partial_rules: &[CVerifiedFunctionRule],
     plan_entries: &[CFunctionTerminationPlan],
+    verified_loop_rules: &BTreeMap<String, Vec<CVerifiedLoopRule>>,
 ) -> Result<Vec<CVerifiedFunctionTerminationRule>, CTerminationError> {
     let functions = partial_rules
         .iter()
@@ -2037,6 +2196,14 @@ pub fn c_verified_function_termination_rules(
             let mut invariant_index = 0;
             let mut invariants = BTreeMap::new();
             collect_loop_invariants(&function.body, &mut invariant_index, &mut invariants);
+            if let Some(rules) = verified_loop_rules.get(name) {
+                merge_verified_loop_invariants(
+                    name,
+                    &function.source_body,
+                    rules,
+                    &mut invariants,
+                )?;
+            }
             let mut next_loop = 0;
             component_ok &= check_loops(
                 &function.source_body,

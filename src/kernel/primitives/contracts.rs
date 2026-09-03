@@ -686,6 +686,11 @@ impl CExecutionEnvironment {
 }
 
 impl CVerifiedLoopRule {
+    pub(crate) fn with_loop_index(mut self, loop_index: usize) -> Self {
+        self.loop_index = Some(loop_index);
+        self
+    }
+
     pub fn with_composite_resource_definitions(
         mut self,
         definitions: impl IntoIterator<Item = CCompositeResourceDefinition>,

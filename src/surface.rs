@@ -3577,6 +3577,66 @@ impl SourceProof {
             Self::Script(tactics) => Some(tactics),
         }
     }
+
+    pub(crate) fn collect_termination_loop_clauses<'a>(
+        &'a self,
+        clauses: &mut Vec<&'a StructuralClause>,
+    ) {
+        let Self::Script(tactics) = self else {
+            return;
+        };
+        for tactic in tactics {
+            tactic.collect_termination_loop_clauses(clauses);
+        }
+    }
+}
+
+impl ProofTactic {
+    pub(crate) fn collect_termination_loop_clauses<'a>(
+        &'a self,
+        clauses: &mut Vec<&'a StructuralClause>,
+    ) {
+        match self {
+            Self::Have(have) => have.proof.collect_termination_loop_clauses(clauses),
+            Self::Open(open) => {
+                for tactic in &open.tactics {
+                    tactic.collect_termination_loop_clauses(clauses);
+                }
+            }
+            Self::If(proof_if) => {
+                for tactic in proof_if.then_tactics.iter().chain(&proof_if.else_tactics) {
+                    tactic.collect_termination_loop_clauses(clauses);
+                }
+            }
+            Self::Cases(proof_cases) => {
+                for tactic in proof_cases
+                    .left_tactics
+                    .iter()
+                    .chain(&proof_cases.right_tactics)
+                {
+                    tactic.collect_termination_loop_clauses(clauses);
+                }
+            }
+            Self::Branch(branch) => {
+                for tactic in branch.then_tactics.iter().chain(&branch.else_tactics) {
+                    tactic.collect_termination_loop_clauses(clauses);
+                }
+            }
+            Self::Loop(clause) => {
+                clauses.push(clause);
+                if let Some(proof) = clause.initialize_proof() {
+                    proof.collect_termination_loop_clauses(clauses);
+                }
+                if let Some(proof) = clause.preserve_proof() {
+                    proof.collect_termination_loop_clauses(clauses);
+                }
+                for item in clause.items() {
+                    item.proof().collect_termination_loop_clauses(clauses);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>) {

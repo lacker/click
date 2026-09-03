@@ -43,9 +43,12 @@ some pivot. This supports count-up loops as well as countdowns, for example
 checked as C int32 arithmetic, so its arithmetic must also be defined under
 those assumptions. This produces separate termination evidence; it does not
 change what an invariant or a postcondition means. Loops without `decreases`
-remain valid partial-correctness proofs. Nested-loop propagation and recursive
-calls inside loops remain unsupported until the verifier can summarize their
-effect on the enclosing ranking tuple.
+remain valid partial-correctness proofs. A separately ranked nested loop is
+treated as a terminating phase when checking its enclosing loop; aliases for
+outer ranking variables written by that phase are forgotten, and the outer
+invariants must establish the resulting ranking components are nonnegative.
+Recursive calls inside loops remain unsupported until the verifier can
+summarize their effect on the enclosing ranking tuple.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

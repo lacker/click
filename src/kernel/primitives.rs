@@ -1000,6 +1000,11 @@ impl CVerifiedFunctionContractClaim {
 pub struct CVerifiedLoopRule {
     pub(super) symbolic_entry_state: CState,
     pub(super) loop_statement: CStatement,
+    /// Source traversal index for the loop this rule certifies. The index is
+    /// assigned by the proof driver after the kernel constructs the rule so
+    /// termination checking can safely recover annotations from a nested
+    /// frontier rule without changing the contract function's shape.
+    pub(super) loop_index: Option<usize>,
     pub(super) required_assumptions: PureFactContext,
     pub(super) paths: Vec<CStatementExecutionPath>,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,

@@ -754,6 +754,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     );
     check_verification_deadline()?;
     let mut verified = Vec::new();
+    let mut termination_loop_rules = BTreeMap::<String, Vec<CVerifiedLoopRule>>::new();
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
@@ -914,6 +915,17 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 if has_explicit_claims {
                     verified.extend(theorems);
                 }
+            }
+        }
+        let function_termination_loop_rules = termination_loop_rules
+            .entry(function_block.signature().name().to_string())
+            .or_default();
+        for rule in function_verified
+            .iter()
+            .flat_map(|theorem| theorem.frontier_loop_rules.iter())
+        {
+            if !function_termination_loop_rules.contains(rule) {
+                function_termination_loop_rules.push(rule.clone());
             }
         }
         // A frontier-local proof constructs loop annotations and checked
@@ -1225,10 +1237,12 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     }
 
     let partial_rules = function_environment.verified_function_rules();
-    let termination_rules =
-        c_verified_function_termination_rules(&partial_rules, &termination_plans).map_err(
-            |error| ClickError::new(format!("could not certify C termination: {error}")),
-        )?;
+    let termination_rules = c_verified_function_termination_rules(
+        &partial_rules,
+        &termination_plans,
+        &termination_loop_rules,
+    )
+    .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
     for name in &requested_termination {
         if !termination_rules
             .iter()
@@ -1864,6 +1878,34 @@ pub(in crate::surface) fn c_function_termination_plans(
                     "duplicate `decreases` measure for loop {index} in `{}`",
                     function.signature().name()
                 )));
+            }
+        }
+        // Grouped proofs are the source of frontier-local loop clauses. A
+        // nested `loop` tactic lives inside its enclosing loop's preservation
+        // proof, so it is not present in `structural_clauses()`; collect those
+        // clauses in source/proof order and let the kernel bind that order to
+        // the exact C loop indices it re-traverses.
+        if function.structural_clauses().is_empty()
+            && let Some(proof) = function.grouped_proof()
+        {
+            let mut grouped_clauses = Vec::new();
+            proof.collect_termination_loop_clauses(&mut grouped_clauses);
+            for (index, clause) in grouped_clauses.into_iter().enumerate() {
+                if let Some(measure) = clause.decreases() {
+                    let expressions = termination_measure_expressions(
+                        measure,
+                        &format!(
+                            "loop {index} `decreases` in `{}`",
+                            function.signature().name()
+                        ),
+                    )?;
+                    if loop_measures.insert(index, expressions).is_some() {
+                        return Err(ClickError::new(format!(
+                            "duplicate `decreases` measure for loop {index} in `{}`",
+                            function.signature().name()
+                        )));
+                    }
+                }
             }
         }
         if recursive_measure.is_some() || !loop_measures.is_empty() {

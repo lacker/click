@@ -218,6 +218,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             *do_while,
                             environment,
                         )?;
+                        verified_loop_rules.extend(result.nested_loop_rules);
                         final_exit_candidates.extend(result.final_exit_candidates);
                         preservation_path_certificates.push(PathCertificate {
                             case_path: context.case_path.clone(),
@@ -859,7 +860,7 @@ fn advance_execution_proof_statement(
                     }
                 ))
             })?;
-            verified_loop_rules.push(loop_rule);
+            verified_loop_rules.push(loop_rule.with_loop_index(loop_index));
         }
         for transition in transitions {
             let mut surface_propositions = context.surface_propositions.clone();

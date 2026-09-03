@@ -142,9 +142,12 @@ unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not yet support
 mutual C recursion. Loop-local lexicographic tuples are supported; nested-loop
-propagation and recursive calls inside loops remain rejected rather than
-guessed because the current checker cannot summarize an inner loop's effect on
-the enclosing ranking tuple.
+propagation treats a separately ranked inner loop as an opaque terminating
+phase. If it writes a variable mentioned by the enclosing tuple, the kernel
+forgets that variable's scalar alias and relies on the enclosing invariants for
+the post-phase nonnegativity proof. Recursive calls inside loops remain
+rejected until the verifier can summarize their effect on the enclosing
+ranking tuple.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked

@@ -5,10 +5,9 @@ Found by the 2026-09-01 kernel audit at cb034b21.
 The original loop ranking checker accepted only a single measure decremented
 in place as `measure = measure - K` for positive constant `K`. That excluded
 count-up loops and phase-style loops whose progress is naturally described by
-more than one value. Nested-loop propagation and recursive calls inside loops
-remain separate unsupported shapes: the current checker does not summarize an
-inner loop's effect on an enclosing ranking measure. Structural-resource
-termination also remains limited to direct, simply-guarded recursion.
+more than one value. Recursive calls inside loops remain a separate unsupported
+shape. Structural-resource termination also remains limited to direct,
+simply-guarded recursion.
 
 ## Violated invariant
 
@@ -27,8 +26,11 @@ invariants as ranking assumptions. A count-up regression using `n - i` is in
 represented as checked vectors of scalar expressions and are proved by a
 strictly decreasing pivot after equal earlier components; the phase-loop
 regressions are in `mdtests/c_decreases_lexicographic_loop.md` and
-`mdtests/c_decreases_rejects_non_decreasing_lexicographic_loop.md`. Nested-loop
-propagation and recursion inside loops are still open.
+`mdtests/c_decreases_rejects_non_decreasing_lexicographic_loop.md`. A nested
+loop with its own ranking is now summarized as a terminating opaque phase for
+the enclosing loop; `mdtests/c_decreases_nested_loop.md` covers an outer first
+component that decreases after the phase. Recursive calls inside loops are
+still open.
 
 ## Intended regression
 
@@ -48,8 +50,11 @@ non-decreasing must expect `fail: ... does not decrease`.
   measure's well-foundedness checked as `0 <= measure` under the guard), not
   a single decremented variable.
 - Lexicographic tuples of such expressions are supported for progress within
-  one loop's back-edge paths. Nested-loop propagation and recursion inside
-  loops still require a separate effect-summary design.
+  one loop's back-edge paths. Separately ranked nested loops are supported as
+  opaque terminating phases; aliases for enclosing ranking variables written
+  by the phase are forgotten, so enclosing invariants must establish their
+  post-phase nonnegativity. Recursive calls inside loops still require a
+  separate effect-summary design.
 - The surface plan carries the expression and the kernel re-lowers and checks
   it, in keeping with the untrusted-plan design in `docs/internals/kernel.md`.
 - The mdtests above pass; `scripts/check.sh` passes.

@@ -235,8 +235,23 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     }
     let function_with_prior_loops = function_block
         .with_bound_frontier_loop_clauses(&execution.presentation.frontier_loop_clauses.to_vec());
-    let bound_function_block =
-        function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
+    let mut current_loop_clauses = vec![loop_template.bound_to_loop(loop_index)];
+    let mut nested_loop_clauses = Vec::new();
+    for proof in [
+        loop_template.initialize_proof(),
+        loop_template.preserve_proof(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        proof.collect_termination_loop_clauses(&mut nested_loop_clauses);
+    }
+    for (offset, clause) in nested_loop_clauses.into_iter().enumerate() {
+        current_loop_clauses.push(clause.bound_to_loop(loop_index + offset + 1));
+    }
+    let bound_function_block = function_with_prior_loops
+        .with_frontier_loop_clause(loop_template, loop_index)
+        .with_bound_frontier_loop_clauses(&current_loop_clauses[1..]);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
     let initial_state = execution.core.frontier.execution_start_state(state).clone();
@@ -350,9 +365,13 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
                 "`{claim_label}` tactic {tactic_index}: `loop` did not construct a verified rule for loop({loop_index})"
             ))
         })?
+        .with_loop_index(loop_index)
         .with_composite_resource_definitions(
             annotated.composite_resource_definitions().iter().cloned(),
         );
+    for rule in verified_loop_rules {
+        execution.core.frontier_loop_rules.push(rule);
+    }
     let loop_exit_condition = match &current_loop {
         CStatement::While { condition, .. } => Some(ClickProposition::Not(Box::new(
             surface_c_condition(condition),

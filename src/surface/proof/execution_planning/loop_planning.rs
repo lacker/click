@@ -1187,6 +1187,10 @@ pub(in crate::surface::proof) struct LoopPreservationProofResult {
     pub(in crate::surface::proof) certificate: ProofCertificate,
     pub(in crate::surface::proof) effect_certificates: Vec<(usize, ProofCertificate)>,
     pub(in crate::surface::proof) final_exit_candidates: Vec<CLoopFinalExitCandidate>,
+    /// Loop rules checked by frontier-local tactics inside this loop's
+    /// preservation proof. They are evidence for termination only; the
+    /// enclosing contract still uses the outer loop's checked artifact.
+    pub(in crate::surface::proof) nested_loop_rules: Vec<CVerifiedLoopRule>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1392,8 +1396,17 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     let mut final_exit_candidates = Vec::new();
+    let mut nested_loop_rules = Vec::new();
     for leaf in leaves {
         let context_execution = leaf.execution_view()?.execution.clone();
+        for rule in context_execution.core.frontier_loop_rules.iter() {
+            if !nested_loop_rules
+                .iter()
+                .any(|existing: &CVerifiedLoopRule| existing == rule)
+            {
+                nested_loop_rules.push(rule.clone());
+            }
+        }
         let context_frontier = leaf.execution_view()?.frontier.clone();
         let case_path = context_execution
             .presentation
@@ -1606,5 +1619,6 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         certificate,
         effect_certificates,
         final_exit_candidates,
+        nested_loop_rules,
     })
 }

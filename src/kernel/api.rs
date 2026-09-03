@@ -1895,6 +1895,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
     .then(|| CVerifiedLoopRule {
         symbolic_entry_state: state.clone(),
         loop_statement: statement.clone(),
+        loop_index: None,
         required_assumptions: assumptions.clone(),
         paths: paths.clone(),
         composite_resource_definitions: Vec::new(),
