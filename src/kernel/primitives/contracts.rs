@@ -526,8 +526,22 @@ impl CExecutionEnvironment {
         self
     }
 
+    pub fn with_external_function_rule(mut self, rule: CExternalFunctionRule) -> Self {
+        std::sync::Arc::make_mut(&mut self.external_function_rules)
+            .insert(rule.function.name().to_string(), rule);
+        self.variable_index = CExecutionEnvironmentVariableIndex::default();
+        self
+    }
+
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
         self.functions.get(name)
+    }
+
+    pub(in crate::kernel) fn get_external_function_rule(
+        &self,
+        name: &str,
+    ) -> Option<&CExternalFunctionRule> {
+        self.external_function_rules.get(name)
     }
 
     pub(crate) fn function_names_with_pointer_type(&self, c_type: CType) -> Vec<String> {
@@ -590,6 +604,10 @@ impl CExecutionEnvironment {
     #[cfg(test)]
     pub(crate) fn shares_project_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.functions, &other.functions)
+            && std::sync::Arc::ptr_eq(
+                &self.external_function_rules,
+                &other.external_function_rules,
+            )
             && std::sync::Arc::ptr_eq(
                 &self.verified_function_rules,
                 &other.verified_function_rules,

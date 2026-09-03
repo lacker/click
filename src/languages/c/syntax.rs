@@ -393,6 +393,22 @@ pub struct C0SyntaxError {
 }
 
 impl C0Function {
+    pub(crate) fn external(
+        return_type: C0Type,
+        name: String,
+        parameters: Vec<C0Parameter>,
+    ) -> Self {
+        Self {
+            return_type,
+            return_struct_name: None,
+            name,
+            parameters,
+            body: C0Statement::Skip,
+            structs: BTreeMap::new(),
+            enums: BTreeMap::new(),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

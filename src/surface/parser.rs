@@ -284,8 +284,10 @@ impl Parser {
             } else if self.peek_ident() == Some("counted") {
                 return Err(self
                     .error("`counted resource` has been removed; declare an ordinary `resource`"));
+            } else if self.peek_ident() == Some("extern") {
+                function_blocks.push(self.parse_function_block(true)?);
             } else {
-                function_blocks.push(self.parse_function_block()?);
+                function_blocks.push(self.parse_function_block(false)?);
             }
         }
 
@@ -695,7 +697,10 @@ impl Parser {
         })
     }
 
-    fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
+    fn parse_function_block(&mut self, external: bool) -> Result<FunctionBlock, ClickError> {
+        if external {
+            self.expect_ident_spelling("extern")?;
+        }
         let ParsedFunctionSignature {
             signature,
             mut struct_params,
@@ -906,6 +911,20 @@ impl Parser {
         } else {
             None
         };
+        if external {
+            if decreases.is_some()
+                || grouped_proof.is_some()
+                || ensures
+                    .iter()
+                    .any(|ensure| !matches!(ensure.proof(), SourceProof::Default))
+                || effects
+                    .iter()
+                    .any(|effect| !matches!(effect.proof(), SourceProof::Default))
+            {
+                return Err(self
+                    .error("external function contracts cannot carry proof or decreases clauses"));
+            }
+        }
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
 
@@ -919,6 +938,7 @@ impl Parser {
 
         Ok(FunctionBlock {
             signature,
+            external,
             requires,
             requirement_label_indices,
             decreases,

@@ -756,6 +756,9 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
+        if function_block.is_external() {
+            continue;
+        }
         if selected_functions
             .as_ref()
             .is_some_and(|functions| !functions.contains(function_block.signature.name()))
@@ -1398,10 +1401,16 @@ pub(in crate::surface) fn verification_required_functions(
         if !required.insert(name.clone()) {
             continue;
         }
-        let parsed = &parsed_sources
-            .get(&name)
-            .ok_or_else(|| ClickError::new(format!("no C source defines `{name}`")))?
-            .1;
+        let Some(parsed) = parsed_sources.get(&name).map(|entry| &entry.1) else {
+            if file
+                .function_blocks()
+                .iter()
+                .any(|function| function.is_external() && function.signature().name() == name)
+            {
+                continue;
+            }
+            return Err(ClickError::new(format!("no C source defines `{name}`")));
+        };
         pending.extend(c0_statement_calls(parsed).into_iter().flatten());
     }
     Ok(required)
@@ -1695,6 +1704,9 @@ pub(in crate::surface) fn c_function_termination_plans(
     let mut plans = Vec::new();
     let mut requested = BTreeSet::new();
     for function in file.function_blocks() {
+        if function.is_external() {
+            continue;
+        }
         let selected = selected_functions
             .is_none_or(|selected| selected.contains(function.signature().name()));
         let recursive_measure = function
@@ -1836,7 +1848,11 @@ pub(in crate::surface) fn parse_verified_sources(
     c_sources: &BTreeMap<&str, &str>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
     if file.verifying_sources.is_empty() {
-        if file.function_blocks().is_empty() {
+        if file
+            .function_blocks()
+            .iter()
+            .all(FunctionBlock::is_external)
+        {
             return Ok(BTreeMap::new());
         }
         return Err(ClickError::new(
@@ -1863,7 +1879,39 @@ pub(in crate::surface) fn parse_verified_sources(
         }
     }
 
+    for function in file
+        .function_blocks()
+        .iter()
+        .filter(|function| function.is_external())
+    {
+        if parsed.contains_key(function.signature().name()) {
+            return Err(ClickError::new(format!(
+                "external function `{}` is also defined by a `verifying` source",
+                function.signature().name()
+            )));
+        }
+    }
+
     Ok(parsed)
+}
+
+fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
+    syntax::C0Function::external(
+        function_block.signature().return_type(),
+        function_block.signature().name().to_string(),
+        function_block
+            .signature()
+            .parameters()
+            .iter()
+            .map(|parameter| {
+                syntax::C0Parameter::new(
+                    parameter.c_type(),
+                    parameter.name().to_string(),
+                    parameter.struct_name().map(str::to_string),
+                )
+            })
+            .collect(),
+    )
 }
 
 pub(in crate::surface) fn build_function_environment(
@@ -1923,6 +1971,39 @@ pub(in crate::surface) fn build_function_environment(
             None => function.to_kernel_function(),
         };
         environment = environment.with_function(function);
+    }
+    for function_block in function_blocks
+        .iter()
+        .filter(|function| function.is_external())
+    {
+        let parsed_function = external_c0_function(function_block);
+        let (state, arguments, _, _) = initial_claim_context(
+            function_block,
+            &parsed_function,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            &format!("{}.external contract", function_block.signature().name()),
+        )?;
+        let function = annotated_function(
+            function_block,
+            &parsed_function,
+            &state,
+            &arguments,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            false,
+        )?;
+        let rule = crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
+            ClickError::new(format!(
+                "external function `{}` has a contract that cannot be applied opaquely",
+                function_block.signature().name()
+            ))
+        })?;
+        environment = environment
+            .with_function(function)
+            .with_external_function_rule(rule);
     }
     Ok(environment)
 }

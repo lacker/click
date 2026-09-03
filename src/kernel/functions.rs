@@ -474,6 +474,19 @@ pub(super) fn execute_c_function_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if let Some(rule) = environment.get_external_function_rule(function.name()) {
+        let assumed_rule = CVerifiedFunctionRule {
+            function: rule.function.clone(),
+        };
+        return execute_verified_function_rule(
+            caller_state,
+            &assumed_rule,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
     match execution_semantics.calls {
         CCallSemantics::ExecuteBodies => {}
         CCallSemantics::ApplyVerifiedRules => {

@@ -1998,6 +1998,16 @@ pub fn c_verified_function_rule(
     Some(CVerifiedFunctionRule { function })
 }
 
+/// Packages a body-less external contract as an opaque assumption. The
+/// contract still has to be structurally complete and representable by the
+/// kernel, but no body-safety or postcondition proof is claimed for it.
+pub fn c_external_function_rule(function: CFunction) -> Option<CExternalFunctionRule> {
+    (function.opaque_contract_supported()
+        && !function.contract_claims().is_empty()
+        && function_contract_claims_are_complete(&function))
+    .then_some(CExternalFunctionRule { function })
+}
+
 /// Builds an untrusted ranking plan. Supplying a plan is not evidence; the
 /// kernel validates it together with the exact verified C functions in
 /// [`c_verified_function_termination_rules`].

@@ -40,6 +40,27 @@ fn parser_accepts_standard_c_type_spellings_in_sidecars() {
 }
 
 #[test]
+fn parser_accepts_bodyless_external_function_contracts() {
+    let file = parse(
+        r#"
+        extern int32 external_identity(int32 x) {
+            requires x >= 0;
+            ensures result == x;
+        }
+        "#,
+    )
+    .expect("bodyless external contracts should parse");
+
+    assert_eq!(file.verifying_sources(), &[] as &[String]);
+    assert_eq!(file.function_blocks().len(), 1);
+    assert!(file.function_blocks()[0].is_external());
+    assert_eq!(
+        file.function_blocks()[0].signature().name(),
+        "external_identity"
+    );
+}
+
+#[test]
 fn parser_rejects_excessive_parenthesis_depth_with_a_source_diagnostic() {
     let source = super::scaling_tests::theorem_with_parenthesized_requirement(
         parser::PARENTHESIS_NESTING_LIMIT + 1,

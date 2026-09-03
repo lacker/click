@@ -836,6 +836,7 @@ pub struct CFunctionSpecification {
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
+    pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
     pub(super) verified_function_rules: std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
         std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
@@ -848,6 +849,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
         formatter
             .debug_struct("CExecutionEnvironment")
             .field("functions", &self.functions)
+            .field("external_function_rules", &self.external_function_rules)
             .field("verified_function_rules", &self.verified_function_rules)
             .field(
                 "verified_function_termination_rules",
@@ -861,6 +863,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
         self.functions == other.functions
+            && self.external_function_rules == other.external_function_rules
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.verified_loop_rules == other.verified_loop_rules
@@ -906,6 +909,15 @@ impl CExecutionSemantics {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
+    pub(super) function: CFunction,
+}
+
+/// A contract supplied for a C function whose implementation is outside the
+/// verified source set. External rules are intentionally distinct from
+/// [`CVerifiedFunctionRule`]: they are assumptions accepted at call sites,
+/// not evidence that Click checked a function body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CExternalFunctionRule {
     pub(super) function: CFunction,
 }
 

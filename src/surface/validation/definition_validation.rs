@@ -184,7 +184,14 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .map(|definition| definition.name())
         .collect::<BTreeSet<_>>();
 
+    let mut function_specs = BTreeSet::new();
     for function in file.function_blocks() {
+        if !function_specs.insert(function.signature().name().to_string()) {
+            return Err(ClickError::new(format!(
+                "duplicate C function spec `{}`",
+                function.signature().name()
+            )));
+        }
         if user_click_functions.contains(function.signature().name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a Click function and a C function spec",

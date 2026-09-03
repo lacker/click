@@ -58,6 +58,14 @@ and explicit ranges such as `owns owner[0..3]` remain useful for broader
 footprints. The supported ABI is LP64; other target ABIs are rejected rather
 than approximated.
 
+## External C functions
+
+Sidecars may declare body-less C callees with `extern` contracts. The kernel
+applies those contracts as explicit assumptions, so the callee implementation
+is not checked by Click and its preconditions remain caller obligations. The
+standard-library contract catalog and automatic dependency reporting for
+external assumptions are not yet provided.
+
 ## Type support is still narrow
 
 The verifier supports `void` function returns, `int32`, and a byte-like

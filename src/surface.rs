@@ -396,6 +396,7 @@ struct ClickFunctionType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionBlock {
     signature: FunctionSignature,
+    external: bool,
     requires: Vec<Requirement>,
     /// Parsed once so a simple `choose(... from requirement label)` step does
     /// not linearly rescan every function requirement.
@@ -3314,6 +3315,10 @@ impl TheoremDefinition {
 impl FunctionBlock {
     pub fn signature(&self) -> &FunctionSignature {
         &self.signature
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.external
     }
 
     pub fn requires(&self) -> &[Requirement] {
