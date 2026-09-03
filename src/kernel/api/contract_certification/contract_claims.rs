@@ -574,8 +574,9 @@ fn spec_quantifier_binders(proposition: &SpecProposition, binders: &mut Vec<Vari
 }
 
 /// Renames one quantifier binder of a specification proposition, in the
-/// binder and throughout its body. Variable substitution alone stops at the
-/// binding site, which is exactly the occurrence to change here.
+/// binder and throughout its body. Callers must ensure that `to` is fresh in
+/// the body; the multi-binder wrapper below stages all renames through fresh
+/// identities before installing their final names.
 fn rename_spec_binder(
     proposition: &SpecProposition,
     from: Variable,
@@ -634,6 +635,52 @@ fn rename_spec_binder(
     }
 }
 
+/// Applies a binder renaming simultaneously. Staging matters when the target
+/// names overlap the source names: applying `a -> b` before `b -> a` would
+/// otherwise rewrite the first binder twice. A target that is already free in
+/// the specification cannot be installed without capture, so the caller must
+/// fall back to lowering under the original binders.
+fn rename_spec_binders(
+    proposition: &SpecProposition,
+    renames: &[(Variable, Variable)],
+) -> Option<SpecProposition> {
+    let mut free_variables = BTreeSet::new();
+    collect_spec_proposition_bitvector_variables(proposition, &mut free_variables);
+    if renames
+        .iter()
+        .any(|(_, target)| free_variables.contains(target))
+    {
+        return None;
+    }
+
+    let mut reserved = free_variables;
+    let mut binders = Vec::new();
+    spec_quantifier_binders(proposition, &mut binders);
+    reserved.extend(binders);
+    for (source, target) in renames {
+        reserved.insert(*source);
+        reserved.insert(*target);
+    }
+    let mut fresh_variables = KernelVariableGenerator::fresh_for(0, reserved);
+    let staged = renames
+        .iter()
+        .map(|(source, target)| (*source, *target, fresh_variables.next()))
+        .collect::<Vec<_>>();
+
+    let mut renamed = proposition.clone();
+    for (source, _, fresh) in &staged {
+        if source != fresh {
+            renamed = rename_spec_binder(&renamed, *source, *fresh);
+        }
+    }
+    for (_, target, fresh) in staged {
+        if fresh != target {
+            renamed = rename_spec_binder(&renamed, fresh, target);
+        }
+    }
+    Some(renamed)
+}
+
 /// Lowers a quantified ensure under the binders of a completed proposition
 /// that has the same quantifier shape, when every lowered path then matches
 /// a completion; otherwise lowers it under its own binders. One extra
@@ -659,12 +706,14 @@ fn lower_ensure_under_completion_binders(
             {
                 continue;
             }
-            let renamed = spec_binders
+            let renames = spec_binders
                 .iter()
                 .zip(&key_binders)
-                .fold(ensure.clone(), |proposition, (from, to)| {
-                    rename_spec_binder(&proposition, *from, *to)
-                });
+                .map(|(from, to)| (*from, *to))
+                .collect::<Vec<_>>();
+            let Some(renamed) = rename_spec_binders(ensure, &renames) else {
+                continue;
+            };
             let paths = lower_spec_proposition_at_state_with_loop_entry(
                 post_state,
                 &renamed,
@@ -1179,15 +1228,17 @@ fn function_claim_holds_on_prepared_path(
                     &segment.base,
                 )
                 .unwrap_or(4);
-                if segment.guard().is_some_and(|guard| {
-                    evaluate_guarded_contract_condition(
+                if let Some(guard) = segment.guard() {
+                    match evaluate_guarded_contract_condition(
                         guard,
                         entry_state,
                         assumptions,
                         &mut budget,
-                    ) == Some(false)
-                }) {
-                    continue;
+                    ) {
+                        Some(true) => {}
+                        Some(false) => continue,
+                        None => return false,
+                    }
                 }
                 let Ok(Ok(segment)) =
                     evaluate_loop_effect_segment(entry_state, segment, assumptions, &mut budget)
@@ -1704,7 +1755,8 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let checked_propositions = checked_proposition_index(checked_propositions);
-    Ok(function
+    let mut unverified = missing_function_contract_claim_keys(function);
+    let claim_unverified = function
         .contract_claims()
         .iter()
         .filter(|claim| {
@@ -1719,7 +1771,13 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
             })
         })
         .map(|claim| claim.key().clone())
-        .collect())
+        .collect::<Vec<_>>();
+    for key in claim_unverified {
+        if !unverified.contains(&key) {
+            unverified.push(key);
+        }
+    }
+    Ok(unverified)
 }
 
 /// Certifies one contract claim only after a kernel-produced complete
@@ -1742,6 +1800,7 @@ pub fn c_verified_function_rule(
 ) -> Option<CVerifiedFunctionRule> {
     if !function.opaque_contract_supported()
         || function.contract_claims().is_empty()
+        || !function_contract_claims_are_complete(&function)
         || proofs.iter().any(|proof| proof.function != function)
         || function
             .contract_claims()
@@ -1778,6 +1837,80 @@ pub fn c_function_termination_plan(
 pub(crate) fn c_recursive_function_contract_hypothesis(
     function: CFunction,
 ) -> Option<CVerifiedFunctionRule> {
-    (function.opaque_contract_supported() && !function.contract_claims().is_empty())
-        .then_some(CVerifiedFunctionRule { function })
+    (function.opaque_contract_supported()
+        && !function.contract_claims().is_empty()
+        && function_contract_claims_are_complete(&function))
+    .then_some(CVerifiedFunctionRule { function })
+}
+
+/// Structural contract coverage is part of the rule boundary, not merely a
+/// convention of the surface lowering. A body-safety claim cannot stand in
+/// for an omitted postcondition. An explicitly declared mutable frame needs
+/// an effect claim even when the frame is empty on a particular execution
+/// path; a resource-derived frame is covered by its resource transition.
+fn function_contract_claims_are_complete(function: &CFunction) -> bool {
+    let claims = function.contract_claims();
+    (0..function.contract_ensures().len()).all(|index| {
+        claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::EnsureProposition(claim_index)
+                    if *claim_index == index
+            )
+        })
+    }) && (0..function.resource_ensures().len()).all(|index| {
+        claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::EnsureResource(claim_index)
+                    if *claim_index == index
+            )
+        })
+    }) && (!function.contract_effect_claim_required()
+        || function.contract_mutable().is_empty()
+        || claims
+            .iter()
+            .any(|claim| matches!(claim.target(), CFunctionContractClaimTarget::Effect)))
+}
+
+/// Returns diagnostic keys for obligations that have no corresponding claim.
+/// The public key type predates separate proposition/resource vectors, so the
+/// target index is used for an unclaimed diagnostic entry.
+fn missing_function_contract_claim_keys(function: &CFunction) -> Vec<CFunctionContractClaimKey> {
+    let claims = function.contract_claims();
+    let mut missing = Vec::new();
+    for index in 0..function.contract_ensures().len() {
+        if !claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::EnsureProposition(claim_index)
+                    if *claim_index == index
+            )
+        }) {
+            missing.push(CFunctionContractClaimKey::Ensure(index));
+        }
+    }
+    for index in 0..function.resource_ensures().len() {
+        if !claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::EnsureResource(claim_index)
+                    if *claim_index == index
+            )
+        }) {
+            let key = CFunctionContractClaimKey::Ensure(index);
+            if !missing.contains(&key) {
+                missing.push(key);
+            }
+        }
+    }
+    if function.contract_effect_claim_required()
+        && !function.contract_mutable().is_empty()
+        && !claims
+            .iter()
+            .any(|claim| matches!(claim.target(), CFunctionContractClaimTarget::Effect))
+    {
+        missing.push(CFunctionContractClaimKey::Effect(0));
+    }
+    missing
 }

@@ -158,6 +158,7 @@ fn loop_effect_derivation_starts_a_separate_root_branch() {
             },
             &before_state,
             &CLoopEffectCheck::new(CLoopEffect::Immutable, None),
+            &[],
         )
         .expect("a loop effect should derive a separate proof");
 

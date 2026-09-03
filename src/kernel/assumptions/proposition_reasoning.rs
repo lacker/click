@@ -843,13 +843,17 @@ impl PureFactContext {
                         if fact_sort != sort {
                             return false;
                         }
-                        let renamed = substitute_bitvector_variable_in_proposition(
-                            fact_body,
-                            *fact_var,
-                            &Bitvector32Term::Variable(*var),
-                        );
+                        let Some(renamed) =
+                            crate::kernel::api::substitute_quantified_body_capture_free(
+                                fact_body, *fact_var, *var,
+                            )
+                        else {
+                            return false;
+                        };
                         renamed == **body
-                            || crate::kernel::api::propositions_alpha_equivalent(&renamed, body)
+                            || crate::kernel::api::propositions_alpha_equivalent_under_binders(
+                                *fact_var, fact_body, *var, body,
+                            )
                             || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
                     })
             }
@@ -975,14 +979,12 @@ impl PureFactContext {
                 return false;
             };
             fact_sort == sort
-                && crate::kernel::api::propositions_alpha_equivalent(
-                    &substitute_bitvector_variable_in_proposition(
-                        fact_body,
-                        *fact_var,
-                        &Bitvector32Term::Variable(var),
-                    ),
-                    body,
+                && crate::kernel::api::substitute_quantified_body_capture_free(
+                    fact_body, *fact_var, var,
                 )
+                .is_some_and(|renamed| {
+                    crate::kernel::api::propositions_alpha_equivalent(&renamed, body)
+                })
         });
         if alpha {
             return true;

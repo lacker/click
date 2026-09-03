@@ -3445,6 +3445,128 @@ fn forall_int32_application_avoids_capturing_the_argument_variable() {
 }
 
 #[test]
+fn simultaneous_proposition_substitution_does_not_rewrite_installed_values() {
+    let first = Variable(540);
+    let second = Variable(541);
+    let proposition = Proposition::Implies(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(first),
+                Bitvector32Term::Constant(5),
+            ),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(first),
+                Bitvector32Term::Variable(second),
+            ),
+            true,
+        )),
+    );
+    let substitutions = BTreeMap::from([
+        (first, Bitvector32Term::Variable(second)),
+        (second, Bitvector32Term::Constant(0)),
+    ]);
+
+    let substituted = substitute_bitvector_variables_in_proposition(&proposition, &substitutions);
+    assert_eq!(
+        substituted,
+        Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(second),
+                    Bitvector32Term::Constant(5),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(second),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
+fn alpha_equivalence_rejects_free_variable_capture() {
+    let free = Variable(550);
+    let left_binder = Variable(551);
+    let right_binder = free;
+    let left = Proposition::ForAll {
+        var: left_binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(free),
+                Bitvector32Term::Constant(5),
+            ),
+            true,
+        )),
+    };
+    let right = Proposition::ForAll {
+        var: right_binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(free),
+                Bitvector32Term::Constant(5),
+            ),
+            true,
+        )),
+    };
+
+    assert!(!propositions_alpha_equivalent(&left, &right));
+}
+
+#[test]
+fn range_fold_substitution_renames_a_captured_binder() {
+    let source = Variable(560);
+    let accumulator = Variable(561);
+    let item = Variable(562);
+    let fold = Bitvector32Term::range_fold(
+        Bitvector32Term::Variable(Variable(563)),
+        Bitvector32Term::Variable(Variable(564)),
+        Bitvector32Term::Constant(0),
+        accumulator,
+        item,
+        Bitvector32Term::add(
+            Bitvector32Term::Variable(accumulator),
+            Bitvector32Term::Variable(item),
+        ),
+    );
+    let term = Bitvector32Term::add(Bitvector32Term::Variable(source), fold);
+
+    let substituted =
+        substitute_bitvector_variable(&term, source, &Bitvector32Term::Variable(item));
+    let Bitvector32Term::Add(left, fold) = &substituted else {
+        panic!("substitution should preserve the outer addition");
+    };
+    let Bitvector32Term::RangeFold {
+        accumulator: renamed_accumulator,
+        item: renamed_item,
+        body,
+        ..
+    } = fold.as_ref()
+    else {
+        panic!("substitution should preserve the symbolic range fold");
+    };
+    assert_eq!(left.as_ref(), &Bitvector32Term::Variable(item));
+    assert_ne!(*renamed_item, item);
+    assert_eq!(*renamed_accumulator, accumulator);
+    assert_eq!(
+        body.as_ref(),
+        &Bitvector32Term::add(
+            Bitvector32Term::Variable(accumulator),
+            Bitvector32Term::Variable(*renamed_item),
+        )
+    );
+}
+
+#[test]
 fn assumptions_prove_by_bounded_disjunction_cases() {
     let x = Bitvector32Term::Variable(Variable(89));
     let x_is_zero = Proposition::ConditionIs(

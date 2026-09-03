@@ -1081,6 +1081,7 @@ fn verify_structural_effect_proof(
     before_state: &CState,
     case_path: &[ProofCaseChoice],
     preservation: &Proof<'_>,
+    whole_loop_effect_facts: &[Proposition],
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<ProofCertificate, ClickError> {
     let legacy_site = ProofSite::StructuralItem {
@@ -1156,7 +1157,13 @@ fn verify_structural_effect_proof(
             "`{claim_label}` uses a proof operation that is unavailable for a loop structural effect"
         )));
     }
-    let root = preservation.start_loop_effect_proof(&claim_label, site, before_state, check)?;
+    let root = preservation.start_loop_effect_proof(
+        &claim_label,
+        site,
+        before_state,
+        check,
+        whole_loop_effect_facts,
+    )?;
     let checked = if smart_frame {
         root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
             .ok_or_else(|| {
@@ -1360,7 +1367,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .flat_map(|clause| clause.items().iter().enumerate())
         .filter(|(_, item)| item.is_effect_kind())
         .collect::<Vec<_>>();
-    if effect_items.len() != effect_checks.len() {
+    // Resource-backed function frames add a kernel-only whole-loop effect
+    // check even when the source has no structural `mutable` item. The
+    // source-indexed checks still appear first, so only a deficit is an
+    // invalid lowering; surplus inherited checks need no surface certificate.
+    if effect_items.len() > effect_checks.len() {
         return Err(ClickError::new(format!(
             "`{claim_label}` has {} structural effect items but {} lowered effect checks",
             effect_items.len(),
@@ -1521,6 +1532,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 preservation.state(),
                 &case_path,
                 &checked,
+                preservation.whole_loop_effect_facts(),
                 environment,
             )?;
             effect_certificate_paths[effect_index].push(PathCertificate {

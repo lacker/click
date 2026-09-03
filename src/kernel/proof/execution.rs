@@ -31,6 +31,11 @@ pub(crate) enum ExecutionRegionKind {
 pub(crate) struct LoopEffectGoal {
     pub(crate) before_state: CState,
     pub(crate) check: CLoopEffectCheck,
+    /// Whole-span summaries generated for the enclosing loop. They are
+    /// valid evidence for a whole-span effect, but a step-span check must
+    /// validate the iteration's own writes instead of inheriting the whole
+    /// loop's broader footprint.
+    pub(crate) whole_loop_effect_facts: Vec<Proposition>,
     pub(crate) closed: bool,
 }
 

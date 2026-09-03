@@ -1284,6 +1284,167 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     assert!(c_verified_function_rule(function, &[first, second]).is_some());
 }
 
+#[test]
+fn verified_function_rule_rejects_unclaimed_contract_obligations() {
+    let function = c_function(
+        CType::Int32,
+        "unclaimed_ensure",
+        Vec::new(),
+        c_return(c_int32_literal(1)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert_eq!(
+        c_unverified_function_contract_claims(&function, &execution)
+            .expect("the complete frontier should remain diagnostic"),
+        vec![CFunctionContractClaimKey::Ensure(0)]
+    );
+    let body_safety = c_verified_function_contract_claim(
+        &function,
+        CFunctionContractClaimKey::BodySafety,
+        &execution,
+    )
+    .expect("the body-safety claim itself should still certify");
+    assert!(c_verified_function_rule(function, &[body_safety]).is_none());
+}
+
+#[test]
+fn contract_certification_does_not_accept_injected_opaque_predicate_facts() {
+    let predicate = SpecProposition::Predicate {
+        name: "positive".to_string(),
+        arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+            c_variable("result"),
+        ))],
+    };
+    let positive_body = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("result")),
+        operator: CComparisonOperator::GreaterEqual,
+        right: SpecExpression::Value(int32(1)),
+    };
+    let function = c_function(
+        CType::Int32,
+        "injected_predicate",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![positive_body.clone()],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    )
+    .with_predicate_unfoldings(vec![CPredicateUnfolding::new(predicate, positive_body)]);
+    let injected = Proposition::ForAll {
+        var: Variable(991_001),
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Predicate {
+            name: "positive".to_string(),
+            arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(Variable(
+                991_001,
+            )))],
+        }),
+    };
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        vec![injected],
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::Ensure(0),
+            &execution,
+        )
+        .is_none(),
+        "caller-supplied quantified predicate facts must not certify a false ensure"
+    );
+}
+
+#[test]
+fn contract_effect_claim_rejects_an_undecidable_guard() {
+    let base = Pointer {
+        block: PointerBlock::Concrete("heap:guarded-effect".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let flag = Variable(991_002);
+    let function = c_function(
+        CType::Int32,
+        "undecidable_guarded_effect",
+        vec![
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("flag", CType::Int32),
+        ],
+        c_seq(
+            c_store(
+                c_index(c_variable("p"), c_int32_literal(0)),
+                c_int32_literal(1),
+            ),
+            c_return(c_int32_literal(1)),
+        ),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        vec![
+            CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1))
+                .with_guard(SpecProposition::Comparison {
+                    left: SpecExpression::CExpression(c_variable("flag")),
+                    operator: CComparisonOperator::NotEqual,
+                    right: SpecExpression::Value(int32(0)),
+                }),
+        ],
+        vec![CFunctionContractClaim::effect(0)],
+        true,
+    );
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new().with_memory(CMemory::new().with_block(base.block.clone(), 4)),
+        function.clone(),
+        vec![
+            c_pointer_value(base),
+            CExpression::Value(CValue::Int32(Bitvector32Term::Variable(flag))),
+        ],
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::Effect(0),
+            &execution,
+        )
+        .is_none(),
+        "a guarded frame must be case-split or proven true before certification"
+    );
+}
+
 fn vacuous_forall_contract(requires_body: SpecProposition) -> CFunction {
     c_function(
         CType::Int32,

@@ -35,6 +35,7 @@ impl CFunction {
             contract_requires: Vec::new(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
+            contract_effect_claim_required: false,
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
@@ -68,8 +69,19 @@ impl CFunction {
         self.contract_requires = requires;
         self.contract_ensures = ensures;
         self.contract_mutable = mutable;
+        self.contract_effect_claim_required = !self.contract_mutable.is_empty();
         self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
+        self
+    }
+
+    /// Marks the mutable frame as inferred from consumed resource ownership.
+    /// Such a frame is part of the resource transition, not an omitted
+    /// function-level Effect claim. This narrow crate-level escape hatch is
+    /// used by the surface lowering; external kernel callers retain the
+    /// default requirement that a nonempty frame have an Effect claim.
+    pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
+        self.contract_effect_claim_required = false;
         self
     }
 
@@ -124,6 +136,10 @@ impl CFunction {
 
     pub fn contract_mutable(&self) -> &[CMemorySegment] {
         &self.contract_mutable
+    }
+
+    pub(crate) fn contract_effect_claim_required(&self) -> bool {
+        self.contract_effect_claim_required
     }
 
     pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
@@ -571,6 +587,7 @@ impl CExecutionEnvironment {
                                     state.resources(),
                                     base,
                                     bytes,
+                                    assumptions,
                                 ))
                             }
                             _ => false,

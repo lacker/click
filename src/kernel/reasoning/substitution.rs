@@ -408,6 +408,54 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_proposition(
     }
 }
 
+/// Applies a finite substitution to free variables simultaneously.
+///
+/// Sequentially applying a map is unsound when one replacement mentions a
+/// variable that is also a key in the map: the later replacement rewrites the
+/// value just installed by the earlier one.  Stage every source through a
+/// fresh variable first, then install the requested replacements in a second
+/// pass.  The ordinary substitution routine handles capture avoidance at each
+/// quantifier boundary.
+pub(in crate::kernel) fn substitute_bitvector_variables_in_proposition(
+    proposition: &Proposition,
+    substitutions: &BTreeMap<Variable, Bitvector32Term>,
+) -> Proposition {
+    if substitutions.is_empty() {
+        return proposition.clone();
+    }
+
+    let mut reserved = BTreeSet::new();
+    collect_proposition_bitvector_variables(proposition, &mut reserved);
+    collect_proposition_bound_variables(proposition, &mut reserved);
+    for (source, replacement) in substitutions {
+        reserved.insert(*source);
+        collect_bitvector_variables(replacement, &mut reserved);
+    }
+
+    let mut fresh_variables = KernelVariableGenerator::fresh_for(0, reserved);
+    let staged = substitutions
+        .keys()
+        .map(|source| (*source, fresh_variables.next()))
+        .collect::<Vec<_>>();
+
+    let mut result = proposition.clone();
+    for (source, temporary) in &staged {
+        result = substitute_bitvector_variable_in_proposition(
+            &result,
+            *source,
+            &Bitvector32Term::Variable(*temporary),
+        );
+    }
+    for (source, temporary) in staged {
+        result = substitute_bitvector_variable_in_proposition(
+            &result,
+            temporary,
+            &substitutions[&source],
+        );
+    }
+    result
+}
+
 fn capture_avoiding_quantifier_body(
     binder: Variable,
     body: &Proposition,
@@ -440,6 +488,164 @@ pub(in crate::kernel) fn collect_proposition_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
+        Proposition::Equal(left, right) => {
+            collect_term_bound_variables(left, variables);
+            collect_term_bound_variables(right, variables);
+        }
+        Proposition::ConditionIs(condition, _) => {
+            collect_condition_bound_variables(condition, variables);
+        }
+        Proposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                collect_term_bound_variables(argument, variables);
+            }
+        }
+        Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome,
+        } => {
+            collect_c_state_bound_variables(state, variables);
+            collect_c_expression_bound_variables(expression, variables);
+            collect_expression_outcome_bound_variables(outcome, variables);
+        }
+        Proposition::CConditionEvaluates {
+            state, condition, ..
+        } => {
+            collect_c_state_bound_variables(state, variables);
+            collect_c_expression_bound_variables(condition, variables);
+        }
+        Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome,
+        }
+        | Proposition::CStatementVerifies {
+            state,
+            statement,
+            outcome,
+        } => {
+            collect_c_state_bound_variables(state, variables);
+            collect_c_statement_bound_variables(statement, variables);
+            collect_statement_outcome_bound_variables(outcome, variables);
+        }
+        Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome,
+        }
+        | Proposition::CFunctionVerifies {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => {
+            collect_c_state_bound_variables(state, variables);
+            collect_c_function_bound_variables(function, variables);
+            for argument in arguments {
+                collect_c_expression_bound_variables(argument, variables);
+            }
+            collect_function_outcome_bound_variables(outcome, variables);
+        }
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        }
+        | Proposition::CFunctionPartiallySatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            collect_c_function_bound_variables(function, variables);
+            collect_c_function_specification_bound_variables(specification, variables);
+        }
+        Proposition::CMemoryLoads {
+            memory,
+            pointer,
+            outcome,
+        } => {
+            collect_memory_bound_variables(memory, variables);
+            collect_pointer_bound_variables(pointer, variables);
+            collect_expression_outcome_bound_variables(outcome, variables);
+        }
+        Proposition::CMemoryCanStore {
+            memory, pointer, ..
+        } => {
+            collect_memory_bound_variables(memory, variables);
+            collect_pointer_bound_variables(pointer, variables);
+        }
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => {
+            collect_memory_bound_variables(memory, variables);
+            collect_pointer_bound_variables(base, variables);
+            collect_bitvector_bound_variables(bytes, variables);
+        }
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => {
+            collect_pointer_bound_variables(left_base, variables);
+            collect_bitvector_bound_variables(left_start, variables);
+            collect_bitvector_bound_variables(left_end, variables);
+            collect_pointer_bound_variables(right_base, variables);
+            collect_bitvector_bound_variables(right_start, variables);
+            collect_bitvector_bound_variables(right_end, variables);
+        }
+        Proposition::CResourceSeparate { left, right }
+        | Proposition::CResourceContains {
+            parent: left,
+            child: right,
+        } => {
+            collect_resource_bound_variables(left, variables);
+            collect_resource_bound_variables(right, variables);
+        }
+        Proposition::CResourceComposition(resources) => {
+            for fact in resources.facts() {
+                collect_resource_bound_variables(fact.resource(), variables);
+            }
+        }
+        Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            pointers,
+        } => {
+            collect_memory_bound_variables(before, variables);
+            collect_memory_bound_variables(after, variables);
+            for pointer in pointers {
+                collect_pointer_bound_variables(pointer, variables);
+            }
+        }
+        Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges,
+        } => {
+            collect_memory_bound_variables(before, variables);
+            collect_memory_bound_variables(after, variables);
+            for range in mutable_ranges {
+                collect_pointer_bound_variables(&range.base, variables);
+                collect_bitvector_bound_variables(&range.start, variables);
+                collect_bitvector_bound_variables(&range.end, variables);
+            }
+        }
+        Proposition::CHeapAllocationFreed {
+            before,
+            after,
+            allocation_base,
+            bytes,
+        } => {
+            collect_memory_bound_variables(before, variables);
+            collect_memory_bound_variables(after, variables);
+            collect_pointer_bound_variables(allocation_base, variables);
+            collect_bitvector_bound_variables(bytes, variables);
+        }
         Proposition::And(left, right)
         | Proposition::Or(left, right)
         | Proposition::Implies(left, right) => {
@@ -462,7 +668,421 @@ pub(in crate::kernel) fn collect_proposition_bound_variables(
             }
             collect_proposition_bound_variables(postcondition, variables);
         }
+    }
+}
+
+fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>) {
+    match term {
+        Term::Condition(condition) => collect_condition_bound_variables(condition, variables),
+        Term::Bitvector32(bits) => collect_bitvector_bound_variables(bits, variables),
+        Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
+        Term::CValue(value) => collect_c_value_bound_variables(value, variables),
+        Term::CExpressionOutcome(outcome) => {
+            collect_expression_outcome_bound_variables(outcome, variables)
+        }
+        Term::CStatementOutcome(outcome) => {
+            collect_statement_outcome_bound_variables(outcome, variables)
+        }
+        Term::CFunctionOutcome(outcome) => {
+            collect_function_outcome_bound_variables(outcome, variables)
+        }
+        Term::CState(state) => collect_c_state_bound_variables(state, variables),
+        Term::CMemory(memory) => collect_memory_bound_variables(memory, variables),
+    }
+}
+
+fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
+    match value {
+        CValue::Int32(bits) | CValue::UInt8(bits) => {
+            collect_bitvector_bound_variables(bits, variables)
+        }
+        CValue::Pointer(pointer) => collect_pointer_bound_variables(pointer, variables),
+        CValue::Void => {}
+    }
+}
+
+fn collect_c_expression_bound_variables(
+    expression: &CExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match expression {
+        CExpression::Value(value) => collect_c_value_bound_variables(value, variables),
+        CExpression::Variable(_) => {}
+        CExpression::AddressOf(body)
+        | CExpression::Not(body)
+        | CExpression::Load(body)
+        | CExpression::BitwiseNot(body) => collect_c_expression_bound_variables(body, variables),
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::TypedLoad { pointer, .. } => {
+            collect_c_expression_bound_variables(pointer, variables)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_bound_variables(left, variables);
+            collect_c_expression_bound_variables(right, variables);
+        }
+    }
+}
+
+fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut BTreeSet<Variable>) {
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        } => collect_c_expression_bound_variables(expression, variables),
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bound_variables(argument, variables);
+            }
+        }
+        CStatement::HeapAllocate { bytes, .. } => {
+            collect_c_expression_bound_variables(bytes, variables)
+        }
+        CStatement::HeapFree { pointer } => {
+            collect_c_expression_bound_variables(pointer, variables)
+        }
+        CStatement::Seq(first, second) => {
+            collect_c_statement_bound_variables(first, variables);
+            collect_c_statement_bound_variables(second, variables);
+        }
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            collect_c_expression_bound_variables(pointer, variables);
+            collect_c_expression_bound_variables(value, variables);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_bound_variables(condition, variables);
+            collect_c_statement_bound_variables(then_branch, variables);
+            collect_c_statement_bound_variables(else_branch, variables);
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            body,
+        } => {
+            collect_c_expression_bound_variables(condition, variables);
+            for proposition in invariant {
+                collect_proposition_bound_variables(proposition, variables);
+            }
+            for check in invariant_checks {
+                collect_spec_proposition_bound_variables(check.proposition(), variables);
+            }
+            for check in effect_checks {
+                collect_loop_effect_bound_variables(check.effect(), variables);
+            }
+            collect_c_statement_bound_variables(body, variables);
+        }
+    }
+}
+
+fn collect_loop_effect_bound_variables(effect: &CLoopEffect, variables: &mut BTreeSet<Variable>) {
+    if let CLoopEffect::Mutable(segments) = effect {
+        for segment in segments {
+            collect_c_memory_segment_bound_variables(segment, variables);
+        }
+    }
+}
+
+fn collect_c_memory_segment_bound_variables(
+    segment: &CMemorySegment,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_expression_bound_variables(&segment.base, variables);
+    collect_c_expression_bound_variables(&segment.start, variables);
+    collect_c_expression_bound_variables(&segment.end, variables);
+    if let Some(guard) = segment.guard() {
+        collect_spec_proposition_bound_variables(guard, variables);
+    }
+}
+
+fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Variable>) {
+    for binding in state.locals.bindings.values() {
+        if let CLocalBinding::Object { value, .. } = binding {
+            collect_c_value_bound_variables(value, variables);
+        }
+    }
+    collect_memory_bound_variables(&state.memory, variables);
+    for fact in state.resources.facts() {
+        collect_resource_bound_variables(fact.resource(), variables);
+    }
+    for population in state.counted_populations.iter() {
+        for argument in &population.arguments {
+            collect_c_value_bound_variables(argument, variables);
+        }
+        collect_bitvector_bound_variables(&population.count, variables);
+    }
+}
+
+fn collect_statement_outcome_bound_variables(
+    outcome: &CStatementOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CStatementOutcome::Normal(state) => collect_c_state_bound_variables(state, variables),
+        CStatementOutcome::Return { value, state } => {
+            collect_c_value_bound_variables(value, variables);
+            collect_c_state_bound_variables(state, variables);
+        }
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => {}
+    }
+}
+
+fn collect_function_outcome_bound_variables(
+    outcome: &CFunctionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CFunctionOutcome::Return { value, state } => {
+            collect_c_value_bound_variables(value, variables);
+            collect_c_state_bound_variables(state, variables);
+        }
+        CFunctionOutcome::VerificationDiverges
+        | CFunctionOutcome::UndefinedBehavior(_)
+        | CFunctionOutcome::RuntimeError(_) => {}
+    }
+}
+
+fn collect_spec_proposition_bound_variables(
+    proposition: &SpecProposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        SpecProposition::ForAllInt32 { variable, body, .. }
+        | SpecProposition::ExistsInt32 { variable, body, .. } => {
+            variables.insert(*variable);
+            collect_spec_proposition_bound_variables(body, variables);
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            collect_spec_proposition_bound_variables(left, variables);
+            collect_spec_proposition_bound_variables(right, variables);
+        }
+        SpecProposition::Not(body) => collect_spec_proposition_bound_variables(body, variables),
         _ => {}
+    }
+}
+
+fn collect_c_resource_spec_bound_variables(
+    resource: &CResourceSpec,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResourceSpec::Quantified { quantity, resource } => {
+            collect_c_expression_bound_variables(quantity, variables);
+            collect_c_resource_spec_bound_variables(resource, variables);
+        }
+        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => {
+            collect_c_memory_segment_bound_variables(segment, variables)
+        }
+        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bound_variables(argument, variables);
+            }
+        }
+    }
+}
+
+fn collect_c_function_bound_variables(function: &CFunction, variables: &mut BTreeSet<Variable>) {
+    for resource in function.resource_requires() {
+        collect_c_resource_spec_bound_variables(resource, variables);
+    }
+    for resource in function.resource_ensures() {
+        collect_c_resource_spec_bound_variables(resource, variables);
+    }
+    for proposition in function.contract_requires() {
+        collect_spec_proposition_bound_variables(proposition, variables);
+    }
+    for proposition in function.contract_ensures() {
+        collect_spec_proposition_bound_variables(proposition, variables);
+    }
+    for segment in function.contract_mutable() {
+        collect_c_memory_segment_bound_variables(segment, variables);
+    }
+    collect_c_statement_bound_variables(function.body(), variables);
+}
+
+fn collect_c_function_specification_bound_variables(
+    specification: &CFunctionSpecification,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_state_bound_variables(specification.state(), variables);
+    for argument in specification.arguments() {
+        collect_c_expression_bound_variables(argument, variables);
+    }
+    for requirement in specification.requires() {
+        collect_proposition_bound_variables(requirement, variables);
+    }
+    collect_function_outcome_bound_variables(specification.outcome(), variables);
+}
+
+fn collect_expression_outcome_bound_variables(
+    outcome: &CExpressionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    if let CExpressionOutcome::Value(value) = outcome {
+        collect_c_value_bound_variables(value, variables);
+    }
+}
+
+fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<Variable>) {
+    collect_pointer_offset_bound_variables(&pointer.offset, variables);
+}
+
+fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
+    for (pointer, value) in memory.cells.as_ref() {
+        collect_pointer_bound_variables(pointer, variables);
+        collect_c_value_bound_variables(value, variables);
+    }
+}
+
+fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
+    match resource {
+        CResource::Memory(range) => {
+            collect_pointer_bound_variables(&range.base, variables);
+            collect_bitvector_bound_variables(&range.start, variables);
+            collect_bitvector_bound_variables(&range.end, variables);
+        }
+        CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_value_bound_variables(argument, variables);
+            }
+        }
+    }
+}
+
+/// Collects identities introduced by `RangeFold` binders inside a term.
+/// `collect_bitvector_variables` intentionally removes those identities from
+/// its result because they are not free; freshness construction needs the
+/// bound identities as well so a logical or fold binder cannot reuse one.
+fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_bound_variables(left, variables);
+            collect_bitvector_bound_variables(right, variables);
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            collect_bitvector_bound_variables(value, variables);
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_bound_variables(condition, variables);
+            collect_bitvector_bound_variables(then_term, variables);
+            collect_bitvector_bound_variables(else_term, variables);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            collect_bitvector_bound_variables(start, variables);
+            collect_bitvector_bound_variables(end, variables);
+            collect_bitvector_bound_variables(initial, variables);
+            variables.insert(*accumulator);
+            variables.insert(*item);
+            collect_bitvector_bound_variables(body, variables);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_bound_variables(argument, variables);
+            }
+        }
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            // Memory snapshots are immutable kernel values; their free
+            // variable collector remains the source of truth for snapshot
+            // contents, while the pointer can contain nested fold terms.
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_offset_bound_variables(&pointer.offset, variables);
+        }
+    }
+}
+
+fn collect_condition_bound_variables(
+    condition: &ConditionTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match condition {
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_bitvector_bound_variables(left, variables);
+            collect_bitvector_bound_variables(right, variables);
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_bound_variables(left, variables);
+            collect_pointer_offset_bound_variables(right, variables);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_offset_bound_variables(&left.offset, variables);
+            collect_pointer_offset_bound_variables(&right.offset, variables);
+        }
+    }
+}
+
+fn collect_pointer_offset_bound_variables(
+    offset: &PointerOffsetTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_bound_variables(left, variables);
+            collect_pointer_offset_bound_variables(right, variables);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            collect_bitvector_bound_variables(value, variables);
+        }
     }
 }
 
@@ -1430,6 +2050,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 }),
             })
             .collect(),
+        contract_effect_claim_required: function.contract_effect_claim_required,
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
         composite_resource_definitions: function
@@ -1748,17 +2369,59 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
             item,
             body,
         } => {
-            let body = if *accumulator == from || *item == from {
-                body.as_ref().clone()
-            } else {
-                substitute_bitvector_variable(body, from, to)
-            };
+            let mut body = body.as_ref().clone();
+            let original_accumulator = *accumulator;
+            let original_item = *item;
+            let mut accumulator = *accumulator;
+            let mut item = *item;
+            let mut replacement_variables = BTreeSet::new();
+            collect_bitvector_variables(to, &mut replacement_variables);
+
+            // A fold binder shadows `from` in the body, so no substitution
+            // enters that body in this case. Otherwise rename a binder that
+            // occurs in the replacement before descending into the body.
+            // The fresh names are reserved against both free and nested fold
+            // variables, so the two renames cannot collide with one another.
+            if original_accumulator != from && replacement_variables.contains(&accumulator) {
+                let mut reserved = BTreeSet::new();
+                collect_bitvector_variables(&body, &mut reserved);
+                collect_bitvector_bound_variables(&body, &mut reserved);
+                reserved.extend(replacement_variables.iter().copied());
+                reserved.insert(from);
+                reserved.insert(accumulator);
+                reserved.insert(item);
+                let mut fresh = KernelVariableGenerator::fresh_for(0, reserved);
+                let renamed = fresh.next();
+                body = substitute_bitvector_variable(
+                    &body,
+                    accumulator,
+                    &Bitvector32Term::Variable(renamed),
+                );
+                accumulator = renamed;
+            }
+            if original_item != from && replacement_variables.contains(&item) {
+                let mut reserved = BTreeSet::new();
+                collect_bitvector_variables(&body, &mut reserved);
+                collect_bitvector_bound_variables(&body, &mut reserved);
+                reserved.extend(replacement_variables.iter().copied());
+                reserved.insert(from);
+                reserved.insert(accumulator);
+                reserved.insert(item);
+                let mut fresh = KernelVariableGenerator::fresh_for(0, reserved);
+                let renamed = fresh.next();
+                body =
+                    substitute_bitvector_variable(&body, item, &Bitvector32Term::Variable(renamed));
+                item = renamed;
+            }
+            if original_accumulator != from && original_item != from {
+                body = substitute_bitvector_variable(&body, from, to);
+            }
             Bitvector32Term::range_fold(
                 substitute_bitvector_variable(start, from, to),
                 substitute_bitvector_variable(end, from, to),
                 substitute_bitvector_variable(initial, from, to),
-                *accumulator,
-                *item,
+                accumulator,
+                item,
                 body,
             )
         }

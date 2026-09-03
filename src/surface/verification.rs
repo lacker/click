@@ -687,11 +687,12 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         let mut theorem_certification_authorities =
             BTreeMap::<String, Vec<CVerifiedPureTheorem>>::new();
         for theorem in verified_theorems.iter().filter(|theorem| {
-            theorem
-                .theorem_definition
-                .parameters()
-                .iter()
-                .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
+            theorem.kernel_authority.is_some()
+                && theorem
+                    .theorem_definition
+                    .parameters()
+                    .iter()
+                    .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
         }) {
             let implication = theorem.requires.iter().rev().fold(
                 theorem.conclusion.clone(),
@@ -714,12 +715,14 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 .entry(theorem.theorem_definition.name().to_string())
                 .or_default()
                 .push(fact);
-            if let Some(authority) = &theorem.kernel_authority {
-                theorem_certification_authorities
-                    .entry(theorem.theorem_definition.name().to_string())
-                    .or_default()
-                    .push(authority.clone());
-            }
+            let authority = theorem
+                .kernel_authority
+                .as_ref()
+                .expect("theorem certification facts require kernel authority");
+            theorem_certification_authorities
+                .entry(theorem.theorem_definition.name().to_string())
+                .or_default()
+                .push(authority.clone());
         }
         let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
         check_verification_deadline()?;
@@ -1175,7 +1178,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     detail,
                 )));
             };
-            let ordered_claim_proofs = function_verified
+            let _ordered_claim_proofs = function_verified
                 .iter()
                 .map(|verified| {
                     let key = if has_explicit_claims {
@@ -1202,13 +1205,19 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let rule = c_verified_function_rule(contract_function, &ordered_claim_proofs)
-                .ok_or_else(|| {
+            // Package every kernel-certified structural claim. Surface proof
+            // scripts mention ensures and explicit effects; a resource-backed
+            // mutable frame (for example `consumes p[1..2]`) is covered by
+            // the resource transition, while explicit mutable frames require
+            // an Effect claim.
+            let rule = c_verified_function_rule(contract_function, &certified_claims).ok_or_else(
+                || {
                     ClickError::new(format!(
                         "could not package verified contract for `{}`",
                         function_block.signature.name()
                     ))
-                })?;
+                },
+            )?;
             function_environment = function_environment.with_verified_function_rule(rule);
         }
         if instrumentation::enabled() {
@@ -1668,7 +1677,7 @@ pub(in crate::surface) fn build_function_environment(
                     click_function_environment,
                     resource_environment,
                 )?;
-                function
+                let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
                     .with_composite_resource_definitions(composite_resource_definitions(
@@ -1683,7 +1692,12 @@ pub(in crate::surface) fn build_function_environment(
                         contract_mutable,
                         contract_claims,
                         opaque_supported,
-                    )
+                    );
+                if function_block.effects().is_empty() {
+                    function.with_resource_derived_mutable_frame()
+                } else {
+                    function
+                }
             }
             None => function.to_kernel_function(),
         };

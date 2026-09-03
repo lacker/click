@@ -3138,16 +3138,73 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                 true,
             ));
         }
-        // Every declared resource has a population count, but ordinary body
-        // facts are handled by composite expansion above. Only a definition
-        // whose body invariant observes its population count needs this
-        // additional invariant evaluation. In particular, do not force an
-        // undecided conditional body before certification enumerates its
-        // guard cases.
-        if !definition.is_counted_population() && !include_ordinary {
+        // Resource expansion checks ownership relations, but a composite's
+        // declared pure facts must also be checked from the kernel-side body
+        // state. Ordinary resources do not need a population ledger merely
+        // to validate those facts; this is deliberately independent of the
+        // population-wide accounting policy below. A body with no facts has
+        // no additional proposition to validate here.
+        let check_declared_facts = definition.is_counted_population()
+            || include_ordinary
+            || !definition.facts().is_empty();
+        if !check_declared_facts {
             continue;
         }
-        if population_count.is_none() {
+        let body_active = match population_count {
+            Some(_) => {
+                let mut population_state = state.clone();
+                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                    if parameter.c_type() != argument.c_type() {
+                        return None;
+                    }
+                    population_state.locals.set_typed(
+                        parameter.name().to_string(),
+                        argument.clone(),
+                        parameter.c_type(),
+                    );
+                }
+                let mut budget = ExecutionBudget::default();
+                let evaluation_assumptions = assumptions
+                    .clone()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads();
+                evaluate_composite_resource_body_condition(
+                    definition,
+                    &population_state,
+                    &evaluation_assumptions,
+                    &mut budget,
+                )?
+            }
+            None if !definition.is_counted_population() && !include_ordinary => {
+                let mut population_state = state.clone();
+                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                    if parameter.c_type() != argument.c_type() {
+                        return None;
+                    }
+                    population_state.locals.set_typed(
+                        parameter.name().to_string(),
+                        argument.clone(),
+                        parameter.c_type(),
+                    );
+                }
+                let mut budget = ExecutionBudget::default();
+                let evaluation_assumptions = assumptions
+                    .clone()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads();
+                match evaluate_composite_resource_body_condition(
+                    definition,
+                    &population_state,
+                    &evaluation_assumptions,
+                    &mut budget,
+                ) {
+                    Some(active) => active,
+                    None => continue,
+                }
+            }
+            None => return None,
+        };
+        if population_count.is_none() && (definition.is_counted_population() || include_ordinary) {
             return None;
         }
         let mut population_state = state.clone();
@@ -3166,12 +3223,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             .clone()
             .allow_symbolic_contract_loads()
             .prefer_symbolic_external_loads();
-        if !evaluate_composite_resource_body_condition(
-            definition,
-            &population_state,
-            &evaluation_assumptions,
-            &mut budget,
-        )? {
+        if !body_active {
             continue;
         }
         // Definition facts are justified by the population body, even while

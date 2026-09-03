@@ -123,6 +123,7 @@ impl<'a> Proof<'a> {
         site: ProofSite,
         before_state: &CState,
         check: &CLoopEffectCheck,
+        whole_loop_effect_facts: &[Proposition],
     ) -> Result<Proof<'b>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("a loop effect requires an execution proof"));
@@ -135,6 +136,7 @@ impl<'a> Proof<'a> {
         execution.core.loop_effect_goal = Some(LoopEffectGoal {
             before_state: before_state.clone(),
             check: check.clone(),
+            whole_loop_effect_facts: whole_loop_effect_facts.to_vec(),
             closed: false,
         });
         execution.presentation.surface_record = SurfaceRecord::default();

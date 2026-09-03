@@ -46,6 +46,7 @@ pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use loops::c_loop_state_components_match_at_back_edge;
 pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;
+pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 pub(crate) use reasoning::resolve_load_variables_from_registry;

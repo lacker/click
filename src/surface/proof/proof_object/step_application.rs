@@ -91,6 +91,15 @@ impl<'a> Proof<'a> {
         }
 
         let transition = match &step {
+            ProofStep::Induct {
+                parameter,
+                hypothesis,
+            } => self.apply_induct(parameter, hypothesis),
+            ProofStep::ApplyInduction {
+                hypothesis,
+                argument,
+                premises,
+            } => self.apply_induction(hypothesis, argument, premises),
             ProofStep::ApplyTheoremUsing {
                 application,
                 premises,
@@ -461,15 +470,28 @@ impl<'a> Proof<'a> {
             if goal.closed {
                 return Err(self.step_error("the structural effect goal was closed more than once"));
             }
+            let omit_enclosing_whole_summary = |fact: &Proposition| {
+                goal.check.span() == CLoopEffectSpan::Step
+                    && goal
+                        .whole_loop_effect_facts
+                        .iter()
+                        .any(|whole| whole == fact)
+            };
             let mut loop_effect_facts = frame_facts.clone();
             loop_effect_facts.extend(
                 execution
                     .core
                     .effect_facts
                     .iter()
-                    .map(|fact| fact.proposition().clone()),
+                    .map(|fact| fact.proposition().clone())
+                    .filter(|fact| !omit_enclosing_whole_summary(fact)),
             );
-            loop_effect_facts.extend(self.facts().memory_effect_summaries().cloned());
+            loop_effect_facts.extend(
+                self.facts()
+                    .memory_effect_summaries()
+                    .filter(|fact| !omit_enclosing_whole_summary(fact))
+                    .cloned(),
+            );
             loop_effect_facts.sort();
             loop_effect_facts.dedup();
             c_loop_effects_hold_at_back_edge(
@@ -1190,6 +1212,149 @@ impl<'a> Proof<'a> {
                     "`intro` requires an implication, negation, or universal goal, got {goal:?}"
                 )),
                 _ => unreachable!("kernel returned an unrelated intro error"),
+            })
+    }
+
+    #[inline(never)]
+    fn apply_induct(
+        &self,
+        parameter: &str,
+        hypothesis: &str,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return Err(self.step_error("`induct` requires a pure theorem proof"));
+        };
+        let Some(setup) = context.induction_setup.as_ref() else {
+            return Err(self.step_error("`induct` is not active for this pure theorem"));
+        };
+        if parameter != setup.parameter || hypothesis != setup.hypothesis {
+            return Err(self.step_error("induction step does not match the theorem setup"));
+        }
+        let expected_goal =
+            self.lower_surface_proposition(&setup.surface_goal, "induction theorem goal")?;
+        if self.goal() != Some(&expected_goal) {
+            return Err(
+                self.step_error("`induct` must be the first step of the pure theorem proof")
+            );
+        }
+        let Some(CValue::Int32(current)) = context.theorem_context.values.get(parameter) else {
+            return Err(self.step_error("induction parameter must have type int32"));
+        };
+        let nonnegative = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(current.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        if !self.facts().contains(&nonnegative) {
+            return Err(self.step_error(format!(
+                "`induct({parameter})` requires an exact nonnegative requirement"
+            )));
+        }
+        let quantified = super::super::pure_theorems::pure_induction_hypothesis(
+            setup,
+            context.theorem_context,
+            context.predicate_environment,
+            context.click_function_environment,
+        )?;
+        if self.facts().contains(&quantified) {
+            return Err(self.step_error("induction hypothesis was already introduced"));
+        }
+        let facts = self.facts().with_fact(quantified.clone());
+        Ok(self.checked_fact_transition(
+            self.state().locals().clone(),
+            facts,
+            false,
+            vec![quantified.clone()],
+            vec![quantified],
+        ))
+    }
+
+    #[inline(never)]
+    fn apply_induction(
+        &self,
+        hypothesis: &str,
+        argument: &ContractExpression,
+        surface_premises: &[ClickProposition],
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return Err(self.step_error("induction application requires a pure theorem proof"));
+        };
+        let Some(setup) = context.induction_setup.as_ref() else {
+            return Err(self.step_error("induction hypothesis is not active"));
+        };
+        if hypothesis != setup.hypothesis {
+            return Err(self.step_error(format!("unknown induction hypothesis `{hypothesis}`")));
+        }
+        let explicit_premises = surface_premises
+            .iter()
+            .map(|premise| self.lower_surface_proposition(premise, "induction premise"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let state = CState::new().with_memory(context.theorem_context.memory.clone());
+        let mut active_functions = BTreeSet::new();
+        let value = evaluate_contract_expression_with_environment(
+            &context.theorem_context.values,
+            &context.theorem_context.array_refs,
+            &state,
+            &state,
+            None,
+            self.facts().assumptions(),
+            argument,
+            context.predicate_environment,
+            context.click_function_environment,
+            &RecordedSnapshots::new(),
+            &mut active_functions,
+        )
+        .map_err(|message| {
+            self.step_error(format!("could not evaluate induction argument: {message}"))
+        })?;
+        let CValue::Int32(argument) = value else {
+            return Err(self.step_error("induction argument must have type int32"));
+        };
+        let quantified = super::super::pure_theorems::pure_induction_hypothesis(
+            setup,
+            context.theorem_context,
+            context.predicate_environment,
+            context.click_function_environment,
+        )?;
+        self.state
+            .apply_instantiate(quantified, argument, &explicit_premises)
+            .map(|state| {
+                // `apply_instantiate` has performed the complete kernel
+                // premise/order/conclusion check. Publish its exact fact
+                // delta through the same Proof transition used by ordinary
+                // quantified instantiation.
+                let added_facts = state.state().checked_facts().to_vec();
+                let mut facts = self.facts().clone();
+                for fact in &added_facts {
+                    facts = facts.with_fact(fact.clone());
+                }
+                let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+                self.checked_fact_transition(
+                    self.state().locals().clone(),
+                    facts,
+                    complete,
+                    added_facts.clone(),
+                    added_facts,
+                )
+            })
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("induction application requires a proposition goal")
+                }
+                PropositionCloseError::InstantiatePremiseUnavailable(premise) => self.step_error(
+                    format!("induction premise is not exactly available: {premise:?}"),
+                ),
+                PropositionCloseError::InstantiateQuantifiedUnavailable => {
+                    self.step_error("induction hypothesis is not exactly available")
+                }
+                PropositionCloseError::InstantiateInvalid(message) => {
+                    let _ = message;
+                    self.step_error("kernel rejected induction application")
+                }
+                _ => unreachable!("kernel returned an unrelated induction error"),
             })
     }
 

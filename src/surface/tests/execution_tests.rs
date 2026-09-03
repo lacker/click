@@ -613,40 +613,84 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     assert_eq!(
         implication_body(verified.theorem.proposition()),
         &Proposition::CFunctionPartiallySatisfiesSpecification {
-            function: syntax::parse_function(FILL3_C)
-                .expect("fill3 should parse")
-                .to_kernel_function()
-                .with_resource_summary(
-                    vec![CResourceSpec::OwnMemory(CMemorySegment::new(
-                        CExpression::Variable("p".to_string()),
-                        CExpression::Value(int32(0)),
-                        CExpression::Value(int32(3)),
-                    ))],
-                    Vec::new(),
+            function: {
+                let parsed = syntax::parse_function(FILL3_C)
+                    .expect("fill3 should parse")
+                    .to_kernel_function();
+                let CStatement::Seq(prefix, suffix) = parsed.body().clone() else {
+                    panic!("fill3 body should have a prefix and suffix");
+                };
+                let CStatement::Seq(loop_statement, result) = suffix.as_ref().clone() else {
+                    panic!("fill3 suffix should contain the loop and return");
+                };
+                let CStatement::While {
+                    condition,
+                    invariant,
+                    invariant_checks,
+                    body,
+                    ..
+                } = loop_statement.as_ref().clone()
+                else {
+                    panic!("fill3 suffix should start with a loop");
+                };
+                c_function(
+                    CType::Int32,
+                    "fill3",
+                    vec![crate::kernel::c_parameter("p", CType::Int32Pointer)],
+                    c_seq(
+                        prefix.as_ref().clone(),
+                        c_seq(
+                            c_while_with_invariant_and_effect_checks(
+                                condition,
+                                invariant,
+                                invariant_checks,
+                                vec![CLoopEffectCheck::new_with_span(
+                                    CLoopEffect::Mutable(vec![CMemorySegment::new(
+                                        crate::kernel::c_variable("p"),
+                                        crate::kernel::c_int32_literal(0),
+                                        crate::kernel::c_int32_literal(3),
+                                    )]),
+                                    CLoopEffectSpan::Whole,
+                                    Some("loop 0 inherited owned resource frame".to_string()),
+                                )],
+                                body.as_ref().clone(),
+                            ),
+                            result.as_ref().clone(),
+                        ),
+                    ),
                 )
-                .with_contract(
-                    vec![SpecProposition::MemoryLoadable {
-                        memory: SpecMemory::Current,
-                        base: SpecExpression::CExpression(CExpression::Variable("p".to_string(),)),
-                        start: SpecExpression::Value(int32(0)),
-                        end: SpecExpression::Value(int32(3)),
-                        element_width: 4,
-                    }],
-                    vec![SpecProposition::Comparison {
-                        left: SpecExpression::CExpression(CExpression::Variable(
-                            "result".to_string(),
-                        )),
-                        operator: CComparisonOperator::Equal,
-                        right: SpecExpression::Value(int32(2)),
-                    }],
-                    vec![CMemorySegment::new(
-                        CExpression::Variable("p".to_string()),
-                        CExpression::Value(int32(0)),
-                        CExpression::Value(int32(3)),
-                    )],
-                    vec![CFunctionContractClaim::ensure_proposition(0, 0)],
-                    true,
-                ),
+                .with_source_body(parsed.source_body().clone())
+            }
+            .with_resource_summary(
+                vec![CResourceSpec::OwnMemory(CMemorySegment::new(
+                    CExpression::Variable("p".to_string()),
+                    CExpression::Value(int32(0)),
+                    CExpression::Value(int32(3)),
+                ))],
+                Vec::new(),
+            )
+            .with_contract(
+                vec![SpecProposition::MemoryLoadable {
+                    memory: SpecMemory::Current,
+                    base: SpecExpression::CExpression(CExpression::Variable("p".to_string(),)),
+                    start: SpecExpression::Value(int32(0)),
+                    end: SpecExpression::Value(int32(3)),
+                    element_width: 4,
+                }],
+                vec![SpecProposition::Comparison {
+                    left: SpecExpression::CExpression(CExpression::Variable("result".to_string(),)),
+                    operator: CComparisonOperator::Equal,
+                    right: SpecExpression::Value(int32(2)),
+                }],
+                vec![CMemorySegment::new(
+                    CExpression::Variable("p".to_string()),
+                    CExpression::Value(int32(0)),
+                    CExpression::Value(int32(3)),
+                )],
+                vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+                true,
+            )
+            .with_resource_derived_mutable_frame(),
             specification: verified.specification.clone(),
         }
     );

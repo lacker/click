@@ -17,7 +17,7 @@ mod memory_state;
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;
-use memory_state::*;
+pub(crate) use memory_state::resource_context_has_symbolic_int32_range_read;
 pub(super) use resource_algebra::*;
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
@@ -533,6 +533,10 @@ pub struct CFunction {
     pub(super) contract_requires: Vec<SpecProposition>,
     pub(super) contract_ensures: Vec<SpecProposition>,
     pub(super) contract_mutable: Vec<CMemorySegment>,
+    /// Whether the mutable contract frame requires an explicit Effect claim.
+    /// Resource-backed frames are inferred from consumed ownership and are
+    /// covered by the resource transition instead.
+    pub(super) contract_effect_claim_required: bool,
     pub(super) contract_claims: Vec<CFunctionContractClaim>,
     pub(super) opaque_contract_supported: bool,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,

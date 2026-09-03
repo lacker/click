@@ -1,23 +1,32 @@
 use super::*;
 
-pub(super) fn resource_context_has_symbolic_int32_range_read(
+pub(crate) fn resource_context_has_symbolic_int32_range_read(
     resources: &ResourceContext,
     base: &Pointer,
     bytes: &Bitvector32Term,
+    assumptions: &PureFactContext,
 ) -> bool {
+    let elements = match bytes {
+        Bitvector32Term::Constant(bytes) if bytes % 4 == 0 => Bitvector32Term::Constant(bytes / 4),
+        Bitvector32Term::Multiply(left, right) if **right == Bitvector32Term::Constant(4) => {
+            left.as_ref().clone()
+        }
+        Bitvector32Term::Multiply(left, right) if **left == Bitvector32Term::Constant(4) => {
+            right.as_ref().clone()
+        }
+        _ => return false,
+    };
+    let required = CMemoryRange::new(base.clone(), Bitvector32Term::Constant(0), elements);
     resources.facts().iter().any(|fact| {
         let Some(range) = fact.memory_range() else {
             return false;
         };
-        if range.element_width() != 4 {
-            return false;
-        }
-        let range_base = range.base().offset_by_int32_elements(range.start().clone());
-        let range_bytes = Bitvector32Term::multiply(
-            Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
-            Bitvector32Term::Constant(4),
-        );
-        &range_base == base && &range_bytes == bytes
+        range.element_width() == 4
+            && crate::kernel::primitives::resource_algebra::memory_range_covers(
+                range,
+                &required,
+                assumptions,
+            )
     })
 }
 

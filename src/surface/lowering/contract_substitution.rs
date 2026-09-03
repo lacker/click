@@ -273,19 +273,21 @@ pub(in crate::surface) fn substitute_click_proposition(
         ClickProposition::ForAll { c_type, name, body } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
+            let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::ForAll {
                 c_type: *c_type,
-                name: name.clone(),
-                body: Box::new(substitute_click_proposition(body, &scoped)?),
+                name,
+                body: Box::new(body),
             })
         }
         ClickProposition::Exists { c_type, name, body } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
+            let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::Exists {
                 c_type: *c_type,
-                name: name.clone(),
-                body: Box::new(substitute_click_proposition(body, &scoped)?),
+                name,
+                body: Box::new(body),
             })
         }
         ClickProposition::RangeAll {
@@ -296,11 +298,12 @@ pub(in crate::surface) fn substitute_click_proposition(
         } => {
             let mut scoped = substitutions.clone();
             scoped.remove(item);
+            let (item, body) = prepare_click_proposition_binding_body(item, body, &scoped)?;
             Ok(ClickProposition::RangeAll {
                 start: substitute_contract_expression(start, substitutions)?,
                 end: substitute_contract_expression(end, substitutions)?,
-                item: item.clone(),
-                body: Box::new(substitute_click_proposition(body, &scoped)?),
+                item,
+                body: Box::new(body),
             })
         }
         ClickProposition::RangeAny {
@@ -311,11 +314,12 @@ pub(in crate::surface) fn substitute_click_proposition(
         } => {
             let mut scoped = substitutions.clone();
             scoped.remove(item);
+            let (item, body) = prepare_click_proposition_binding_body(item, body, &scoped)?;
             Ok(ClickProposition::RangeAny {
                 start: substitute_contract_expression(start, substitutions)?,
                 end: substitute_contract_expression(end, substitutions)?,
-                item: item.clone(),
-                body: Box::new(substitute_click_proposition(body, &scoped)?),
+                item,
+                body: Box::new(body),
             })
         }
         ClickProposition::PredicateCall { name, arguments } => {
@@ -327,6 +331,334 @@ pub(in crate::surface) fn substitute_click_proposition(
                     .collect::<Result<Vec<_>, _>>()?,
             })
         }
+    }
+}
+
+fn prepare_click_proposition_binding_body(
+    binder: &str,
+    body: &ClickProposition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<(String, ClickProposition), String> {
+    if !substitutions_reference_name(substitutions, binder) {
+        return Ok((
+            binder.to_string(),
+            substitute_click_proposition(body, substitutions)?,
+        ));
+    }
+
+    let fresh = fresh_click_binding_name_for_proposition(binder, body, substitutions);
+    let renaming = BTreeMap::from([(
+        binder.to_string(),
+        ContractExpression::CBinding(fresh.clone()),
+    )]);
+    let renamed = substitute_click_proposition(body, &renaming)?;
+    Ok((
+        fresh,
+        substitute_click_proposition(&renamed, substitutions)?,
+    ))
+}
+
+fn prepare_contract_expression_binding_body(
+    binder: &str,
+    body: &ContractExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<(String, ContractExpression), String> {
+    if !substitutions_reference_name(substitutions, binder) {
+        return Ok((
+            binder.to_string(),
+            substitute_contract_expression(body, substitutions)?,
+        ));
+    }
+
+    let fresh = fresh_click_binding_name_for_expression(binder, body, substitutions);
+    let renaming = BTreeMap::from([(
+        binder.to_string(),
+        ContractExpression::CBinding(fresh.clone()),
+    )]);
+    let renamed = substitute_contract_expression(body, &renaming)?;
+    Ok((
+        fresh,
+        substitute_contract_expression(&renamed, substitutions)?,
+    ))
+}
+
+fn prepare_contract_range_fold_body(
+    accumulator: &str,
+    item: &str,
+    body: &ContractExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<(String, String, ContractExpression), String> {
+    let mut used = substitutions.keys().cloned().collect::<BTreeSet<_>>();
+    collect_contract_expression_referenced_names(body, &mut used);
+    collect_contract_expression_binding_names(body, &mut used);
+    for expression in substitutions.values() {
+        collect_contract_expression_referenced_names(expression, &mut used);
+        collect_contract_expression_binding_names(expression, &mut used);
+    }
+    used.insert(accumulator.to_string());
+    used.insert(item.to_string());
+
+    let original_accumulator = accumulator.to_string();
+    let original_item = item.to_string();
+    let mut accumulator = original_accumulator.clone();
+    let mut item = original_item.clone();
+    let mut renamed_body = body.clone();
+
+    if substitutions_reference_name(substitutions, &original_accumulator) {
+        let fresh = fresh_click_binding_name(used.clone());
+        used.insert(fresh.clone());
+        let renaming = BTreeMap::from([(
+            original_accumulator.clone(),
+            ContractExpression::CBinding(fresh.clone()),
+        )]);
+        renamed_body = substitute_contract_expression(&renamed_body, &renaming)?;
+        accumulator = fresh;
+    }
+    if original_item != original_accumulator
+        && substitutions_reference_name(substitutions, &original_item)
+    {
+        let fresh = fresh_click_binding_name(used);
+        let renaming = BTreeMap::from([(
+            original_item.clone(),
+            ContractExpression::CBinding(fresh.clone()),
+        )]);
+        renamed_body = substitute_contract_expression(&renamed_body, &renaming)?;
+        item = fresh;
+    } else if original_item == original_accumulator {
+        item = accumulator.clone();
+    }
+
+    Ok((
+        accumulator,
+        item,
+        substitute_contract_expression(&renamed_body, substitutions)?,
+    ))
+}
+
+fn substitutions_reference_name(
+    substitutions: &BTreeMap<String, ContractExpression>,
+    name: &str,
+) -> bool {
+    substitutions.values().any(|expression| {
+        let mut names = BTreeSet::new();
+        collect_contract_expression_referenced_names(expression, &mut names);
+        names.contains(name)
+    })
+}
+
+fn fresh_click_binding_name_for_proposition(
+    binder: &str,
+    body: &ClickProposition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> String {
+    let mut used = substitutions.keys().cloned().collect::<BTreeSet<_>>();
+    collect_click_proposition_referenced_names(body, &mut used);
+    collect_click_proposition_binding_names(body, &mut used);
+    for expression in substitutions.values() {
+        collect_contract_expression_referenced_names(expression, &mut used);
+        collect_contract_expression_binding_names(expression, &mut used);
+    }
+    used.insert(binder.to_string());
+    fresh_click_binding_name(used)
+}
+
+fn fresh_click_binding_name_for_expression(
+    binder: &str,
+    body: &ContractExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> String {
+    let mut used = substitutions.keys().cloned().collect::<BTreeSet<_>>();
+    collect_contract_expression_referenced_names(body, &mut used);
+    collect_contract_expression_binding_names(body, &mut used);
+    for expression in substitutions.values() {
+        collect_contract_expression_referenced_names(expression, &mut used);
+        collect_contract_expression_binding_names(expression, &mut used);
+    }
+    used.insert(binder.to_string());
+    fresh_click_binding_name(used)
+}
+
+fn fresh_click_binding_name(used: BTreeSet<String>) -> String {
+    let mut index = 0usize;
+    loop {
+        let candidate = format!("__click_binder_{index}");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn collect_click_proposition_binding_names(
+    proposition: &ClickProposition,
+    names: &mut BTreeSet<String>,
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_contract_expression_binding_names(left, names);
+            collect_contract_expression_binding_names(right, names);
+        }
+        ClickProposition::Separate { left, right } => {
+            collect_resource_subject_binding_names(left, names);
+            collect_resource_subject_binding_names(right, names);
+        }
+        ClickProposition::Contains { parent, child } => {
+            collect_resource_subject_binding_names(parent, names);
+            collect_resource_subject_binding_names(child, names);
+        }
+        ClickProposition::Loadable { segment } => {
+            collect_contract_segment_binding_names(segment, names);
+        }
+        ClickProposition::Defined { expression } => {
+            collect_contract_expression_binding_names(expression, names);
+        }
+        ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
+            collect_click_proposition_binding_names(proposition, names);
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_click_proposition_binding_names(left, names);
+            collect_click_proposition_binding_names(right, names);
+        }
+        ClickProposition::ForAll { name, body, .. }
+        | ClickProposition::Exists { name, body, .. } => {
+            names.insert(name.clone());
+            collect_click_proposition_binding_names(body, names);
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        }
+        | ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            collect_contract_expression_binding_names(start, names);
+            collect_contract_expression_binding_names(end, names);
+            names.insert(item.clone());
+            collect_click_proposition_binding_names(body, names);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_binding_names(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_contract_expression_binding_names(
+    expression: &ContractExpression,
+    names: &mut BTreeSet<String>,
+) {
+    match expression {
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => {}
+        ContractExpression::Field { base, .. }
+        | ContractExpression::Old(base)
+        | ContractExpression::At {
+            expression: base, ..
+        }
+        | ContractExpression::BitwiseNot(base) => {
+            collect_contract_expression_binding_names(base, names);
+        }
+        ContractExpression::ResourceCount(resource) => {
+            collect_resource_clause_binding_names(resource, names);
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            collect_contract_expression_binding_names(left, names);
+            collect_contract_expression_binding_names(right, names);
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_click_proposition_binding_names(condition, names);
+            collect_contract_expression_binding_names(then_branch, names);
+            collect_contract_expression_binding_names(else_branch, names);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            collect_contract_expression_binding_names(start, names);
+            collect_contract_expression_binding_names(end, names);
+            collect_contract_expression_binding_names(initial, names);
+            names.insert(accumulator.clone());
+            names.insert(item.clone());
+            collect_contract_expression_binding_names(body, names);
+        }
+        ContractExpression::Let {
+            name, value, body, ..
+        } => {
+            names.insert(name.clone());
+            collect_contract_expression_binding_names(value, names);
+            collect_contract_expression_binding_names(body, names);
+        }
+        ContractExpression::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_binding_names(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_resource_subject_binding_names(
+    resource: &ResourceSubject,
+    names: &mut BTreeSet<String>,
+) {
+    match resource {
+        ResourceSubject::Memory(segment) => collect_contract_segment_binding_names(segment, names),
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_binding_names(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_resource_clause_binding_names(resource: &ResourceClause, names: &mut BTreeSet<String>) {
+    match resource {
+        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+            collect_contract_segment_binding_names(segment, names)
+        }
+        ResourceClause::Quantified { quantity, resource } => {
+            collect_contract_expression_binding_names(quantity, names);
+            collect_resource_clause_binding_names(resource, names);
+        }
+        ResourceClause::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_binding_names(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_contract_segment_binding_names(segment: &ContractSegment, names: &mut BTreeSet<String>) {
+    if let ContractSegmentSurface::Range { base, start, end } = &segment.surface {
+        collect_contract_expression_binding_names(base, names);
+        collect_contract_expression_binding_names(start, names);
+        collect_contract_expression_binding_names(end, names);
     }
 }
 
@@ -1508,13 +1840,15 @@ pub(in crate::surface) fn substitute_contract_expression(
             let mut scoped = substitutions.clone();
             scoped.remove(accumulator);
             scoped.remove(item);
+            let (accumulator, item, body) =
+                prepare_contract_range_fold_body(accumulator, item, body, &scoped)?;
             Ok(ContractExpression::RangeFold {
                 start: Box::new(substitute_contract_expression(start, substitutions)?),
                 end: Box::new(substitute_contract_expression(end, substitutions)?),
                 initial: Box::new(substitute_contract_expression(initial, substitutions)?),
-                accumulator: accumulator.clone(),
-                item: item.clone(),
-                body: Box::new(substitute_contract_expression(body, &scoped)?),
+                accumulator,
+                item,
+                body: Box::new(body),
             })
         }
         ContractExpression::Let {
@@ -1525,11 +1859,12 @@ pub(in crate::surface) fn substitute_contract_expression(
         } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
+            let (name, body) = prepare_contract_expression_binding_body(name, body, &scoped)?;
             Ok(ContractExpression::Let {
-                name: name.clone(),
+                name,
                 c_type: *c_type,
                 value: Box::new(substitute_contract_expression(value, substitutions)?),
-                body: Box::new(substitute_contract_expression(body, &scoped)?),
+                body: Box::new(body),
             })
         }
         ContractExpression::Call { name, arguments } => Ok(ContractExpression::Call {

@@ -40,6 +40,90 @@ fn current_index(base: &str, index: u32) -> ContractExpression {
     ContractExpression::Index(Box::new(current_var(base)), Box::new(current_int(index)))
 }
 
+#[test]
+fn contract_substitution_renames_colliding_logical_binders() {
+    let proposition = ClickProposition::ForAll {
+        c_type: C0Type::Int32,
+        name: "i".to_string(),
+        body: Box::new(ClickProposition::Comparison {
+            left: current_var("argument"),
+            operator: ComparisonOperator::Equal,
+            right: current_var("i"),
+        }),
+    };
+    let substitutions = BTreeMap::from([(String::from("argument"), current_var("i"))]);
+
+    let substituted = lowering::substitute_click_proposition(&proposition, &substitutions)
+        .expect("surface substitution should succeed");
+    let ClickProposition::ForAll { name, body, .. } = substituted else {
+        panic!("substitution should preserve the logical binder");
+    };
+    assert_ne!(name, "i");
+    assert_eq!(
+        body.as_ref(),
+        &ClickProposition::Comparison {
+            left: current_var("i"),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CBinding(name),
+        }
+    );
+}
+
+#[test]
+fn contract_substitution_renames_colliding_range_fold_and_let_binders() {
+    let substitutions = BTreeMap::from([(String::from("argument"), current_var("i"))]);
+    let fold = ContractExpression::RangeFold {
+        start: Box::new(current_int(0)),
+        end: Box::new(current_int(3)),
+        initial: Box::new(current_int(0)),
+        accumulator: "acc".to_string(),
+        item: "i".to_string(),
+        body: Box::new(ContractExpression::Add(
+            Box::new(current_var("argument")),
+            Box::new(current_var("i")),
+        )),
+    };
+    let let_expression = ContractExpression::Let {
+        name: "i".to_string(),
+        c_type: Some(C0Type::Int32),
+        value: Box::new(current_int(0)),
+        body: Box::new(ContractExpression::Add(
+            Box::new(current_var("argument")),
+            Box::new(current_var("i")),
+        )),
+    };
+
+    let ContractExpression::RangeFold { item, body, .. } =
+        lowering::substitute_contract_expression(&fold, &substitutions)
+            .expect("range-fold substitution should succeed")
+    else {
+        panic!("substitution should preserve the range fold");
+    };
+    assert_ne!(item, "i");
+    assert_eq!(
+        body.as_ref(),
+        &ContractExpression::Add(
+            Box::new(current_var("i")),
+            Box::new(ContractExpression::CBinding(item.clone())),
+        )
+    );
+
+    let ContractExpression::Let { name, body, .. } =
+        lowering::substitute_contract_expression(&let_expression, &substitutions)
+            .expect("let substitution should succeed")
+    else {
+        panic!("substitution should preserve the let expression");
+    };
+    assert_ne!(name, "i");
+    assert_eq!(
+        body.as_ref(),
+        &ContractExpression::Add(
+            Box::new(current_var("i")),
+            Box::new(ContractExpression::CBinding(name)),
+        )
+    );
+}
+
 fn old_index(base: &str, index: u32) -> ContractExpression {
     ContractExpression::Old(Box::new(current_index(base, index)))
 }

@@ -1,4 +1,4 @@
-use super::pure_theorems::PureTheoremContext;
+use super::pure_theorems::{PureInductionSetup, PureTheoremContext};
 use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedBranchSplit, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError,
@@ -395,6 +395,22 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
             premises,
         } => Some(ProofStep::ApplyTheoremUsing {
             application: application.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::Induct {
+            parameter,
+            hypothesis,
+        } => Some(ProofStep::Induct {
+            parameter: parameter.clone(),
+            hypothesis: hypothesis.clone(),
+        }),
+        ProofTactic::ApplyInductionUsing {
+            hypothesis,
+            argument,
+            premises,
+        } => Some(ProofStep::ApplyInduction {
+            hypothesis: hypothesis.clone(),
+            argument: argument.clone(),
             premises: premises.clone(),
         }),
         ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),

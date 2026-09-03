@@ -26,6 +26,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
         function_effects: &[],
+        implicit_contract_mutable_segments: &[],
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -77,6 +78,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
         function_effects: &[],
+        implicit_contract_mutable_segments: &[],
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -146,6 +148,31 @@ pub(in crate::surface) fn annotated_function(
     resource_environment: &ResourceEnvironment,
     inherit_function_effects_into_loops: bool,
 ) -> Result<CFunction, ClickError> {
+    let (resource_requires, resource_ensures) =
+        function_resource_summary(function_block, resource_environment)?;
+    let (
+        contract_requires,
+        contract_ensures,
+        contract_mutable,
+        contract_claims,
+        opaque_contract_supported,
+        predicate_unfoldings,
+    ) = function_contract_summary(
+        function_block,
+        parsed_function,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+    )?;
+    // `consumes` grants the callee a write-capable owned range even when the
+    // source has no explicit function-level `mutable` clause. Carry that
+    // frame into loop summaries so checked proof artifacts retain the same
+    // memory-effect evidence as independent contract certification.
+    let implicit_contract_mutable_segments = if function_block.effects().is_empty() {
+        contract_mutable.as_slice()
+    } else {
+        &[]
+    };
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         function_effects: if inherit_function_effects_into_loops {
@@ -153,6 +180,7 @@ pub(in crate::surface) fn annotated_function(
         } else {
             &[]
         },
+        implicit_contract_mutable_segments,
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -175,24 +203,8 @@ pub(in crate::surface) fn annotated_function(
         branch_join_target: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
-    let (resource_requires, resource_ensures) =
-        function_resource_summary(function_block, resource_environment)?;
-    let (
-        contract_requires,
-        contract_ensures,
-        contract_mutable,
-        contract_claims,
-        opaque_contract_supported,
-        predicate_unfoldings,
-    ) = function_contract_summary(
-        function_block,
-        parsed_function,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
     let source_body = parsed_function.to_kernel_function().body().clone();
-    Ok(c_function(
+    let function = c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
         parsed_function
@@ -216,7 +228,12 @@ pub(in crate::surface) fn annotated_function(
         contract_mutable,
         contract_claims,
         opaque_contract_supported,
-    ))
+    );
+    Ok(if function_block.effects().is_empty() {
+        function.with_resource_derived_mutable_frame()
+    } else {
+        function
+    })
 }
 
 /// Lowers one `branch ensuring` fact as a state-parametric kernel
@@ -235,6 +252,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
         function_effects: &[],
+        implicit_contract_mutable_segments: &[],
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -272,6 +290,7 @@ pub(in crate::surface) fn function_contract_summary(
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         function_effects: &[],
+        implicit_contract_mutable_segments: &[],
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -585,6 +604,7 @@ fn collect_owned_resource_memory_segments_inner(
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
     function_effects: &'a [EffectClause],
+    implicit_contract_mutable_segments: &'a [CMemorySegment],
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
@@ -1809,6 +1829,22 @@ impl AnnotationLowerer<'_> {
                 Effect::Immutable => Vec::new(),
             })
             .collect::<Vec<_>>();
+        let has_explicit_whole_effect = self
+            .structural_clauses
+            .iter()
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+            .flat_map(StructuralClause::items)
+            .any(|item| item.kind() == StructuralItemKind::Effect);
+        if self.function_effects.is_empty()
+            && !has_explicit_whole_effect
+            && !self.implicit_contract_mutable_segments.is_empty()
+        {
+            checks.push(CLoopEffectCheck::new_with_span(
+                CLoopEffect::Mutable(self.implicit_contract_mutable_segments.to_vec()),
+                CLoopEffectSpan::Whole,
+                Some(format!("loop {loop_index} inherited owned resource frame")),
+            ));
+        }
         let implicit_effect = if !function_mutable.is_empty() {
             Some(Effect::Mutable(function_mutable))
         } else if self

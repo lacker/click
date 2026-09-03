@@ -40,13 +40,13 @@ pub(super) struct PureTheoremContext {
 
 #[derive(Clone, Debug)]
 pub(super) struct PureInductionSetup {
-    parameter: String,
-    hypothesis: String,
-    surface_requires: Vec<ClickProposition>,
-    surface_goal: ClickProposition,
+    pub(super) parameter: String,
+    pub(super) hypothesis: String,
+    pub(super) surface_requires: Vec<ClickProposition>,
+    pub(super) surface_goal: ClickProposition,
 }
 
-fn pure_induction_hypothesis(
+pub(super) fn pure_induction_hypothesis(
     setup: &PureInductionSetup,
     context: &PureTheoremContext,
     predicate_environment: &PredicateEnvironment,
@@ -475,6 +475,7 @@ fn verify_theorem_ensure(
     }
 
     let checked_certificate;
+    let mut legacy_induction_diagnostic = None;
     let (proof_kind, source_tactics, induction_setup) = match ensure_clause.proof() {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto) => {
             checked_certificate = check_direct_pure_goal_with_proof(
@@ -560,7 +561,11 @@ fn verify_theorem_ensure(
             if checked_certificate.is_some() {
                 (ProofKind::TacticScript, None, induction_setup)
             } else {
-                prove_pure_theorem_script(
+                // Keep the old walk only as a diagnostic fallback for
+                // rejected source shapes. Its success is ignored, and its
+                // failure is consulted only if the checked gateway also
+                // rejects the generated certificate.
+                let legacy_result = prove_pure_theorem_script(
                     claim_label,
                     &context.requires,
                     &goal,
@@ -570,7 +575,12 @@ fn verify_theorem_ensure(
                     context,
                     &tactics,
                     induction_setup.as_ref(),
-                )?;
+                );
+                if induction_setup.is_some() {
+                    legacy_induction_diagnostic = legacy_result.err();
+                } else {
+                    legacy_result?;
+                }
                 (ProofKind::TacticScript, Some(tactics), induction_setup)
             }
         }
@@ -579,7 +589,7 @@ fn verify_theorem_ensure(
     let certificate = match checked_certificate {
         Some(certificate) => certificate,
         None => {
-            let (certificate, ()) = pure_goal_proof_certificate_gateway(
+            let gateway = pure_goal_proof_certificate_gateway(
                 claim_label,
                 || {
                     pure_theorem_surface_certificate(
@@ -606,7 +616,14 @@ fn verify_theorem_ensure(
                         induction_setup.as_ref(),
                     )
                 },
-            )?;
+            );
+            let (certificate, ()) = match gateway {
+                Ok(result) => result,
+                Err(error) => match legacy_induction_diagnostic {
+                    Some(diagnostic) => return Err(diagnostic),
+                    None => return Err(error),
+                },
+            };
             certificate
         }
     };
@@ -914,6 +931,8 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::Normalize
         | ProofStep::ArithmeticUsing(_)
         | ProofStep::Intro
+        | ProofStep::Induct { .. }
+        | ProofStep::ApplyInduction { .. }
         | ProofStep::Split
         | ProofStep::Left
         | ProofStep::Right
@@ -2207,24 +2226,42 @@ pub(super) fn validate_pure_theorem_certificate(
     certificate: &ProofCertificate,
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
-    if induction_setup.is_none() && proof_supports_pure_certificate(certificate) {
-        let root = Proof::for_pure_goal(
-            claim_label,
-            requires,
-            goal.clone(),
-            context,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-        );
+    if proof_supports_pure_certificate(certificate) {
+        let root = match induction_setup {
+            Some(setup) => Proof::for_pure_surface_goal_with_induction(
+                claim_label,
+                requires,
+                goal.clone(),
+                setup.surface_goal.clone(),
+                context,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+                setup.clone(),
+            ),
+            None => Proof::for_pure_goal(
+                claim_label,
+                requires,
+                goal.clone(),
+                context,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+            ),
+        };
         let tactics = certificate.to_proof_tactics();
-        let Some(proof) = root.try_planned_linear_script(&tactics)? else {
+        let Some(proof) = root.try_authoritative_linear_script(&tactics)? else {
             return Err(ClickError::new(format!(
                 "pure goal `{claim_label}` certificate ended before closing its goal"
             )));
         };
         debug_assert!(proof.is_complete());
         return Ok(());
+    }
+    if induction_setup.is_some() {
+        return Err(ClickError::new(format!(
+            "pure induction certificate for `{claim_label}` contains a step not supported by the checked Proof object"
+        )));
     }
     prove_pure_theorem_script(
         claim_label,

@@ -108,6 +108,31 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(in crate::surface::proof) fn for_pure_surface_goal_with_induction(
+        claim_label: &'a str,
+        requires: &[Proposition],
+        goal: Proposition,
+        surface_goal: ClickProposition,
+        theorem_context: &'a PureTheoremContext,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        induction_setup: PureInductionSetup,
+    ) -> Self {
+        Self::for_pure_goal_with_surface_and_induction(
+            claim_label,
+            requires,
+            goal,
+            Some(surface_goal),
+            theorem_context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            Some(induction_setup),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn for_pure_goal_with_surface(
         claim_label: &'a str,
         requires: &[Proposition],
@@ -118,6 +143,31 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
+        Self::for_pure_goal_with_surface_and_induction(
+            claim_label,
+            requires,
+            goal,
+            surface_goal,
+            theorem_context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_pure_goal_with_surface_and_induction(
+        claim_label: &'a str,
+        requires: &[Proposition],
+        goal: Proposition,
+        surface_goal: Option<ClickProposition>,
+        theorem_context: &'a PureTheoremContext,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        induction_setup: Option<PureInductionSetup>,
+    ) -> Self {
         let facts = ProofFacts::from_ordered(requires);
         Self {
             context: Arc::new(ProofContext::Pure(PureProofContext {
@@ -126,6 +176,7 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
+                induction_setup,
             })),
             state: KernelProofObject::root(ProofLocals::default(), {
                 let context = BranchState {
