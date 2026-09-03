@@ -42,7 +42,6 @@ C language coverage:
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Lift the block-scoped declaration restriction](block-scoped-declarations.md)
 - [Bound non-heap resource exhaustion](resource-exhaustion.md)
-- [Verify one unchanged existing-source fixture](audit-existing-c-source-fidelity.md)
 - [Match heap frees against every owned allocation authority](heap-free-multiple-allocation-authorities.md)
 
 Semantics and reasoning:
