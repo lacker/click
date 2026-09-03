@@ -664,6 +664,9 @@ pub(in crate::kernel) fn collect_c_function_bitvector_variables(
     for resource in function.resource_ensures() {
         collect_resource_spec_bitvector_variables(resource, variables);
     }
+    for resource in function.resource_constructors() {
+        collect_resource_spec_bitvector_variables(resource, variables);
+    }
     for proposition in function.contract_requires() {
         collect_spec_proposition_bitvector_variables(proposition, variables);
     }

@@ -156,6 +156,7 @@ pub(in crate::surface) fn annotated_function(
 ) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, resource_environment)?;
+    let resource_constructors = function_resource_constructors(function_block)?;
     let (
         contract_requires,
         contract_ensures,
@@ -225,6 +226,7 @@ pub(in crate::surface) fn annotated_function(
     )
     .with_source_body(source_body)
     .with_resource_summary(resource_requires, resource_ensures)
+    .with_resource_constructors(resource_constructors)
     .with_composite_resource_definitions(composite_resource_definitions(
         resource_environment,
         predicate_environment,

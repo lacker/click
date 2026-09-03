@@ -235,6 +235,40 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             &format!("ensures clauses in `{}`", function.signature().name()),
         )?;
 
+        for resource in function.constructs() {
+            validate_resource_clause(
+                resource,
+                &resources,
+                &recursive_resources,
+                &click_functions,
+                &click_function_types,
+                &ensures_type_environment,
+                &format!("constructs clause in `{}`", function.signature().name()),
+            )?;
+            let ResourceClause::Declared {
+                access: ResourceAccessMode::Own,
+                kind: ResourceKind::Token,
+                name,
+                ..
+            } = resource
+            else {
+                return Err(ClickError::new(format!(
+                    "`constructs` in `{}` requires an owned abstract resource token",
+                    function.signature().name()
+                )));
+            };
+            if resource_definitions
+                .iter()
+                .find(|definition| definition.name() == name)
+                .is_some_and(|definition| definition.composite_body().is_some())
+            {
+                return Err(ClickError::new(format!(
+                    "`constructs` in `{}` requires an abstract resource token; `{name}` is composite",
+                    function.signature().name()
+                )));
+            }
+        }
+
         let mut requirement_labels = BTreeSet::new();
         for requirement in function.requires() {
             if let Some(label) = requirement.label()

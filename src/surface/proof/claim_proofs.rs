@@ -1802,6 +1802,35 @@ pub(super) fn finish_ordered_proof<'a>(
                                     );
                                 }
                             }
+                            PostExecutionTactic::Construct(resource) => {
+                                let Some(evolving) = outcome_proof.take() else {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `construct` has no Proof goal"
+                                    )));
+                                };
+                                let before = evolving.checkpoint();
+                                let constructed = evolving
+                                    .apply_step(ProofStep::ConstructResource(resource.clone()))?;
+                                outcome = constructed.focused_outcome_snapshot()?;
+                                let surface_tactics =
+                                    constructed.certificate_since(&before)?.to_proof_tactics();
+                                outcome_proof = Some(constructed);
+                                for tactic in surface_tactics {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic,
+                                    );
+                                }
+                            }
                             PostExecutionTactic::CloseOpen {
                                 resource,
                                 preserve_exposed_body,

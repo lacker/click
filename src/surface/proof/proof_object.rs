@@ -1806,6 +1806,7 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         | ProofStep::UnfoldFunction(_)
         | ProofStep::UnfoldResource(_) => "unfold",
         ProofStep::FoldResource(_) => "fold",
+        ProofStep::ConstructResource(_) => "construct",
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::FrameUsing { .. } => "frame",
         ProofStep::CloseInvariants => "close_invariants()",

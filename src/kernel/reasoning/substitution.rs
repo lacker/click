@@ -2038,6 +2038,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
             .collect(),
+        resource_constructors: function
+            .resource_constructors()
+            .iter()
+            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+            .collect(),
         contract_requires: function
             .contract_requires
             .iter()

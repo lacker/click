@@ -136,6 +136,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "choose",
     "close_invariants",
     "conjunction",
+    "construct",
+    "constructs",
     "consumes",
     "contains",
     "contradiction",
@@ -403,6 +405,7 @@ pub struct FunctionBlock {
     decreases: Option<CFunctionDecrease>,
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
+    constructs: Vec<ResourceClause>,
     ensures: Vec<EnsureClause>,
     grouped_proof: Option<SourceProof>,
 }
@@ -1867,6 +1870,7 @@ pub enum ProofTactic {
     Branch(ProofBranch),
     Loop(StructuralClause),
     ObserveResource(ResourceClause),
+    ConstructResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Assumption,
@@ -1927,6 +1931,7 @@ pub enum SimpleTactic {
     FactTransport,
     Instantiate,
     FoldResource,
+    ConstructResource,
     Frame,
 }
 
@@ -2017,6 +2022,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "fold-resource",
         syntax: "fold(resource)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "construct-resource",
+        syntax: "construct(resource)",
         class: "simple",
     },
     PublicTacticForm {
@@ -2220,6 +2230,7 @@ pub enum ProofStep {
         premises: Vec<ClickProposition>,
     },
     ObserveResource(ResourceClause),
+    ConstructResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Assumption,
@@ -2362,6 +2373,7 @@ impl ProofStep {
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
             ProofTactic::FoldResource(resource) => Self::FoldResource(resource.clone()),
+            ProofTactic::ConstructResource(resource) => Self::ConstructResource(resource.clone()),
             ProofTactic::Induct {
                 parameter,
                 hypothesis,
@@ -2526,6 +2538,7 @@ impl ProofStep {
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
             Self::FoldResource(resource) => ProofTactic::FoldResource(resource.clone()),
+            Self::ConstructResource(resource) => ProofTactic::ConstructResource(resource.clone()),
             Self::Induct {
                 parameter,
                 hypothesis,
@@ -2837,6 +2850,7 @@ impl ProofTactic {
             Self::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
             Self::InstantiateUsing { .. } => TacticClass::Simple(SimpleTactic::Instantiate),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
+            Self::ConstructResource(_) => TacticClass::Simple(SimpleTactic::ConstructResource),
             Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
             Self::SmartExecute | Self::SmartExecuteAllPaths => {
                 TacticClass::Smart(SmartTacticKind::SmartExecute)
@@ -3310,6 +3324,10 @@ impl FunctionBlock {
 
     pub fn effects(&self) -> &[EffectClause] {
         &self.effects
+    }
+
+    pub fn constructs(&self) -> &[ResourceClause] {
+        &self.constructs
     }
 
     pub fn ensures(&self) -> &[EnsureClause] {

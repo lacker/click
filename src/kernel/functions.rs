@@ -25,14 +25,86 @@ fn canonical_memory_range(range: CMemoryRange, assumptions: &PureFactContext) ->
 }
 
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
-    function
-        .composite_resource_definitions()
-        .iter()
-        .any(CCompositeResourceDefinition::needs_outcome_resource_transfer)
+    !function.resource_constructors().is_empty()
+        || function
+            .composite_resource_definitions()
+            .iter()
+            .any(CCompositeResourceDefinition::needs_outcome_resource_transfer)
 }
 
 fn function_changes_declared_resource_quantities(function: &CFunction) -> bool {
     function.resource_requires() != function.resource_ensures()
+}
+
+/// Applies one explicitly authorized abstract-token construction to a return
+/// state. Construction is a zero-source resource event: unlike a transfer,
+/// it does not consume a caller resource or rely on a body representation.
+pub(super) fn construct_c_function_resource(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    result: &CValue,
+    constructed: &CResourceFact,
+    assumptions: &PureFactContext,
+) -> ExecutionResult<Result<CState, CRuntimeError>> {
+    let Some(mut evaluation_state) = c_function_entry_state(state, function, arguments) else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "could not bind function arguments for resource construction".to_string(),
+        )));
+    };
+    if function.return_type() != CType::Void {
+        evaluation_state.locals.set_typed(
+            "result".to_string(),
+            result.clone(),
+            function.return_type(),
+        );
+    }
+    let mut budget = ExecutionBudget::default();
+    let mut authorized = false;
+    for specification in function.resource_constructors() {
+        let candidate = match evaluate_function_resource_spec(
+            &evaluation_state,
+            specification,
+            assumptions,
+            &mut budget,
+        )? {
+            Ok(candidate) => candidate,
+            Err(error) => return Ok(Err(error)),
+        };
+        if candidate == *constructed {
+            authorized = true;
+            break;
+        }
+    }
+    if !authorized {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "resource construction is not authorized by the function contract".to_string(),
+        )));
+    }
+    let CResourceFact::Own(CResource::Token { .. }, quantity) = constructed else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "resource construction requires one owned abstract token".to_string(),
+        )));
+    };
+    if quantity.as_const() != Some(1) {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "resource construction creates exactly one token".to_string(),
+        )));
+    }
+    if state.resources().contains_exact_representation(constructed) {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "resource construction would duplicate an existing token".to_string(),
+        )));
+    }
+    let resources = match state
+        .resources()
+        .clone()
+        .try_compose_with_fact(constructed.clone(), assumptions)
+    {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+    };
+    Ok(Ok(state.clone().with_resource_context(resources)))
 }
 
 fn complete_void_fallthrough(

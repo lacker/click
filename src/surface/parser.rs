@@ -680,6 +680,7 @@ impl Parser {
         let mut requires = Vec::new();
         let mut decreases = None;
         let mut effects = Vec::new();
+        let mut constructs = Vec::new();
         let mut ensures = Vec::new();
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
@@ -818,6 +819,15 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
+                Some("constructs") => {
+                    self.position += 1;
+                    let resource = self.parse_owned_resource_target()?;
+                    self.expect(Token::Semicolon)?;
+                    constructs.push(
+                        apply_contract_lets_to_resource_clause(resource, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
                 Some("ensures") => {
                     let ensure = self.parse_ensure_clause()?;
                     ensures.push(
@@ -827,13 +837,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -874,6 +884,7 @@ impl Parser {
             decreases,
             structural_clauses: Vec::new(),
             effects,
+            constructs,
             ensures,
             grouped_proof,
         })
@@ -2104,6 +2115,12 @@ impl Parser {
                 let resource = self.parse_owned_resource_target()?;
                 self.expect(Token::RParen)?;
                 ProofTactic::FoldResource(resource)
+            }
+            "construct" => {
+                self.expect(Token::LParen)?;
+                let resource = self.parse_owned_resource_target()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::ConstructResource(resource)
             }
             "induct" => {
                 self.expect(Token::LParen)?;

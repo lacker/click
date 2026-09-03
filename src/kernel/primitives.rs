@@ -575,6 +575,7 @@ pub struct CFunction {
     pub(super) source_body: CStatement,
     pub(super) resource_requires: Vec<CResourceSpec>,
     pub(super) resource_ensures: Vec<CResourceSpec>,
+    pub(super) resource_constructors: Vec<CResourceSpec>,
     pub(super) contract_requires: Vec<SpecProposition>,
     pub(super) contract_ensures: Vec<SpecProposition>,
     pub(super) contract_mutable: Vec<CMemorySegment>,

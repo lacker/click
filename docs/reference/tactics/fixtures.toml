@@ -53,6 +53,11 @@ path = "mdtests/composite_resource_composes_token.md"
 needle = "fold(live_server(fd, state));"
 
 [[form]]
+id = "construct-resource"
+path = "src/surface/tests/contract_tests.rs"
+needle = "construct(open_fd(result));"
+
+[[form]]
 id = "induct"
 path = "mdtests/pure_induction_countdown.md"
 needle = "induct(n) as ih;"

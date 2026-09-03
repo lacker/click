@@ -34,6 +34,7 @@ documentation inventory keep the following accepted words synchronized.
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |
+| `constructs` | Authorizes one function to create an abstract resource token. |
 | `immutable`, `mutable` | Effect clauses and structural effect items. |
 | `invariant`, `step`, `initialize`, `preserve` | Loop structural items and phase proofs. |
 | `contains`, `fact`, `if` | Composite-resource members and optional resource guard. `if` also forms expressions and proof splits. |
@@ -47,7 +48,7 @@ documentation inventory keep the following accepted words synchronized.
 | `load_int32`, `load_uint8`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
-| `unfold`, `fold`, `observe`, `open` | Predicate and resource tactics. |
+| `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |
 | `apply`, `have`, `if`, `cases`, `branch`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
