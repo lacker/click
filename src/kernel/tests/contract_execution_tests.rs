@@ -1514,100 +1514,6 @@ fn contract_effect_claim_rejects_interior_entry_live_heap_pointer_as_fresh() {
     );
 }
 
-fn vacuous_forall_contract(requires_body: SpecProposition) -> CFunction {
-    c_function(
-        CType::Int32,
-        "vac",
-        vec![c_parameter("n", CType::Int32)],
-        c_return(c_variable("n")),
-    )
-    .with_contract(
-        vec![SpecProposition::ForAllInt32 {
-            name: "k".to_string(),
-            variable: Variable(919_777),
-            body: Box::new(requires_body),
-        }],
-        vec![SpecProposition::Comparison {
-            left: SpecExpression::CExpression(c_variable("result")),
-            operator: CComparisonOperator::Equal,
-            right: SpecExpression::Value(int32(7)),
-        }],
-        Vec::new(),
-        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
-        true,
-    )
-}
-
-fn constant_bounds(lo: u32, hi: u32) -> SpecProposition {
-    SpecProposition::And(
-        Box::new(SpecProposition::Comparison {
-            left: SpecExpression::Value(int32(lo)),
-            operator: CComparisonOperator::LessEqual,
-            right: SpecExpression::CExpression(c_variable("k")),
-        }),
-        Box::new(SpecProposition::Comparison {
-            left: SpecExpression::CExpression(c_variable("k")),
-            operator: CComparisonOperator::LessThan,
-            right: SpecExpression::Value(int32(hi)),
-        }),
-    )
-}
-
-fn n_is_seven() -> SpecProposition {
-    SpecProposition::Comparison {
-        left: SpecExpression::CExpression(c_variable("n")),
-        operator: CComparisonOperator::Equal,
-        right: SpecExpression::Value(int32(7)),
-    }
-}
-
-fn certify_vacuous_forall_ensure(function: &CFunction) -> Option<CVerifiedFunctionContractClaim> {
-    let execution = prove_c_function_contract_execution_paths_with_environment(
-        CState::new(),
-        function.clone(),
-        vec![CExpression::Value(int32(Bitvector32Term::Variable(
-            Variable(919_778),
-        )))],
-        Vec::new(),
-        CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
-        CFunctionContractExecutionMode::VerifyLoops,
-    );
-    c_verified_function_contract_claim(function, CFunctionContractClaimKey::Ensure(0), &execution)
-}
-
-/// `forall k. (0 <= k < 3) -> ((5 <= k < 10) -> n == 7)` is satisfied by every
-/// `n`: no `k` meets both bounds. Instantiating it must not inject `n == 7`,
-/// so `ensures result == 7` on `return n` must not certify.
-#[test]
-fn finite_forall_instantiation_checks_every_bound_premise() {
-    let function = vacuous_forall_contract(SpecProposition::Implies(
-        Box::new(constant_bounds(0, 3)),
-        Box::new(SpecProposition::Implies(
-            Box::new(constant_bounds(5, 10)),
-            Box::new(n_is_seven()),
-        )),
-    ));
-    assert!(
-        certify_vacuous_forall_ensure(&function).is_none(),
-        "a universal with disjoint bound premises must not certify its conclusion"
-    );
-}
-
-/// The same instantiation still works when the single bound is satisfiable:
-/// `forall k. (0 <= k < 1) -> n == 7` really does give `n == 7`.
-#[test]
-fn finite_forall_instantiation_still_uses_a_satisfiable_bound() {
-    let function = vacuous_forall_contract(SpecProposition::Implies(
-        Box::new(constant_bounds(0, 1)),
-        Box::new(n_is_seven()),
-    ));
-    assert!(
-        certify_vacuous_forall_ensure(&function).is_some(),
-        "a satisfiable bounded universal should still instantiate its conclusion"
-    );
-}
-
 #[test]
 fn contract_certification_reuses_a_matching_kernel_checked_execution() {
     let function = c_function(
@@ -2003,12 +1909,12 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         )),
     };
     let execution = CFunctionContractExecution {
-        reuse_diagnostic: None,
-        completion_origin_state: None,
-        execution: SymbolicCExecution {
+        cases: vec![vec![CContractPathSet {
             paths: vec![path],
-            limit: None,
-        },
+            completion_origin_state: None,
+        }]],
+        limit: None,
+        reuse_diagnostic: None,
     };
 
     assert!(
@@ -2018,6 +1924,98 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
             &execution,
         )
         .is_none()
+    );
+}
+
+/// A claim is judged over each path set of a case in turn: a set whose
+/// paths fail it does not decide the claim while another set certifies it,
+/// every case needs a certifying set, and a case with no set certifies
+/// nothing.
+#[test]
+fn contract_claims_are_judged_over_each_path_set_of_a_case() {
+    let function = c_function(
+        CType::Int32,
+        "alternatives",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let state = CState::new();
+    let proposition = Proposition::CFunctionExecutes {
+        state: state.clone(),
+        function: function.clone(),
+        arguments: Vec::new(),
+        outcome: CFunctionOutcome::Return {
+            value: int32(0),
+            state,
+        },
+    };
+    let unproved = ProofObligation::verification_condition(Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Variable(Variable(91_200)),
+            Bitvector32Term::Constant(8),
+        ),
+        true,
+    ));
+    let failing = SymbolicCExecutionPath {
+        assumptions: PureFactContext::new(),
+        facts: Vec::new(),
+        effect_facts: Vec::new(),
+        obligations: vec![unproved.clone()],
+        theorem: Theorem::new(wrap_proof_facts(
+            proposition.clone(),
+            &PureFactContext::new(),
+            &[],
+            &[unproved],
+        )),
+    };
+    let clean = SymbolicCExecutionPath {
+        assumptions: PureFactContext::new(),
+        facts: Vec::new(),
+        effect_facts: Vec::new(),
+        obligations: Vec::new(),
+        theorem: Theorem::new(wrap_proof_facts(
+            proposition,
+            &PureFactContext::new(),
+            &[],
+            &[],
+        )),
+    };
+    let set = |path: &SymbolicCExecutionPath| CContractPathSet {
+        paths: vec![path.clone()],
+        completion_origin_state: None,
+    };
+    let certified = |cases: Vec<Vec<CContractPathSet>>| {
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::BodySafety,
+            &CFunctionContractExecution {
+                cases,
+                limit: None,
+                reuse_diagnostic: None,
+            },
+        )
+        .is_some()
+    };
+    assert!(
+        certified(vec![vec![set(&failing), set(&clean)]]),
+        "a later path set certifies the claim the first fails"
+    );
+    assert!(certified(vec![vec![set(&clean), set(&failing)]]));
+    assert!(!certified(vec![vec![set(&failing)]]));
+    assert!(
+        !certified(vec![vec![set(&clean)], vec![set(&failing)]]),
+        "every case needs a certifying path set"
+    );
+    assert!(
+        !certified(vec![vec![set(&clean)], Vec::new()]),
+        "a case with no path set certifies nothing"
     );
 }
 
@@ -2068,12 +2066,12 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         )),
     };
     let execution = CFunctionContractExecution {
-        reuse_diagnostic: None,
-        completion_origin_state: None,
-        execution: SymbolicCExecution {
+        cases: vec![vec![CContractPathSet {
             paths: vec![path],
-            limit: None,
-        },
+            completion_origin_state: None,
+        }]],
+        limit: None,
+        reuse_diagnostic: None,
     };
 
     assert!(

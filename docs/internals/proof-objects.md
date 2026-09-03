@@ -264,9 +264,20 @@ explicit one; either records the completion like any other closer. A
 resource ensure or an effect claim is an exact check against the outcome.
 When nothing closes a claim, the diagnostic names the reason: the goal's
 lowering, a rewrite that did not apply, or the unclosed goal with the sides
-its comparison evaluated to. Only a claim with no matching completion is
-proved from the path's facts, the second-proof route that remains until a
-completion made after a proof-level join names the kernel's path variable.
+its comparison evaluated to. Certification proves nothing a second time: a
+lowered ensure that folded to a constant truth is decided by that
+evaluation, and every other form needs a matching completion. Proofs of one
+function structure their paths differently (a `branch` proof continues once
+from the joined state and publishes the joined path, whose result names the
+join's fresh variable; an automatic proof publishes each arm) and may run at
+different representations of the entry (one observed a resource first), so
+certification keeps every artifact reusable at the contract entry as its
+own path set and accepts a claim when, in every resource-guard case, one
+path set certifies it on all of its paths; each set is a complete execution
+of the function, so any one is authority, and a set is prepared for claim
+checking only when a claim is judged over it. A rewritten claim goal stays
+on the retained outcome proof, so the closer after the rewrite records the
+claim goal the proof was rooted at rather than the rewritten form.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A

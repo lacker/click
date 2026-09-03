@@ -218,41 +218,7 @@ pub fn c_function_outcomes_program_state_equal_by_execution_provenance(
         right_state.memory(),
         right_facts,
         assumptions,
-    ) && (c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
-        || return_values_equal_by_certified_stores(
-            left_value,
-            left_state.memory(),
-            left_facts,
-            right_value,
-            assumptions,
-        )
-        || return_values_equal_by_certified_stores(
-            left_value,
-            right_state.memory(),
-            right_facts,
-            right_value,
-            assumptions,
-        ))
-}
-
-fn return_values_equal_by_certified_stores(
-    left: &CValue,
-    post_memory: &CMemory,
-    execution_facts: &[ExecutionPureFact],
-    right: &CValue,
-    assumptions: &PureFactContext,
-) -> bool {
-    let (CValue::Int32(left) | CValue::UInt8(left), CValue::Int32(right) | CValue::UInt8(right)) =
-        (left, right)
-    else {
-        return false;
-    };
-    certification_proves_post_proposition(
-        assumptions,
-        &Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true),
-        post_memory,
-        execution_facts,
-    )
+    ) && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
 }
 
 fn memories_equal_by_execution_provenance(
@@ -559,7 +525,6 @@ struct CertifiedFunctionClaimPath {
     post_state: Option<CState>,
     post_resources: Option<ResourceContext>,
     assumptions: PureFactContext,
-    execution_facts: Vec<ExecutionPureFact>,
     effect_facts: Vec<ExecutionPureFact>,
 }
 
@@ -863,7 +828,6 @@ fn prepare_function_claim_path(
             post_state: None,
             post_resources: None,
             assumptions,
-            execution_facts,
             effect_facts,
         });
     }
@@ -966,7 +930,6 @@ fn prepare_function_claim_path(
         post_state: Some(post_state),
         post_resources: Some(post_resources),
         assumptions,
-        execution_facts,
         effect_facts,
     })
 }
@@ -989,16 +952,13 @@ fn function_claim_holds_on_prepared_path(
         post_state,
         post_resources,
         assumptions,
-        execution_facts,
         effect_facts,
     } = path;
     let mut budget = ExecutionBudget::default();
     match claim.target() {
         CFunctionContractClaimTarget::BodySafety => true,
         CFunctionContractClaimTarget::EnsureProposition(index) => {
-            let (Some(return_state), Some(post_state), Some(post_resources)) =
-                (return_state, post_state, post_resources)
-            else {
+            let (Some(post_state), Some(post_resources)) = (post_state, post_resources) else {
                 return true;
             };
             let Some(ensure) = function.contract_ensures().get(*index) else {
@@ -1193,36 +1153,16 @@ fn function_claim_holds_on_prepared_path(
                             })
                         },
                     );
-                    let mut path_propositions = path
-                        .facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone())
-                        .collect::<Vec<_>>();
-                    let assumption_facts =
-                        assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
-                    path_propositions.extend(finite_forall_instantiations(&assumption_facts));
-                    path_propositions
-                        .extend(finite_forall_instantiations(&path_propositions.clone()));
-                    let path_assumptions =
-                        assumptions_with_propositions(assumptions, &path_propositions);
-                    let proposition_holds = crate::instrumentation::measure_operation(
-                        function.name(),
-                        "contract claim",
-                        "completion match",
-                        || completion_certifies(&path.proposition),
-                    ) || crate::instrumentation::measure_operation(
-                        function.name(),
-                        "contract claim",
-                        "post proposition proof",
-                        || {
-                            certification_proves_post_proposition(
-                                &path_assumptions,
-                                &path.proposition,
-                                return_state.memory(),
-                                execution_facts,
-                            )
-                        },
-                    );
+                    // A lowering that folded the ensure to a constant truth
+                    // decided the claim on this path by evaluation alone;
+                    // every other form needs a matching completion.
+                    let proposition_holds = lowered_goal_is_constant_true(&path.proposition)
+                        || crate::instrumentation::measure_operation(
+                            function.name(),
+                            "contract claim",
+                            "completion match",
+                            || completion_certifies(&path.proposition),
+                        );
                     obligations_hold && proposition_holds
                 })
         }
@@ -1666,6 +1606,15 @@ pub fn c_verified_function_contract_claims(
     c_verified_function_contract_claims_with_checked_propositions(function, contract_execution, &[])
 }
 
+/// Whether a lowered ensure folded to a constant truth: the kernel's own
+/// evaluation at the outcome decided it, so it needs no completion.
+fn lowered_goal_is_constant_true(proposition: &Proposition) -> bool {
+    matches!(
+        completion_key(proposition),
+        Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+    )
+}
+
 /// The form in which a completed proposition is matched against a lowered
 /// ensure. The two are lowerings of one claim by different code: the proof
 /// folds trivial conditions as it lowers (a term compared with itself, a
@@ -1801,36 +1750,14 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     contract_execution: &CFunctionContractExecution,
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Option<Vec<CVerifiedFunctionContractClaim>> {
-    let execution = &contract_execution.execution;
-    if execution.limit().is_some() || execution.paths().is_empty() {
+    if !contract_execution.is_complete() {
         return None;
     }
     let timings = crate::instrumentation::enabled();
     let prepare_started = std::time::Instant::now();
-    let paths = crate::instrumentation::measure_operation(
-        function.name(),
-        "contract certification",
-        "contract path preparation",
-        || {
-            execution
-                .paths()
-                .iter()
-                .map(|path| prepare_function_claim_path(function, path))
-                .collect::<Result<Vec<_>, _>>()
-        },
-    )
-    .ok()?;
-    if timings {
-        crate::instrumentation::emit(
-            crate::instrumentation::VerificationEvent::ClaimPathsPrepared {
-                function: function.name().to_string(),
-                count: paths.len(),
-                elapsed: prepare_started.elapsed(),
-            },
-        );
-    }
+    let cases = contract_path_set_views(contract_execution);
     let checked_propositions = checked_proposition_index(checked_propositions);
-    function
+    let claims = function
         .contract_claims()
         .iter()
         .map(|claim| {
@@ -1847,15 +1774,12 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                 &claim_key,
                 operation_name,
                 || {
-                    paths.iter().all(|path| {
-                        function_claim_holds_on_prepared_path(
-                            function,
-                            claim,
-                            path,
-                            &checked_propositions,
-                            contract_execution.completion_origin_state.as_ref(),
-                        )
-                    })
+                    claim_holds_on_some_path_set_of_every_case(
+                        function,
+                        claim,
+                        &cases,
+                        &checked_propositions,
+                    )
                 },
             );
             if timings {
@@ -1872,7 +1796,107 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                 key: claim.key().clone(),
             })
         })
+        .collect::<Option<Vec<_>>>();
+    if timings {
+        crate::instrumentation::emit(
+            crate::instrumentation::VerificationEvent::ClaimPathsPrepared {
+                function: function.name().to_string(),
+                count: cases
+                    .iter()
+                    .flatten()
+                    .filter_map(|view| view.prepared.get())
+                    .filter_map(|prepared| prepared.as_ref().ok())
+                    .map(Vec::len)
+                    .sum(),
+                elapsed: prepare_started.elapsed(),
+            },
+        );
+    }
+    // A case none of whose path sets could be prepared certifies nothing.
+    if cases.iter().any(|alternatives| {
+        alternatives
+            .iter()
+            .all(|view| view.prepared.get().is_some_and(Result::is_err))
+    }) {
+        return None;
+    }
+    claims
+}
+
+/// One path set of a contract execution, prepared for claim checking the
+/// first time a claim is judged over it. A claim the first set certifies
+/// never prepares the second.
+struct ContractPathSetView<'a> {
+    set: &'a CContractPathSet,
+    prepared: std::cell::OnceCell<Result<Vec<CertifiedFunctionClaimPath>, String>>,
+}
+
+impl ContractPathSetView<'_> {
+    fn prepared(&self, function: &CFunction) -> &Result<Vec<CertifiedFunctionClaimPath>, String> {
+        self.prepared.get_or_init(|| {
+            crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract path preparation",
+                || {
+                    self.set
+                        .paths
+                        .iter()
+                        .enumerate()
+                        .map(|(index, path)| {
+                            prepare_function_claim_path(function, path).map_err(|reason| {
+                                format!("execution path {index} is invalid: {reason}")
+                            })
+                        })
+                        .collect()
+                },
+            )
+        })
+    }
+}
+
+fn contract_path_set_views(
+    contract_execution: &CFunctionContractExecution,
+) -> Vec<Vec<ContractPathSetView<'_>>> {
+    contract_execution
+        .cases()
+        .iter()
+        .map(|alternatives| {
+            alternatives
+                .iter()
+                .map(|set| ContractPathSetView {
+                    set,
+                    prepared: std::cell::OnceCell::new(),
+                })
+                .collect()
+        })
         .collect()
+}
+
+/// A claim holds when every resource-guard case has one path set on all of
+/// whose paths it holds. Each set is a complete execution of the function
+/// under its case, so one certifying set is authority for the case.
+fn claim_holds_on_some_path_set_of_every_case(
+    function: &CFunction,
+    claim: &CFunctionContractClaim,
+    cases: &[Vec<ContractPathSetView<'_>>],
+    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+) -> bool {
+    cases.iter().all(|alternatives| {
+        alternatives.iter().any(|view| {
+            view.prepared(function).as_ref().is_ok_and(|paths| {
+                paths.iter().all(|path| {
+                    function_claim_holds_on_prepared_path(
+                        function,
+                        claim,
+                        path,
+                        checked_propositions,
+                        view.set.completion_origin_state.as_ref(),
+                    )
+                })
+            })
+        })
+    })
 }
 
 /// Reports the exact contract claims that the checked execution frontier does
@@ -1900,43 +1924,43 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
     contract_execution: &CFunctionContractExecution,
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Result<Vec<CFunctionContractClaimKey>, String> {
-    let execution = &contract_execution.execution;
-    if let Some(limit) = execution.limit() {
+    if let Some(limit) = contract_execution.limit() {
         return Err(format!("symbolic execution reached its {limit:?} limit"));
     }
-    if execution.paths().is_empty() {
+    if !contract_execution.is_complete() {
         return Err("symbolic execution produced no paths".to_string());
     }
-    let paths = execution
-        .paths()
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            prepare_function_claim_path(function, path)
-                .map_err(|reason| format!("execution path {index} is invalid: {reason}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let cases = contract_path_set_views(contract_execution);
     let checked_propositions = checked_proposition_index(checked_propositions);
     let mut unverified = missing_function_contract_claim_keys(function);
     let claim_unverified = function
         .contract_claims()
         .iter()
         .filter(|claim| {
-            !paths.iter().all(|path| {
-                function_claim_holds_on_prepared_path(
-                    function,
-                    claim,
-                    path,
-                    &checked_propositions,
-                    contract_execution.completion_origin_state.as_ref(),
-                )
-            })
+            !claim_holds_on_some_path_set_of_every_case(
+                function,
+                claim,
+                &cases,
+                &checked_propositions,
+            )
         })
         .map(|claim| claim.key().clone())
         .collect::<Vec<_>>();
     for key in claim_unverified {
         if !unverified.contains(&key) {
             unverified.push(key);
+        }
+    }
+    // A case none of whose path sets could be prepared names the first
+    // reason.
+    for alternatives in &cases {
+        let failures = alternatives
+            .iter()
+            .filter_map(|view| view.prepared.get())
+            .filter_map(|prepared| prepared.as_ref().err())
+            .collect::<Vec<_>>();
+        if !failures.is_empty() && failures.len() == alternatives.len() {
+            return Err(failures[0].clone());
         }
     }
     Ok(unverified)

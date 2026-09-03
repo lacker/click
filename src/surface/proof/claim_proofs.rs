@@ -1,3 +1,4 @@
+use super::proof_object::ProofCheckpoint;
 use super::*;
 use crate::kernel::apply_c_function_contract_resource_transition;
 use std::sync::Arc;
@@ -1767,6 +1768,13 @@ pub(super) fn finish_ordered_proof<'a>(
                     // rewritten goal the legacy closer checks.
                     let mut rewrite_claim_equalities: Vec<Vec<ClickProposition>> =
                         vec![Vec::new(); claims.len()];
+                    // A claim goal rewritten on the retained outcome proof
+                    // stays that proof, with the position after the rewrite:
+                    // the closers after it continue the same derivation, so
+                    // the completion they record is the claim goal the proof
+                    // was rooted at, not the rewritten form.
+                    let mut rewritten_claim_proofs: Vec<Option<(Proof<'_>, ProofCheckpoint<'_>)>> =
+                        (0..claims.len()).map(|_| None).collect();
                     // Facts established after execution all describe this fixed
                     // outcome snapshot. Keep them separately so `fold` can reuse an
                     // exact lowering without accidentally selecting the same surface
@@ -2670,6 +2678,28 @@ pub(super) fn finish_ordered_proof<'a>(
                                             Vec::new(),
                                         )],
                                     };
+                                    // A goal rewritten on the retained outcome
+                                    // proof is closed on that proof.
+                                    if let Some((rewritten, checkpoint)) =
+                                        &rewritten_claim_proofs[claim_index]
+                                    {
+                                        match rewritten.apply_step(ProofStep::Assumption) {
+                                            Ok(proof) => {
+                                                retained_certificate =
+                                                    Some(proof.certificate_since(checkpoint)?);
+                                                closures[claim_index] =
+                                                    ClaimClosure::by_exact_check_completing(
+                                                        proof.completed_proposition().ok(),
+                                                    );
+                                                closed_any = true;
+                                                break;
+                                            }
+                                            Err(_) => {
+                                                check_verification_deadline()?;
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
@@ -2833,6 +2863,26 @@ pub(super) fn finish_ordered_proof<'a>(
                                             Vec::new(),
                                         )],
                                     };
+                                    // A goal rewritten on the retained outcome
+                                    // proof is closed on that proof.
+                                    if let Some((rewritten, checkpoint)) =
+                                        &rewritten_claim_proofs[claim_index]
+                                    {
+                                        match rewritten.apply_step(ProofStep::Normalize) {
+                                            Ok(proof) => {
+                                                let certificate =
+                                                    proof.certificate_since(checkpoint)?;
+                                                retained_certificate.get_or_insert(certificate);
+                                                closures[claim_index] =
+                                                    ClaimClosure::by_exact_check_completing(
+                                                        proof.completed_proposition().ok(),
+                                                    );
+                                                closed_any = true;
+                                            }
+                                            Err(_) => check_verification_deadline()?,
+                                        }
+                                        continue;
+                                    }
                                     let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
@@ -2917,8 +2967,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // them when this path derived a goal, and the
                                 // path lineage itself is not advanced.
                                 let fixed_state_root = match outcome_proof.as_ref() {
-                                    Some(evolving) => evolving.clone(),
-                                    None => Proof::for_fixed_state_frontier(
+                                    Some(_) => None,
+                                    None => Some(Proof::for_fixed_state_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -2934,7 +2984,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         theorem_environment,
                                         &unfolded_predicates,
                                         &transition_facts,
-                                    ),
+                                    )),
                                 };
                                 let mut rewrote_any = false;
                                 let mut first_error = None;
@@ -2986,41 +3036,103 @@ pub(super) fn finish_ordered_proof<'a>(
                                             Vec::new(),
                                         )],
                                     };
-                                    let mut closed = None;
+                                    // The rewrite continues a goal already
+                                    // rewritten on the retained outcome proof,
+                                    // or opens the claim goal on that proof;
+                                    // only without one does it use a fresh
+                                    // fixed-state proof, as the closers after
+                                    // it then will.
+                                    let mut rewritten_result = None;
                                     let mut last_error = None;
-                                    for (goal, goal_facts) in goal_candidates {
-                                        match fixed_state_root
-                                            .with_checked_outcome_facts(
-                                                &[
-                                                    path_requirements.as_slice(),
-                                                    goal_facts.as_slice(),
-                                                ]
-                                                .concat(),
-                                            )?
-                                            .focus_fixed_state_goal_with_surface(
-                                                goal,
-                                                Some(surface_goal.clone()),
-                                            )?
-                                            .apply_step(ProofStep::Rewrite(
-                                                surface_equality.clone(),
-                                            )) {
+                                    if let Some((rewritten, checkpoint)) =
+                                        &rewritten_claim_proofs[claim_index]
+                                    {
+                                        match rewritten.apply_step(ProofStep::Rewrite(
+                                            surface_equality.clone(),
+                                        )) {
                                             Ok(proof) => {
-                                                closed = Some(proof);
-                                                break;
+                                                let certificate =
+                                                    proof.certificate_since(checkpoint)?;
+                                                rewritten_result = Some((
+                                                    proof.goal().cloned(),
+                                                    certificate,
+                                                    Some(proof),
+                                                ));
                                             }
                                             Err(error) => last_error = Some(error),
                                         }
+                                    } else if let Some(evolving) = outcome_proof.as_ref() {
+                                        for (goal, goal_facts) in &goal_candidates {
+                                            match evolving
+                                                .with_checked_outcome_facts(
+                                                    &[
+                                                        path_requirements.as_slice(),
+                                                        goal_facts.as_slice(),
+                                                    ]
+                                                    .concat(),
+                                                )?
+                                                .focus_fixed_state_goal_with_surface(
+                                                    goal.clone(),
+                                                    Some(surface_goal.clone()),
+                                                )?
+                                                .apply_step(ProofStep::Rewrite(
+                                                    surface_equality.clone(),
+                                                )) {
+                                                Ok(proof) => {
+                                                    let certificate = proof.certificate();
+                                                    rewritten_result = Some((
+                                                        proof.goal().cloned(),
+                                                        certificate,
+                                                        Some(proof),
+                                                    ));
+                                                    break;
+                                                }
+                                                Err(error) => last_error = Some(error),
+                                            }
+                                        }
+                                    } else if let Some(fixed_state_root) = &fixed_state_root {
+                                        for (goal, goal_facts) in &goal_candidates {
+                                            match fixed_state_root
+                                                .with_checked_outcome_facts(
+                                                    &[
+                                                        path_requirements.as_slice(),
+                                                        goal_facts.as_slice(),
+                                                    ]
+                                                    .concat(),
+                                                )?
+                                                .focus_fixed_state_goal_with_surface(
+                                                    goal.clone(),
+                                                    Some(surface_goal.clone()),
+                                                )?
+                                                .apply_step(ProofStep::Rewrite(
+                                                    surface_equality.clone(),
+                                                )) {
+                                                Ok(proof) => {
+                                                    rewritten_result = Some((
+                                                        proof.goal().cloned(),
+                                                        proof.certificate(),
+                                                        None,
+                                                    ));
+                                                    break;
+                                                }
+                                                Err(error) => last_error = Some(error),
+                                            }
+                                        }
                                     }
-                                    match closed {
-                                        Some(proof) => {
-                                            let rewritten = proof.goal().cloned().ok_or_else(|| {
+                                    match rewritten_result {
+                                        Some((rewritten, certificate, chained)) => {
+                                            let rewritten = rewritten.ok_or_else(|| {
                                                 ClickError::new(format!(
                                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: checked `rewrite` lost its proposition goal"
                                                 ))
                                             })?;
-                                            retained_certificate
-                                                .get_or_insert_with(|| proof.certificate());
+                                            retained_certificate.get_or_insert(certificate);
                                             rewritten_claim_goals[claim_index] = Some(rewritten);
+                                            if let Some(proof) = chained {
+                                                let checkpoint = proof.checkpoint();
+                                                rewritten_claim_proofs[claim_index] =
+                                                    Some((proof, checkpoint));
+                                            }
                                             rewrite_claim_equalities[claim_index]
                                                 .push(surface_equality.clone());
                                             rewrote_any = true;

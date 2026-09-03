@@ -2977,14 +2977,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 ),
             ));
         }
-        return CFunctionContractExecution {
-            reuse_diagnostic: None,
-            completion_origin_state: None,
-            execution: SymbolicCExecution {
-                paths: Vec::new(),
-                limit: None,
-            },
-        };
+        return CFunctionContractExecution::empty();
     };
     let Some(resource_condition_cases) = crate::instrumentation::measure_operation(
         function.name(),
@@ -3000,18 +2993,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 ),
             ));
         }
-        return CFunctionContractExecution {
-            reuse_diagnostic: None,
-            completion_origin_state: None,
-            execution: SymbolicCExecution {
-                paths: Vec::new(),
-                limit: None,
-            },
-        };
+        return CFunctionContractExecution::empty();
     };
-    let mut combined_paths = Vec::new();
+    let mut cases = Vec::new();
     let mut reuse_diagnostic = None;
-    let mut completion_origin_state = None;
     for case_facts in resource_condition_cases {
         let case_seed = assumptions_with_propositions(&PureFactContext::new(), &case_facts);
         let Some(mut assumptions) = crate::instrumentation::measure_operation(
@@ -3037,24 +3022,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     )),
                 );
             }
-            return CFunctionContractExecution {
-                reuse_diagnostic: None,
-                completion_origin_state: None,
-                execution: SymbolicCExecution {
-                    paths: Vec::new(),
-                    limit: None,
-                },
-            };
+            return CFunctionContractExecution::empty();
         };
         let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments) else {
-            return CFunctionContractExecution {
-                reuse_diagnostic: None,
-                completion_origin_state: None,
-                execution: SymbolicCExecution {
-                    paths: Vec::new(),
-                    limit: None,
-                },
-            };
+            return CFunctionContractExecution::empty();
         };
         let has_recursive_resources = function
             .composite_resource_definitions()
@@ -3074,14 +3045,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     )
                 },
             ) else {
-                return CFunctionContractExecution {
-                    reuse_diagnostic: None,
-                    completion_origin_state: None,
-                    execution: SymbolicCExecution {
-                        paths: Vec::new(),
-                        limit: None,
-                    },
-                };
+                return CFunctionContractExecution::empty();
             };
             entry_state.resources = entry_resources.clone();
             assumptions = crate::instrumentation::measure_operation(
@@ -3358,29 +3322,50 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             |_checked: &CCheckedFunctionExecution, premise: &Proposition| {
                 reuse_assumptions.proves(premise)
             };
-        let reusable = checked_artifacts.iter().find(|checked| {
-            checked.state == state
-                && matches_execution_metadata_except_state(checked)
-                && checked
-                    .assumptions
-                    .pure_facts()
-                    .into_iter()
-                    .all(|premise| checked_premise_is_authorized(checked, &premise))
-        });
-        let rebased_reuse = reusable
-            .is_none()
-            .then(|| {
-                checked_artifacts
+        let authorized = |checked: &CCheckedFunctionExecution| {
+            checked
+                .assumptions
+                .pure_facts()
+                .into_iter()
+                .all(|premise| checked_premise_is_authorized(checked, &premise))
+        };
+        let candidates = checked_artifacts
+            .iter()
+            .filter(|checked| matches_execution_metadata_except_state(checked))
+            .collect::<Vec<_>>();
+        // Every checked execution reusable at this entry is one path set the
+        // claims may be judged over. Proofs of one function structure their
+        // paths differently (a proof that joins two arms publishes the
+        // joined path; another publishes each arm) and may run at different
+        // representations of the entry (one observed a resource first), and
+        // a claim completed on one proof's outcome is matched against that
+        // proof's paths. An artifact at the contract's exact entry state is
+        // taken as is; one at another representation is rebased onto this
+        // entry, which pays the definitional equivalence check only for it.
+        let mut alternatives: Vec<CContractPathSet> = crate::instrumentation::measure_operation(
+            function.name(),
+            "contract certification",
+            "contract checked body reuse",
+            || {
+                candidates
                     .iter()
-                    .filter(|checked| matches_execution_metadata_except_state(checked))
-                    .find(|checked| {
-                        checked
-                            .assumptions
-                            .pure_facts()
-                            .into_iter()
-                            .all(|premise| checked_premise_is_authorized(checked, &premise))
+                    .filter(|checked| checked.state == state && authorized(checked))
+                    .map(|checked| CContractPathSet {
+                        paths: checked.execution.paths.clone(),
+                        completion_origin_state: Some(checked.state.clone()),
                     })
-                    .and_then(|checked| {
+                    .collect()
+            },
+        );
+        alternatives.extend(crate::instrumentation::measure_operation(
+            function.name(),
+            "contract certification",
+            "contract checked body resource-rebased reuse",
+            || {
+                candidates
+                    .iter()
+                    .filter(|checked| checked.state != state && authorized(checked))
+                    .filter_map(|checked| {
                         crate::instrumentation::measure_operation(
                             function.name(),
                             "contract certification",
@@ -3394,23 +3379,21 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                 )
                             },
                         )
-                        .map(|execution| (execution, checked.state.clone()))
+                        .map(|execution| CContractPathSet {
+                            paths: execution.paths,
+                            completion_origin_state: Some(checked.state.clone()),
+                        })
                     })
-            })
-            .flatten();
-        // A surface proof can split at function entry and independently check
-        // the complete function under `condition` and `not condition`. Neither
-        // artifact alone is valid under the unsplit contract assumptions, but
-        // together their frontiers are exhaustive. Keep this composition in
-        // the kernel: callers cannot manufacture artifacts, the exact
-        // execution metadata must match, every non-branch premise must follow
-        // from the reconstructed contract context, and both polarities of one
-        // exact condition must be present.
-        let partition_reuse = (reusable.is_none() && rebased_reuse.is_none())
-            .then(|| {
-                let candidates = checked_artifacts
+                    .collect::<Vec<_>>()
+            },
+        ));
+        if alternatives.is_empty() {
+            // Two artifacts whose single unauthorized entry premises are one
+            // condition and its negation together cover the entry: their
+            // paths form one path set.
+            let partition_reuse = || -> Option<CContractPathSet> {
+                let partitioned = candidates
                     .iter()
-                    .filter(|checked| matches_execution_metadata_except_state(checked))
                     .filter_map(|checked| {
                         let mut unproved = checked
                             .assumptions
@@ -3424,55 +3407,112 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         let Proposition::ConditionIs(condition, value) = premise else {
                             return None;
                         };
-                        Some((checked, condition, value))
+                        Some((*checked, condition, value))
                     })
                     .collect::<Vec<_>>();
                 for (left_index, (left, left_condition, left_value)) in
-                    candidates.iter().enumerate()
+                    partitioned.iter().enumerate()
                 {
-                    if let Some((right, _, _)) = candidates[left_index + 1..].iter().find(
+                    let Some((right, _, _)) = partitioned[left_index + 1..].iter().find(
                         |(_, right_condition, right_value)| {
                             right_condition == left_condition && right_value != left_value
                         },
-                    ) {
-                        let origin = (left.state == right.state).then(|| left.state.clone());
-                        let left = checked_execution_at_definitionally_equal_entry_state(
-                            left,
-                            &state,
-                            &function,
-                            &assumptions,
-                        )?;
-                        let right = checked_execution_at_definitionally_equal_entry_state(
-                            right,
-                            &state,
-                            &function,
-                            &assumptions,
-                        )?;
-                        let mut paths = left.paths;
-                        paths.extend(right.paths);
-                        return Some((SymbolicCExecution { paths, limit: None }, origin));
-                    }
+                    ) else {
+                        continue;
+                    };
+                    let origin = (left.state == right.state).then(|| left.state.clone());
+                    let left = checked_execution_at_definitionally_equal_entry_state(
+                        left,
+                        &state,
+                        &function,
+                        &assumptions,
+                    )?;
+                    let right = checked_execution_at_definitionally_equal_entry_state(
+                        right,
+                        &state,
+                        &function,
+                        &assumptions,
+                    )?;
+                    let mut paths = left.paths;
+                    paths.extend(right.paths);
+                    return Some(CContractPathSet {
+                        paths,
+                        completion_origin_state: origin,
+                    });
                 }
                 None
-            })
-            .flatten();
-        // Why nothing above applied: the census key (the body-rerun ratchet
-        // in `docs/internals/testing.md`) and a short description for the
-        // caller's diagnostic. Same-state artifacts report their first
-        // unauthorized premise; otherwise the entry state itself differed.
-        let fallback_cause = (reusable.is_none()
-            && rebased_reuse.is_none()
-            && partition_reuse.is_none())
-        .then(|| {
+            };
+            alternatives.extend(crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract checked body partition reuse",
+                partition_reuse,
+            ));
+        }
+        let reused = !alternatives.is_empty();
+        if !reused && checked_artifacts.is_empty() {
+            // A kernel caller that supplied no artifact asks for the
+            // kernel's own exact execution; that is one execution, not a
+            // rerun. With artifacts supplied, certification never
+            // executes the body: reuse either applies or the caller gets
+            // no paths and the reason.
+            record_checked_function_body_execution();
+            crate::instrumentation::record_contract_fallback(ContractFallback::NoArtifact);
+            let execution = crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract body symbolic execution",
+                || {
+                    match mode {
+                    CFunctionContractExecutionMode::VerifyLoops => {
+                        prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                            state.clone(),
+                            function.clone(),
+                            arguments.clone(),
+                            assumptions,
+                            environment.clone(),
+                            execution_semantics,
+                            ExecutionBudget::for_c_function_verification(&function, &arguments),
+                            true,
+                        )
+                    }
+                    CFunctionContractExecutionMode::ExecuteLoops => {
+                        prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+                            state.clone(),
+                            function.clone(),
+                            arguments.clone(),
+                            assumptions,
+                            environment.clone(),
+                            execution_semantics,
+                            ExecutionBudget::for_c_function(&function, &arguments),
+                            true,
+                        )
+                    }
+                }
+                },
+            );
+            if let Some(limit) = execution.limit {
+                return CFunctionContractExecution::with_limit(limit);
+            }
+            if crate::instrumentation::enabled() && execution.paths.is_empty() {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                        "exact certification executed a resource-guard case for {} but produced no consistent path",
+                        function.name()
+                    )),
+                );
+            }
+            alternatives.push(CContractPathSet {
+                paths: execution.paths,
+                completion_origin_state: None,
+            });
+        } else if !reused {
             let mut cause = ContractFallback::NoArtifact;
             let mut detail = format!(
                 "no checked execution of `{}` matched the contract's execution mode",
                 function.name()
             );
-            for checked in checked_artifacts
-                .iter()
-                .filter(|checked| matches_execution_metadata_except_state(checked))
-            {
+            for checked in &candidates {
                 if checked.state != state {
                     if cause == ContractFallback::NoArtifact {
                         cause = ContractFallback::EntryStateDelta;
@@ -3511,152 +3551,62 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 };
                 break;
             }
-            (cause, detail)
-        });
-        let body_operation = if reusable.is_some() {
-            "contract checked body reuse"
-        } else if rebased_reuse.is_some() {
-            "contract checked body resource-rebased reuse"
-        } else if partition_reuse.is_some() {
-            "contract checked body partition reuse"
-        } else if checked_artifacts.is_empty() {
-            "contract body symbolic execution"
-        } else {
-            "contract checked body unavailable"
-        };
-        let reused = reusable.is_some() || rebased_reuse.is_some() || partition_reuse.is_some();
-        if let Some(checked) = &reusable {
-            completion_origin_state = Some(checked.state.clone());
-        } else if let Some((_, origin)) = &rebased_reuse {
-            completion_origin_state = Some(origin.clone());
-        } else if let Some((_, Some(origin))) = &partition_reuse {
-            completion_origin_state = Some(origin.clone());
+            crate::instrumentation::record_contract_fallback(cause);
+            crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract checked body unavailable",
+                || (),
+            );
+            reuse_diagnostic = Some(detail);
         }
-        let mut execution = crate::instrumentation::measure_operation(
-            function.name(),
-            "contract certification",
-            body_operation,
-            || match (reusable, rebased_reuse, partition_reuse) {
-                (Some(checked), _, _) => checked.execution.clone(),
-                (None, Some((execution, _)), _) => execution,
-                (None, None, Some((execution, _))) => execution,
-                // A kernel caller that supplied no artifact asks for the
-                // kernel's own exact execution; that is one execution, not a
-                // rerun. With artifacts supplied, certification never
-                // executes the body: reuse either applies or the caller gets
-                // no paths and the reason.
-                (None, None, None) if checked_artifacts.is_empty() => {
-                    record_checked_function_body_execution();
-                    crate::instrumentation::record_contract_fallback(ContractFallback::NoArtifact);
-                    match mode {
-                        CFunctionContractExecutionMode::VerifyLoops => {
-                            prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
-                                state.clone(),
-                                function.clone(),
-                                arguments.clone(),
-                                assumptions,
-                                environment.clone(),
-                                execution_semantics,
-                                ExecutionBudget::for_c_function_verification(
-                                    &function,
-                                    &arguments,
-                                ),
-                                true,
-                            )
-                        }
-                        CFunctionContractExecutionMode::ExecuteLoops => {
-                            prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
-                                state.clone(),
-                                function.clone(),
-                                arguments.clone(),
-                                assumptions,
-                                environment.clone(),
-                                execution_semantics,
-                                ExecutionBudget::for_c_function(&function, &arguments),
-                                true,
-                            )
-                        }
-                    }
+        for set in &mut alternatives {
+            // A reused path carries the proof's own entry premises. Every one
+            // of them was just authorized from the reconstructed contract
+            // context, so the context itself, with the predicate identities
+            // and relation facts derived above, is a sound entry context for
+            // the path and is what claim certification needs to see:
+            // requirement bodies and derived entry facts the proof never
+            // spelled out.
+            if reused {
+                for path in &mut set.paths {
+                    let entry_premises = path.assumptions.pure_facts();
+                    path.facts
+                        .retain(|fact| !entry_premises.contains(fact.proposition()));
+                    path.assumptions = reuse_assumptions.clone();
                 }
-                (None, None, None) => {
-                    let (cause, detail) = fallback_cause
-                        .unwrap_or_else(|| (ContractFallback::NoArtifact, String::new()));
-                    crate::instrumentation::record_contract_fallback(cause);
-                    reuse_diagnostic = Some(detail);
-                    SymbolicCExecution {
-                        paths: Vec::new(),
-                        limit: None,
-                    }
-                }
-            },
-        );
-        // A reused path carries the proof's own entry premises. Every one of
-        // them was just authorized from the reconstructed contract context,
-        // so the context itself, with the predicate identities and relation
-        // facts derived above, is a sound entry context for the path and is
-        // what claim certification needs to see: requirement bodies and
-        // derived entry facts the proof never spelled out.
-        if reused {
-            for path in &mut execution.paths {
-                let entry_premises = path.assumptions.pure_facts();
-                path.facts
-                    .retain(|fact| !entry_premises.contains(fact.proposition()));
-                path.assumptions = reuse_assumptions.clone();
             }
-        }
-        for path in &mut execution.paths {
-            let mut certification_assumptions = path.assumptions.clone();
-            for obligation in &path.obligations {
-                let Proposition::ConditionIs(condition, value) = obligation.proposition() else {
-                    continue;
-                };
-                if certification_proves_proposition(
-                    &certification_assumptions,
-                    obligation.proposition(),
-                ) || pure_theorem_facts.iter().any(|fact| {
-                    certification_proves_condition_from_verified_pure_implication(
+            for path in &mut set.paths {
+                let mut certification_assumptions = path.assumptions.clone();
+                for obligation in &path.obligations {
+                    let Proposition::ConditionIs(condition, value) = obligation.proposition()
+                    else {
+                        continue;
+                    };
+                    if certification_proves_proposition(
                         &certification_assumptions,
-                        fact,
-                        condition,
-                        *value,
-                    )
-                }) {
-                    certification_assumptions = certification_assumptions
-                        .assume_proposition(obligation.proposition().clone());
+                        obligation.proposition(),
+                    ) || pure_theorem_facts.iter().any(|fact| {
+                        certification_proves_condition_from_verified_pure_implication(
+                            &certification_assumptions,
+                            fact,
+                            condition,
+                            *value,
+                        )
+                    }) {
+                        certification_assumptions = certification_assumptions
+                            .assume_proposition(obligation.proposition().clone());
+                    }
                 }
+                path.assumptions = certification_assumptions;
             }
-            path.assumptions = certification_assumptions;
         }
-        if crate::instrumentation::enabled()
-            && execution.paths.is_empty()
-            && execution.limit.is_none()
-        {
-            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
-                format!(
-                    "exact certification executed a resource-guard case for {} but produced no consistent path",
-                    function.name()
-                ),
-            ));
-        }
-        if let Some(limit) = execution.limit {
-            return CFunctionContractExecution {
-                reuse_diagnostic: None,
-                completion_origin_state: None,
-                execution: SymbolicCExecution {
-                    paths: Vec::new(),
-                    limit: Some(limit),
-                },
-            };
-        }
-        combined_paths.extend(execution.paths);
+        cases.push(alternatives);
     }
     CFunctionContractExecution {
+        cases,
+        limit: None,
         reuse_diagnostic,
-        completion_origin_state,
-        execution: SymbolicCExecution {
-            paths: combined_paths,
-            limit: None,
-        },
     }
 }
 

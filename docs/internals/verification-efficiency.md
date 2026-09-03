@@ -240,9 +240,14 @@ At the opaque-contract boundary, the kernel reconstructs contract assumptions
 and resource-guard cases independently. It reuses an artifact only when all
 retained structural inputs and reasoning-policy flags match and every
 retained premise is proved by that reconstructed contract context. A limited or empty
-frontier is never reusable. Any mismatch performs fresh symbolic execution.
-Thus reuse removes duplicate C-body interpretation without trusting smart
-search state or weakening independent contract checking.
+frontier is never reusable. Every reusable artifact becomes one path set of
+the case, and a claim is certified when one path set certifies it on every
+path; a set is prepared for claim checking only when a claim is judged over
+it, so a claim the first set certifies never prepares the second. With
+artifacts supplied, certification never executes the body: when no artifact
+can be reused it produces no paths and the reason. Thus reuse removes
+duplicate C-body interpretation without trusting smart search state or
+weakening independent contract checking.
 
 Proof-directed folds, unfolds, and observations are retained as checked
 zero-source execution events. Each event names its exact input state,

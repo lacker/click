@@ -2334,6 +2334,21 @@ pub struct SymbolicCExecution {
     pub(super) limit: Option<ExecutionLimit>,
 }
 
+/// One complete path set contract certification may judge a claim over: a
+/// checked execution reused at the contract's entry, the union of two
+/// complementary entry partitions, or the kernel's own execution when no
+/// artifact was supplied. Its paths jointly cover the function from the
+/// entry they name, so a claim that holds on every one of them holds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CContractPathSet {
+    pub(super) paths: Vec<SymbolicCExecutionPath>,
+    /// The caller state the reused artifact's proof ran at, when its paths
+    /// were rebased onto this contract's caller state. A claim the proof
+    /// completed at that state certifies the rebased path: the rebase
+    /// checked the two entry representations definitionally equal.
+    pub(super) completion_origin_state: Option<CState>,
+}
+
 /// A complete function frontier produced from only the exact function's
 /// contract entry state and requirements.
 ///
@@ -2343,15 +2358,20 @@ pub struct SymbolicCExecution {
 /// contract evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionContractExecution {
-    pub(super) execution: SymbolicCExecution,
+    /// One entry per resource-guard case of the contract, each listing every
+    /// path set available for that case. A claim holds when, in every case,
+    /// one path set certifies it on all of its paths: each set is a complete
+    /// execution of the function under the case, so any one is authority for
+    /// it. The sets differ only in how the proofs that produced them
+    /// structured the paths (a proof that joins two arms publishes the
+    /// joined path; another publishes each arm), and a claim completed on
+    /// one proof's outcome is matched against that proof's paths.
+    pub(super) cases: Vec<Vec<CContractPathSet>>,
+    /// The execution limit the kernel's own execution hit, when it did.
+    pub(super) limit: Option<ExecutionLimit>,
     /// Why no supplied checked artifact could be reused when certification
     /// produced no paths. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
-    /// The caller state the reused artifact's proof ran at, when its paths
-    /// were rebased onto this contract's caller state. A claim the proof
-    /// completed at that state certifies the rebased path: the rebase
-    /// checked the two entry representations definitionally equal.
-    pub(super) completion_origin_state: Option<CState>,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -2381,12 +2401,44 @@ pub enum CFunctionContractExecutionMode {
 }
 
 impl CFunctionContractExecution {
+    pub(crate) fn empty() -> Self {
+        Self {
+            cases: Vec::new(),
+            limit: None,
+            reuse_diagnostic: None,
+        }
+    }
+
+    pub(crate) fn with_limit(limit: ExecutionLimit) -> Self {
+        Self {
+            cases: Vec::new(),
+            limit: Some(limit),
+            reuse_diagnostic: None,
+        }
+    }
+
+    /// Every path across every case and path set.
     pub fn path_count(&self) -> usize {
-        self.execution.paths.len()
+        self.cases.iter().flatten().map(|set| set.paths.len()).sum()
     }
 
     pub fn limit(&self) -> Option<&ExecutionLimit> {
-        self.execution.limit.as_ref()
+        self.limit.as_ref()
+    }
+
+    /// Whether every resource-guard case has a path set to judge claims
+    /// over and no execution limit was hit.
+    pub(crate) fn is_complete(&self) -> bool {
+        self.limit.is_none()
+            && !self.cases.is_empty()
+            && self
+                .cases
+                .iter()
+                .all(|alternatives| !alternatives.is_empty())
+    }
+
+    pub(crate) fn cases(&self) -> &[Vec<CContractPathSet>] {
+        &self.cases
     }
 
     /// Why certification produced no paths although checked artifacts were

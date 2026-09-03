@@ -25,18 +25,23 @@ every proof-side proposition and expression is elaborated and lowered or
 evaluated by the kernel, with no fallback; the evaluator and the
 requirement lowerer are deleted, so function requirements at proof entry,
 an applied theorem's clauses, and a pure theorem's goal take the same
-route. Of step 6, the legacy claim checker and the excluded-middle arm
-are deleted: a claim with no closer is closed by the direct logical
-closure or the smart `simp` certificate, both recording a completion.
-What remains: the second-proof route (`certification_proves_post_proposition`),
-which a census still finds deciding where a completion made after a
-proof-level join names the proof's join variable while certification
-lowers the ensure over the kernel's path variable
-(`proof_branch_continuation.md`, `witness_and_choose.md`), and where the
-kernel-API tests certify claims without completions
-(`contract_execution_tests.rs`); the C-fragment evaluator the resource
-lowering still uses (`evaluate_c_contract_expression` and its load and
-pointer helpers in `contract_evaluation`).
+route. Of step 6, the legacy claim checker, the excluded-middle arm, and
+the second-proof route (`certification_proves_post_proposition`, with the
+finite-forall instantiation and certified-store reasoning that served only
+it) are deleted: a claim with no closer is closed by the direct logical
+closure or the smart `simp` certificate, both recording a completion; a
+lowered ensure that folded to a constant truth is an exact rule; every
+artifact reusable at the contract entry is its own path set, and a claim
+is certified when one path set certifies it on every path, so a
+completion made after a proof-level join is matched against the joined
+path its proof published rather than against another proof's per-arm
+paths; and a rewritten claim goal stays on the retained outcome proof, so
+the closer after a `rewrite` records the claim goal, not the rewritten
+form. The kernel-API tests that certified an ensure from a bounded
+universal without a completion are deleted with the route. What remains
+of slice 2: the C-fragment evaluator the resource lowering still uses
+(`evaluate_c_contract_expression` and its load and pointer helpers in
+`contract_evaluation`).
 
 ## Violated invariant
 
