@@ -427,6 +427,53 @@ fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
 }
 
 #[test]
+fn c0_syntax_accepts_scalar_casts_and_conditional_expressions() {
+    let function = syntax::parse_function(
+        r#"
+        int32 choose(int32 condition, uint8 left, int32 right) {
+            return condition ? (int32) left : right + 1;
+        }
+        "#,
+    )
+    .expect("scalar casts and conditional expressions should parse");
+
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        }) if matches!(condition.as_ref(), syntax::C0Expression::Variable(name) if name == "condition")
+            && matches!(
+                then_branch.as_ref(),
+                syntax::C0Expression::Cast {
+                    c_type: syntax::C0Type::Int32,
+                    expression,
+                } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "left")
+            )
+            && matches!(
+                else_branch.as_ref(),
+                syntax::C0Expression::Add(left, right)
+                    if matches!(left.as_ref(), syntax::C0Expression::Variable(name) if name == "right")
+                        && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(1))
+            )
+    ));
+}
+
+#[test]
+fn c0_syntax_rejects_non_scalar_casts() {
+    let error = syntax::parse_function(
+        r#"
+        int32 bad(int32* value) {
+            return (int32*) value;
+        }
+        "#,
+    )
+    .expect_err("pointer casts are outside the scalar cast subset");
+    assert!(error.message().contains("scalar values"));
+}
+
+#[test]
 fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"

@@ -233,6 +233,15 @@ pub(super) enum CLValueStorage {
 pub enum CExpression {
     Value(CValue),
     Variable(String),
+    Cast {
+        expression: Box<CExpression>,
+        target_type: CType,
+    },
+    Conditional {
+        condition: Box<CExpression>,
+        then_branch: Box<CExpression>,
+        else_branch: Box<CExpression>,
+    },
     AddressOf(Box<CExpression>),
     PointerOffsetBytes {
         pointer: Box<CExpression>,

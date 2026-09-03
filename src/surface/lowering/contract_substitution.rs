@@ -1957,6 +1957,22 @@ pub(in crate::surface) fn substitute_c_fragment(
                 )
             })
         }
+        CExpression::Cast {
+            expression,
+            target_type,
+        } => Ok(CExpression::Cast {
+            expression: Box::new(substitute_c_fragment(expression, substitutions)?),
+            target_type: *target_type,
+        }),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => Ok(CExpression::Conditional {
+            condition: Box::new(substitute_c_fragment(condition, substitutions)?),
+            then_branch: Box::new(substitute_c_fragment(then_branch, substitutions)?),
+            else_branch: Box::new(substitute_c_fragment(else_branch, substitutions)?),
+        }),
         CExpression::AddressOf(body) => Ok(CExpression::AddressOf(Box::new(
             substitute_c_fragment(body, substitutions)?,
         ))),

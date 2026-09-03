@@ -141,6 +141,22 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::Variable(_) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
+        CExpression::Cast {
+            expression,
+            target_type,
+        } => evaluate_c_cast_paths(state, expression, *target_type, assumptions, budget)?,
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => evaluate_c_conditional_paths(
+            state,
+            condition,
+            then_branch,
+            else_branch,
+            assumptions,
+            budget,
+        )?,
         CExpression::AddressOf(target) => {
             address_of_lvalue_paths(state, target, assumptions, budget)?
         }
@@ -338,6 +354,126 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
     };
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_cast_paths(
+    state: &CState,
+    expression: &CExpression,
+    target_type: CType,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            mut facts,
+            mut obligations,
+        } = path;
+        let outcome = match outcome {
+            CExpressionOutcome::Value(value) => {
+                let effective_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                let coerced = if target_type == CType::Int32 {
+                    match value {
+                        CValue::UInt8(value) => promote_c_int32_path_value(
+                            CValue::UInt8(value),
+                            &mut facts,
+                            &effective_assumptions,
+                        )
+                        .map(CValue::Int32),
+                        value => coerce_c_value_to_type(
+                            value,
+                            target_type,
+                            &mut obligations,
+                            &effective_assumptions,
+                        ),
+                    }
+                } else {
+                    coerce_c_value_to_type(
+                        value,
+                        target_type,
+                        &mut obligations,
+                        &effective_assumptions,
+                    )
+                };
+                match coerced {
+                    Some(value) => CExpressionOutcome::Value(value),
+                    None => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(error) => {
+                CExpressionOutcome::UndefinedBehavior(error)
+            }
+            CExpressionOutcome::RuntimeError(error) => CExpressionOutcome::RuntimeError(error),
+        };
+        paths.push(CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        });
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_conditional_paths(
+    state: &CState,
+    condition: &CExpression,
+    then_branch: &CExpression,
+    else_branch: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for condition_path in evaluate_c_expression_paths(state, condition, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = condition_path;
+        let CExpressionOutcome::Value(value) = outcome else {
+            paths.push(CExpressionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        };
+
+        for truthiness in c_truthiness_paths(value, facts, obligations, assumptions) {
+            let branch = if truthiness.is_true {
+                then_branch
+            } else {
+                else_branch
+            };
+            let branch_assumptions = assumptions_with_path_context(
+                assumptions,
+                &truthiness.facts,
+                &truthiness.obligations,
+            );
+            for branch_path in
+                evaluate_c_expression_paths(state, branch, &branch_assumptions, budget)?
+            {
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &truthiness.facts,
+                    &truthiness.obligations,
+                    &branch_path.facts,
+                    &branch_path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                paths.push(CExpressionPath {
+                    outcome: branch_path.outcome,
+                    facts,
+                    obligations,
+                });
+            }
+        }
+    }
     budget.check_path_width(paths.len())?;
     Ok(paths)
 }

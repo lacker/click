@@ -671,6 +671,18 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }
+        CExpression::Cast { expression, .. } => {
+            collect_c_expression_variables(expression, names);
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_variables(condition, names);
+            collect_c_expression_variables(then_branch, names);
+            collect_c_expression_variables(else_branch, names);
+        }
         CExpression::AddressOf(inner)
         | CExpression::PointerOffsetBytes { pointer: inner, .. }
         | CExpression::Not(inner)

@@ -4,6 +4,16 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
     match expression {
         CExpression::Value(_) => false,
         CExpression::Variable(name) => name == variable,
+        CExpression::Cast { expression, .. } => c_expression_uses_variable(expression, variable),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_uses_variable(condition, variable)
+                || c_expression_uses_variable(then_branch, variable)
+                || c_expression_uses_variable(else_branch, variable)
+        }
         CExpression::AddressOf(expression)
         | CExpression::Not(expression)
         | CExpression::BitwiseNot(expression)

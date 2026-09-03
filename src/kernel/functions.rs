@@ -2173,6 +2173,16 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
 fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) => true,
+        CExpression::Cast { expression, .. } => c_expression_is_snapshot_independent(expression),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_is_snapshot_independent(condition)
+                && c_expression_is_snapshot_independent(then_branch)
+                && c_expression_is_snapshot_independent(else_branch)
+        }
         CExpression::AddressOf(inner)
         | CExpression::Not(inner)
         | CExpression::BitwiseNot(inner) => c_expression_is_snapshot_independent(inner),

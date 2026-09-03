@@ -258,6 +258,18 @@ pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
     match expression {
         CExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
         CExpression::Variable(_) => {}
+        CExpression::Cast { expression, .. } => {
+            collect_c_expression_bitvector_variables(expression, variables)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_bitvector_variables(condition, variables);
+            collect_c_expression_bitvector_variables(then_branch, variables);
+            collect_c_expression_bitvector_variables(else_branch, variables);
+        }
         CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }

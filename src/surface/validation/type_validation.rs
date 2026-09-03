@@ -503,6 +503,34 @@ fn infer_c_expression_type(
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
         CExpression::Value(CValue::Pointer(_)) => None,
         CExpression::Variable(name) => variables.get(name).copied(),
+        CExpression::Cast {
+            expression: _,
+            target_type,
+        } => match target_type {
+            CType::Int32 => Some(C0Type::Int32),
+            CType::UInt8 => Some(C0Type::UInt8),
+            CType::Int32Pointer => Some(C0Type::Int32Pointer),
+            CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
+            CType::Int32PointerPointer => Some(C0Type::Int32PointerPointer),
+            CType::UInt8PointerPointer => Some(C0Type::UInt8PointerPointer),
+            CType::Void | CType::Int32Array(_) | CType::UInt8Array(_) => None,
+        },
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let _ = infer_c_expression_type(condition, variables)?;
+            let then_type = infer_c_expression_type(then_branch, variables);
+            let else_type = infer_c_expression_type(else_branch, variables);
+            match (then_type, else_type) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
+                    Some(C0Type::Int32)
+                }
+                _ => None,
+            }
+        }
         CExpression::AddressOf(_) => None,
         CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)

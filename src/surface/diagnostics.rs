@@ -829,6 +829,20 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
     match expression {
         CExpression::Value(value) => describe_c_value(value, &[], &[]),
         CExpression::Variable(name) => name.clone(),
+        CExpression::Cast {
+            expression,
+            target_type,
+        } => format!("({target_type:?}){}", describe_c_expression(expression)),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => format!(
+            "{} ? {} : {}",
+            describe_c_expression(condition),
+            describe_c_expression(then_branch),
+            describe_c_expression(else_branch)
+        ),
         CExpression::AddressOf(target) => format!("&{}", describe_c_expression(target)),
         CExpression::PointerOffsetBytes { pointer, bytes } => {
             format!("byte_offset({}, {bytes})", describe_c_expression(pointer))

@@ -38,6 +38,22 @@ fn substitute_c_expression_variables(
     };
     match expression {
         Value(_) => expression.clone(),
+        Cast {
+            expression: body,
+            target_type,
+        } => Cast {
+            expression: unary(body),
+            target_type: *target_type,
+        },
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => Conditional {
+            condition: unary(condition),
+            then_branch: unary(then_branch),
+            else_branch: unary(else_branch),
+        },
         Variable(name) => substitutions
             .get(name)
             .cloned()
@@ -584,6 +600,12 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
     let inner = |body: &CExpression| expression_takes_address_of(body, name);
     match expression {
         Value(_) | Variable(_) => false,
+        Cast { expression, .. } => inner(expression),
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => inner(condition) || inner(then_branch) || inner(else_branch),
         AddressOf(body) => {
             matches!(body.as_ref(), Variable(target) if target == name) || inner(body)
         }

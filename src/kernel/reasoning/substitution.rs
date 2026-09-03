@@ -708,6 +708,18 @@ fn collect_c_expression_bound_variables(
     match expression {
         CExpression::Value(value) => collect_c_value_bound_variables(value, variables),
         CExpression::Variable(_) => {}
+        CExpression::Cast { expression, .. } => {
+            collect_c_expression_bound_variables(expression, variables);
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_bound_variables(condition, variables);
+            collect_c_expression_bound_variables(then_branch, variables);
+            collect_c_expression_bound_variables(else_branch, variables);
+        }
         CExpression::AddressOf(body)
         | CExpression::Not(body)
         | CExpression::Load(body)
@@ -1133,6 +1145,34 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             CExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
         CExpression::Variable(name) => CExpression::Variable(name.clone()),
+        CExpression::Cast {
+            expression,
+            target_type,
+        } => CExpression::Cast {
+            expression: Box::new(substitute_bitvector_variable_in_c_expression(
+                expression, from, to,
+            )),
+            target_type: *target_type,
+        },
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => CExpression::Conditional {
+            condition: Box::new(substitute_bitvector_variable_in_c_expression(
+                condition, from, to,
+            )),
+            then_branch: Box::new(substitute_bitvector_variable_in_c_expression(
+                then_branch,
+                from,
+                to,
+            )),
+            else_branch: Box::new(substitute_bitvector_variable_in_c_expression(
+                else_branch,
+                from,
+                to,
+            )),
+        },
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),

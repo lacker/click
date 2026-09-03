@@ -1349,6 +1349,18 @@ fn collect_resource_fact_reads_from_c_expression(
 ) {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) => {}
+        CExpression::Cast { expression, .. } => {
+            collect_resource_fact_reads_from_c_expression(expression, reads);
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_resource_fact_reads_from_c_expression(condition, reads);
+            collect_resource_fact_reads_from_c_expression(then_branch, reads);
+            collect_resource_fact_reads_from_c_expression(else_branch, reads);
+        }
         CExpression::AddressOf(_) => {}
         CExpression::PointerOffsetBytes { pointer, .. } => {
             collect_resource_fact_reads_from_c_expression(pointer, reads);

@@ -238,6 +238,14 @@ id = "c0.expression.address-of"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.cast"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.conditional"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.sizeof-struct"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 

@@ -67,6 +67,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.char-literal",
     "expression.null-pointer",
     "expression.address-of",
+    "expression.cast",
+    "expression.conditional",
     "expression.sizeof-struct",
     "expression.sizeof-type",
     "expression.call",
@@ -229,6 +231,15 @@ pub enum C0Statement {
 pub enum C0Expression {
     Void,
     Variable(String),
+    Cast {
+        expression: Box<C0Expression>,
+        c_type: C0Type,
+    },
+    Conditional {
+        condition: Box<C0Expression>,
+        then_branch: Box<C0Expression>,
+        else_branch: Box<C0Expression>,
+    },
     AddressOf(Box<C0Expression>),
     PointerOffsetBytes {
         pointer: Box<C0Expression>,
@@ -507,6 +518,18 @@ impl C0Expression {
         match self {
             Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
+            Self::Cast { expression, c_type } => {
+                crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type())
+            }
+            Self::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => crate::kernel::c_conditional(
+                condition.to_kernel_expression(),
+                then_branch.to_kernel_expression(),
+                else_branch.to_kernel_expression(),
+            ),
             Self::AddressOf(target) => {
                 crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
             }
@@ -783,6 +806,8 @@ enum Token {
     Caret,
     Tilde,
     Equal,
+    Question,
+    Colon,
 }
 
 impl Token {
@@ -845,6 +870,8 @@ impl Token {
             Self::Caret => "^",
             Self::Tilde => "~",
             Self::Equal => "=",
+            Self::Question => "?",
+            Self::Colon => ":",
         }
     }
 
@@ -2074,7 +2101,23 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        self.parse_logical_or()
+        self.parse_conditional()
+    }
+
+    fn parse_conditional(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let condition = self.parse_logical_or()?;
+        if self.peek() != Some(&Token::Question) {
+            return Ok(condition);
+        }
+        self.position += 1;
+        let then_branch = self.parse_expression()?;
+        self.expect(Token::Colon)?;
+        let else_branch = self.parse_conditional()?;
+        Ok(C0Expression::Conditional {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        })
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<C0Expression>, C0SyntaxError> {
@@ -2274,6 +2317,24 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek() == Some(&Token::LParen) && self.is_type_start_at(1) {
+            self.position += 1;
+            let parsed_type = self.parse_type()?;
+            self.expect(Token::RParen)?;
+            let c_type = match (parsed_type.c_type, parsed_type.struct_name) {
+                (C0Type::Int32 | C0Type::UInt8, None) => parsed_type.c_type,
+                _ => {
+                    return Err(self.error_at_previous(
+                        "casts currently support only `int32` and `uint8` scalar values",
+                    ));
+                }
+            };
+            return Ok(C0Expression::Cast {
+                expression: Box::new(self.parse_unary()?),
+                c_type,
+            });
+        }
+
         if self.peek() == Some(&Token::Plus) {
             self.position += 1;
             return self.parse_unary();
@@ -2623,6 +2684,15 @@ impl Parser {
         self.tokens.get(self.position + offset)
     }
 
+    fn is_type_start_at(&self, offset: usize) -> bool {
+        match self.peek_n(offset) {
+            Some(Token::Ident(name)) => {
+                is_builtin_type_start(name) || self.typedefs.contains_key(name)
+            }
+            _ => false,
+        }
+    }
+
     fn peek_ident(&self) -> Option<&str> {
         match self.peek() {
             Some(Token::Ident(name)) => Some(name),
@@ -2858,6 +2928,8 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             '~' => Token::Tilde,
             '!' => Token::Bang,
             '=' => Token::Equal,
+            '?' => Token::Question,
+            ':' => Token::Colon,
             _ => {
                 return Err(C0SyntaxError::at(
                     position,

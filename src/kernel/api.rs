@@ -559,6 +559,25 @@ pub fn c_variable(name: impl Into<String>) -> CExpression {
     CExpression::Variable(name.into())
 }
 
+pub fn c_cast(expression: CExpression, target_type: CType) -> CExpression {
+    CExpression::Cast {
+        expression: Box::new(expression),
+        target_type,
+    }
+}
+
+pub fn c_conditional(
+    condition: CExpression,
+    then_branch: CExpression,
+    else_branch: CExpression,
+) -> CExpression {
+    CExpression::Conditional {
+        condition: Box::new(condition),
+        then_branch: Box::new(then_branch),
+        else_branch: Box::new(else_branch),
+    }
+}
+
 pub fn c_addr_of(name: impl Into<String>) -> CExpression {
     CExpression::AddressOf(Box::new(c_variable(name)))
 }

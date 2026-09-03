@@ -473,6 +473,18 @@ fn collect_expression_variable_names(expression: &CExpression, names: &mut BTree
             names.insert(name.clone());
         }
         CExpression::Value(_) => {}
+        CExpression::Cast { expression, .. } => {
+            collect_expression_variable_names(expression, names)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expression_variable_names(condition, names);
+            collect_expression_variable_names(then_branch, names);
+            collect_expression_variable_names(else_branch, names);
+        }
         CExpression::PointerOffsetBytes { pointer, .. } => {
             collect_expression_variable_names(pointer, names)
         }

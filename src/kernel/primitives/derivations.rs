@@ -897,6 +897,16 @@ fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize 
         }
         match expression {
             CExpression::Value(_) => {}
+            CExpression::Cast { expression, .. } => pending.push((expression, false)),
+            CExpression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                pending.push((condition, false));
+                pending.push((then_branch, false));
+                pending.push((else_branch, false));
+            }
             // Scalar variables add an lvalue visit. Arrays skip it, so this is
             // a safe structural allowance without consulting an execution
             // state during budget construction.

@@ -8,11 +8,11 @@ existing terms; none needs new kernel state.
   `for` now accept one controlled statement, including nested `else if`
   chains, while still requiring declarations to be enclosed in braces. The
   parser and mdtest regression landed in `2d524a83`.
-- **Ternary.** `?` and `:` are unexpected characters (`:1945-1972`). The
-  kernel has `Bitvector32Term::If` for value selection.
-- **Casts.** There is no `(type) expr` production (`:1592-1637`, `:1752-1756`
-  treats `(` as grouping only). `(int32) c` and `(uint8) x` should map to the
-  existing promotion and checked narrowing; pointer casts need a decision.
+- **Ternary (implemented).** Scalar `condition ? then : else` expressions
+  now parse with C precedence and short-circuit path evaluation.
+- **Scalar casts (implemented).** `(int32) expr` and `(uint8) expr` now
+  reuse the existing promotion and checked-narrowing proof obligations.
+  Pointer and aggregate casts remain outside this issue's C0 scope.
 - **Integer literals (implemented).** Decimal, octal, and hexadecimal literals
   with the conventional `U`/`L` suffix combinations now lower to the existing
   int32 literal form; invalid octal and out-of-range forms remain rejected.
@@ -58,8 +58,8 @@ rejected with a diagnostic.
 
 ## Acceptance criteria
 
-- Every bullet is parsed and lowered to existing kernel forms, with
-  evaluation order and value semantics matching C (compound assignment on a
-  memory lvalue evaluates the lvalue once).
+- Every bullet is parsed and lowered to kernel forms with evaluation order and
+  value semantics matching C (compound assignment on a memory lvalue
+  evaluates the lvalue once).
 - `C0_PUBLIC_FORMS` and `docs/reference/language/c0.md` list the new forms.
 - The mdtests above pass; `scripts/check.sh` passes.
