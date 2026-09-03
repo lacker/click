@@ -6,11 +6,13 @@ Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
-slice now extends this with scalar-only copies.
+slice now extends this with copies of scalar and fixed-array fields.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
 arrays, embedded structs, named enum fields, and pointers. Structs whose fields
-are only `int32`, `uint8`, or named enum fields can be parameters, locals, assignments, and returns
-by value; each operation uses fresh address-backed storage. Local arrays of
+are only `int32`, `uint8`, named enum fields, or fixed one-dimensional scalar
+arrays can be parameters, locals, assignments, and returns by value; each
+operation uses fresh address-backed storage and copies array cells individually.
+Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
 of those supported structs use the same stride; the kernel represents the
@@ -54,8 +56,9 @@ Staged mdtests, each with an unchanged C file:
 4. ~~A scalar-only struct passed and returned by value (copy semantics, no
    aliasing).~~ Covered by `mdtests/struct_by_value_scalar_copy.md` and the
    C0/kernel aggregate-layout metadata test. Named enum fields in that shape
-   are covered by `mdtests/struct_by_value_enum_copy.md`; pointer, array, and
-   embedded-field value shapes remain open.
+   are covered by `mdtests/struct_by_value_enum_copy.md` and
+   `mdtests/struct_by_value_array_copy.md`; pointer and embedded-field value
+   shapes remain open.
 5. A union of `int32` and `int32*` with a tag field, read only through the
    active member.
 

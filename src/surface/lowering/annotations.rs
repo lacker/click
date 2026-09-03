@@ -2169,6 +2169,9 @@ impl AnnotationLowerer<'_> {
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
                 .unwrap_or_else(|| self.array_ref_element_type_for_name(name)),
+            ContractExpression::Field { lowered, .. } => self
+                .c_expression_array_element_type(lowered, environment)
+                .unwrap_or(CType::Int32),
             ContractExpression::At { expression, .. } => {
                 self.contract_array_element_type(expression, environment)
             }

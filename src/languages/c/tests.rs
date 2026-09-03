@@ -3227,9 +3227,60 @@ fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
     assert!(
         error
             .message()
-            .contains("only int32, uint8, and named enum fields")
+            .contains("int32, uint8, named enum fields, and fixed scalar arrays")
     );
     assert!(error.message().contains("contains a pointer"));
+}
+
+#[test]
+fn c0_struct_values_preserve_inline_array_layout_metadata() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            int32 values[2];
+            uint8 bytes[3];
+        };
+
+        struct packet identity(struct packet value) {
+            return value;
+        }
+        "#,
+    )
+    .expect("inline scalar arrays should be allowed in struct values");
+
+    let packet = function.structs().get("packet").expect("packet layout");
+    assert_eq!(packet.field("tag").unwrap().offset_bytes(), 0);
+    assert_eq!(packet.field("values").unwrap().offset_bytes(), 4);
+    assert_eq!(
+        packet.field("values").unwrap().c_type(),
+        syntax::C0Type::Int32Array(2)
+    );
+    assert_eq!(packet.field("bytes").unwrap().offset_bytes(), 12);
+    assert_eq!(
+        packet.field("bytes").unwrap().c_type(),
+        syntax::C0Type::UInt8Array(3)
+    );
+    assert_eq!(packet.size_bytes(), 16);
+
+    let kernel_function = function.to_kernel_function();
+    let layout = kernel_function.parameters()[0]
+        .aggregate_layout()
+        .expect("array struct parameter layout");
+    let values = layout
+        .fields()
+        .iter()
+        .find(|field| field.name() == "values")
+        .expect("values field in kernel layout");
+    assert_eq!(values.offset_bytes(), 4);
+    assert_eq!(values.c_type(), crate::kernel::CType::Int32Array(2));
+    let bytes = layout
+        .fields()
+        .iter()
+        .find(|field| field.name() == "bytes")
+        .expect("bytes field in kernel layout");
+    assert_eq!(bytes.offset_bytes(), 12);
+    assert_eq!(bytes.c_type(), crate::kernel::CType::UInt8Array(3));
 }
 
 #[test]

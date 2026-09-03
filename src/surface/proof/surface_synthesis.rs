@@ -1073,27 +1073,40 @@ fn synthesize_local_aggregate_field(
         .aggregate_object_values()
         .find_map(|(name, layout, slot)| {
             layout.fields().iter().find_map(|field| {
-                let pointer = if field.offset_bytes() == 0 {
-                    slot.clone()
-                } else {
-                    Pointer {
-                        block: slot.block.clone(),
-                        offset: crate::kernel::PointerOffsetTerm::add(
-                            slot.offset.clone(),
-                            crate::kernel::PointerOffsetTerm::constant(i64::from(
-                                field.offset_bytes(),
-                            )),
-                        ),
+                let (element_type, element_count) = match field.c_type() {
+                    CType::Int32 => (CType::Int32, 1),
+                    CType::UInt8 => (CType::UInt8, 1),
+                    CType::Int32Array(length) => (CType::Int32, length),
+                    CType::UInt8Array(length) => (CType::UInt8, length),
+                    _ => return None,
+                };
+                (0..element_count).find_map(|index| {
+                    let element_offset = field
+                        .offset_bytes()
+                        .checked_add(index.checked_mul(element_type.byte_width())?)?;
+                    let pointer = if element_offset == 0 {
+                        slot.clone()
+                    } else {
+                        Pointer {
+                            block: slot.block.clone(),
+                            offset: crate::kernel::PointerOffsetTerm::add(
+                                slot.offset.clone(),
+                                crate::kernel::PointerOffsetTerm::constant(i64::from(
+                                    element_offset,
+                                )),
+                            ),
+                        }
+                    };
+                    let CExpressionOutcome::Value(value) = state.memory().load(&pointer) else {
+                        return None;
+                    };
+                    let value_term = match value {
+                        CValue::Int32(value) | CValue::UInt8(value) => value,
+                        CValue::Pointer(_) | CValue::Void => return None,
+                    };
+                    if value_term != *term {
+                        return None;
                     }
-                };
-                let CExpressionOutcome::Value(value) = state.memory().load(&pointer) else {
-                    return None;
-                };
-                let value_term = match value {
-                    CValue::Int32(value) | CValue::UInt8(value) => value,
-                    CValue::Pointer(_) | CValue::Void => return None,
-                };
-                (value_term == *term).then(|| {
                     let base = CExpression::Variable(name.to_string());
                     let lowered_pointer = if field.offset_bytes() == 0 {
                         base.clone()
@@ -1103,13 +1116,23 @@ fn synthesize_local_aggregate_field(
                             bytes: field.offset_bytes(),
                         }
                     };
-                    ContractExpression::Field {
+                    let field_expression = ContractExpression::Field {
                         base: Box::new(ContractExpression::CFragment(base)),
                         field: field.name().to_string(),
                         lowered: CExpression::TypedLoad {
                             pointer: Box::new(lowered_pointer),
                             value_type: field.c_type(),
                         },
+                    };
+                    if element_count == 1 {
+                        Some(field_expression)
+                    } else {
+                        Some(ContractExpression::Index(
+                            Box::new(field_expression),
+                            Box::new(ContractExpression::CFragment(CExpression::Value(int32(
+                                index,
+                            )))),
+                        ))
                     }
                 })
             })

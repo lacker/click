@@ -1398,10 +1398,14 @@ impl Parser {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         if layout.fields.values().any(|field| {
-            field.struct_name.is_some() || !matches!(field.c_type, C0Type::Int32 | C0Type::UInt8)
+            field.struct_name.is_some()
+                || !matches!(
+                    field.c_type,
+                    C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
+                )
         }) {
             return Err(self.error_here(format!(
-                "struct-by-value currently supports only int32, uint8, and named enum fields; `struct {struct_name}` contains a pointer, array, or embedded struct field"
+                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer or embedded struct field"
             )));
         }
         Ok(layout)
@@ -2884,29 +2888,41 @@ impl Parser {
             .structs
             .get(target_struct)
             .expect("validated struct value has a layout");
-        let stores = layout
-            .fields
-            .values()
-            .map(|field| {
+        let mut stores = Vec::new();
+        for field in layout.fields.values() {
+            let (element_type, element_count) = match field.c_type {
+                C0Type::Int32 | C0Type::UInt8 => (field.c_type, 1),
+                C0Type::Int32Array(length) => (C0Type::Int32, length),
+                C0Type::UInt8Array(length) => (C0Type::UInt8, length),
+                _ => unreachable!("validated struct value field shape"),
+            };
+            let element_width = element_type.abi_size_bytes();
+            for index in 0..element_count {
+                let element_offset = field
+                    .offset_bytes
+                    .checked_add(
+                        index
+                            .checked_mul(element_width)
+                            .expect("validated struct value field offset"),
+                    )
+                    .expect("validated struct value field offset");
                 let target_pointer = offset_field_pointer(
                     C0Expression::Variable(target.to_string()),
-                    field.offset_bytes,
+                    element_offset,
                 );
-                let source_pointer = offset_field_pointer(
-                    C0Expression::Variable(source.clone()),
-                    field.offset_bytes,
-                );
-                C0Statement::Store {
+                let source_pointer =
+                    offset_field_pointer(C0Expression::Variable(source.clone()), element_offset);
+                stores.push(C0Statement::Store {
                     pointer: target_pointer,
                     value: C0Expression::Field {
                         pointer: Box::new(source_pointer),
-                        field_type: field.c_type,
+                        field_type: element_type,
                         field_struct_name: None,
                     },
-                    value_type: Some(field.c_type),
-                }
-            })
-            .collect::<Vec<_>>();
+                    value_type: Some(element_type),
+                });
+            }
+        }
         Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
     }
 

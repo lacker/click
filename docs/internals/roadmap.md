@@ -90,10 +90,10 @@ Likely additions:
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded
   aggregate places. One-dimensional function parameters declared as arrays of
-  the supported structs now retain their ABI stride. Scalar-only by-value
-  structs with `int32`/`uint8` fields now have explicit fresh-copy semantics
-  for parameters, locals, assignments, and returns. Named enum fields inside
-  that by-value shape use the same scalar representation. Remaining work
+  the supported structs now retain their ABI stride. Copyable by-value structs
+  with scalar, named-enum, and fixed scalar-array fields now have explicit
+  fresh-copy semantics for parameters, locals, assignments, and returns; array
+  fields are copied element by element. Remaining work
   includes broader struct values, arrays of embedded structs, multidimensional
   struct arrays, unions/bitfields, and broader address-taking. Named enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,

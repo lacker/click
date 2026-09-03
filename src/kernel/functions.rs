@@ -1815,10 +1815,11 @@ pub(super) fn bind_c_function_arguments(
     Some(callee_state)
 }
 
-/// Copy the modeled scalar fields of an address-backed aggregate into a
-/// distinct destination block. Missing cells in automatic storage remain
-/// missing so an uninitialized source field stays uninitialized in the copy;
-/// opaque/external source cells are represented by typed symbolic loads.
+/// Copy the modeled scalar cells of an address-backed aggregate into a
+/// distinct destination block. Fixed scalar-array fields are copied one cell
+/// at a time. Missing cells in automatic storage remain missing so an
+/// uninitialized source field stays uninitialized in the copy; opaque/external
+/// source cells are represented by typed symbolic loads.
 pub(super) fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
@@ -1826,36 +1827,52 @@ pub(super) fn copy_aggregate_fields(
     layout: &CAggregateLayout,
 ) -> CMemory {
     for field in layout.fields() {
-        let source_field = source.offset_by_bytes(field.offset_bytes());
-        let destination_field = destination.offset_by_bytes(field.offset_bytes());
-        let value = memory.known_value(&source_field).or_else(|| {
-            if memory.is_zeroed_heap_address(&source_field, field.c_type().byte_width()) {
-                return match field.c_type() {
-                    CType::Int32 => Some(int32(0)),
-                    CType::UInt8 => Some(uint8(0)),
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int32 | CType::UInt8 => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            _ => continue,
+        };
+        for index in 0..element_count {
+            let element_offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate field offset"),
+                )
+                .expect("validated aggregate field offset");
+            let source_field = source.offset_by_bytes(element_offset);
+            let destination_field = destination.offset_by_bytes(element_offset);
+            let value = memory.known_value(&source_field).or_else(|| {
+                if memory.is_zeroed_heap_address(&source_field, element_type.byte_width()) {
+                    return match element_type {
+                        CType::Int32 => Some(int32(0)),
+                        CType::UInt8 => Some(uint8(0)),
+                        _ => None,
+                    };
+                }
+                if memory.has_block(&source_field.block)
+                    && !matches!(source_field.block, PointerBlock::Symbolic(_))
+                    && memory.access_in_bounds(&source_field, element_type.byte_width())
+                {
+                    return None;
+                }
+                match element_type {
+                    CType::Int32 => Some(CValue::Int32(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::UInt8 => Some(CValue::UInt8(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
                     _ => None,
-                };
+                }
+            });
+            if let Some(value) = value {
+                memory = memory.store(destination_field, value);
             }
-            if memory.has_block(&source_field.block)
-                && !matches!(source_field.block, PointerBlock::Symbolic(_))
-                && memory.access_in_bounds(&source_field, field.c_type().byte_width())
-            {
-                return None;
-            }
-            match field.c_type() {
-                CType::Int32 => Some(CValue::Int32(crate::kernel::canonical_form_of_load(
-                    crate::kernel::intern_c_memory(memory.clone()),
-                    source_field,
-                ))),
-                CType::UInt8 => Some(CValue::UInt8(crate::kernel::canonical_form_of_load(
-                    crate::kernel::intern_c_memory(memory.clone()),
-                    source_field,
-                ))),
-                _ => None,
-            }
-        });
-        if let Some(value) = value {
-            memory = memory.store(destination_field, value);
         }
     }
     memory

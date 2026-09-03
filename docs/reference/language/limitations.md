@@ -41,12 +41,13 @@ structs are also accepted for indexed `items[i].field` loads and stores, using
 the ABI-sized struct stride.
 One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
-does not change the pointer ABI. Scalar-only struct values are also supported
-when every field is `int32`, `uint8`, or a named enum field: parameters, locals,
-assignments, and returns use fresh address-backed copies, with enum fields using
-the same four-byte scalar representation. Struct values containing pointers,
-arrays, or embedded structs remain unsupported, as do direct aggregate loads,
-aggregate resource segments, arrays of embedded structs,
+does not change the pointer ABI. Copyable struct values are also supported when
+every field is `int32`, `uint8`, a named enum field, or a fixed one-dimensional
+array of those scalar elements: parameters, locals, assignments, and returns
+use fresh address-backed copies, with enum fields using the same four-byte
+scalar representation and array fields copied element by element. Struct
+values containing pointers or embedded structs remain unsupported, as do direct
+aggregate loads, aggregate resource segments, arrays of embedded structs,
 multidimensional inline arrays, unions, bitfields, packed layout, or general
 field-address expressions. Named enums use the four-byte scalar ABI
 representation; their enumerators are resolved to
