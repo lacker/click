@@ -7,9 +7,9 @@ Struct pointers are supported: declarations, `->` field access, and
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
 slice now extends this with copies of scalar and fixed-array fields.
-Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
+Struct fields currently support `int32`, `uint8`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
-and one-dimensional arrays of embedded structs. Structs whose fields
+and fixed-dimensional arrays of embedded structs. Structs whose fields
 are only `int32`, `uint8`, named enum fields, or fixed one-dimensional scalar
 arrays can be parameters, locals, assignments, and returns by value; each
 operation uses fresh address-backed storage and copies array cells individually.
@@ -33,8 +33,8 @@ Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values, multidimensional struct arrays, bitfields, and
-broader address-taking as remaining. The first tagged-union slice is covered by
+lists broader struct values, bitfields, and broader address-taking as
+remaining. The first tagged-union slice is covered by
 `mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
 explicit source-level precondition rather than an inferred rule. The pilot
 target json-c's `json_object` uses unions,
@@ -70,10 +70,11 @@ Staged mdtests, each with an unchanged C file:
    active member.~~ Covered by `mdtests/struct_tagged_union.md` and the C0
    union-layout/read-only-boundary tests. Arbitrary tag-to-member mappings are
    still an explicit source-level precondition; C0 does not infer them.
-6. ~~A one-dimensional array of embedded structs (`struct inner values[2];`)
-   indexed through a containing struct pointer.~~ Covered by
-   `mdtests/struct_array_of_embedded_structs.md` and the C0 ABI/execution test;
-   multidimensional embedded arrays remain explicitly rejected.
+6. ~~An array of embedded structs (`struct inner values[2]` or
+   `struct inner values[2][2]`) indexed through a containing struct pointer.~~
+   Covered by `mdtests/struct_array_of_embedded_structs.md`,
+   `mdtests/struct_multidimensional_embedded_array.md`, and the C0
+   ABI/execution tests.
 
 ## Acceptance criteria
 

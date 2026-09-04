@@ -47,10 +47,11 @@ array of those scalar elements: parameters, locals, assignments, and returns
 use fresh address-backed copies, with enum fields using the same four-byte
 scalar representation and array fields copied element by element. Struct
 values containing pointers or embedded structs remain unsupported, as do direct
-aggregate loads, aggregate resource segments, arrays of embedded structs,
-multidimensional inline arrays, bitfields, packed layout, or general
-field-address expressions. Named enums use the four-byte scalar ABI
-representation; their enumerators are resolved to
+aggregate loads, aggregate resource segments, multidimensional inline arrays
+of scalar fields, bitfields, packed layout, or general field-address
+expressions. Fixed multidimensional arrays of embedded structs are supported
+through indexed leaf-field access with row-major ABI stride. Named enums use
+the four-byte scalar ABI representation; their enumerators are resolved to
 int32 values in C expressions, while enum parameters, returns, locals, arrays,
 and anonymous declarations remain unsupported. Aggregate fields are not
 resource segments; resource clauses must name a leaf field.

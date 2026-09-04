@@ -287,7 +287,9 @@ int32 tail; }` with `inner` sized at 8 bytes, `in` starts at byte offset 4 and
 place while nested member lowering adds the inner field offset before emitting
 the kernel's scalar load or store. Direct aggregate loads and copies remain
 unsupported; resource clauses currently name nested leaf fields rather than
-the aggregate itself.
+the aggregate itself. Fixed multidimensional arrays of embedded structs retain
+their declared shape in C0 metadata; indexed leaf access flattens indices in
+row-major order before adding the nested struct's complete ABI stride.
 
 Scalar-only by-value structs are the first exception to that address-first
 boundary. C0 retains each field name, byte offset, and kernel scalar type in a

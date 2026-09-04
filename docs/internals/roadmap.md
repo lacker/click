@@ -94,8 +94,8 @@ Likely additions:
   with scalar, named-enum, and fixed scalar-array fields now have explicit
   fresh-copy semantics for parameters, locals, assignments, and returns; array
   fields are copied element by element. Remaining work
-  includes broader struct values, multidimensional struct arrays, bitfields,
-  and broader address-taking. Named enum fields
+  includes broader struct values, bitfields, and broader address-taking. Named
+  enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
   and anonymous declarations remain outside the slice.
 - Globals:

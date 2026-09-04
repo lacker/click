@@ -1169,6 +1169,7 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
         pointer,
         field_type: syntax::C0Type::Int32,
         field_struct_name: None,
+        ..
     }) = function.body()
     else {
         panic!("the terminal scalar field should retain its resolved type")
@@ -3827,6 +3828,108 @@ fn c0_embedded_struct_array_field_preserves_stride_and_accesses_leaf() {
         Default::default(),
     )
     .expect("indexed embedded struct fields should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_multidimensional_embedded_struct_array_preserves_row_major_stride() {
+    #[repr(C)]
+    struct HostInner {
+        value: i32,
+        flag: u8,
+    }
+
+    #[repr(C)]
+    struct HostPacket {
+        tag: u8,
+        points: [[HostInner; 2]; 2],
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 flag;
+        };
+        struct packet {
+            uint8 tag;
+            struct inner points[2][2];
+            int32 tail;
+        };
+
+        int32 read_point(struct packet* packet) {
+            packet->points[1][1].value = 7;
+            return packet->points[1][1].value;
+        }
+        "#,
+    )
+    .expect("multidimensional arrays of embedded structs should parse");
+
+    let packet_layout = function.structs().get("packet").expect("packet layout");
+    let points = packet_layout
+        .field("points")
+        .expect("embedded struct array field");
+    assert_eq!(points.c_type(), syntax::C0Type::UInt8Array(32));
+    assert_eq!(points.struct_name(), Some("inner"));
+    assert_eq!(points.array_element_width(), Some(8));
+    assert_eq!(points.array_shape(), Some(&[2, 2][..]));
+    assert_eq!(points.byte_width(), 32);
+    assert_eq!(
+        points.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, points)
+    );
+    assert_eq!(
+        packet_layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        packet_layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+
+    let function = function.to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 10);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 40))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 40)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(28),
+                    },
+                    crate::kernel::int32(7),
+                ),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("multidimensional embedded struct fields should execute");
 
     assert_eq!(
         theorem.proposition(),
