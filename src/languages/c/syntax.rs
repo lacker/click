@@ -4991,7 +4991,8 @@ impl Parser {
                 ));
             }
             let mut values = Vec::new();
-            self.parse_array_initializer_level("struct field", &dimensions, 0, &mut values)?;
+            let zero = zero_initializer(element_type);
+            self.parse_array_initializer_level("struct field", &dimensions, 0, &mut values, &zero)?;
             return Ok(values
                 .into_iter()
                 .enumerate()
