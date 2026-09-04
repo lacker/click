@@ -75,16 +75,38 @@ be presented as the canonical form of `new_len`.
 `canonical_term` is a fixed composition of structural load canonicalization
 and load-variable replacement. Existing tests cover a representative
 idempotence case, and the documentation claims determinism and idempotence.
-However, proposition reasoning skips deep structural canonicalization whenever
-`bitvector_term_deeper_than(term, 64)` is true. Consequently the proof result,
-though not the canonicalizer's nominal definition, still depends on an opaque
-term-depth check. The recursive implementation of
-`canonicalize_atomic_loads_deep` is the underlying stack-safety concern.
+Proposition reasoning used to guard a deep structural comparison with
+`bitvector_term_deeper_than(term, 64)`. Inspection found an important nuance:
+in the current equality flow the preceding `decide` path already reaches the
+memory-resolution equality graph, whose vertices are keyed by
+`canonical_term`. The guarded comparison was therefore redundant for the
+known callers rather than a reproduced proof result that changed at depth 65.
+It was still an invalid and brittle boundary: a small control-flow refactor
+could have made the fallback's opaque cutoff observable, and the recursive
+preflight walked embedded memory as well as the explicit term.
 
-This issue owns that preflight limit. The canonicalizer must become safely
-applicable at every supported finite depth, and its idempotence contract needs
-multi-shape and multi-depth regression coverage rather than one representative
-load case.
+Stage 3 removed that preflight and the two recursive implementations beneath
+the true canonical form. Structural load canonicalization, load-variable
+substitution (including every condition family and pointer offsets), and
+top-level offset canonicalization now use explicit worklists. Chains in which
+one materialized cell stores a load of the next cell are followed iteratively
+as well. The whole-term memo tables
+are retained for ordinary shallow terms because expansion performance depends
+on them, but an iterative structural preflight makes deep terms bypass those
+caches: their derived `Hash`/`Eq` operations would otherwise recursively walk
+the same structures before the iterative body ran. This numeric threshold is
+only a cache policy and cannot change a proof or canonical result. Narrow
+caches for memory-DAG and load identities remain unchanged.
+
+Multi-size regressions exercise conditional terms at depths 1, 8, 32, 96,
+and 256. The two canonicalization passes visit respectively
+`8/49/193/577/1537` and `7/49/193/577/1537` term nodes, within a linear bound,
+and a second application returns the exact same term. A separate resolved-load
+regression at depths 64, 128, 256, and 512 visits each explicit node once and
+reaches the deepest cell. Pointer-offset canonicalization is independently
+covered at depths 64, 128, and 256. Two depth-128 terms whose only difference
+is irrelevant snapshot history also have identical canonical forms and prove
+equal through the public proposition path.
 
 ### Context-dependent footprint lowering
 
@@ -376,10 +398,14 @@ useful on its own.
    The layered case is closed by the inner generated-term worklist rather than
    the nominal round count; the exact boundary and remaining lack of a general
    idempotence proof are recorded above.
-3. **Make true canonicalization complete and stack-safe.** Replace recursive
-   deep-load traversal with an iterative implementation, delete the 64-level
-   preflight, and land multi-size regressions. This stage is independent of
-   how contextual equality is represented.
+3. **Make true canonicalization complete and stack-safe (complete).** The
+   structural and load-substitution passes, including condition operands and
+   pointer offsets, now use explicit worklists; materialized root-load chains
+   are iterative; deep inputs bypass recursive whole-term memo keys; and the
+   64-level logical preflight is gone. Multi-size idempotence and linear-work
+   regressions cover depths beyond the former cutoff. The cutoff turned out to
+   be redundant in the current equality flow, not a known observable proof
+   failure; removing it still closes a brittle logical boundary.
 4. **Separate contextual footprint lowering.** Prefer target-directed explicit
    equality evidence. Preserve the verified-call and resource regressions that
    motivated creation-time lowering. Delete the three-round loop only once all

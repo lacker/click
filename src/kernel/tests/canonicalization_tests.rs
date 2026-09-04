@@ -432,29 +432,40 @@ fn canonical_term_is_idempotent_for_every_term_shape() {
 
 #[test]
 fn canonical_term_is_idempotent_at_multiple_term_depths() {
-    for target_depth in [1, 8, 32, 96] {
+    let mut samples = Vec::new();
+    for target_depth in [1_usize, 8, 32, 96, 256] {
         let mut term = unresolved_canonicalization_test_load();
         for depth in 0..target_depth {
             term = Bitvector32Term::Add(
                 Box::new(Bitvector32Term::If {
                     condition: Box::new(ConditionTerm::Bitvector32Equal(
                         Box::new(term),
-                        Box::new(Bitvector32Term::Constant(depth)),
+                        Box::new(Bitvector32Term::Constant(depth as u32)),
                     )),
                     then_term: Box::new(unresolved_canonicalization_test_load()),
-                    else_term: Box::new(Bitvector32Term::Constant(depth + 1)),
+                    else_term: Box::new(Bitvector32Term::Constant(depth as u32 + 1)),
                 }),
-                Box::new(Bitvector32Term::Constant(depth + 2)),
+                Box::new(Bitvector32Term::Constant(depth as u32 + 2)),
             );
         }
 
+        crate::kernel::memory_provenance::reset_atomic_canonicalization_term_visits();
+        crate::kernel::eval::reset_load_substitution_term_visits();
         let once = crate::kernel::eval::canonical_term(&term);
+        let atomic_visits = crate::kernel::memory_provenance::atomic_canonicalization_term_visits();
+        let substitution_visits = crate::kernel::eval::load_substitution_term_visits();
+        assert!(atomic_visits <= 7 * target_depth + 2);
+        assert!(substitution_visits <= 7 * target_depth + 2);
+        samples.push((target_depth, atomic_visits, substitution_visits));
         assert_eq!(
             crate::kernel::eval::canonical_term(&once),
             once,
             "canonicalization was not idempotent at depth {target_depth}",
         );
     }
+    assert!(samples[4].1 <= 260 * samples[0].1);
+    assert!(samples[4].2 <= 260 * samples[0].2);
+    eprintln!("canonical term depth work: {samples:?}");
 }
 
 #[test]
@@ -676,6 +687,87 @@ fn canonical_term_resolves_equal_loads_to_one_form() {
 }
 
 #[test]
+fn atomic_canonicalization_reaches_loads_in_every_condition_region() {
+    let pointer = Pointer {
+        block: "condition-cells".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new()
+        .with_block("condition-cells", 4)
+        .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(7)));
+    let load =
+        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory), Box::new(pointer));
+    let overflow = Bitvector32Term::If {
+        condition: Box::new(ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(load.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        )),
+        then_term: Box::new(Bitvector32Term::Constant(2)),
+        else_term: Box::new(Bitvector32Term::Constant(3)),
+    };
+    let pointer_offset = Bitvector32Term::If {
+        condition: Box::new(ConditionTerm::PointerOffsetEqual(
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(load),
+                byte_width: 4,
+            }),
+            Box::new(PointerOffsetTerm::Constant(28)),
+        )),
+        then_term: Box::new(Bitvector32Term::Constant(4)),
+        else_term: Box::new(Bitvector32Term::Constant(5)),
+    };
+
+    let canonical_overflow = crate::kernel::api::canonicalize_atomic_loads(&overflow);
+    let Bitvector32Term::If { condition, .. } = canonical_overflow else {
+        panic!("expected conditional term");
+    };
+    assert!(matches!(
+        condition.as_ref(),
+        ConditionTerm::Bitvector32SignedAddOverflows(left, _)
+            if left.as_ref() == &Bitvector32Term::Constant(7)
+    ));
+
+    let canonical_pointer_offset = crate::kernel::api::canonicalize_atomic_loads(&pointer_offset);
+    let Bitvector32Term::If { condition, .. } = canonical_pointer_offset else {
+        panic!("expected conditional term");
+    };
+    assert!(matches!(
+        condition.as_ref(),
+        ConditionTerm::PointerOffsetEqual(left, _)
+            if left.as_ref() == &PointerOffsetTerm::Constant(28)
+    ));
+}
+
+#[test]
+fn representational_load_equality_holds_beyond_the_former_depth_preflight() {
+    let pointer = Pointer {
+        block: "deep-cells".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CMemory::new().with_block("deep-cells", 4);
+    let drifted = base.clone().with_block("unrelated", 4);
+    let mut left = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(base),
+        Box::new(pointer.clone()),
+    );
+    let mut right =
+        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(drifted), Box::new(pointer));
+    for value in 0..128 {
+        left = Bitvector32Term::Add(Box::new(left), Box::new(Bitvector32Term::Constant(value)));
+        right = Bitvector32Term::Add(Box::new(right), Box::new(Bitvector32Term::Constant(value)));
+    }
+
+    assert_eq!(
+        crate::kernel::eval::canonical_term(&left),
+        crate::kernel::eval::canonical_term(&right),
+    );
+    assert!(PureFactContext::new().proves(&Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    )));
+}
+
+#[test]
 fn offsets_have_same_canonical_form_through_the_canonical_form() {
     let pointer = Pointer {
         block: "cells".into(),
@@ -717,6 +809,39 @@ fn offsets_have_same_canonical_form_through_the_canonical_form() {
         &scaled(base),
         &other_scaled,
     ));
+}
+
+#[test]
+fn canonical_offset_term_is_complete_and_idempotent_at_multiple_depths() {
+    for depth in [64, 128, 256] {
+        let mut offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(unresolved_canonicalization_test_load()),
+            byte_width: 4,
+        };
+        for _ in 0..depth {
+            offset =
+                PointerOffsetTerm::Add(Box::new(offset), Box::new(PointerOffsetTerm::Constant(1)));
+        }
+
+        let canonical = crate::kernel::eval::canonical_offset_term(&offset);
+        assert_eq!(
+            crate::kernel::eval::canonical_offset_term(&canonical),
+            canonical,
+            "offset canonicalization was not idempotent at depth {depth}",
+        );
+        let mut leaf = &canonical;
+        while let PointerOffsetTerm::Add(left, _) = leaf {
+            leaf = left;
+        }
+        assert!(
+            matches!(
+                leaf,
+                PointerOffsetTerm::Int32Scaled { value, .. }
+                    if matches!(value.as_ref(), Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable))
+            ),
+            "the deepest scaled index should take its load variable at depth {depth}: {leaf:?}",
+        );
+    }
 }
 
 #[test]

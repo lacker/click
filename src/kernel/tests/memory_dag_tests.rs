@@ -994,8 +994,9 @@ fn memory_dag_walks_follow_chains_of_any_length() {
     );
 }
 
-/// Canonicalization has no depth cut: a materialized cell resolves however
-/// deeply the load sits in the term.
+/// Canonicalization has no depth cut: its explicit worklist reaches a
+/// materialized cell however deeply the load sits in the term, with work
+/// linear in the term it traverses.
 #[test]
 fn canonical_form_resolves_loads_at_any_depth() {
     let memory = CMemory::new()
@@ -1005,12 +1006,20 @@ fn canonical_form_resolves_loads_at_any_depth() {
         crate::kernel::intern_c_memory(memory),
         Box::new(arc_pointer(4)),
     );
-    for depth in [8, 32, 64, 128] {
+    let mut samples = Vec::new();
+    for depth in [64, 128, 256, 512] {
         let mut term = load.clone();
         for _ in 0..depth {
             term = Bitvector32Term::Add(Box::new(term), Box::new(Bitvector32Term::Constant(1)));
         }
+        crate::kernel::memory_provenance::clear_canonical_form_caches();
+        crate::kernel::memory_provenance::reset_atomic_canonicalization_term_visits();
         let canonical = crate::kernel::api::canonicalize_atomic_loads(&term);
+        let visits = crate::kernel::memory_provenance::atomic_canonicalization_term_visits();
+        assert!(
+            visits <= 2 * depth + 2,
+            "canonicalization should visit each explicit term node once: depth={depth}, visits={visits}",
+        );
         let mut leaf = &canonical;
         while let Bitvector32Term::Add(left, _) = leaf {
             leaf = left;
@@ -1020,5 +1029,10 @@ fn canonical_form_resolves_loads_at_any_depth() {
             &Bitvector32Term::Constant(7),
             "the load at depth {depth} should resolve to its cell"
         );
+        samples.push((depth, visits));
     }
+    assert!(
+        samples[3].1 <= samples[0].1 * 9,
+        "eight times the term depth must take near-linear work: {samples:?}",
+    );
 }

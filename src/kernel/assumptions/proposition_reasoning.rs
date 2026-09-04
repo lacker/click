@@ -217,14 +217,13 @@ impl PureFactContext {
                     // Two terms for one value that differ only
                     // representationally (memory snapshots embedded in loads,
                     // including under folds and conditionals) are equal by
-                    // deep canonicalization; both calls are memoized.
+                    // deep canonicalization; both calls use complete,
+                    // input-linear worklists.
                     || *value
                         && matches!(
                             condition,
                             ConditionTerm::Bitvector32Equal(left, right)
-                                if !crate::kernel::api::bitvector_term_deeper_than(left, 64)
-                                    && !crate::kernel::api::bitvector_term_deeper_than(right, 64)
-                                    && crate::kernel::api::canonicalize_atomic_loads(left)
+                                if crate::kernel::api::canonicalize_atomic_loads(left)
                                         == crate::kernel::api::canonicalize_atomic_loads(right)
                         )
                     || self.proves_condition_from_facts(condition, *value)
@@ -737,14 +736,13 @@ impl PureFactContext {
                     // Two terms for one value that differ only
                     // representationally (memory snapshots embedded in loads,
                     // including under folds and conditionals) are equal by
-                    // deep canonicalization; both calls are memoized.
+                    // deep canonicalization; both calls use complete,
+                    // input-linear worklists.
                     || *value
                         && matches!(
                             condition,
                             ConditionTerm::Bitvector32Equal(left, right)
-                                if !crate::kernel::api::bitvector_term_deeper_than(left, 64)
-                                    && !crate::kernel::api::bitvector_term_deeper_than(right, 64)
-                                    && crate::kernel::api::canonicalize_atomic_loads(left)
+                                if crate::kernel::api::canonicalize_atomic_loads(left)
                                         == crate::kernel::api::canonicalize_atomic_loads(right)
                         )
                     // Equalities over loads resolve through materialized

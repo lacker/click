@@ -55,12 +55,20 @@ two-stage composition:
    variable identified by the cell and the snapshot of its last write, found
    by walking the memory derivation DAG.
 
-The composition is deterministic, idempotent, and memoized at both stages.
-Its result does not depend on where the term came from: a premise, a goal,
-a resource-range endpoint, or a nested pointer offset canonicalize
-identically. Load-variable substitution stops at binder scopes (`RangeFold`
-bodies), where a load may mention bound variables; the first stage still
-applies there.
+The composition is deterministic, idempotent, and complete over its explicit
+input. Both stages and pointer-offset traversal use explicit worklists, with
+work linear in the term they visit. A chain in which each materialized cell
+stores a load of the next cell is followed iteratively too. Whole-term
+memoization is used only after an iterative preflight establishes that the
+recursive structural key is shallow; deeper terms bypass those caches and
+take the same complete path. Thus a cache policy can affect speed but never
+the canonical result. Narrow memory-DAG and load-identity caches remain keyed
+by the identities they actually answer.
+
+The result does not depend on where the term came from: a premise, a goal, a
+resource-range endpoint, or a nested pointer offset canonicalize identically.
+Load-variable substitution stops at binder scopes (`RangeFold` bodies), where
+a load may mention bound variables; the first stage still applies there.
 
 ### Contextual lowering is a different operation
 
