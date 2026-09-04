@@ -40,7 +40,8 @@ The bounded `realloc` implementation now applies to `uint8*` as well as
 remaining arbitrary-layout `realloc` cases stay outside this issue's supported
 typed allocation model. Heap `malloc` and `free` now also support
 `int32**`/`uint8**` pointer arrays with their eight-byte pointer stride;
-pointer-array `calloc` and `realloc` remain follow-up work.
+pointer-array `calloc` now initializes each pointer cell to null; pointer-array
+`realloc` remains follow-up work.
 
 ## Acceptance criteria
 
@@ -55,9 +56,9 @@ pointer-array `calloc` and `realloc` remain follow-up work.
 - `malloc` and `calloc` assigned to `uint8*` are modeled as positive byte
   extents, with one-byte access ranges and zeroed `calloc` reads; their
   complete ranges can be reclaimed by `free`.
-- `malloc` assigned to `int32**` or `uint8**` is modeled as a positive
-  pointer-sized range, with pointer-cell loads/stores and complete `free`
-  reclamation.
+- `malloc` and `calloc` assigned to `int32**` or `uint8**` are modeled as a
+  positive pointer-sized range, with pointer-cell loads/stores, null
+  initialization for `calloc`, and complete `free` reclamation.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

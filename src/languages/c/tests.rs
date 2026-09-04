@@ -1835,6 +1835,70 @@ fn c0_syntax_accepts_matching_struct_calloc() {
 }
 
 #[test]
+fn c0_syntax_accepts_matching_pointer_array_calloc() {
+    fn assert_pointer_array_calloc(source: &str) {
+        let function = syntax::parse_function(source)
+            .expect("calloc should accept matching pointer-array element sizes");
+
+        fn find_allocation<'a>(
+            statement: &'a syntax::C0Statement,
+            target: &str,
+        ) -> Option<&'a syntax::C0Expression> {
+            match statement {
+                syntax::C0Statement::HeapAllocate {
+                    target: allocation_target,
+                    bytes,
+                    zeroed,
+                } if allocation_target == target => {
+                    assert!(*zeroed);
+                    Some(bytes)
+                }
+                syntax::C0Statement::Seq(first, second) => {
+                    find_allocation(first, target).or_else(|| find_allocation(second, target))
+                }
+                _ => None,
+            }
+        }
+
+        assert!(matches!(
+            find_allocation(function.body(), "slots"),
+            Some(syntax::C0Expression::Multiply(_, _))
+        ));
+    }
+
+    assert_pointer_array_calloc(
+        r#"
+        int32* allocate_int32_pointers(int32 count) {
+            int32** slots = calloc(count, sizeof(int32*));
+            return slots[0];
+        }
+        "#,
+    );
+    assert_pointer_array_calloc(
+        r#"
+        uint8* allocate_uint8_pointers(int32 count) {
+            uint8** slots = calloc(count, sizeof(uint8*));
+            return slots[0];
+        }
+        "#,
+    );
+}
+
+#[test]
+fn c0_syntax_rejects_mismatched_pointer_array_calloc_element_size() {
+    let error = syntax::parse_function(
+        r#"
+        int32* bad(int32 count) {
+            int32** slots = calloc(count, sizeof(uint8*));
+            return slots[0];
+        }
+        "#,
+    )
+    .expect_err("pointer-array calloc must match the target pointer type");
+    assert!(error.message().contains("`calloc` currently supports"));
+}
+
+#[test]
 fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
     let function = syntax::parse_function(
         r#"

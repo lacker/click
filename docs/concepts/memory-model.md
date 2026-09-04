@@ -36,7 +36,8 @@ readable; successful `calloc` cells read as zero or null until overwritten.
 Pointer-array `malloc` uses `count * sizeof(int32*)` or
 `count * sizeof(uint8*)` with the eight-byte LP64 pointer stride; pointer cells
 are uninitialized until stored, and the complete pointer-array range is
-reclaimed by `free`.
+reclaimed by `free`. Matching pointer-array `calloc` uses the same range and
+initializes each cell to the canonical null pointer until a store overwrites it.
 
 A pending `realloc` keeps its old live block and resources in place until the
 result is refined. Failure removes only the pending result. Success records a

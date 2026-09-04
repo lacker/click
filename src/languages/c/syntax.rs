@@ -3856,6 +3856,24 @@ impl Parser {
                                 ..
                             }
                     ),
+                    Some(C0Type::Int32PointerPointer) => matches!(
+                        element_size,
+                        C0Expression::Int32Literal(8)
+                            | C0Expression::SizeOfType {
+                                c_type: C0Type::Int32Pointer,
+                                struct_name: None,
+                                ..
+                            }
+                    ),
+                    Some(C0Type::UInt8PointerPointer) => matches!(
+                        element_size,
+                        C0Expression::Int32Literal(8)
+                            | C0Expression::SizeOfType {
+                                c_type: C0Type::UInt8Pointer,
+                                struct_name: None,
+                                ..
+                            }
+                    ),
                     _ => matches!(
                         element_size,
                         C0Expression::Int32Literal(4)

@@ -106,6 +106,10 @@ retain, nonfinal release, final release, and free across opaque calls.
   rejected without authorization.
 - `mdtests/heap_pointer_array_uninitialized.md`: fresh pointer-array cells
   cannot be read before they are initialized.
+- `mdtests/calloc_pointer_arrays.md`: zero-initialized pointer-array cells and
+  complete reclamation.
+- `mdtests/calloc_pointer_array_null_deref.md`: null pointer-array cells remain
+  invalid to dereference.
 
 ## Aliasing and separation
 
