@@ -845,6 +845,21 @@ fn canonical_offset_term_is_complete_and_idempotent_at_multiple_depths() {
 }
 
 #[test]
+fn pointer_offset_add_coalesces_nested_constant_displacements() {
+    let base = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(17))),
+        byte_width: 4,
+    };
+    let nested = PointerOffsetTerm::add(
+        PointerOffsetTerm::add(base.clone(), PointerOffsetTerm::Constant(4)),
+        PointerOffsetTerm::Constant(4),
+    );
+    let flat = PointerOffsetTerm::add(base, PointerOffsetTerm::Constant(8));
+
+    assert_eq!(nested, flat);
+}
+
+#[test]
 fn load_variables_are_congruent_through_ground_index_equalities() {
     // `data[index]` with `index == 0` in scope is the cell `data[0]`: the
     // two load variables are content-addressed by different addresses, so

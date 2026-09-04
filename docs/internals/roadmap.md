@@ -115,7 +115,9 @@ Likely additions:
   scalar leaves. Direct whole-struct lvalue loads and copies, including
   embedded aggregate assignment and aggregate arguments/returns, now lower to
   the same recursive typed leaf-copy machinery without a runtime aggregate
-  value.
+  value. Pointer-backed aggregate returns also support field-wise relational
+  postconditions over mixed-width and nested fields while preserving fresh
+  return storage.
   Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields

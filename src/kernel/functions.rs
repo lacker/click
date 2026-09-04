@@ -1636,6 +1636,32 @@ fn materialize_aggregate_return(
     Some(CValue::typed_pointer(destination, function.return_type()))
 }
 
+fn coerce_function_return_value(
+    value: CValue,
+    function: &CFunction,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    // Plain struct returns use `uint8*` as their internal ABI slot, while the
+    // source expression that supplies the value retains the pointee type of
+    // the object it addresses (for example, `int32*` for `return *source`).
+    // The aggregate return materializer copies through the pointer and is the
+    // type boundary that validates the complete object. The C0 struct model
+    // uses `int32*` for a struct pointer and `uint8*` for an address-backed
+    // struct value, so only those two data-pointer views cross this boundary.
+    if function.return_aggregate_layout().is_some()
+        && let CValue::Pointer(pointer) = &value
+        && matches!(pointer.c_type(), CType::Int32Pointer | CType::UInt8Pointer)
+        && !pointer.pointer().block.is_function()
+    {
+        return Some(CValue::typed_pointer(
+            pointer.pointer().clone(),
+            function.return_type(),
+        ));
+    }
+    coerce_c_value_to_type(value, function.return_type(), obligations, assumptions)
+}
+
 fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
@@ -4961,8 +4987,7 @@ fn function_outcome_from_body_with_population_transition(
             None,
         ));
     };
-    let Some(value) =
-        coerce_c_value_to_type(value, function.return_type(), &mut obligations, assumptions)
+    let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
         return Ok((
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
@@ -5021,8 +5046,7 @@ fn function_outcome_from_body_with_resource_transfer(
             None,
         ));
     };
-    let Some(value) =
-        coerce_c_value_to_type(value, function.return_type(), &mut obligations, assumptions)
+    let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
         return Ok((
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
@@ -5308,12 +5332,9 @@ pub(super) fn function_outcome_from_body(
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {
         CStatementOutcome::Return { value, mut state } => {
-            let Some(value) = coerce_c_value_to_type(
-                value,
-                function.return_type(),
-                &mut obligations,
-                assumptions,
-            ) else {
+            let Some(value) =
+                coerce_function_return_value(value, function, &mut obligations, assumptions)
+            else {
                 return (
                     CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                         "{} returned a value that does not match its declared type",

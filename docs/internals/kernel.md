@@ -340,6 +340,15 @@ aggregate still has no runtime `CValue`: expressions decay to its address for
 field loads and stores, while function-pointer fields, unions, and
 other unsupported aggregate shapes remain outside this by-value slice.
 
+Aggregate returns supplied by a pointer-backed whole-object expression have a
+small ABI boundary: C0's struct-pointer view is `int32*`, while the internal
+address-backed return slot is `uint8*`. The return transition accepts only
+those two modeled data-pointer views, retags the address at that boundary, and
+copies every modeled leaf into a fresh `__return` block. Consequently a
+postcondition such as `result.inner.flag == source.inner.flag` compares the
+fresh result cell with the source snapshot without turning the returned
+aggregate into an alias or weakening ordinary pointer-return type checks.
+
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an
 `int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on

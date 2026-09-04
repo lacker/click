@@ -61,7 +61,10 @@ Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Whole-struct lvalue loads and
 copies, such as `dst = *src`, `*dst = *src`, and `dst->inner = src->inner`,
 are lowered to typed leaf copies; aggregate arguments and returns use the same
-address-backed representation. Function-pointer fields, unions,
+address-backed representation. Pointer-backed aggregate returns can state
+field-wise postconditions over mixed-width and nested fields; the returned
+aggregate is still a fresh copy rather than an alias of the source.
+Function-pointer fields, unions,
 aggregate initializers, conditional aggregate expressions, packed layout, or
 address-taking of union members remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array

@@ -981,12 +981,26 @@ impl PointerOffsetTerm {
     }
 
     pub(crate) fn add(left: Self, right: Self) -> Self {
-        match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Constant(left + right),
-            (Some(0), _) => right,
-            (_, Some(0)) => left,
-            _ => Self::Add(Box::new(left), Box::new(right)),
+        if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
+            return Self::Constant(left + right);
         }
+        if left.as_const() == Some(0) {
+            return right;
+        }
+        if right.as_const() == Some(0) {
+            return left;
+        }
+        // Keep a chain of constant byte displacements in one canonical
+        // shape. Nested member access commonly forms `(base + outer) +
+        // inner`, while aggregate copying starts from `base + total`;
+        // treating those as distinct pointers would mint unrelated
+        // symbolic loads for the same field.
+        if let (Self::Add(base, trailing), Self::Constant(right)) = (&left, &right)
+            && let Some(trailing) = trailing.as_const()
+        {
+            return Self::add((**base).clone(), Self::Constant(trailing + right));
+        }
+        Self::Add(Box::new(left), Box::new(right))
     }
 
     pub(crate) fn scale_int32(value: Bitvector32Term, byte_width: i64) -> Self {

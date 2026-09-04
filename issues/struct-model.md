@@ -142,9 +142,10 @@ Staged mdtests, each with an unchanged C file:
     can borrow its field views from the caller's enclosing owned object, and
     the borrow ends at return so the caller can still free the allocation.~~
     Covered by `mdtests/struct_aggregate_helper_view.md`. Relational
-    postconditions for pointer-backed aggregate returns remain a separate
-    proof-transition gap; they must not be accepted by weakening the helper's
-    body or by treating a returned aggregate pointer as an alias.
+    postconditions for pointer-backed aggregate returns are covered by
+    `mdtests/struct_aggregate_return_postcondition.md`; the return boundary
+    retags the source's internal pointer view, materializes a fresh recursive
+    copy, and proves field equality without treating the source as an alias.
 
 ## Acceptance criteria
 
@@ -166,6 +167,9 @@ Staged mdtests, each with an unchanged C file:
   that names the unsupported construct; no silent approximation. Other
   compiler-dependent layout constructs are owned by `multiple-compilers.md`.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.
+- Pointer-backed aggregate returns expose field-wise relational postconditions
+  across mixed-width and nested fields, while ordinary pointer-return type
+  checking remains unchanged and the returned object remains fresh.
 - `scripts/check.sh` passes.
 
 Related: [c-type-spellings.md](c-type-spellings.md) for `typedef`;
