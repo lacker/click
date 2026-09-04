@@ -3527,6 +3527,164 @@ fn c0_struct_layout_uses_lp64_alignment_and_tail_padding() {
 }
 
 #[test]
+fn c0_struct_layout_preserves_wide_scalar_field_types_and_lp64_offsets() {
+    #[repr(C)]
+    struct HostPacket {
+        tag: u8,
+        count: u32,
+        total: i64,
+        mask: u64,
+        tail: u8,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            uint32 count;
+            int64 total;
+            uint64 mask;
+            uint8 tail;
+        };
+
+        uint64 read_mask(struct packet* packet) {
+            return packet->mask;
+        }
+        "#,
+    )
+    .expect("wide scalar struct fields should parse");
+    let layout = function.structs().get("packet").expect("packet layout");
+
+    let tag = layout.field("tag").expect("tag field");
+    assert_eq!(tag.c_type(), syntax::C0Type::UInt8);
+    assert_eq!(tag.byte_width(), 1);
+    assert_eq!(
+        tag.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, tag)
+    );
+
+    let count = layout.field("count").expect("count field");
+    assert_eq!(count.c_type(), syntax::C0Type::UInt32);
+    assert_eq!(count.byte_width(), 4);
+    assert_eq!(
+        count.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, count)
+    );
+
+    let total = layout.field("total").expect("total field");
+    assert_eq!(total.c_type(), syntax::C0Type::Int64);
+    assert_eq!(total.byte_width(), 8);
+    assert_eq!(
+        total.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, total)
+    );
+
+    let mask = layout.field("mask").expect("mask field");
+    assert_eq!(mask.c_type(), syntax::C0Type::UInt64);
+    assert_eq!(mask.byte_width(), 8);
+    assert_eq!(
+        mask.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, mask)
+    );
+
+    let tail = layout.field("tail").expect("tail field");
+    assert_eq!(tail.c_type(), syntax::C0Type::UInt8);
+    assert_eq!(tail.byte_width(), 1);
+    assert_eq!(
+        tail.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, tail)
+    );
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+}
+
+#[test]
+fn c0_wide_scalar_struct_fields_execute_at_declared_widths() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            uint32 count;
+            int64 total;
+            uint64 mask;
+            uint8 tail;
+        };
+
+        uint64 update(struct packet* packet) {
+            packet->count = 7u;
+            packet->total = -9;
+            packet->mask = 11ull;
+            return packet->mask;
+        }
+        "#,
+    )
+    .expect("wide scalar struct fields should lower")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 8);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 32))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 32)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+                    },
+                    crate::kernel::uint32(7),
+                )
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(8),
+                    },
+                    crate::kernel::int64(crate::kernel::Bitvector32Term::Int64Constant(-9)),
+                )
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(16),
+                    },
+                    crate::kernel::uint64(crate::kernel::Bitvector32Term::UInt64Constant(11)),
+                ),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("wide scalar struct fields should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::uint64(crate::kernel::Bitvector32Term::UInt64Constant(11)),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_scalar_struct_values_preserve_named_kernel_layout_metadata() {
     let function = syntax::parse_function(
         r#"
@@ -3572,6 +3730,51 @@ fn c0_scalar_struct_values_preserve_named_kernel_layout_metadata() {
         .aggregate_layout()
         .expect("struct parameter should retain aggregate metadata");
     assert_eq!(parameter_layout, return_layout);
+}
+
+#[test]
+fn c0_struct_values_preserve_wide_scalar_layout_metadata() {
+    let function = syntax::parse_function(
+        r#"
+        struct widths {
+            uint32 count;
+            int64 total;
+            uint64 mask;
+        };
+
+        struct widths update(struct widths value) {
+            value.count = 7u;
+            value.total = -9;
+            value.mask = 11ull;
+            return value;
+        }
+        "#,
+    )
+    .expect("wide scalar struct values should parse");
+
+    let kernel = function.to_kernel_function();
+    let layout = kernel.parameters()[0]
+        .aggregate_layout()
+        .expect("wide scalar struct parameter should retain aggregate metadata");
+    assert_eq!(layout.size_bytes(), 24);
+    let field = |name: &str| {
+        layout
+            .fields()
+            .iter()
+            .find(|field| field.name() == name)
+            .unwrap_or_else(|| panic!("missing aggregate field `{name}`"))
+    };
+    assert_eq!(field("count").offset_bytes(), 0);
+    assert_eq!(field("count").c_type(), crate::kernel::CType::UInt32);
+    assert_eq!(field("total").offset_bytes(), 8);
+    assert_eq!(field("total").c_type(), crate::kernel::CType::Int64);
+    assert_eq!(field("mask").offset_bytes(), 16);
+    assert_eq!(field("mask").c_type(), crate::kernel::CType::UInt64);
+
+    let return_layout = kernel
+        .return_aggregate_layout()
+        .expect("wide scalar struct return should retain aggregate metadata");
+    assert_eq!(return_layout, layout);
 }
 
 #[test]
@@ -3993,7 +4196,7 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
     .expect_err("union-bearing struct values should remain outside this slice");
 
     assert!(error.message().contains(
-        "int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields"
+        "int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields"
     ));
     assert!(
         error

@@ -30,7 +30,7 @@ documentation inventory keep the following accepted words synchronized.
 | `predicate`, `function`, `theorem` | Top-level logic declarations; `function` also starts a C contract. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
-| `int16`, `int32`, `uint8`, `uint16`, `uint32`, `short`, `int`, `int16_t`, `int32_t`, `unsigned char`, `unsigned short`, `uint8_t`, `uint16_t`, `uint32_t`, `unsigned int`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
+| `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `long`, `long long`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |

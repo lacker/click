@@ -63,8 +63,9 @@ literal suffixes now select their width and signedness instead of being
 discarded. The positive and negative regressions are
 `mdtests/int64_uint64_arithmetic.md`, `mdtests/int64_division_by_zero.md`,
 `mdtests/int64_invalid_shift.md`, `mdtests/int64_signed_overflow.md`, and
-`mdtests/uint64_division_by_zero.md`. Arrays, pointers, and struct fields of
-these types remain outside this scalar slice.
+`mdtests/uint64_division_by_zero.md`. Arrays and pointers of these types remain
+outside this scalar slice; scalar struct fields are covered by
+`issues/struct-model.md`.
 
 ## Intended regression
 

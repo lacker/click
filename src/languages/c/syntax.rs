@@ -1606,6 +1606,8 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "uint16"
             | "uint32"
             | "uint32_t"
+            | "int64"
+            | "uint64"
             | "unsigned"
             | "signed"
             | "char"
@@ -2007,6 +2009,9 @@ impl Parser {
                         | C0Type::Int32
                         | C0Type::UInt8
                         | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Int64
+                        | C0Type::UInt64
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Int32Pointer
@@ -2016,7 +2021,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
                 )));
             }
         }
@@ -2892,6 +2897,9 @@ impl Parser {
                 | C0Type::Int32
                 | C0Type::UInt8
                 | C0Type::UInt16
+                | C0Type::UInt32
+                | C0Type::Int64
+                | C0Type::UInt64
                 | C0Type::Int32Pointer
                 | C0Type::UInt8Pointer
                 | C0Type::Int32PointerPointer
@@ -2900,7 +2908,7 @@ impl Parser {
                 | C0Type::UInt8Array(_)
         ) {
             return Err(self.error_here(format!(
-                "struct `{struct_name}` fields currently support int16, int32, uint8, uint16, enum, fixed scalar arrays, and pointer fields",
+                "struct `{struct_name}` fields currently support int16, int32, uint8, uint16, uint32, int64, uint64, enum, fixed scalar arrays, and pointer fields",
             )));
         }
         let (field_size, field_alignment) = match c_type {
@@ -4165,7 +4173,13 @@ impl Parser {
         let mut stores = Vec::new();
         for field in layout.aggregate_fields() {
             let (element_type, element_count) = match field.c_type {
-                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 => (field.c_type, 1),
+                C0Type::Int16
+                | C0Type::Int32
+                | C0Type::UInt8
+                | C0Type::UInt16
+                | C0Type::UInt32
+                | C0Type::Int64
+                | C0Type::UInt64 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Int32Pointer

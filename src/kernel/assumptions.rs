@@ -2717,6 +2717,9 @@ pub(super) fn memory_range_contained_for_memory_resolution(
     parent: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
+    if range.element_width() != parent.element_width() {
+        return false;
+    }
     if memory_range_shallowly_contained(range, parent) {
         return true;
     }

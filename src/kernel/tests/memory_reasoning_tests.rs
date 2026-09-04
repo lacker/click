@@ -74,6 +74,41 @@ fn memory_resource_coverage_requires_a_shared_element_width() {
 }
 
 #[test]
+fn mixed_width_separation_does_not_block_same_width_coverage() {
+    let base = Pointer {
+        block: "mixed-width-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let int32_range = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(2),
+        4,
+    );
+    let wide_range = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(3),
+        8,
+    );
+    let available = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(int32_range.clone()))
+        .unchecked_with_fact(CResourceFact::own_memory(wide_range.clone()));
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(int32_range),
+        right: CResource::Memory(wide_range),
+    });
+    let required = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(2),
+        8,
+    ));
+
+    assert!(available.satisfies_fact(&required, &assumptions));
+}
+
+#[test]
 fn typed_reads_can_use_a_differently_indexed_byte_footprint() {
     let base = Pointer {
         block: "struct-buffer".into(),

@@ -236,7 +236,8 @@ In `src/kernel/`:
   unsigned order, equality, overflow, and pointer-offset equality.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
   including the non-object `Void` return value, scalar `int16`, `int32`,
-  `uint8`, `uint16`, and `uint32`, pointers, and typed memory loads/stores.
+  `uint8`, `uint16`, `uint32`, `int64`, and `uint64`, pointers, and typed
+  memory loads/stores.
   Kernel execution reports
   `TypeMismatch` if `Void` is used as a condition or object type; it never
   erases that execution path.
@@ -277,13 +278,17 @@ returns preserve the `uint32` type tag. Scalar narrowing is checked at the
 existing boundaries; the coercion adds proof obligations for the target range
 unless the current path already proves it. `int16` occupies two bytes with
 signed range `-32768..32767`; `uint16` occupies two bytes with range `0..65535`.
+Scalar `int64` and `uint64` retain their signedness through arithmetic,
+comparisons, shifts, and bitwise operations; both occupy eight bytes in the
+modeled LP64 ABI.
 
 ## C ABI and memory layout
 
 The C0 importer models one explicit ABI: LP64. In that ABI, `int16` and
 `uint16` have size and alignment 2, `int32` has size and alignment 4, `uint8`
-has size and alignment 1, `uint32` has size and alignment 4, and every supported pointer
-has size and alignment 8. Struct fields are aligned individually and the
+has size and alignment 1, `uint32` has size and alignment 4, `int64` and
+`uint64` have size and alignment 8, and every supported pointer has size and
+alignment 8. Struct fields are aligned individually and the
 struct size includes the tail padding required by its maximum field alignment.
 Named enum fields use the supported four-byte `int32` representation. The C0
 metadata retains the enum declaration and enumerator values, but lowering

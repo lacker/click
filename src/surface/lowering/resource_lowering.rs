@@ -1237,6 +1237,9 @@ fn symbolic_value_from_load(
         CType::Int32 => CValue::Int32(load),
         CType::UInt8 => CValue::UInt8(load),
         CType::UInt16 => CValue::UInt16(load),
+        CType::UInt32 => CValue::UInt32(load),
+        CType::Int64 => CValue::Int64(load),
+        CType::UInt64 => CValue::UInt64(load),
         c_type if c_type.is_pointer() => CValue::typed_pointer(
             Pointer {
                 block: pointer.block.clone(),

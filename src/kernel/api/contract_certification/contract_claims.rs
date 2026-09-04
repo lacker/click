@@ -318,7 +318,9 @@ fn memories_equal_by_matching_derivations(
         | CValue::Int32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
         | CValue::UInt16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
-        | CValue::UInt32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))) = value
+        | CValue::UInt32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::Int64(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::UInt64(Bitvector32Term::MemoryLoad(load_memory, load_pointer))) = value
         else {
             return false;
         };

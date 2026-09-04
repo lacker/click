@@ -1888,7 +1888,13 @@ pub(super) fn copy_aggregate_fields(
 ) -> CMemory {
     for field in layout.fields() {
         let (element_type, element_count) = match field.c_type() {
-            CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 => (field.c_type(), 1),
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Int32Pointer
@@ -1921,6 +1927,9 @@ pub(super) fn copy_aggregate_fields(
                             Some(CValue::typed_pointer(Pointer::null(), element_type))
                         }
                         CType::UInt16 => Some(uint16(0)),
+                        CType::UInt32 => Some(uint32(0)),
+                        CType::Int64 => Some(CValue::Int64(Bitvector32Term::Constant(0))),
+                        CType::UInt64 => Some(CValue::UInt64(Bitvector32Term::Constant(0))),
                         _ => None,
                     };
                 }
@@ -1964,6 +1973,18 @@ pub(super) fn copy_aggregate_fields(
                         ))
                     }
                     CType::UInt16 => Some(CValue::UInt16(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::UInt32 => Some(CValue::UInt32(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::Int64 => Some(CValue::Int64(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::UInt64 => Some(CValue::UInt64(crate::kernel::canonical_form_of_load(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
                     ))),

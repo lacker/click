@@ -9,10 +9,11 @@ Struct pointers are supported: declarations, `->` field access, and
 slice now extends this with copies of scalar, fixed-dimensional scalar-array,
 recursively embedded-struct, and fixed-dimensional embedded-struct-array
 fields.
-Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, fixed scalar
-arrays, embedded structs, named enum fields, pointers, named read-only unions,
-and fixed-dimensional arrays of embedded structs. Structs whose fields
-are only `int16`, `int32`, `uint8`, `uint16`, named enum fields,
+Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, `uint32`,
+`int64`, `uint64`, fixed scalar arrays, embedded structs, named enum fields,
+pointers, named read-only unions, and fixed-dimensional arrays of embedded
+structs. Structs whose fields are only `int16`, `int32`, `uint8`, `uint16`,
+`uint32`, `int64`, `uint64`, named enum fields,
 fixed-dimensional scalar arrays, recursively embedded structs, or
 fixed-dimensional arrays of embedded structs can be parameters, locals,
 assignments, and returns by value; each operation uses fresh address-backed
@@ -119,6 +120,10 @@ Staged mdtests, each with an unchanged C file:
     stores update the selected cell.~~ Covered by
     `mdtests/struct_scalar_array_element_address.md` and the C0 indexed-lvalue
     address regressions.
+13. ~~Scalar `uint32`, `int64`, and `uint64` fields retain their declared
+    types, LP64 offsets, typed leaf loads/stores, and by-value copy semantics.~~
+    Covered by `mdtests/struct_wide_scalar_fields.md` and the C0 layout and
+    aggregate-copy regressions.
 
 ## Acceptance criteria
 

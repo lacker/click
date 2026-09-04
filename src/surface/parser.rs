@@ -1231,6 +1231,9 @@ impl Parser {
                         | C0Type::Int32
                         | C0Type::UInt8
                         | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Int64
+                        | C0Type::UInt64
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Int32Pointer
@@ -1240,7 +1243,7 @@ impl Parser {
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
                 )));
             }
         }
@@ -2979,6 +2982,7 @@ impl Parser {
         }
         let element_width = match field.c_type {
             C0Type::Int16 | C0Type::UInt16 => 2,
+            C0Type::Int64 | C0Type::UInt64 => 8,
             _ => 4,
         };
         let start = field.offset_bytes / element_width;
@@ -3174,6 +3178,18 @@ impl Parser {
                 || (field.slot_end_bytes - field.offset_bytes) % 2 != 0
             {
                 return Err(self.error("16-bit field places require two-byte alignment and width"));
+            }
+            return Ok(());
+        }
+        if matches!(field.c_type, C0Type::Int64 | C0Type::UInt64) {
+            if field.offset_bytes % 8 != 0
+                || field.byte_width != 8
+                || field.slot_end_bytes < field.offset_bytes
+                || (field.slot_end_bytes - field.offset_bytes) % 8 != 0
+            {
+                return Err(
+                    self.error("64-bit field places require eight-byte alignment and width")
+                );
             }
             return Ok(());
         }

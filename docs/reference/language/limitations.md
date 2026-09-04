@@ -12,7 +12,8 @@ contract expressions, calls, and the other parenthesized surface forms.
 ## C0 is small
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
-features include broader structs, 64-bit and `size_t` integers, `char`, static
+features include broader structs, pointer and array forms of 64-bit and
+`size_t` integers, `char`, static
 locals and string literals, unmodeled allocator compatibility, and some
 operators. Supported scalar file-scope globals are described in [Supported
 C0](c0.md). The
@@ -33,7 +34,8 @@ conversions, unrelated custom allocator APIs, and `realloc` remain outside
 this surface description.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int16`, `int32`, `uint8`, `uint16`, named enum fields,
+declarations with `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`,
+`uint64`, named enum fields,
 fixed-dimensional arrays of the supported `int32` and `uint8` scalars, and
 pointer-valued fields, plus chained `p->child->field`
 loads/stores through struct pointers. Inline scalar arrays retain their element
@@ -48,7 +50,8 @@ the ABI-sized struct stride.
 One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. Copyable struct values are also supported when
-every field is `int16`, `int32`, `uint8`, `uint16`, a named enum field, a
+every field is `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`,
+a named enum field, a
 modeled data pointer, a fixed-dimensional array of `int32` or `uint8` elements,
 an embedded struct whose fields satisfy the same rule, or a fixed-dimensional
 array of such embedded structs: parameters, locals, assignments, and returns
@@ -122,20 +125,23 @@ diagnostics.
 ## Type support is still narrow
 
 The verifier supports `void` function returns and scalar `int16`, `int32`,
-`uint8`, `uint16`, and `uint32`, including their standard spellings
+`uint8`, `uint16`, `uint32`, `int64`, and `uint64`, including their standard spellings
 (`short`/`int16_t`, `int`/`int32_t`, `unsigned char`/`uint8_t`,
-`unsigned short`/`uint16_t`, and `unsigned int`/`uint32_t`), plus the existing
+`unsigned short`/`uint16_t`, `unsigned int`/`uint32_t`,
+`long`/`long long`/`int64_t`/`ssize_t`, and
+`unsigned long`/`unsigned long long`/`uint64_t`/`size_t`), plus the existing
 `int32*`, `uint8*`, `int32**`, `uint8**`, and `uint8[]` forms. C typedefs may
-alias these modeled types and named struct-pointer types. The 16-bit and
-`uint32` types are not yet available through pointers or arrays; `uint32` is
-also not available through struct fields. `uint32` supports modular `+`,
+alias these modeled types and named struct-pointer types. The 16-bit, `uint32`,
+and 64-bit types are not yet available through pointers or arrays. `uint32`
+supports modular `+`,
 `-`, and `*`, unsigned `/` and `%`, equality, unsigned ordered comparisons,
 bitwise operators, and typed shifts; division by zero and invalid shift counts
 remain undefined behavior. It does not support `void` objects or
 parameters. Scalar casts are supported, with checked narrowing into `int16`,
 `uint8`, or `uint16`; pointer and aggregate casts remain unsupported. This is
-not a full C integer model: `size_t`, 64-bit arithmetic, and the complete usual
-arithmetic-conversion lattice remain outside the slice.
+not a full C integer model: pointer/array forms of `size_t` and the 64-bit
+types, plus the complete usual arithmetic-conversion lattice, remain outside
+the slice.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
 are modeled with C undefined behavior for their C undefined cases: overflow,
 zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,
@@ -156,8 +162,8 @@ prove `0 <= value <= 255`. Narrowing to `int16` requires
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-`size_t`, 64-bit integers, and the full usual arithmetic conversion story remain
-future work.
+Pointer/array forms of `size_t` and 64-bit integers, and the full usual
+arithmetic conversion story, remain future work.
 
 The first `for` support is sugar over `while`, and its initializer may be a
 scalar assignment or scalar declaration initializer. Its step can use scalar

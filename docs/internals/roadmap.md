@@ -81,7 +81,7 @@ Likely additions:
   ternary expressions, value-producing update expressions, and broader `for`
   forms beyond the current assignment/update lowering.
 - More integer types:
-  `size_t`, `ssize_t`-like signed sizes, `uint64`, and
+  pointer/array forms of `size_t`, `ssize_t`, and `uint64`, and
   well-specified casts/promotions.
 - `char` and string literal support:
   null-terminated byte arrays, read-only static storage, and byte/string
@@ -98,7 +98,7 @@ Likely additions:
   field resource places, and nested leaf-field access through embedded
   aggregate places. One-dimensional function parameters declared as arrays of
   the supported structs now retain their ABI stride. Copyable by-value structs
-  with scalar, named-enum, fixed-dimensional scalar-array, and recursively embedded
+  with scalar (including `uint32`, `int64`, and `uint64`), named-enum, fixed-dimensional scalar-array, and recursively embedded
   struct fields now have explicit fresh-copy semantics for parameters, locals,
   assignments, and returns; nested fields and array elements are copied
   recursively; fixed-dimensional arrays of embedded structs are flattened
