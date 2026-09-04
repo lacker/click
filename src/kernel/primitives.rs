@@ -833,6 +833,15 @@ pub struct CStaticLocal {
     pub(super) volatile: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) element_type: CType,
+    pub(super) length: u32,
+    pub(super) initial_values: Vec<CValue>,
+}
+
 /// A function's embedded C string constant. The bytes include the trailing
 /// NUL and are installed in a stable read-only memory block at function entry.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -917,6 +926,7 @@ pub struct CFunction {
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) global_arrays: Vec<CGlobalArray>,
     pub(super) static_variables: Vec<CStaticLocal>,
+    pub(super) static_arrays: std::sync::Arc<Vec<CStaticArray>>,
     pub(super) string_literals: Vec<CStringLiteral>,
 }
 

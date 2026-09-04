@@ -129,6 +129,7 @@ pub struct C0Function {
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
+    static_arrays: BTreeMap<String, C0StaticArray>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -398,6 +399,76 @@ pub struct C0StaticLocal {
     c_type: C0Type,
     initializer: C0Expression,
     volatile: bool,
+}
+
+/// A function-local fixed-size scalar array with static storage duration.
+/// The source name is what C fragments use; `kernel_name` keeps distinct
+/// block scopes distinct in the lowered C0 expression tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticArray {
+    source_name: String,
+    kernel_name: String,
+    element_type: C0Type,
+    length: u32,
+    initializer: Vec<C0Expression>,
+}
+
+impl C0StaticArray {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        element_type: C0Type,
+        length: u32,
+        initializer: Vec<C0Expression>,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            element_type,
+            length,
+            initializer,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn element_type(&self) -> C0Type {
+        self.element_type
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        array_type_for_element(self.element_type, self.length)
+            .expect("validated static array element type")
+    }
+
+    pub fn initializer(&self) -> &[C0Expression] {
+        &self.initializer
+    }
+
+    pub(crate) fn to_kernel_static_array(&self) -> Option<crate::kernel::CStaticArray> {
+        let values = self
+            .initializer
+            .iter()
+            .map(|value| kernel_integer_literal_value(self.element_type, value))
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::kernel::CStaticArray::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.element_type.to_kernel_type(),
+            self.length,
+            values,
+        ))
+    }
 }
 
 impl C0StaticLocal {
@@ -860,6 +931,7 @@ impl C0Function {
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
+            static_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -906,6 +978,10 @@ impl C0Function {
 
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
+    }
+
+    pub fn static_arrays(&self) -> &BTreeMap<String, C0StaticArray> {
+        &self.static_arrays
     }
 
     pub fn string_literals(&self) -> &[C0StringLiteral] {
@@ -968,6 +1044,12 @@ impl C0Function {
                 self.static_locals
                     .values()
                     .filter_map(C0StaticLocal::to_kernel_static)
+                    .collect(),
+            )
+            .with_static_arrays(
+                self.static_arrays
+                    .values()
+                    .filter_map(C0StaticArray::to_kernel_static_array)
                     .collect(),
             )
             .with_string_literals(
@@ -2144,6 +2226,7 @@ struct Parser {
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
+    static_arrays: BTreeMap<String, C0StaticArray>,
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
@@ -2223,6 +2306,7 @@ impl Parser {
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
+            static_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
@@ -2590,6 +2674,7 @@ impl Parser {
             globals: self.globals.clone(),
             global_arrays: self.global_arrays.clone(),
             static_locals,
+            static_arrays: std::mem::take(&mut self.static_arrays),
             string_literals,
         })
     }
@@ -4844,28 +4929,53 @@ impl Parser {
             let source_name = self.expect_ident("static local name")?;
             let kernel_name = self.declare_static_name(&source_name)?;
             if self.peek() == Some(&Token::LBracket) {
-                return Err(self.error_here(
-                    "static local arrays are not supported yet; use a scalar static local",
-                ));
-            }
-            self.variable_types
-                .insert(kernel_name.clone(), parsed_type.c_type);
-            if parsed_type.is_volatile {
-                self.variable_volatiles.insert(kernel_name.clone());
-            }
-            let initializer = if self.peek() == Some(&Token::Equal) {
-                self.position += 1;
-                let initializer = self.parse_expression()?;
-                validate_static_initializer(self, parsed_type.c_type, &initializer)?;
-                initializer
+                if parsed_type.is_volatile {
+                    return Err(
+                        self.error_here("volatile static local arrays are not supported yet")
+                    );
+                }
+                let length = self.parse_static_array_length(&source_name)?;
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    self.position += 1;
+                    self.parse_static_array_initializer(&source_name, parsed_type.c_type, length)?
+                } else {
+                    vec![C0Expression::Int32Literal(0); length as usize]
+                };
+                self.variable_types.insert(
+                    kernel_name.clone(),
+                    array_type_for_element(parsed_type.c_type, length)
+                        .expect("validated static array element type"),
+                );
+                self.static_arrays.insert(
+                    kernel_name.clone(),
+                    C0StaticArray::new(
+                        source_name,
+                        kernel_name,
+                        parsed_type.c_type,
+                        length,
+                        initializer,
+                    ),
+                );
             } else {
-                C0Expression::Int32Literal(0)
-            };
-            self.static_locals.insert(
-                kernel_name.clone(),
-                C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
-                    .with_volatile(parsed_type.is_volatile),
-            );
+                self.variable_types
+                    .insert(kernel_name.clone(), parsed_type.c_type);
+                if parsed_type.is_volatile {
+                    self.variable_volatiles.insert(kernel_name.clone());
+                }
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    self.position += 1;
+                    let initializer = self.parse_expression()?;
+                    validate_static_initializer(self, parsed_type.c_type, &initializer)?;
+                    initializer
+                } else {
+                    C0Expression::Int32Literal(0)
+                };
+                self.static_locals.insert(
+                    kernel_name.clone(),
+                    C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
+                        .with_volatile(parsed_type.is_volatile),
+                );
+            }
             if self.peek() != Some(&Token::Comma) {
                 break;
             }
@@ -4877,6 +4987,91 @@ impl Parser {
         // the statement tree preserves the source declaration's position
         // without reinitializing the object on every invocation.
         Ok(C0Statement::Skip)
+    }
+
+    fn parse_static_array_length(&mut self, name: &str) -> Result<u32, C0SyntaxError> {
+        self.expect(Token::LBracket)?;
+        let length = match self.next() {
+            Some(Token::Number(number)) => {
+                let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid static local array length `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(length).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "static local array length `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "expected positive static local array length, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self
+                    .error_here("expected positive static local array length, got end of input"));
+            }
+        };
+        if length == 0 {
+            return Err(self.error_at_previous(format!(
+                "static local array `{name}` must have positive length"
+            )));
+        }
+        self.expect(Token::RBracket)?;
+        if self.peek() == Some(&Token::LBracket) {
+            return Err(
+                self.error_here("multidimensional static local arrays are not supported yet")
+            );
+        }
+        Ok(length)
+    }
+
+    fn parse_static_array_initializer(
+        &mut self,
+        name: &str,
+        element_type: C0Type,
+        length: u32,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let mut values = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if values.len() == length as usize {
+                    return Err(self.error_here(format!(
+                        "too many initializers for static local array `{name}[{length}]`"
+                    )));
+                }
+                let value = self.parse_expression()?;
+                validate_static_initializer(self, element_type, &value)?;
+                values.push(value);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in static local array `{name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in static local array `{name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        values.resize(length as usize, C0Expression::Int32Literal(0));
+        Ok(values)
     }
 
     fn struct_value_copy_statement(

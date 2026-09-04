@@ -319,6 +319,49 @@ fn c0_collects_static_scalar_locals_with_stable_kernel_names() {
 }
 
 #[test]
+fn c0_collects_static_scalar_arrays_with_stable_kernel_names() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 lookup() {
+            static int32 values[3] = {5, 7};
+            return values[0] + values[1] + values[2];
+        }
+        "#,
+    )
+    .expect("static arrays should parse");
+
+    let function = &functions[0];
+    assert_eq!(function.static_arrays().len(), 1);
+    let array = function
+        .static_arrays()
+        .values()
+        .next()
+        .expect("static array metadata");
+    assert_eq!(array.name(), "values");
+    assert_ne!(array.kernel_name(), array.name());
+    assert_eq!(array.element_type(), syntax::C0Type::Int32);
+    assert_eq!(array.length(), 3);
+    assert_eq!(
+        array.initializer(),
+        &[
+            syntax::C0Expression::Int32Literal(5),
+            syntax::C0Expression::Int32Literal(7),
+            syntax::C0Expression::Int32Literal(0),
+        ]
+    );
+    let kernel_function = function.to_kernel_function();
+    assert_eq!(kernel_function.static_arrays().len(), 1);
+    assert_eq!(
+        kernel_function.static_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(5),
+            crate::kernel::int32(7),
+            crate::kernel::int32(0)
+        ]
+    );
+}
+
+#[test]
 fn c0_collects_string_literals_with_terminators() {
     let functions = syntax::parse_functions(
         r#"
@@ -345,13 +388,17 @@ fn c0_rejects_unsupported_static_local_shapes() {
     let error = syntax::parse_functions(
         r#"
         int32 invalid() {
-            static int32 values[2];
+            static int32 values[2][2];
             return 0;
         }
         "#,
     )
-    .expect_err("static arrays should remain outside the scalar slice");
-    assert!(error.message().contains("static local arrays"));
+    .expect_err("multidimensional static arrays should remain outside the slice");
+    assert!(
+        error
+            .message()
+            .contains("multidimensional static local arrays")
+    );
 }
 
 fn memory_range(

@@ -96,7 +96,10 @@ Likely additions:
   footprints. File-scope scalar `static` objects now use
   translation-unit-qualified storage, while function-local scalar `static`
   objects use stable function-qualified storage; both support one-time
-  literal/zero initialization and explicit contract footprints.
+  literal/zero initialization and explicit contract footprints. Fixed-size
+  one-dimensional scalar arrays are also supported for function-local statics;
+  aggregate, multidimensional, incomplete, and dynamic-initialization cases
+  remain open.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded

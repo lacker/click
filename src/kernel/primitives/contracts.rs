@@ -207,6 +207,66 @@ impl CStaticLocal {
     }
 }
 
+impl CStaticArray {
+    pub fn new(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        element_type: CType,
+        length: u32,
+        initial_values: Vec<CValue>,
+    ) -> Self {
+        assert!(
+            matches!(
+                element_type,
+                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+            ),
+            "C static local arrays currently support scalar integer element types only"
+        );
+        assert!(
+            length > 0,
+            "C static local arrays must have positive length"
+        );
+        assert_eq!(
+            initial_values.len(),
+            length as usize,
+            "C static local array initializer must cover its declared length"
+        );
+        assert!(
+            initial_values
+                .iter()
+                .all(|value| value.c_type() == element_type),
+            "C static local array initializers must match their declared element type"
+        );
+        Self {
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
+            element_type,
+            length,
+            initial_values,
+        }
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn element_type(&self) -> CType {
+        self.element_type
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn initial_values(&self) -> &[CValue] {
+        &self.initial_values
+    }
+}
+
 impl CStringLiteral {
     pub fn new(name: impl Into<String>, bytes: Vec<u8>) -> Self {
         assert_eq!(
@@ -257,6 +317,7 @@ impl CFunction {
             global_variables: Vec::new(),
             global_arrays: Vec::new(),
             static_variables: Vec::new(),
+            static_arrays: std::sync::Arc::new(Vec::new()),
             string_literals: Vec::new(),
         }
     }
@@ -273,6 +334,11 @@ impl CFunction {
 
     pub fn with_static_variables(mut self, static_variables: Vec<CStaticLocal>) -> Self {
         self.static_variables = static_variables;
+        self
+    }
+
+    pub fn with_static_arrays(mut self, static_arrays: Vec<CStaticArray>) -> Self {
+        self.static_arrays = std::sync::Arc::new(static_arrays);
         self
     }
 
@@ -372,6 +438,10 @@ impl CFunction {
 
     pub fn static_variables(&self) -> &[CStaticLocal] {
         &self.static_variables
+    }
+
+    pub fn static_arrays(&self) -> &[CStaticArray] {
+        self.static_arrays.as_slice()
     }
 
     pub fn string_literals(&self) -> &[CStringLiteral] {

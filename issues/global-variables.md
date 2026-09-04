@@ -8,12 +8,14 @@ declarations, exactly one linked external definition, per-translation-unit
 file-scope `static` storage, literal or zero initialization, shared storage
 across calls, `old(global)`, and one-cell contract footprints. Fixed-size
 one-dimensional scalar arrays now use the same stable linkage and
-element-initialization model. Function-local scalar `static` objects are also
-initialized once per program state with stable function-qualified storage.
+element-initialization model. Function-local scalar `static` objects and
+fixed-size one-dimensional scalar `static` arrays are also initialized once
+per program state with stable function-qualified storage.
 Basic ASCII C string literals are now lowered to function-owned,
 NUL-terminated, read-only `uint8` storage and remain stable through calls.
 Aggregate globals/statics, multidimensional or incomplete arrays,
-initialization ordering, and wider string-literal forms remain unsupported.
+initialization ordering, and wider string-literal forms remain unsupported;
+dynamic or non-literal initialization remains unsupported as well.
 The `cstr` predicate layer still exists only on the spec side over uint8
 buffers.
 
@@ -33,8 +35,11 @@ one-time function-local static storage, `mdtests/file_scope_global_arrays.md`
 and `mdtests/file_scope_global_arrays_cross_file.md` for initialized arrays and
 cross-file `extern` storage, `mdtests/file_scope_static_arrays.md` for private
 array storage, `mdtests/global_effect_requires_mutable.md` for effect
-certification, and the three `string_literals` tests for stable read-only
-literal storage, call-summary propagation, and indirect-write rejection.
+certification, `mdtests/static_local_arrays.md` for one-time function-local
+static array storage and indexed effects, `mdtests/static_array_local_effect.md`
+for rejecting an unauthorized static-array write, and the three
+`string_literals` tests for stable read-only literal storage, call-summary
+propagation, and indirect-write rejection.
 
 ## Acceptance criteria
 
@@ -57,13 +62,17 @@ literal storage, call-summary propagation, and indirect-write rejection.
   is initialized only when that block first enters the state, remains shared
   across recursive/nested calls, and is nameable by its owning function's
   contracts.
+- A function-local fixed-size one-dimensional array of a supported scalar type
+  has one function-qualified memory block, is initialized element-by-element
+  with omitted entries zero-filled, remains shared across recursive/nested
+  calls, and is nameable by indexed contract ranges.
 - Effect certification treats scalar global and file-scope static writes like
   any other footprint write, and function-local static writes require the same
   explicit footprint. Array elements use ordinary indexed memory ranges, and a
   global write not named in `mutable` is rejected. String literals remain
   read-only through copied pointers; aggregate static storage,
-  multidimensional/incomplete arrays, initialization ordering, and wider
-  literal forms remain open.
+  multidimensional/incomplete arrays, dynamic or non-literal initialization,
+  initialization ordering, and wider literal forms remain open.
 - `scripts/check.sh` passes.
 
 Related: [multi-function-files-and-headers.md](multi-function-files-and-headers.md).

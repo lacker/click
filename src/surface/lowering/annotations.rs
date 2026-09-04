@@ -269,6 +269,13 @@ pub(in crate::surface) fn annotated_function(
                 .filter_map(syntax::C0StaticLocal::to_kernel_static)
                 .collect(),
         )
+        .with_static_arrays(
+            parsed_function
+                .static_arrays()
+                .values()
+                .filter_map(syntax::C0StaticArray::to_kernel_static_array)
+                .collect(),
+        )
         .with_string_literals(
             parsed_function
                 .string_literals()

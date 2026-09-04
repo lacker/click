@@ -2102,6 +2102,42 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for static_array in function.static_arrays() {
+        let slot = CMemory::static_pointer(function.name(), static_array.kernel_name());
+        let bytes = static_array
+            .length()
+            .checked_mul(static_array.element_type().byte_width())
+            .expect("validated C static local array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            for (index, value) in static_array.initial_values().iter().enumerate() {
+                state.memory = state.memory.store(
+                    slot.offset_by_bytes(
+                        u32::try_from(index)
+                            .expect("validated C static local array length")
+                            .saturating_mul(static_array.element_type().byte_width()),
+                    ),
+                    value.clone(),
+                );
+            }
+        }
+        state.locals.set_array_object_at(
+            static_array.kernel_name().to_string(),
+            static_array.element_type(),
+            static_array.length(),
+            slot.clone(),
+        );
+        if static_array.kernel_name() != static_array.source_name()
+            && !state.locals.contains_name(static_array.source_name())
+        {
+            state.locals.set_array_object_at(
+                static_array.source_name().to_string(),
+                static_array.element_type(),
+                static_array.length(),
+                slot,
+            );
+        }
+    }
     state
 }
 
