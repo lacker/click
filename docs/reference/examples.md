@@ -172,6 +172,9 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/struct_multidimensional_scalar_array.md`: fixed multidimensional
   scalar-array fields preserve shape, element width, row-major indexing, and
   by-value copy behavior.
+- `mdtests/struct_aggregate_initializer.md`: positional struct initializers
+  recursively initialize nested fields and arrays, including zero-filled
+  omitted members.
 
 ## Byte values and buffers
 

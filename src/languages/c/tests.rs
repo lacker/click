@@ -4587,6 +4587,27 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
 }
 
 #[test]
+fn c0_rejects_designated_struct_initializers_explicitly() {
+    let error = syntax::parse_function(
+        r#"
+        struct packet {
+            int32 value;
+        };
+
+        int32 invalid() {
+            struct packet packet = {.value = 1};
+            return packet.value;
+        }
+        "#,
+    )
+    .expect_err("designated struct initializers remain outside this slice");
+    assert_eq!(
+        error.message(),
+        "designated aggregate initializers are not supported"
+    );
+}
+
+#[test]
 fn c0_struct_values_preserve_inline_array_layout_metadata() {
     let function = syntax::parse_function(
         r#"

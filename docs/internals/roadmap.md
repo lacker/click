@@ -120,7 +120,9 @@ Likely additions:
   the same recursive typed leaf-copy machinery without a runtime aggregate
   value. Pointer-backed aggregate returns also support field-wise relational
   postconditions over mixed-width and nested fields while preserving fresh
-  return storage.
+  return storage. Positional initializers for copyable struct-valued locals
+  recursively write typed leaves and zero-fill omitted members, including
+  nested structs and fixed-dimensional scalar or embedded-struct arrays.
   Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields

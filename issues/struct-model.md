@@ -31,7 +31,10 @@ leaf accesses. Resource clauses may name an embedded aggregate directly; the
 surface parser expands that place into typed leaf ranges while preserving each
 leaf's field metadata. Direct whole-struct lvalue loads and copies now use the
 same address-backed typed leaf semantics, including aggregate arguments and
-returns; aggregate initializers and conditional aggregate expressions remain
+returns. Positional aggregate initializers for copyable struct-valued locals
+now use the same recursive typed leaf stores, including nested structs,
+fixed-dimensional scalar arrays, fixed-dimensional embedded-struct arrays, and
+zero-fill for omitted members. Conditional aggregate expressions remain
 unsupported.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
@@ -146,6 +149,11 @@ Staged mdtests, each with an unchanged C file:
     `mdtests/struct_aggregate_return_postcondition.md`; the return boundary
     retags the source's internal pointer view, materializes a fresh recursive
     copy, and proves field equality without treating the source as an alias.
+17. ~~A copyable struct-valued local accepts a positional aggregate initializer
+    with nested structs, fixed-dimensional scalar arrays, embedded-struct
+    arrays, pointer fields, and omitted members that become zero.~~ Covered by
+    `mdtests/struct_aggregate_initializer.md`. Designated initializers and
+    initializers for arrays of structs remain separate follow-up slices.
 
 ## Acceptance criteria
 
@@ -170,6 +178,10 @@ Staged mdtests, each with an unchanged C file:
 - Pointer-backed aggregate returns expose field-wise relational postconditions
   across mixed-width and nested fields, while ordinary pointer-return type
   checking remains unchanged and the returned object remains fresh.
+- Positional aggregate initializers for copyable struct-valued locals lower to
+  recursive typed leaf stores, preserve source declaration order and nested
+  array shape, and zero-fill omitted members; unsupported designated and
+  struct-array initializer forms remain explicitly rejected.
 - `scripts/check.sh` passes.
 
 Related: [c-type-spellings.md](c-type-spellings.md) for `typedef`;

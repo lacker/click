@@ -349,6 +349,15 @@ postcondition such as `result.inner.flag == source.inner.flag` compares the
 fresh result cell with the source snapshot without turning the returned
 aggregate into an alias or weakening ordinary pointer-return type checks.
 
+Positional initializers for copyable struct-valued locals use the same
+address-backed boundary. The C0 parser walks fields in declaration order,
+recurses through explicitly braced embedded structs and embedded-struct
+arrays, and emits typed stores for each initialized leaf. It emits explicit
+zero stores for omitted members and cells, so an automatic aggregate is fully
+initialized before later field loads. Designated initializers and struct-array
+initializers remain outside this slice; no runtime aggregate value or padding
+store is introduced.
+
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an
 `int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on

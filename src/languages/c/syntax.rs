@@ -1922,6 +1922,48 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
 }
 
+fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
+    let (element_type, length) = match field.c_type {
+        C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::UInt8Array(length) => (C0Type::UInt8, length),
+        _ => return None,
+    };
+    if field.struct_name.is_some() {
+        return None;
+    }
+    Some((
+        element_type,
+        field.array_shape.clone().unwrap_or_else(|| vec![length]),
+    ))
+}
+
+fn zero_initializer_value(c_type: C0Type) -> C0Expression {
+    match c_type {
+        C0Type::UInt8 => C0Expression::UInt8Literal(0),
+        C0Type::UInt32 => C0Expression::UInt32Literal(0),
+        C0Type::Int64 => C0Expression::Int64Literal(0),
+        C0Type::UInt64 => C0Expression::UInt64Literal(0),
+        C0Type::Int16
+        | C0Type::Int32
+        | C0Type::UInt16
+        | C0Type::Int16Pointer
+        | C0Type::UInt16Pointer
+        | C0Type::Int32Pointer
+        | C0Type::UInt8Pointer
+        | C0Type::UInt32Pointer
+        | C0Type::Int64Pointer
+        | C0Type::UInt64Pointer
+        | C0Type::Int16PointerPointer
+        | C0Type::UInt16PointerPointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::UInt32PointerPointer
+        | C0Type::Int64PointerPointer
+        | C0Type::UInt64PointerPointer => C0Expression::Int32Literal(0),
+        _ => unreachable!("zero initializer called for non-scalar field type"),
+    }
+}
+
 fn flatten_aggregate_fields(
     fields: &BTreeMap<String, C0StructField>,
     structs: &BTreeMap<String, C0StructLayout>,
@@ -4826,6 +4868,383 @@ impl Parser {
         Ok(())
     }
 
+    fn parse_struct_value_initializer(
+        &mut self,
+        target: &str,
+        struct_name: &str,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let stores = self.parse_struct_initializer_level(
+            C0Expression::Variable(target.to_string()),
+            struct_name,
+        )?;
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_struct_initializer_level(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let mut fields = self
+            .structs
+            .get(struct_name)
+            .expect("validated struct initializer has a layout")
+            .fields
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        // `fields` is a BTreeMap for name lookup, but C initializer order is
+        // declaration order. ABI offsets are already assigned in declaration
+        // order, so they provide the stable source-order key here.
+        fields.sort_by_key(|field| field.offset_bytes);
+
+        self.expect(Token::LBrace)?;
+        let mut stores = Vec::new();
+        let mut field_index = 0usize;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                let Some(field) = fields.get(field_index) else {
+                    return Err(self
+                        .error_here(format!("too many initializers for `struct {struct_name}`")));
+                };
+                if matches!(self.peek(), Some(Token::Dot | Token::LBracket)) {
+                    return Err(
+                        self.error_here("designated aggregate initializers are not supported")
+                    );
+                }
+                stores.extend(self.parse_struct_initializer_field(target_pointer.clone(), field)?);
+                field_index += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `struct {struct_name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `struct {struct_name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        for field in fields.iter().skip(field_index) {
+            stores.extend(self.zero_struct_initializer_field(target_pointer.clone(), field));
+        }
+        Ok(stores)
+    }
+
+    fn parse_struct_initializer_field(
+        &mut self,
+        target_pointer: C0Expression,
+        field: &C0StructField,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        if let Some(element_width) = field.array_element_width {
+            let struct_name = field
+                .struct_name
+                .as_deref()
+                .expect("embedded struct array has a struct name");
+            let shape = field
+                .array_shape
+                .as_deref()
+                .expect("embedded struct array has a shape");
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "embedded struct array initializers require nested `{...}` groups",
+                ));
+            }
+            return self.parse_embedded_struct_array_initializer_level(
+                field_pointer,
+                struct_name,
+                shape,
+                0,
+                0,
+                element_width,
+            );
+        }
+        if field.c_type == C0Type::Int32 {
+            if let Some(struct_name) = field.struct_name.as_deref() {
+                if self.peek() != Some(&Token::LBrace) {
+                    return Err(self.error_here(
+                        "embedded struct initializers require a nested `{...}` group",
+                    ));
+                }
+                return self.parse_struct_initializer_level(field_pointer, struct_name);
+            }
+        }
+
+        if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "inline scalar array initializers require a nested `{...}` group",
+                ));
+            }
+            let mut values = Vec::new();
+            self.parse_array_initializer_level("struct field", &dimensions, 0, &mut values)?;
+            return Ok(values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| C0Statement::Store {
+                    pointer: offset_field_pointer(
+                        field_pointer.clone(),
+                        u32::try_from(index)
+                            .expect("validated struct array initializer index")
+                            .checked_mul(element_type.abi_size_bytes())
+                            .expect("validated struct array initializer offset"),
+                    ),
+                    value,
+                    value_type: Some(element_type),
+                })
+                .collect());
+        }
+
+        let value = self.parse_expression()?;
+        Ok(vec![C0Statement::Store {
+            pointer: field_pointer,
+            value,
+            value_type: Some(field.c_type),
+        }])
+    }
+
+    fn parse_embedded_struct_array_initializer_level(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        flat_prefix: u32,
+        element_width: u32,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let child_count = dimensions[depth];
+        self.expect(Token::LBrace)?;
+        let mut stores = Vec::new();
+        let mut child_index = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if child_index == child_count {
+                    return Err(
+                        self.error_here("too many initializers for an embedded struct array")
+                    );
+                }
+                let flat_index = flat_prefix
+                    .checked_mul(child_count)
+                    .and_then(|index| index.checked_add(child_index))
+                    .expect("validated embedded struct array initializer index");
+                if depth + 1 == dimensions.len() {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "embedded struct array elements require nested `{...}` groups",
+                        ));
+                    }
+                    stores.extend(
+                        self.parse_struct_initializer_level(
+                            offset_field_pointer(
+                                target_pointer.clone(),
+                                flat_index
+                                    .checked_mul(element_width)
+                                    .expect("validated embedded struct array initializer offset"),
+                            ),
+                            struct_name,
+                        )?,
+                    );
+                } else {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "nested embedded struct array initializers require `{...}` groups",
+                        ));
+                    }
+                    stores.extend(self.parse_embedded_struct_array_initializer_level(
+                        target_pointer.clone(),
+                        struct_name,
+                        dimensions,
+                        depth + 1,
+                        flat_index,
+                        element_width,
+                    )?);
+                }
+                child_index += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in embedded struct array initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(
+                            "expected `,` or `}` in embedded struct array initializer, got end of input",
+                        ));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        while child_index < child_count {
+            let flat_index = flat_prefix
+                .checked_mul(child_count)
+                .and_then(|index| index.checked_add(child_index))
+                .expect("validated embedded struct array initializer index");
+            if depth + 1 == dimensions.len() {
+                stores.extend(
+                    self.zero_struct_initializer_level(
+                        offset_field_pointer(
+                            target_pointer.clone(),
+                            flat_index
+                                .checked_mul(element_width)
+                                .expect("validated embedded struct array initializer offset"),
+                        ),
+                        struct_name,
+                    ),
+                );
+            } else {
+                stores.extend(self.zero_embedded_struct_array_initializer_level(
+                    target_pointer.clone(),
+                    struct_name,
+                    dimensions,
+                    depth + 1,
+                    flat_index,
+                    element_width,
+                ));
+            }
+            child_index += 1;
+        }
+        Ok(stores)
+    }
+
+    fn zero_struct_initializer_level(
+        &self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+    ) -> Vec<C0Statement> {
+        let mut fields = self
+            .structs
+            .get(struct_name)
+            .expect("validated struct initializer has a layout")
+            .fields
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        fields.sort_by_key(|field| field.offset_bytes);
+        fields
+            .iter()
+            .flat_map(|field| self.zero_struct_initializer_field(target_pointer.clone(), field))
+            .collect()
+    }
+
+    fn zero_struct_initializer_field(
+        &self,
+        target_pointer: C0Expression,
+        field: &C0StructField,
+    ) -> Vec<C0Statement> {
+        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        if let Some(element_width) = field.array_element_width {
+            let struct_name = field
+                .struct_name
+                .as_deref()
+                .expect("embedded struct array has a struct name");
+            let shape = field
+                .array_shape
+                .as_deref()
+                .expect("embedded struct array has a shape");
+            return self.zero_embedded_struct_array_initializer_level(
+                field_pointer,
+                struct_name,
+                shape,
+                0,
+                0,
+                element_width,
+            );
+        }
+        if field.c_type == C0Type::Int32 {
+            if let Some(struct_name) = field.struct_name.as_deref() {
+                return self.zero_struct_initializer_level(field_pointer, struct_name);
+            }
+        }
+
+        if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            let element_count = dimensions.iter().product::<u32>();
+            return (0..element_count)
+                .map(|index| C0Statement::Store {
+                    pointer: offset_field_pointer(
+                        field_pointer.clone(),
+                        index
+                            .checked_mul(element_type.abi_size_bytes())
+                            .expect("validated struct array initializer offset"),
+                    ),
+                    value: zero_initializer_value(element_type),
+                    value_type: Some(element_type),
+                })
+                .collect();
+        }
+
+        vec![C0Statement::Store {
+            pointer: field_pointer,
+            value: zero_initializer_value(field.c_type),
+            value_type: Some(field.c_type),
+        }]
+    }
+
+    fn zero_embedded_struct_array_initializer_level(
+        &self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        flat_prefix: u32,
+        element_width: u32,
+    ) -> Vec<C0Statement> {
+        let child_count = dimensions[depth];
+        let mut stores = Vec::new();
+        for child_index in 0..child_count {
+            let flat_index = flat_prefix
+                .checked_mul(child_count)
+                .and_then(|index| index.checked_add(child_index))
+                .expect("validated embedded struct array initializer index");
+            if depth + 1 == dimensions.len() {
+                stores.extend(
+                    self.zero_struct_initializer_level(
+                        offset_field_pointer(
+                            target_pointer.clone(),
+                            flat_index
+                                .checked_mul(element_width)
+                                .expect("validated embedded struct array initializer offset"),
+                        ),
+                        struct_name,
+                    ),
+                );
+            } else {
+                stores.extend(self.zero_embedded_struct_array_initializer_level(
+                    target_pointer.clone(),
+                    struct_name,
+                    dimensions,
+                    depth + 1,
+                    flat_index,
+                    element_width,
+                ));
+            }
+        }
+        stores
+    }
+
     fn parse_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let parsed_type = self.parse_type()?;
         if parsed_type.union_name.is_some() {
@@ -4911,14 +5330,18 @@ impl Parser {
                 self.variable_structs
                     .insert(name.clone(), struct_name.clone());
                 self.variable_struct_values
-                    .insert(name.clone(), struct_name);
+                    .insert(name.clone(), struct_name.clone());
                 let declaration = C0Statement::DeclareStructValue {
                     name: name.clone(),
                     layout: layout.clone(),
                 };
                 let statement = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
-                    if matches!(self.peek(), Some(Token::Ident(_)))
+                    if self.peek() == Some(&Token::LBrace) {
+                        let initializer =
+                            self.parse_struct_value_initializer(&name, &struct_name)?;
+                        C0Statement::Seq(Box::new(declaration), Box::new(initializer))
+                    } else if matches!(self.peek(), Some(Token::Ident(_)))
                         && self.peek_next() == Some(&Token::LParen)
                     {
                         let function_name = self.expect_ident("function name")?;
