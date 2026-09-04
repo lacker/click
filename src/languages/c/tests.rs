@@ -335,23 +335,84 @@ fn c0_collects_static_struct_aggregates_with_stable_kernel_names() {
 }
 
 #[test]
-fn c0_rejects_aggregate_static_initializers_and_arrays() {
+fn c0_collects_aggregate_static_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared = {7, 1};
+
+        int32 read() {
+            static struct state local = {3};
+            return shared.value + shared.ready + local.value + local.ready;
+        }
+        "#,
+    )
+    .expect("aggregate static initializers should parse");
+
+    let function = &functions[0];
+    let global = &function.global_aggregates()["shared"];
+    let global_initializers = global.initializer().expect("global initializer");
+    assert_eq!(global_initializers.len(), 2);
+    assert_eq!(global_initializers[0].offset_bytes(), 0);
+    assert_eq!(global_initializers[0].c_type(), syntax::C0Type::Int32);
+    assert!(matches!(
+        global_initializers[0].value(),
+        syntax::C0Expression::Int32Literal(7)
+    ));
+    assert_eq!(global_initializers[1].offset_bytes(), 4);
+    assert!(matches!(
+        global_initializers[1].value(),
+        syntax::C0Expression::Int32Literal(1)
+    ));
+
+    let static_aggregate = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("static aggregate initializer");
+    assert_eq!(static_aggregate.initializer().len(), 1);
+    assert_eq!(static_aggregate.initializer()[0].offset_bytes(), 0);
+    assert!(matches!(
+        static_aggregate.initializer()[0].value(),
+        syntax::C0Expression::Int32Literal(3)
+    ));
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_global = kernel_function
+        .global_aggregates()
+        .iter()
+        .next()
+        .expect("kernel global aggregate initializer");
+    assert_eq!(kernel_global.initializers().len(), 2);
+    assert_eq!(kernel_global.initializers()[0].offset_bytes(), 0);
+    assert_eq!(kernel_global.initializers()[1].offset_bytes(), 4);
+    let kernel_static = kernel_function
+        .static_aggregates()
+        .iter()
+        .next()
+        .expect("kernel static aggregate initializer");
+    assert_eq!(kernel_static.initializers().len(), 1);
+    assert_eq!(kernel_static.initializers()[0].offset_bytes(), 0);
+}
+
+#[test]
+fn c0_rejects_aggregate_static_arrays_and_nonconstant_initializers() {
     for (source, expected) in [
-        (
-            "struct state { int32 value; }; struct state shared = {1};",
-            "aggregate global initializers",
-        ),
         (
             "struct state { int32 value; }; struct state shared[2];",
             "arrays of file-scope aggregates",
         ),
         (
-            "struct state { int32 value; }; int32 f() { static struct state state = {1}; return 0; }",
-            "aggregate static initializers",
-        ),
-        (
             "struct state { int32 value; }; int32 f() { static struct state state[2]; return 0; }",
             "arrays of function-local aggregate statics",
+        ),
+        (
+            "struct state { int32 value; }; int32 seed; struct state shared = {seed}; int32 f() { return 0; }",
+            "aggregate initializers currently support only integer, floating-point, or null-pointer literals",
         ),
     ] {
         let error = syntax::parse_functions(source)

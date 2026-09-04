@@ -867,6 +867,7 @@ pub struct CGlobalAggregate {
     pub(super) source_name: String,
     pub(super) kernel_name: String,
     pub(super) layout: CAggregateLayout,
+    pub(super) initializers: Vec<CAggregateInitializer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -893,6 +894,7 @@ pub struct CStaticAggregate {
     pub(super) source_name: String,
     pub(super) kernel_name: String,
     pub(super) layout: CAggregateLayout,
+    pub(super) initializers: Vec<CAggregateInitializer>,
 }
 
 /// Static-storage metadata shared by all copies of a function descriptor.
@@ -940,6 +942,32 @@ impl CAggregateField {
 
     pub fn c_type(&self) -> CType {
         self.c_type
+    }
+}
+
+/// One explicitly initialized scalar cell in a static-storage aggregate.
+/// The aggregate materializer zero-fills the complete layout first, then
+/// applies these entries at their ABI-relative offsets.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateInitializer {
+    pub(super) offset_bytes: u32,
+    pub(super) value: CValue,
+}
+
+impl CAggregateInitializer {
+    pub fn new(offset_bytes: u32, value: CValue) -> Self {
+        Self {
+            offset_bytes,
+            value,
+        }
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn value(&self) -> &CValue {
+        &self.value
     }
 }
 

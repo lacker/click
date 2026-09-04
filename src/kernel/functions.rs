@@ -2121,6 +2121,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 .with_block(slot.block.clone(), global_aggregate.layout().size_bytes());
             state.memory =
                 zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate.initializers(),
+            );
         }
         state.locals.set_aggregate_object_at(
             global_aggregate.kernel_name().to_string(),
@@ -2211,6 +2216,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 .with_block(slot.block.clone(), static_aggregate.layout().size_bytes());
             state.memory =
                 zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate.initializers(),
+            );
         }
         state.locals.set_aggregate_object_at(
             static_aggregate.kernel_name().to_string(),
@@ -2313,6 +2323,20 @@ fn zero_aggregate_fields(
                 .expect("validated aggregate zero field offset");
             memory = memory.store(base.offset_by_bytes(offset), zero.clone());
         }
+    }
+    memory
+}
+
+fn initialize_aggregate_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    initializers: &[CAggregateInitializer],
+) -> CMemory {
+    for initializer in initializers {
+        memory = memory.store(
+            base.offset_by_bytes(initializer.offset_bytes()),
+            initializer.value().clone(),
+        );
     }
     memory
 }

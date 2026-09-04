@@ -174,6 +174,7 @@ impl CGlobalAggregate {
         source_name: impl Into<String>,
         kernel_name: impl Into<String>,
         layout: CAggregateLayout,
+        initializers: Vec<CAggregateInitializer>,
     ) -> Self {
         assert!(
             layout.size_bytes() > 0,
@@ -187,6 +188,7 @@ impl CGlobalAggregate {
             source_name: source_name.into(),
             kernel_name: kernel_name.into(),
             layout,
+            initializers,
         }
     }
 
@@ -200,6 +202,10 @@ impl CGlobalAggregate {
 
     pub fn layout(&self) -> &CAggregateLayout {
         &self.layout
+    }
+
+    pub fn initializers(&self) -> &[CAggregateInitializer] {
+        &self.initializers
     }
 }
 
@@ -328,6 +334,7 @@ impl CStaticAggregate {
         source_name: impl Into<String>,
         kernel_name: impl Into<String>,
         layout: CAggregateLayout,
+        initializers: Vec<CAggregateInitializer>,
     ) -> Self {
         assert!(
             layout.size_bytes() > 0,
@@ -341,6 +348,7 @@ impl CStaticAggregate {
             source_name: source_name.into(),
             kernel_name: kernel_name.into(),
             layout,
+            initializers,
         }
     }
 
@@ -354,6 +362,10 @@ impl CStaticAggregate {
 
     pub fn layout(&self) -> &CAggregateLayout {
         &self.layout
+    }
+
+    pub fn initializers(&self) -> &[CAggregateInitializer] {
+        &self.initializers
     }
 }
 

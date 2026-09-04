@@ -15,7 +15,9 @@ Basic ASCII C string literals are now lowered to function-owned,
 NUL-terminated, read-only `uint8` storage and remain stable through calls.
 Zero-initialized struct globals and function-local struct statics with
 supported scalar leaf fields now use stable typed aggregate storage, including
-cross-file `extern` sharing and field-level contract effects. Aggregate
+cross-file `extern` sharing and field-level contract effects. Positional
+compile-time scalar and null-pointer initializers now populate those same
+objects, with omitted leaves retaining zero initialization. Designated
 initializers and arrays of aggregates, multidimensional or incomplete arrays,
 initialization ordering, and wider string-literal forms remain unsupported;
 dynamic or non-literal initialization remains unsupported as well.
@@ -43,7 +45,8 @@ static array storage and indexed effects, `mdtests/static_array_local_effect.md`
 for rejecting an unauthorized static-array write, `mdtests/aggregate_static_objects.md`
 for zero-initialized cross-file and function-private aggregate state,
 `mdtests/aggregate_static_effect.md` for rejecting an unauthorized
-aggregate-field write, and the three
+aggregate-field write, and `mdtests/initialized_aggregate_static_objects.md`
+for initialized cross-file and function-private aggregate state. The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
@@ -61,13 +64,15 @@ propagation, and indirect-write rejection.
   array block, initialized element-by-element with omitted values set to zero;
   external definitions are shared across translation units and file-scope
   `static` arrays are translation-unit-private.
-- The parser accepts zero-initialized struct globals and function-local struct
-  statics whose layouts contain supported scalar leaf fields, links compatible
-  external declarations to one definition, and rejects aggregate initializers
+- The parser accepts zero-initialized or positionally initialized struct
+  globals and function-local struct statics whose layouts contain supported
+  scalar leaf fields, links compatible external declarations to one
+  definition, zero-fills omitted leaves, and rejects designated initializers
   and arrays of aggregates.
 - The kernel materializes each supported aggregate as one stable typed-field
-  block, using global linkage or function-qualified static storage, and keeps
-  its zero state across calls.
+  block, using global linkage or function-qualified static storage, applies
+  explicit positional initializer cells once after zero-filling, and keeps
+  that state across calls.
 - Surface Click can name scalar globals and owning-translation-unit statics in
   `requires`, `ensures`, `mutable`, and resource clauses using their address,
   and `old()` applies to them.
@@ -86,7 +91,7 @@ propagation, and indirect-write rejection.
   any other footprint write, and function-local static writes require the same
   explicit footprint. Array elements use ordinary indexed memory ranges, and a
   global write not named in `mutable` is rejected. String literals remain
-  read-only through copied pointers; aggregate initializers and arrays of
+  read-only through copied pointers; designated initializers and arrays of
   aggregates,
   multidimensional/incomplete arrays, dynamic or non-literal initialization,
   initialization ordering, and wider literal forms remain open.
