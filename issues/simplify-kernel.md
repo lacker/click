@@ -84,6 +84,14 @@ with explicit checked evidence, not to make that hidden kernel decision
 procedure iterative. That migration, including `ARITHMETIC_INTERVAL_DEPTH`, is
 tracked in `issues/arithmetic.md` and is deliberately deferred here.
 
+The three canonicalization-related cuts were also found to share a deeper
+abstraction problem. Assumption-free, idempotent `canonical_term` is currently
+conflated with context-dependent footprint lowering and theory-aware endpoint
+keying. Their limits, separation, caller audit, and possible use of an e-graph
+for context-local equality indexing are now owned by
+`issues/fix-canonicalization.md`; replacing the fixed rounds with an unbounded
+loop is explicitly not the intended fix.
+
 ## Current inventory
 
 Counts below are examples / mdtests, times the bound or route fired, measured
@@ -95,21 +103,12 @@ These are not surface-search migrations. Replace each cut with work bounded by
 the complete named structure, plus an exact cycle check or an iterative walk as
 needed.
 
-1. **Alternating canonicalization rounds**, `CANONICALIZATION_ROUNDS = 3` in
-   `src/kernel/assumptions.rs`. The result can depend on how many times
-   simplification and equality-class selection alternate. Replace it with a
-   fixed point that has an explicit monotone measure or cycle check, or define
-   one canonical representation computed directly.
-2. **Canonical order endpoint depth**, `CANONICAL_ORDER_ENDPOINT_DEPTH = 6`
-   in `src/kernel/assumptions/proposition_reasoning.rs`. This affects the
-   endpoint keys used by context-inconsistency reasoning. Traverse the complete
-   endpoint and preserve the bucketing/scaling property with regressions.
-3. **Deep-term canonicalization preflight**, `bitvector_term_deeper_than(...,
-   64)` in `src/kernel/api.rs`, used to skip canonicalization in proposition
-   reasoning. If the purpose is stack safety, make the canonicalizer iterative;
-   a depth predicate must not decide whether an otherwise supported fact can
-   be proved.
-4. **Nested quantified-binder comparison**, called with depth eight from
+The alternating contextual-lowering rounds, order-endpoint key depth, and
+deep-term canonicalization preflight are tracked together in
+`issues/fix-canonicalization.md` rather than as three independent mechanical
+walk conversions.
+
+1. **Nested quantified-binder comparison**, called with depth eight from
    surface theorem application but implemented in
    `src/kernel/proof/fact_reasoning.rs`. It is a generation-side recognizer, not
    theorem authority. Move it to the surface or make the structural comparison
@@ -200,8 +199,9 @@ comparison now use only that narrower predicate for distinctness.
    contextual constructor, and route-specific tests.
 3. **In progress:** replace the structural and fixed-point cuts with complete
    input-sized walks, landing a scaling regression with each change. Exact-load
-   traversal and havoc write-set identity are complete; the four items still
-   listed above remain. The arithmetic depth cut is separately deferred to the
+   traversal and havoc write-set identity are complete. The canonicalization
+   family is owned by `issues/fix-canonicalization.md`; the nested-binder item
+   remains above. The arithmetic depth cut is separately deferred to the
    smart-tactic migration in `issues/arithmetic.md`.
 4. Move upper-bound split selection to a surface planner that emits checked
    proof branches.
