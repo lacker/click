@@ -2776,22 +2776,18 @@ pub fn pure_fact_context_is_inconsistent(assumptions: &PureFactContext) -> bool 
     assumptions.is_inconsistent()
 }
 
-/// Reifies a contextual proof as a theorem that keeps the exact ambient facts
-/// selected by its derivation as implication premises. Kernel theorem objects
-/// may outlive the context that produced them, so dropping those premises
-/// would turn a path-local consequence into an unconditional axiom.
-fn theorem_from_contextual_proof(
+/// Reifies one exact context fact as the explicit identity implication
+/// `fact -> fact`. This is intentionally not a general proposition prover:
+/// callers that want a derived resource invariant must plan and record that
+/// derivation before asking the kernel to issue theorem authority.
+fn theorem_from_exact_context_fact(
     assumptions: &PureFactContext,
     conclusion: Proposition,
 ) -> Option<Theorem> {
-    let derivation = assumptions.derive_proposition(&conclusion)?;
-    let proposition = derivation
-        .context_premises()
-        .into_iter()
-        .rev()
-        .fold(conclusion, |body, premise| {
-            Proposition::Implies(Box::new(premise), Box::new(body))
-        });
+    if !assumptions.proves_exact(&conclusion) {
+        return None;
+    }
+    let proposition = Proposition::Implies(Box::new(conclusion.clone()), Box::new(conclusion));
     Some(Theorem::new(proposition))
 }
 
@@ -2842,7 +2838,7 @@ pub fn prove_owned_resource_count_lower_bound(
     if claimed != &conclusion {
         return None;
     }
-    theorem_from_contextual_proof(assumptions, conclusion)
+    theorem_from_exact_context_fact(assumptions, conclusion)
 }
 
 /// Certifies the nonnegativity invariant carried by an owned declared-resource
@@ -2864,7 +2860,7 @@ pub fn prove_owned_resource_quantity_nonnegative(
     if claimed != &conclusion {
         return None;
     }
-    theorem_from_contextual_proof(assumptions, conclusion)
+    theorem_from_exact_context_fact(assumptions, conclusion)
 }
 
 /// Re-expresses a checked execution from a definitionally equal ghost-resource

@@ -88,6 +88,14 @@ whole-context derivation payload, and `UPPER_BOUND_SPLIT_DEPTH_LIMIT` are
 deleted. The two bound-universal bubble fixtures verify both the smart proof
 and its independently parsed expansion, including the emitted branch.
 
+The resource-invariant theorem constructors no longer call the general
+proposition prover. They now issue authority only for an exact recorded
+context fact, retained as the explicit identity implication `fact -> fact`.
+Derived count and nonnegativity facts must therefore be planned and recorded
+by the surface before theorem construction; a regression rejects a merely
+transitive contextual consequence. This completes the
+`theorem_from_contextual_proof` part of the authoritative-caller audit.
+
 The arithmetic interval depth was removed from this structural-cleanup queue
 after reviewing the abstraction around it. `arithmetic()` is a nominally simple
 tactic whose kernel operation reconstructs an affine and interval derivation
@@ -177,11 +185,13 @@ change an answer.
    two split rules does not by itself establish "the kernel does not search."
    `verify_lowered_invariant_path` in `src/kernel/loops.rs` calls
    `derive_proposition_without_premise_minimization`, and
-   `theorem_from_contextual_proof` in `src/kernel/api.rs` searches for a
-   derivation and issues a theorem from its selected premises. Inventory the
-   remaining callers and either move their planning to the surface, replace
-   them with named checked evidence, or explicitly narrow this issue's claimed
-   invariant. Contract certification's existing ban on
+   the remaining loop and effect-certification paths still construct
+   derivations from ambient facts. The former
+   `theorem_from_contextual_proof` resource path is complete: its constructors
+   now accept only exact recorded facts and perform no proof search. Inventory
+   the remaining callers and either move their planning to the surface,
+   replace them with named checked evidence, or explicitly narrow this issue's
+   claimed invariant. Contract certification's existing ban on
    `PureFactContext::proves` is necessary but not a complete authority audit.
 
 ## Pointer-distinctness disposition
@@ -219,7 +229,9 @@ comparison now use only that narrower predicate for distinctness.
    and negative-memo gating; then delete or accurately rename the incompleteness
    epoch.
 8. Finish the authoritative general-prover caller audit, or narrow the stated
-   invariant with an explicit rationale for any retained kernel planner.
+   invariant with an explicit rationale for any retained kernel planner. The
+   resource-invariant theorem constructors are complete; loop and effect
+   certification callers remain.
 
 Each numbered step should be a coherent green change. A later step must not be
 used to excuse an opaque bound introduced by an earlier one.
