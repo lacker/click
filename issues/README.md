@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 32
+## Functionality gaps: 15
 
 C language coverage:
 
@@ -32,7 +32,6 @@ C language coverage:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)
-- [Allow function calls in expression position](calls-in-expressions.md)
 - [Make C-string witnesses carry dynamic loadability](cstr-loadability-witnesses.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
