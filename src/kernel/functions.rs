@@ -1570,6 +1570,8 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
         CType::UInt16 => CValue::UInt16(Bitvector32Term::Variable(variable)),
         CType::UInt32 => CValue::UInt32(Bitvector32Term::Variable(variable)),
+        CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variable)),
+        CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variable)),
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer

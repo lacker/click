@@ -834,9 +834,19 @@ fn synthesize_surface_bitvector(
             CValue::Int32(term.clone()),
         )));
     }
-    if let Some((name, _)) = state.locals().object_values().find(
-        |(_, value)| matches!(value, CValue::Int16(local) | CValue::Int32(local) | CValue::UInt8(local) | CValue::UInt16(local) if local == term),
-    ) {
+    if let Some((name, _)) = state.locals().object_values().find(|(_, value)| {
+        matches!(
+            value,
+            CValue::Int16(local)
+                | CValue::Int32(local)
+                | CValue::UInt8(local)
+                | CValue::UInt16(local)
+                | CValue::UInt32(local)
+                | CValue::Int64(local)
+                | CValue::UInt64(local)
+                if local == term
+        )
+    }) {
         return Some(if name == "result" {
             ContractExpression::CBinding(name.to_string())
         } else {
@@ -997,7 +1007,17 @@ fn synthesize_surface_bitvector(
             // A memory-resident scalar local holding exactly this variable
             // reads as its own name here.
             if let Some((name, _)) = state.local_cell_values().find(|(_, value)| {
-                matches!(value, CValue::Int16(held) | CValue::Int32(held) | CValue::UInt8(held) | CValue::UInt16(held) if held == term)
+                matches!(
+                    value,
+                    CValue::Int16(held)
+                        | CValue::Int32(held)
+                        | CValue::UInt8(held)
+                        | CValue::UInt16(held)
+                        | CValue::UInt32(held)
+                        | CValue::Int64(held)
+                        | CValue::UInt64(held)
+                        if held == term
+                )
             }) {
                 return Some(ContractExpression::CFragment(CExpression::Variable(
                     name.to_string(),
@@ -1010,6 +1030,112 @@ fn synthesize_surface_bitvector(
                 state,
                 bound_variables,
             )
+        }
+        Bitvector32Term::Int64Constant(value) => Some(ContractExpression::CFragment(
+            CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(*value))),
+        )),
+        Bitvector32Term::UInt64Constant(value) => Some(ContractExpression::CFragment(
+            CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(*value))),
+        )),
+        Bitvector32Term::Int64From32(value) | Bitvector32Term::Int64FromUInt32(value) => {
+            Some(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(contract_expression_to_c_fragment(
+                    &synthesize_surface_bitvector(
+                        value,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
+                    )?,
+                )?),
+                target_type: CType::Int64,
+            }))
+        }
+        Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value) => {
+            Some(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(contract_expression_to_c_fragment(
+                    &synthesize_surface_bitvector(
+                        value,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
+                    )?,
+                )?),
+                target_type: CType::UInt64,
+            }))
+        }
+        Bitvector32Term::Int64Add(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Add(left, right))
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Subtract(left, right))
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Multiply(left, right))
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Divide(left, right))
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Remainder(left, right))
+        }
+        Bitvector32Term::UInt64Add(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Add(left, right))
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Subtract(left, right))
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Multiply(left, right))
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Divide(left, right))
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Remainder(left, right))
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::ShiftLeft(left, right))
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::ShiftRight(left, right))
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseAnd(left, right))
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseOr(left, right))
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseXor(left, right))
+        }
+        Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
+            Some(ContractExpression::BitwiseNot(Box::new(
+                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
+            )))
         }
         Bitvector32Term::If { .. } | Bitvector32Term::RangeFold { .. } => None,
         Bitvector32Term::PureFunctionApplication {
@@ -1122,7 +1248,9 @@ fn synthesize_local_aggregate_field(
                         | CValue::Int32(value)
                         | CValue::UInt8(value)
                         | CValue::UInt16(value)
-                        | CValue::UInt32(value) => value,
+                        | CValue::UInt32(value)
+                        | CValue::Int64(value)
+                        | CValue::UInt64(value) => value,
                         CValue::Pointer(_) | CValue::Void => return None,
                     };
                     if value_term != *term {
@@ -1168,7 +1296,10 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
         }
         match term {
             Bitvector32Term::MemoryLoad(_, _) => return false,
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Variable(_) => {}
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
@@ -1185,7 +1316,37 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
                 pending.push(left);
                 pending.push(right);
             }
-            Bitvector32Term::BitwiseNot(value) => pending.push(value),
+            Bitvector32Term::Int64Add(left, right)
+            | Bitvector32Term::Int64Subtract(left, right)
+            | Bitvector32Term::Int64Multiply(left, right)
+            | Bitvector32Term::Int64Divide(left, right)
+            | Bitvector32Term::Int64Remainder(left, right)
+            | Bitvector32Term::Int64ShiftLeft(left, right)
+            | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+            | Bitvector32Term::Int64BitwiseAnd(left, right)
+            | Bitvector32Term::Int64BitwiseOr(left, right)
+            | Bitvector32Term::Int64BitwiseXor(left, right)
+            | Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64Multiply(left, right)
+            | Bitvector32Term::UInt64Divide(left, right)
+            | Bitvector32Term::UInt64Remainder(left, right)
+            | Bitvector32Term::UInt64ShiftLeft(left, right)
+            | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            Bitvector32Term::BitwiseNot(value)
+            | Bitvector32Term::Int64BitwiseNot(value)
+            | Bitvector32Term::UInt64BitwiseNot(value)
+            | Bitvector32Term::Int64From32(value)
+            | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::Int64FromUInt32(value)
+            | Bitvector32Term::UInt64FromInt32(value)
+            | Bitvector32Term::UInt64FromInt64(value) => pending.push(value),
             Bitvector32Term::If {
                 then_term,
                 else_term,

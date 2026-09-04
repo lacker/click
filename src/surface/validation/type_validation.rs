@@ -325,6 +325,8 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt8 => "uint8".to_string(),
         C0Type::UInt16 => "uint16".to_string(),
         C0Type::UInt32 => "uint32".to_string(),
+        C0Type::Int64 => "int64".to_string(),
+        C0Type::UInt64 => "uint64".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
@@ -529,6 +531,8 @@ fn infer_c_expression_type(
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
         CExpression::Value(CValue::UInt16(_)) => Some(C0Type::UInt16),
         CExpression::Value(CValue::UInt32(_)) => Some(C0Type::UInt32),
+        CExpression::Value(CValue::Int64(_)) => Some(C0Type::Int64),
+        CExpression::Value(CValue::UInt64(_)) => Some(C0Type::UInt64),
         CExpression::Value(CValue::Pointer(_)) => None,
         CExpression::Variable(name) => variables.get(name).copied(),
         CExpression::Cast {
@@ -546,6 +550,8 @@ fn infer_c_expression_type(
             CType::UInt8PointerPointer => Some(C0Type::UInt8PointerPointer),
             CType::FunctionPointer(signature) => Some(C0Type::FunctionPointer(*signature)),
             CType::Void | CType::Int32Array(_) | CType::UInt8Array(_) => None,
+            CType::Int64 => Some(C0Type::Int64),
+            CType::UInt64 => Some(C0Type::UInt64),
         },
         CExpression::Conditional {
             condition,
@@ -609,6 +615,8 @@ fn infer_c_expression_type(
             CType::UInt8 => C0Type::UInt8,
             CType::UInt16 => C0Type::UInt16,
             CType::UInt32 => C0Type::UInt32,
+            CType::Int64 => C0Type::Int64,
+            CType::UInt64 => C0Type::UInt64,
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
@@ -708,10 +716,11 @@ fn infer_c_shift_type(
     if !type_is_scalar(left_type) || !type_is_scalar(right_type) {
         return None;
     }
-    Some(if left_type == C0Type::UInt32 {
-        C0Type::UInt32
-    } else {
-        C0Type::Int32
+    Some(match left_type {
+        C0Type::UInt64 => C0Type::UInt64,
+        C0Type::Int64 => C0Type::Int64,
+        C0Type::UInt32 => C0Type::UInt32,
+        _ => C0Type::Int32,
     })
 }
 
@@ -726,10 +735,11 @@ fn infer_contract_shift_type(
     let right_type = infer_contract_expression_type(right, variables, click_functions, context)?;
     Ok(match (left_type, right_type) {
         (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-            Some(if left == C0Type::UInt32 {
-                C0Type::UInt32
-            } else {
-                C0Type::Int32
+            Some(match left {
+                C0Type::UInt64 => C0Type::UInt64,
+                C0Type::Int64 => C0Type::Int64,
+                C0Type::UInt32 => C0Type::UInt32,
+                _ => C0Type::Int32,
             })
         }
         _ => None,
@@ -739,12 +749,22 @@ fn infer_contract_shift_type(
 fn type_is_scalar(c_type: C0Type) -> bool {
     matches!(
         c_type,
-        C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+        C0Type::Int16
+            | C0Type::Int32
+            | C0Type::UInt8
+            | C0Type::UInt16
+            | C0Type::UInt32
+            | C0Type::Int64
+            | C0Type::UInt64
     )
 }
 
 fn scalar_arithmetic_result_type(left: C0Type, right: C0Type) -> C0Type {
-    if matches!(left, C0Type::UInt32) || matches!(right, C0Type::UInt32) {
+    if matches!(left, C0Type::UInt64) || matches!(right, C0Type::UInt64) {
+        C0Type::UInt64
+    } else if matches!(left, C0Type::Int64) || matches!(right, C0Type::Int64) {
+        C0Type::Int64
+    } else if matches!(left, C0Type::UInt32) || matches!(right, C0Type::UInt32) {
         C0Type::UInt32
     } else {
         C0Type::Int32

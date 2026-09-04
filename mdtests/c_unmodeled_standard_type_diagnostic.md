@@ -4,7 +4,7 @@ The standard spellings for integer widths that Click does not model yet must
 be rejected explicitly, rather than reported as an unrecognized generic type.
 
 ```c filename=c_unmodeled_standard_type_diagnostic.c
-long unsupported_width() {
+char unsupported_width() {
     return 0;
 }
 ```
@@ -12,11 +12,11 @@ long unsupported_width() {
 ```click
 verifying "c_unmodeled_standard_type_diagnostic.c";
 
-long unsupported_width() {
+char unsupported_width() {
     ensures result == 0;
 }
 ```
 
 ```expect
-fail: unsupported integer width `long`
+fail: unsupported C type `char`
 ```

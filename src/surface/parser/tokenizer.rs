@@ -161,8 +161,8 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                     index += 1;
                 }
                 let form: String = chars[start..index].iter().collect();
-                let value = form.parse::<u32>().map_err(|_| {
-                    ClickError::new(format!("{position}: number `{form}` does not fit in u32"))
+                let value = form.parse::<u64>().map_err(|_| {
+                    ClickError::new(format!("{position}: number `{form}` does not fit in u64"))
                 })?;
                 if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
                     if chars
@@ -194,10 +194,58 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                             chars[index + 3]
                         )));
                     }
+                    let value = u32::try_from(value).map_err(|_| {
+                        ClickError::new(format!(
+                            "{position}: uint32 literal `{form}u32` is outside 0..{}",
+                            u32::MAX
+                        ))
+                    })?;
                     tokens.push(Token::UInt32Number(value));
                     index += 3;
+                } else if chars.get(index) == Some(&'i')
+                    && chars.get(index + 1) == Some(&'6')
+                    && chars.get(index + 2) == Some(&'4')
+                {
+                    if chars
+                        .get(index + 3)
+                        .is_some_and(|next| is_ident_continue(*next))
+                    {
+                        return Err(ClickError::new(format!(
+                            "{position}: invalid int64 literal `{form}i64{}`",
+                            chars[index + 3]
+                        )));
+                    }
+                    let value = i64::try_from(value).map_err(|_| {
+                        ClickError::new(format!(
+                            "{position}: int64 literal `{form}i64` is outside 0..{}",
+                            i64::MAX
+                        ))
+                    })?;
+                    tokens.push(Token::Int64Number(value));
+                    index += 3;
+                } else if chars.get(index) == Some(&'u')
+                    && chars.get(index + 1) == Some(&'6')
+                    && chars.get(index + 2) == Some(&'4')
+                {
+                    if chars
+                        .get(index + 3)
+                        .is_some_and(|next| is_ident_continue(*next))
+                    {
+                        return Err(ClickError::new(format!(
+                            "{position}: invalid uint64 literal `{form}u64{}`",
+                            chars[index + 3]
+                        )));
+                    }
+                    tokens.push(Token::UInt64Number(value));
+                    index += 3;
                 } else {
-                    tokens.push(Token::Number(value));
+                    if let Ok(value) = u32::try_from(value) {
+                        tokens.push(Token::Number(value));
+                    } else if let Ok(value) = i64::try_from(value) {
+                        tokens.push(Token::Int64Number(value));
+                    } else {
+                        tokens.push(Token::UInt64Number(value));
+                    }
                 }
             }
             ch if is_ident_start(ch) => {

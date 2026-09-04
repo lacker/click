@@ -2270,6 +2270,7 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
+        CType::Int64 | CType::UInt64 => 8,
         CType::UInt8 => 1,
         CType::UInt32 => 4,
         CType::Int32Pointer

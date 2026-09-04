@@ -46,6 +46,60 @@ pub(in crate::surface) fn comparison_proposition(
             value,
         ));
     }
+    if matches!(left, CValue::UInt64(_)) || matches!(right, CValue::UInt64(_)) {
+        let left = promoted_uint64_term(&left).ok_or_else(|| {
+            ClickError::new(format!(
+                "cannot compare `{left:?}` and `{right:?}` in proposition"
+            ))
+        })?;
+        let right = promoted_uint64_term(&right).ok_or_else(|| {
+            ClickError::new(format!(
+                "cannot compare `{left:?}` and `{right:?}` in proposition"
+            ))
+        })?;
+        let condition = match operator {
+            ComparisonOperator::Equal | ComparisonOperator::NotEqual => {
+                ConditionTerm::uint64_equal(left, right)
+            }
+            ComparisonOperator::LessThan => ConditionTerm::uint64_less_than(left, right),
+            ComparisonOperator::LessEqual => ConditionTerm::uint64_less_equal(left, right),
+            ComparisonOperator::GreaterThan => ConditionTerm::uint64_greater_than(left, right),
+            ComparisonOperator::GreaterEqual => ConditionTerm::uint64_greater_equal(left, right),
+        };
+        return Ok(Proposition::ConditionIs(
+            condition,
+            !matches!(operator, ComparisonOperator::NotEqual),
+        ));
+    }
+    if matches!(left, CValue::Int64(_)) || matches!(right, CValue::Int64(_)) {
+        let left = promoted_int64_term(&left).ok_or_else(|| {
+            ClickError::new(format!(
+                "cannot compare `{left:?}` and `{right:?}` in proposition"
+            ))
+        })?;
+        let right = promoted_int64_term(&right).ok_or_else(|| {
+            ClickError::new(format!(
+                "cannot compare `{left:?}` and `{right:?}` in proposition"
+            ))
+        })?;
+        let condition = match operator {
+            ComparisonOperator::Equal | ComparisonOperator::NotEqual => {
+                ConditionTerm::int64_equal(left, right)
+            }
+            ComparisonOperator::LessThan => ConditionTerm::int64_signed_less_than(left, right),
+            ComparisonOperator::LessEqual => ConditionTerm::int64_signed_less_equal(left, right),
+            ComparisonOperator::GreaterThan => {
+                ConditionTerm::int64_signed_greater_than(left, right)
+            }
+            ComparisonOperator::GreaterEqual => {
+                ConditionTerm::int64_signed_greater_equal(left, right)
+            }
+        };
+        return Ok(Proposition::ConditionIs(
+            condition,
+            !matches!(operator, ComparisonOperator::NotEqual),
+        ));
+    }
     let unsigned = matches!(
         (&left, &right),
         (CValue::UInt32(_), _) | (_, CValue::UInt32(_))
@@ -92,6 +146,29 @@ pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvecto
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
         | CValue::UInt32(bits) => Some(simp_bitvector(bits)),
+        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int64(bits) => Some(bits.clone()),
+        CValue::Int16(bits) | CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt16(bits) => {
+            Some(Bitvector32Term::int64_from_32(bits.clone()))
+        }
+        CValue::UInt32(bits) => Some(Bitvector32Term::int64_from_uint32(bits.clone())),
+        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn promoted_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::UInt64(bits) => Some(bits.clone()),
+        CValue::Int64(bits) => Some(Bitvector32Term::uint64_from_int64(bits.clone())),
+        CValue::Int16(bits) | CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt16(bits) => {
+            Some(Bitvector32Term::uint64_from_int32(bits.clone()))
+        }
+        CValue::UInt32(bits) => Some(Bitvector32Term::uint64_from_32(bits.clone())),
         CValue::Void | CValue::Pointer(_) => None,
     }
 }

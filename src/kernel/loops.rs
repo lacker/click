@@ -2321,6 +2321,8 @@ pub(super) fn havoc_loop_modified_locals(
             CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
             CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
             CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next())),
+            CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
             // A pointer local reassigned in the body (`p = p + 1`) must not
             // keep its entry value across the abstract iteration, exactly as
             // the join abstraction treats it; an invariant must relate it.

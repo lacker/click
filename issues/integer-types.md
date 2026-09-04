@@ -49,7 +49,22 @@ The third slice now supports scalar signed and unsigned 16-bit values:
 casts and assignment/return conversions enforce `int16`'s
 `-32768..32767` range and `uint16`'s `0..65535` range. The regression is
 `mdtests/int16_uint16_conversion.md`. Pointer, array, `size_t`, and 64-bit
-forms remain separate work.
+forms were separate work at this stage; the scalar 64-bit forms are covered
+by the next slice below.
+
+The fourth slice now supports scalar signed and unsigned 64-bit values:
+`long`/`long long`/`int64_t` map to `int64`, while `unsigned long`,
+`unsigned long long`, `uint64_t`, and `size_t` map to `uint64`; `ssize_t` is
+also accepted as the signed 64-bit alias. Both use eight-byte LP64 storage.
+Signed arithmetic and left shifts retain C undefined-behavior obligations,
+unsigned arithmetic wraps modulo 2^64, comparisons preserve signedness, and
+bitwise operations and shifts cover both 64-bit representations. C integer
+literal suffixes now select their width and signedness instead of being
+discarded. The positive and negative regressions are
+`mdtests/int64_uint64_arithmetic.md`, `mdtests/int64_division_by_zero.md`,
+`mdtests/int64_invalid_shift.md`, `mdtests/int64_signed_overflow.md`, and
+`mdtests/uint64_division_by_zero.md`. Arrays, pointers, and struct fields of
+these types remain outside this scalar slice.
 
 ## Intended regression
 

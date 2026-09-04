@@ -697,7 +697,9 @@ fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Vari
         | CValue::Int32(bits)
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
-        | CValue::UInt32(bits) => collect_bitvector_bound_variables(bits, variables),
+        | CValue::UInt32(bits)
+        | CValue::Int64(bits)
+        | CValue::UInt64(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bound_variables(pointer, variables),
         CValue::Void => {}
     }
@@ -1090,6 +1092,39 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_offset_bound_variables(&pointer.offset, variables);
         }
+        Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_) => {}
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => {
+            collect_bitvector_bound_variables(value, variables)
+        }
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            collect_bitvector_bound_variables(left, variables);
+            collect_bitvector_bound_variables(right, variables);
+        }
     }
 }
 
@@ -1108,7 +1143,21 @@ fn collect_condition_bound_variables(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
@@ -2431,6 +2480,86 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+            ConditionTerm::int64_signed_less_than(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+            ConditionTerm::int64_signed_less_equal(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+            ConditionTerm::int64_signed_greater_than(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+            ConditionTerm::int64_signed_greater_equal(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64UnsignedLessThan(left, right) => ConditionTerm::uint64_less_than(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            ConditionTerm::uint64_less_equal(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            ConditionTerm::uint64_greater_than(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            ConditionTerm::uint64_greater_equal(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => ConditionTerm::Bitvector64Equal(
+            Box::new(substitute_bitvector_variable(left, from, to)),
+            Box::new(substitute_bitvector_variable(right, from, to)),
+        ),
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            ConditionTerm::int64_signed_add_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            ConditionTerm::int64_signed_subtract_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            ConditionTerm::int64_signed_multiply_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            ConditionTerm::int64_signed_divide_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            ConditionTerm::int64_signed_shift_left_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             substitute_bitvector_variable_in_pointer_offset(left, from, to),
             substitute_bitvector_variable_in_pointer_offset(right, from, to),
@@ -2474,6 +2603,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
 ) -> Bitvector32Term {
     match term {
         Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
+        Bitvector32Term::Int64Constant(value) => Bitvector32Term::Int64Constant(*value),
+        Bitvector32Term::UInt64Constant(value) => Bitvector32Term::UInt64Constant(*value),
         Bitvector32Term::Variable(variable) if *variable == from => to.clone(),
         Bitvector32Term::Variable(variable) => {
             // A load variable can represent a load whose address mentions
@@ -2484,6 +2615,111 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
             // same load variable as a direct read of that cell.
             substitute_through_load_variable(*variable, from, to)
                 .unwrap_or(Bitvector32Term::Variable(*variable))
+        }
+        Bitvector32Term::Int64From32(value) => {
+            Bitvector32Term::int64_from_32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt64From32(value) => {
+            Bitvector32Term::uint64_from_32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Int64FromUInt32(value) => {
+            Bitvector32Term::int64_from_uint32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt64FromInt32(value) => {
+            Bitvector32Term::uint64_from_int32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt64FromInt64(value) => {
+            Bitvector32Term::uint64_from_int64(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Int64Add(left, right) => Bitvector32Term::int64_add(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64Subtract(left, right) => Bitvector32Term::int64_subtract(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64Multiply(left, right) => Bitvector32Term::int64_multiply(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64Divide(left, right) => Bitvector32Term::int64_divide(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64Remainder(left, right) => Bitvector32Term::int64_remainder(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64ShiftLeft(left, right) => Bitvector32Term::int64_shift_left(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            Bitvector32Term::int64_arithmetic_shift_right(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => Bitvector32Term::int64_bitwise_and(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64BitwiseOr(left, right) => Bitvector32Term::int64_bitwise_or(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64BitwiseXor(left, right) => Bitvector32Term::int64_bitwise_xor(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Int64BitwiseNot(value) => {
+            Bitvector32Term::int64_bitwise_not(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt64Add(left, right) => Bitvector32Term::uint64_add(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64Subtract(left, right) => Bitvector32Term::uint64_subtract(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64Multiply(left, right) => Bitvector32Term::uint64_multiply(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64Divide(left, right) => Bitvector32Term::uint64_divide(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64Remainder(left, right) => Bitvector32Term::uint64_remainder(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64ShiftLeft(left, right) => Bitvector32Term::uint64_shift_left(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            Bitvector32Term::uint64_logical_shift_right(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => Bitvector32Term::uint64_bitwise_and(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64BitwiseOr(left, right) => Bitvector32Term::uint64_bitwise_or(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64BitwiseXor(left, right) => Bitvector32Term::uint64_bitwise_xor(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UInt64BitwiseNot(value) => {
+            Bitvector32Term::uint64_bitwise_not(substitute_bitvector_variable(value, from, to))
         }
         Bitvector32Term::Add(left, right) => Bitvector32Term::add(
             substitute_bitvector_variable(left, from, to),
@@ -2811,6 +3047,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt16(bits) => uint16(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt32(bits) => uint32(substitute_bitvector_variable(bits, from, to)),
+        CValue::Int64(bits) => CValue::Int64(substitute_bitvector_variable(bits, from, to)),
+        CValue::UInt64(bits) => CValue::UInt64(substitute_bitvector_variable(bits, from, to)),
         CValue::Pointer(pointer) => CValue::typed_pointer(
             substitute_bitvector_variable_in_pointer(pointer.pointer(), from, to),
             pointer.c_type(),
@@ -3194,7 +3432,9 @@ fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &P
         | CValue::Int32(_)
         | CValue::UInt8(_)
         | CValue::UInt16(_)
-        | CValue::UInt32(_) => value.clone(),
+        | CValue::UInt32(_)
+        | CValue::Int64(_)
+        | CValue::UInt64(_) => value.clone(),
     }
 }
 

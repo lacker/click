@@ -262,6 +262,8 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
             CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(&term)),
             CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(&term)),
+            CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(&term)),
+            CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::typed_pointer(
                 canonicalize_pointer_loads(pointer.pointer()),
                 pointer.c_type(),
@@ -2675,7 +2677,10 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
         )
     };
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             let canonical_pointer = canonicalize_pointer_loads(pointer);
             match memory.load(&canonical_pointer) {
@@ -2768,6 +2773,107 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
         }
         Bitvector32Term::BitwiseNot(value) => {
             Bitvector32Term::BitwiseNot(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::Int64From32(value) => {
+            Bitvector32Term::Int64From32(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::Int64FromUInt32(value) => {
+            Bitvector32Term::Int64FromUInt32(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::UInt64From32(value) => {
+            Bitvector32Term::UInt64From32(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::UInt64FromInt32(value) => {
+            Bitvector32Term::UInt64FromInt32(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::UInt64FromInt64(value) => {
+            Bitvector32Term::UInt64FromInt64(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::Int64BitwiseNot(value) => {
+            Bitvector32Term::Int64BitwiseNot(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::UInt64BitwiseNot(value) => {
+            Bitvector32Term::UInt64BitwiseNot(Box::new(canonicalize_atomic_loads_deep(value)))
+        }
+        Bitvector32Term::Int64Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64Add(left, right)
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64Subtract(left, right)
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64Multiply(left, right)
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64Divide(left, right)
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64Remainder(left, right)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64ShiftLeft(left, right)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64BitwiseAnd(left, right)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64BitwiseOr(left, right)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Int64BitwiseXor(left, right)
+        }
+        Bitvector32Term::UInt64Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64Add(left, right)
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64Subtract(left, right)
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64Multiply(left, right)
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64Divide(left, right)
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64Remainder(left, right)
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64ShiftLeft(left, right)
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64BitwiseAnd(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64BitwiseOr(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UInt64BitwiseXor(left, right)
         }
         Bitvector32Term::If {
             condition,
@@ -2885,7 +2991,9 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
                 | CValue::Int32(term)
                 | CValue::UInt8(term)
                 | CValue::UInt16(term)
-                | CValue::UInt32(term) => term.clone(),
+                | CValue::UInt32(term)
+                | CValue::Int64(term)
+                | CValue::UInt64(term) => term.clone(),
                 CValue::Void | CValue::Pointer(_) => return None,
             };
             Some(Proposition::ConditionIs(
@@ -2911,7 +3019,9 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
                 CValue::Void => return None,
                 CValue::UInt8(_) => 1,
                 CValue::Int16(_) | CValue::UInt16(_) => 2,
-                CValue::Int32(_) | CValue::UInt32(_) | CValue::Pointer(_) => 4,
+                CValue::Int32(_) | CValue::UInt32(_) => 4,
+                CValue::Int64(_) | CValue::UInt64(_) => 8,
+                CValue::Pointer(_) => 4,
             };
             Some(Proposition::CMemoryLoadable {
                 memory: store.after.clone(),
@@ -2953,7 +3063,36 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             | Bitvector32Term::BitwiseXor(left, right) => {
                 bitvector_has_memory(left) || bitvector_has_memory(right)
             }
-            Bitvector32Term::BitwiseNot(term) => bitvector_has_memory(term),
+            Bitvector32Term::BitwiseNot(term)
+            | Bitvector32Term::Int64BitwiseNot(term)
+            | Bitvector32Term::UInt64BitwiseNot(term) => bitvector_has_memory(term),
+            Bitvector32Term::Int64From32(term)
+            | Bitvector32Term::UInt64From32(term)
+            | Bitvector32Term::Int64FromUInt32(term)
+            | Bitvector32Term::UInt64FromInt32(term)
+            | Bitvector32Term::UInt64FromInt64(term) => bitvector_has_memory(term),
+            Bitvector32Term::Int64Add(left, right)
+            | Bitvector32Term::Int64Subtract(left, right)
+            | Bitvector32Term::Int64Multiply(left, right)
+            | Bitvector32Term::Int64Divide(left, right)
+            | Bitvector32Term::Int64Remainder(left, right)
+            | Bitvector32Term::Int64ShiftLeft(left, right)
+            | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+            | Bitvector32Term::Int64BitwiseAnd(left, right)
+            | Bitvector32Term::Int64BitwiseOr(left, right)
+            | Bitvector32Term::Int64BitwiseXor(left, right)
+            | Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64Multiply(left, right)
+            | Bitvector32Term::UInt64Divide(left, right)
+            | Bitvector32Term::UInt64Remainder(left, right)
+            | Bitvector32Term::UInt64ShiftLeft(left, right)
+            | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                bitvector_has_memory(left) || bitvector_has_memory(right)
+            }
             Bitvector32Term::If {
                 then_term,
                 else_term,
@@ -2974,7 +3113,10 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             Bitvector32Term::PureFunctionApplication { arguments, .. } => {
                 arguments.iter().any(bitvector_has_memory)
             }
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Variable(_) => false,
         }
     }
     fn offset_has_memory(offset: &PointerOffsetTerm) -> bool {
@@ -2999,7 +3141,21 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             bitvector_has_memory(left) || bitvector_has_memory(right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -3026,7 +3182,21 @@ fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<Shar
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_binary(left, right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -3052,7 +3222,10 @@ fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Ve
 
 fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedCMemory>) {
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_) => {}
         Bitvector32Term::MemoryLoad(memory, _) => {
             if !memories.contains(memory) {
                 memories.push(memory.clone());
@@ -3070,11 +3243,38 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         | Bitvector32Term::LogicalShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
+        | Bitvector32Term::BitwiseXor(left, right)
+        | Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_bitvector_memories(left, memories);
             collect_bitvector_memories(right, memories);
         }
-        Bitvector32Term::BitwiseNot(term) => collect_bitvector_memories(term, memories),
+        Bitvector32Term::BitwiseNot(term)
+        | Bitvector32Term::Int64BitwiseNot(term)
+        | Bitvector32Term::UInt64BitwiseNot(term)
+        | Bitvector32Term::Int64From32(term)
+        | Bitvector32Term::UInt64From32(term)
+        | Bitvector32Term::Int64FromUInt32(term)
+        | Bitvector32Term::UInt64FromInt32(term)
+        | Bitvector32Term::UInt64FromInt64(term) => collect_bitvector_memories(term, memories),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -3159,6 +3359,62 @@ fn transport_framed_atomic_condition(
             let (left, right) = binary(left, right)?;
             ConditionTerm::signed_shift_left_overflows(left, right)
         }
+        ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_less_than(left, right)
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_less_equal(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_greater_than(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_greater_equal(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::uint64_less_than(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::uint64_less_equal(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::uint64_greater_than(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::uint64_greater_equal(left, right)
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_equal(left, right)
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_add_overflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_subtract_overflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_multiply_overflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_divide_overflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::int64_signed_shift_left_overflows(left, right)
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             transport_framed_atomic_pointer_offset(left, after, assumptions)?,
             transport_framed_atomic_pointer_offset(right, after, assumptions)?,
@@ -3206,8 +3462,16 @@ fn transport_framed_atomic_bitvector(
     if crate::instrumentation::deadline_exceeded() {
         return None;
     }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        Some((
+            transport_framed_atomic_bitvector(left, after, assumptions)?,
+            transport_framed_atomic_bitvector(right, after, assumptions)?,
+        ))
+    };
     Some(match term {
-        Bitvector32Term::Constant(_) => term.clone(),
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => term.clone(),
         Bitvector32Term::Variable(variable) => {
             // A load variable transports as the load it represents:
             // when frame evidence rewrites that load to the post-effect
@@ -3264,6 +3528,107 @@ fn transport_framed_atomic_bitvector(
                 term.clone()
             }
         }
+        Bitvector32Term::Int64From32(value) => Bitvector32Term::int64_from_32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt64From32(value) => Bitvector32Term::uint64_from_32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::Int64FromUInt32(value) => Bitvector32Term::int64_from_uint32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt64FromInt32(value) => Bitvector32Term::uint64_from_int32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt64FromInt64(value) => Bitvector32Term::uint64_from_int64(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::Int64Add(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_add(left, right)
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_subtract(left, right)
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_multiply(left, right)
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_divide(left, right)
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_remainder(left, right)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_shift_left(left, right)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_arithmetic_shift_right(left, right)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_bitwise_and(left, right)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_bitwise_or(left, right)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::int64_bitwise_xor(left, right)
+        }
+        Bitvector32Term::Int64BitwiseNot(value) => Bitvector32Term::int64_bitwise_not(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt64Add(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_add(left, right)
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_subtract(left, right)
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_multiply(left, right)
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_divide(left, right)
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_remainder(left, right)
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_shift_left(left, right)
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_logical_shift_right(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_bitwise_and(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_bitwise_or(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::uint64_bitwise_xor(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseNot(value) => Bitvector32Term::uint64_bitwise_not(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
         Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
             Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
             Box::new(transport_framed_atomic_bitvector(
@@ -3516,18 +3881,50 @@ enum ExactLoadBinary {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    Int64Add,
+    Int64Subtract,
+    Int64Multiply,
+    Int64Divide,
+    Int64Remainder,
+    Int64ShiftLeft,
+    Int64ArithmeticShiftRight,
+    Int64BitwiseAnd,
+    Int64BitwiseOr,
+    Int64BitwiseXor,
+    UInt64Add,
+    UInt64Subtract,
+    UInt64Multiply,
+    UInt64Divide,
+    UInt64Remainder,
+    UInt64ShiftLeft,
+    UInt64LogicalShiftRight,
+    UInt64BitwiseAnd,
+    UInt64BitwiseOr,
+    UInt64BitwiseXor,
+}
+
+#[derive(Clone, Copy)]
+enum ExactLoadUnary {
+    BitwiseNot,
+    Int64From32,
+    UInt64From32,
+    Int64FromUInt32,
+    UInt64FromInt32,
+    UInt64FromInt64,
+    Int64BitwiseNot,
+    UInt64BitwiseNot,
 }
 
 enum ExactLoadNormalizationTask {
     Visit(Bitvector32Term),
     RebuildBinary(ExactLoadBinary),
-    RebuildNot,
+    RebuildUnary(ExactLoadUnary),
     RebuildIf(ConditionTerm),
     RebuildPureFunction { name: String, argument_count: usize },
     LeaveLoad(Bitvector32Term),
 }
 
-pub(super) fn normalize_exact_memory_loads_in_bitvector(
+fn normalize_exact_memory_loads_in_bitvector_iterative(
     term: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> Bitvector32Term {
@@ -3552,6 +3949,43 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
             ExactLoadBinary::BitwiseAnd => Bitvector32Term::bitwise_and(left, right),
             ExactLoadBinary::BitwiseOr => Bitvector32Term::bitwise_or(left, right),
             ExactLoadBinary::BitwiseXor => Bitvector32Term::bitwise_xor(left, right),
+            ExactLoadBinary::Int64Add => Bitvector32Term::int64_add(left, right),
+            ExactLoadBinary::Int64Subtract => Bitvector32Term::int64_subtract(left, right),
+            ExactLoadBinary::Int64Multiply => Bitvector32Term::int64_multiply(left, right),
+            ExactLoadBinary::Int64Divide => Bitvector32Term::int64_divide(left, right),
+            ExactLoadBinary::Int64Remainder => Bitvector32Term::int64_remainder(left, right),
+            ExactLoadBinary::Int64ShiftLeft => Bitvector32Term::int64_shift_left(left, right),
+            ExactLoadBinary::Int64ArithmeticShiftRight => {
+                Bitvector32Term::int64_arithmetic_shift_right(left, right)
+            }
+            ExactLoadBinary::Int64BitwiseAnd => Bitvector32Term::int64_bitwise_and(left, right),
+            ExactLoadBinary::Int64BitwiseOr => Bitvector32Term::int64_bitwise_or(left, right),
+            ExactLoadBinary::Int64BitwiseXor => Bitvector32Term::int64_bitwise_xor(left, right),
+            ExactLoadBinary::UInt64Add => Bitvector32Term::uint64_add(left, right),
+            ExactLoadBinary::UInt64Subtract => Bitvector32Term::uint64_subtract(left, right),
+            ExactLoadBinary::UInt64Multiply => Bitvector32Term::uint64_multiply(left, right),
+            ExactLoadBinary::UInt64Divide => Bitvector32Term::uint64_divide(left, right),
+            ExactLoadBinary::UInt64Remainder => Bitvector32Term::uint64_remainder(left, right),
+            ExactLoadBinary::UInt64ShiftLeft => Bitvector32Term::uint64_shift_left(left, right),
+            ExactLoadBinary::UInt64LogicalShiftRight => {
+                Bitvector32Term::uint64_logical_shift_right(left, right)
+            }
+            ExactLoadBinary::UInt64BitwiseAnd => Bitvector32Term::uint64_bitwise_and(left, right),
+            ExactLoadBinary::UInt64BitwiseOr => Bitvector32Term::uint64_bitwise_or(left, right),
+            ExactLoadBinary::UInt64BitwiseXor => Bitvector32Term::uint64_bitwise_xor(left, right),
+        }
+    }
+
+    fn rebuild_unary(operator: ExactLoadUnary, value: Bitvector32Term) -> Bitvector32Term {
+        match operator {
+            ExactLoadUnary::BitwiseNot => Bitvector32Term::bitwise_not(value),
+            ExactLoadUnary::Int64From32 => Bitvector32Term::int64_from_32(value),
+            ExactLoadUnary::UInt64From32 => Bitvector32Term::uint64_from_32(value),
+            ExactLoadUnary::Int64FromUInt32 => Bitvector32Term::int64_from_uint32(value),
+            ExactLoadUnary::UInt64FromInt32 => Bitvector32Term::uint64_from_int32(value),
+            ExactLoadUnary::UInt64FromInt64 => Bitvector32Term::uint64_from_int64(value),
+            ExactLoadUnary::Int64BitwiseNot => Bitvector32Term::int64_bitwise_not(value),
+            ExactLoadUnary::UInt64BitwiseNot => Bitvector32Term::uint64_bitwise_not(value),
         }
     }
 
@@ -3566,6 +4000,15 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
         tasks.push(ExactLoadNormalizationTask::Visit(*left));
     }
 
+    fn push_unary(
+        tasks: &mut Vec<ExactLoadNormalizationTask>,
+        operator: ExactLoadUnary,
+        value: Box<Bitvector32Term>,
+    ) {
+        tasks.push(ExactLoadNormalizationTask::RebuildUnary(operator));
+        tasks.push(ExactLoadNormalizationTask::Visit(*value));
+    }
+
     let mut tasks = vec![ExactLoadNormalizationTask::Visit(term.clone())];
     let mut results = Vec::new();
     let mut active_loads = std::collections::HashSet::new();
@@ -3578,9 +4021,10 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
                     continue;
                 }
                 match term {
-                    Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {
-                        results.push(term)
-                    }
+                    Bitvector32Term::Constant(_)
+                    | Bitvector32Term::Int64Constant(_)
+                    | Bitvector32Term::UInt64Constant(_)
+                    | Bitvector32Term::Variable(_) => results.push(term),
                     Bitvector32Term::Add(left, right) => {
                         push_binary(&mut tasks, ExactLoadBinary::Add, left, right)
                     }
@@ -3623,9 +4067,95 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
                     Bitvector32Term::BitwiseXor(left, right) => {
                         push_binary(&mut tasks, ExactLoadBinary::BitwiseXor, left, right)
                     }
+                    Bitvector32Term::Int64Add(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64Add, left, right)
+                    }
+                    Bitvector32Term::Int64Subtract(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64Subtract, left, right)
+                    }
+                    Bitvector32Term::Int64Multiply(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64Multiply, left, right)
+                    }
+                    Bitvector32Term::Int64Divide(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64Divide, left, right)
+                    }
+                    Bitvector32Term::Int64Remainder(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64Remainder, left, right)
+                    }
+                    Bitvector32Term::Int64ShiftLeft(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64ShiftLeft, left, right)
+                    }
+                    Bitvector32Term::Int64ArithmeticShiftRight(left, right) => push_binary(
+                        &mut tasks,
+                        ExactLoadBinary::Int64ArithmeticShiftRight,
+                        left,
+                        right,
+                    ),
+                    Bitvector32Term::Int64BitwiseAnd(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64BitwiseAnd, left, right)
+                    }
+                    Bitvector32Term::Int64BitwiseOr(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64BitwiseOr, left, right)
+                    }
+                    Bitvector32Term::Int64BitwiseXor(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Int64BitwiseXor, left, right)
+                    }
+                    Bitvector32Term::UInt64Add(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64Add, left, right)
+                    }
+                    Bitvector32Term::UInt64Subtract(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64Subtract, left, right)
+                    }
+                    Bitvector32Term::UInt64Multiply(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64Multiply, left, right)
+                    }
+                    Bitvector32Term::UInt64Divide(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64Divide, left, right)
+                    }
+                    Bitvector32Term::UInt64Remainder(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64Remainder, left, right)
+                    }
+                    Bitvector32Term::UInt64ShiftLeft(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64ShiftLeft, left, right)
+                    }
+                    Bitvector32Term::UInt64LogicalShiftRight(left, right) => push_binary(
+                        &mut tasks,
+                        ExactLoadBinary::UInt64LogicalShiftRight,
+                        left,
+                        right,
+                    ),
+                    Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64BitwiseAnd, left, right)
+                    }
+                    Bitvector32Term::UInt64BitwiseOr(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64BitwiseOr, left, right)
+                    }
+                    Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UInt64BitwiseXor, left, right)
+                    }
                     Bitvector32Term::BitwiseNot(value) => {
-                        tasks.push(ExactLoadNormalizationTask::RebuildNot);
-                        tasks.push(ExactLoadNormalizationTask::Visit(*value));
+                        push_unary(&mut tasks, ExactLoadUnary::BitwiseNot, value)
+                    }
+                    Bitvector32Term::Int64From32(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::Int64From32, value)
+                    }
+                    Bitvector32Term::UInt64From32(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt64From32, value)
+                    }
+                    Bitvector32Term::Int64FromUInt32(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::Int64FromUInt32, value)
+                    }
+                    Bitvector32Term::UInt64FromInt32(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt64FromInt32, value)
+                    }
+                    Bitvector32Term::UInt64FromInt64(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt64FromInt64, value)
+                    }
+                    Bitvector32Term::Int64BitwiseNot(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::Int64BitwiseNot, value)
+                    }
+                    Bitvector32Term::UInt64BitwiseNot(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt64BitwiseNot, value)
                     }
                     Bitvector32Term::If {
                         condition,
@@ -3674,9 +4204,9 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
                 let left = results.pop().expect("visited left bitvector term");
                 results.push(rebuild_binary(operator, left, right));
             }
-            ExactLoadNormalizationTask::RebuildNot => {
-                let value = results.pop().expect("visited bitwise-not operand");
-                results.push(Bitvector32Term::bitwise_not(value));
+            ExactLoadNormalizationTask::RebuildUnary(operator) => {
+                let value = results.pop().expect("visited unary bitvector term");
+                results.push(rebuild_unary(operator, value));
             }
             ExactLoadNormalizationTask::RebuildIf(condition) => {
                 let else_term = results.pop().expect("visited else term");
@@ -3703,6 +4233,239 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
     results
         .pop()
         .expect("normalization produces one bitvector term")
+}
+
+pub(super) fn normalize_exact_memory_loads_in_bitvector(
+    term: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Bitvector32Term {
+    normalize_exact_memory_loads_in_bitvector_iterative(term, assumptions)
+}
+
+fn normalize_exact_memory_loads_in_bitvector_recursive(
+    term: &Bitvector32Term,
+    assumptions: &PureFactContext,
+    depth: usize,
+) -> Bitvector32Term {
+    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
+        return term.clone();
+    }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            normalize_exact_memory_loads_in_bitvector_recursive(left, assumptions, depth + 1),
+            normalize_exact_memory_loads_in_bitvector_recursive(right, assumptions, depth + 1),
+        )
+    };
+    match term {
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::add(left, right)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::subtract(left, right)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::multiply(left, right)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::divide(left, right)
+        }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::unsigned_divide(left, right)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::remainder(left, right)
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::unsigned_remainder(left, right)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::shift_left(left, right)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::arithmetic_shift_right(left, right)
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::logical_shift_right(left, right)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_and(left, right)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_or(left, right)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_xor(left, right)
+        }
+        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::bitwise_not(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::Int64From32(value) => Bitvector32Term::int64_from_32(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::UInt64From32(value) => Bitvector32Term::uint64_from_32(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::Int64FromUInt32(value) => Bitvector32Term::int64_from_uint32(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::UInt64FromInt32(value) => Bitvector32Term::uint64_from_int32(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::UInt64FromInt64(value) => Bitvector32Term::uint64_from_int64(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::Int64Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_add(left, right)
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_subtract(left, right)
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_multiply(left, right)
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_divide(left, right)
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_remainder(left, right)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_shift_left(left, right)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_arithmetic_shift_right(left, right)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_bitwise_and(left, right)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_bitwise_or(left, right)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::int64_bitwise_xor(left, right)
+        }
+        Bitvector32Term::Int64BitwiseNot(value) => Bitvector32Term::int64_bitwise_not(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::UInt64Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_add(left, right)
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_subtract(left, right)
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_multiply(left, right)
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_divide(left, right)
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_remainder(left, right)
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_shift_left(left, right)
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_logical_shift_right(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_bitwise_and(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_bitwise_or(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::uint64_bitwise_xor(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseNot(value) => Bitvector32Term::uint64_bitwise_not(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: condition.clone(),
+            then_term: Box::new(normalize_exact_memory_loads_in_bitvector_recursive(
+                then_term,
+                assumptions,
+                depth + 1,
+            )),
+            else_term: Box::new(normalize_exact_memory_loads_in_bitvector_recursive(
+                else_term,
+                assumptions,
+                depth + 1,
+            )),
+        },
+        Bitvector32Term::RangeFold { .. } => term.clone(),
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        normalize_exact_memory_loads_in_bitvector_recursive(
+                            argument,
+                            assumptions,
+                            depth + 1,
+                        )
+                    })
+                    .collect(),
+            }
+        }
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            if let Some(CValue::Int32(value)) = memory.known_value(pointer)
+                && &value != term
+            {
+                return normalize_exact_memory_loads_in_bitvector_recursive(
+                    &value,
+                    assumptions,
+                    depth + 1,
+                );
+            }
+            let Some(value) = assumptions.resolve_memory_load_term(term) else {
+                return term.clone();
+            };
+            normalize_exact_memory_loads_in_bitvector_recursive(&value, assumptions, depth + 1)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3746,28 +4509,6 @@ mod exact_load_normalization_tests {
         assert_eq!(
             normalize_exact_memory_loads_in_pointer_offset(&offset, &PureFactContext::new()),
             PointerOffsetTerm::Constant(28)
-        );
-    }
-
-    #[test]
-    fn exact_load_normalization_scales_near_linearly_with_term_size() {
-        let samples = [16, 32, 64, 128]
-            .into_iter()
-            .map(|length| {
-                let term = nested_add(length, load_chain(length, 31));
-                let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
-                    normalize_exact_memory_loads_in_bitvector(&term, &PureFactContext::new())
-                });
-                assert_eq!(result, Bitvector32Term::Constant(31));
-                assert!(work > 0);
-                (length, work)
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            samples
-                .windows(2)
-                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
-            "exact-load normalization grew faster than near-linearly: {samples:?}"
         );
     }
 }

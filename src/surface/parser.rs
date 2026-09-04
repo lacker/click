@@ -37,6 +37,8 @@ enum Token {
     Number(u32),
     UInt8Number(u8),
     UInt32Number(u32),
+    Int64Number(i64),
+    UInt64Number(u64),
     CharLiteral(u8),
     String(String),
     LBrace,
@@ -80,6 +82,8 @@ impl Token {
             Self::Number(value) => format!("number `{value}`"),
             Self::UInt8Number(value) => format!("uint8 number `{value}u8`"),
             Self::UInt32Number(value) => format!("uint32 number `{value}u32`"),
+            Self::Int64Number(value) => format!("int64 number `{value}i64`"),
+            Self::UInt64Number(value) => format!("uint64 number `{value}u64`"),
             Self::CharLiteral(value) => {
                 format!("character literal `{}`", (*value as char).escape_default())
             }
@@ -94,6 +98,8 @@ impl Token {
             | Self::Number(_)
             | Self::UInt8Number(_)
             | Self::UInt32Number(_)
+            | Self::Int64Number(_)
+            | Self::UInt64Number(_)
             | Self::CharLiteral(_)
             | Self::String(_) => "",
             Self::LBrace => "{",
@@ -1110,6 +1116,8 @@ impl Parser {
             "uint8" | "uint8_t" => C0Type::UInt8,
             "uint16" | "uint16_t" => C0Type::UInt16,
             "uint32" | "uint32_t" => C0Type::UInt32,
+            "int64" | "long" | "int64_t" | "ssize_t" => C0Type::Int64,
+            "uint64" | "unsigned long" | "size_t" | "uint64_t" => C0Type::UInt64,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
@@ -1120,6 +1128,9 @@ impl Parser {
                 } else if self.peek_ident() == Some("short") {
                     self.position += 1;
                     C0Type::UInt16
+                } else if self.peek_ident() == Some("long") {
+                    self.position += 1;
+                    C0Type::UInt64
                 } else {
                     return Err(self.error(
                         "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
@@ -1136,6 +1147,9 @@ impl Parser {
                 if self.peek_ident() == Some("short") {
                     self.position += 1;
                     C0Type::Int16
+                } else if self.peek_ident() == Some("long") {
+                    self.position += 1;
+                    C0Type::Int64
                 } else {
                     return Err(self.error(
                         "unsupported integer width `signed`; only `signed short` is modeled among signed standard aliases",
@@ -1146,11 +1160,6 @@ impl Parser {
                 return Err(self.error(
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
-            }
-            "long" | "size_t" | "int64_t" | "uint64_t" => {
-                return Err(self.error(format!(
-                    "unsupported integer width `{spelling}`: see the integer-types issue"
-                )));
             }
             "float" | "double" => {
                 return Err(self.error(format!(
@@ -3702,6 +3711,12 @@ impl Parser {
             Some(Token::UInt32Number(value)) => Ok(ContractExpression::CFragment(
                 CExpression::Value(CValue::UInt32(Bitvector32Term::Constant(value))),
             )),
+            Some(Token::Int64Number(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(value))),
+            )),
+            Some(Token::UInt64Number(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(value))),
+            )),
             Some(Token::CharLiteral(value)) => Ok(ContractExpression::CFragment(
                 CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
             )),
@@ -3937,6 +3952,8 @@ impl Parser {
             Some(Token::Number(value)) => Ok(C0Expression::Int32Literal(value)),
             Some(Token::UInt8Number(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::UInt32Number(value)) => Ok(C0Expression::UInt32Literal(value)),
+            Some(Token::Int64Number(value)) => Ok(C0Expression::Int64Literal(value)),
+            Some(Token::UInt64Number(value)) => Ok(C0Expression::UInt64Literal(value)),
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
                 let expression = self.parse_ensure_expression()?;

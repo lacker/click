@@ -982,7 +982,21 @@ fn hash_memory_blind_condition<H: std::hash::Hasher>(condition: &ConditionTerm, 
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
@@ -1001,6 +1015,8 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
     std::hash::Hash::hash(&std::mem::discriminant(term), hasher);
     match term {
         Bitvector32Term::Constant(value) => std::hash::Hash::hash(value, hasher),
+        Bitvector32Term::Int64Constant(value) => std::hash::Hash::hash(value, hasher),
+        Bitvector32Term::UInt64Constant(value) => std::hash::Hash::hash(value, hasher),
         Bitvector32Term::Variable(variable) => std::hash::Hash::hash(variable, hasher),
         Bitvector32Term::MemoryLoad(_, pointer) => hash_memory_blind_pointer(pointer, hasher),
         Bitvector32Term::Add(left, right)
@@ -1016,6 +1032,36 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            hash_memory_blind_bitvector(left, hasher);
+            hash_memory_blind_bitvector(right, hasher);
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => hash_memory_blind_bitvector(value, hasher),
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
@@ -1071,7 +1117,21 @@ fn collect_condition_memory_load_keys(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_binary(left, right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -1107,7 +1167,10 @@ fn collect_bitvector_memory_load_keys(
     keys: &mut BTreeSet<(PointerBlock, u64)>,
 ) {
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::MemoryLoad(_, pointer) => {
             keys.insert((
                 pointer.block.clone(),
@@ -1128,6 +1191,38 @@ fn collect_bitvector_memory_load_keys(
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_memory_load_keys(left, keys);
+            collect_bitvector_memory_load_keys(right, keys);
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => {
+            collect_bitvector_memory_load_keys(value, keys)
+        }
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_bitvector_memory_load_keys(left, keys);
             collect_bitvector_memory_load_keys(right, keys);
         }
@@ -1376,7 +1471,10 @@ impl PureFactContext {
                 Bitvector32Term::MemoryLoad(_, pointer) => {
                     1 + pointer_offset_memory_load_nodes(&pointer.offset)
                 }
-                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => 0,
+                Bitvector32Term::Constant(_)
+                | Bitvector32Term::Variable(_)
+                | Bitvector32Term::Int64Constant(_)
+                | Bitvector32Term::UInt64Constant(_) => 0,
                 Bitvector32Term::Add(left, right)
                 | Bitvector32Term::Subtract(left, right)
                 | Bitvector32Term::Multiply(left, right)
@@ -1390,6 +1488,35 @@ impl PureFactContext {
                 | Bitvector32Term::BitwiseAnd(left, right)
                 | Bitvector32Term::BitwiseOr(left, right)
                 | Bitvector32Term::BitwiseXor(left, right) => {
+                    memory_load_nodes(left) + memory_load_nodes(right)
+                }
+                Bitvector32Term::Int64From32(value)
+                | Bitvector32Term::Int64FromUInt32(value)
+                | Bitvector32Term::UInt64From32(value)
+                | Bitvector32Term::UInt64FromInt32(value)
+                | Bitvector32Term::UInt64FromInt64(value)
+                | Bitvector32Term::Int64BitwiseNot(value)
+                | Bitvector32Term::UInt64BitwiseNot(value) => memory_load_nodes(value),
+                Bitvector32Term::Int64Add(left, right)
+                | Bitvector32Term::Int64Subtract(left, right)
+                | Bitvector32Term::Int64Multiply(left, right)
+                | Bitvector32Term::Int64Divide(left, right)
+                | Bitvector32Term::Int64Remainder(left, right)
+                | Bitvector32Term::Int64ShiftLeft(left, right)
+                | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+                | Bitvector32Term::Int64BitwiseAnd(left, right)
+                | Bitvector32Term::Int64BitwiseOr(left, right)
+                | Bitvector32Term::Int64BitwiseXor(left, right)
+                | Bitvector32Term::UInt64Add(left, right)
+                | Bitvector32Term::UInt64Subtract(left, right)
+                | Bitvector32Term::UInt64Multiply(left, right)
+                | Bitvector32Term::UInt64Divide(left, right)
+                | Bitvector32Term::UInt64Remainder(left, right)
+                | Bitvector32Term::UInt64ShiftLeft(left, right)
+                | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+                | Bitvector32Term::UInt64BitwiseAnd(left, right)
+                | Bitvector32Term::UInt64BitwiseOr(left, right)
+                | Bitvector32Term::UInt64BitwiseXor(left, right) => {
                     memory_load_nodes(left) + memory_load_nodes(right)
                 }
                 Bitvector32Term::BitwiseNot(value) => memory_load_nodes(value),
@@ -3314,7 +3441,10 @@ impl SymbolicCConditionEvaluationPath {
 fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
     match term {
         Bitvector32Term::MemoryLoad(_, _) => true,
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => false,
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)
@@ -3328,6 +3458,35 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => bitvector_term_contains_load(value),
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
         }
         Bitvector32Term::BitwiseNot(value) => bitvector_term_contains_load(value),

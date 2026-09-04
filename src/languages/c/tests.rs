@@ -127,9 +127,8 @@ fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
 #[test]
 fn c0_rejects_unmodeled_standard_integer_widths_and_char() {
     for (source, spelling) in [
-        ("long unsupported() { return 0; }", "long"),
-        ("size_t unsupported() { return 0; }", "size_t"),
         ("char unsupported() { return 0; }", "char"),
+        ("signed char unsupported() { return 0; }", "signed char"),
     ] {
         let error = syntax::parse_function(source)
             .expect_err("unmodeled standard C types should be rejected");
@@ -951,7 +950,7 @@ fn c0_syntax_rejects_non_scalar_casts() {
         "#,
     )
     .expect_err("pointer casts are outside the scalar cast subset");
-    assert!(error.message().contains("scalar values"));
+    assert!(error.message().contains("scalar integer values"));
 }
 
 #[test]
@@ -1110,8 +1109,8 @@ fn c0_syntax_parses_c_integer_literal_radices_and_suffixes() {
     assert!(matches!(
         literals.body(),
         syntax::C0Statement::Return(syntax::C0Expression::BitwiseOr(left, right))
-            if matches!(left.as_ref(), syntax::C0Expression::Int32Literal(15))
-                && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(8))
+            if matches!(left.as_ref(), syntax::C0Expression::UInt32Literal(15))
+                && matches!(right.as_ref(), syntax::C0Expression::UInt32Literal(8))
     ));
 
     let minimum = syntax::parse_function(
@@ -1124,7 +1123,7 @@ fn c0_syntax_parses_c_integer_literal_radices_and_suffixes() {
     .expect("negative hexadecimal literals should preserve int32 minimum");
     assert!(matches!(
         minimum.body(),
-        syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(0x8000_0000))
+        syntax::C0Statement::Return(syntax::C0Expression::Int64Literal(-0x8000_0000))
     ));
 }
 

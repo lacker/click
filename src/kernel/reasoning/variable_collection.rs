@@ -876,7 +876,21 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
@@ -896,7 +910,9 @@ pub(in crate::kernel) fn collect_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match term {
-        Bitvector32Term::Constant(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
             variables.insert(*variable);
             // A load variable denotes its load, so the variables
@@ -923,11 +939,38 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         | Bitvector32Term::LogicalShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
+        | Bitvector32Term::BitwiseXor(left, right)
+        | Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
-        Bitvector32Term::BitwiseNot(value) => {
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value)
+        | Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value) => {
             collect_bitvector_variables(value, variables);
         }
         Bitvector32Term::If {
@@ -1018,7 +1061,9 @@ pub(in crate::kernel) fn collect_c_value_bitvector_variables(
         | CValue::Int32(bits)
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
-        | CValue::UInt32(bits) => collect_bitvector_variables(bits, variables),
+        | CValue::UInt32(bits)
+        | CValue::Int64(bits)
+        | CValue::UInt64(bits) => collect_bitvector_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
     }
 }

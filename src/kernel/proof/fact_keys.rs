@@ -243,6 +243,50 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
             let (left, right) = terms(left, right);
             SnapshotBlindConditionKey::ShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::Equal(left, right)
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::AddOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SubtractOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::MultiplyOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::DivideOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::ShiftLeftOverflows(left, right)
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             SnapshotBlindConditionKey::PointerOffsetEqual(
                 snapshot_blind_pointer_offset_key(left),
@@ -609,6 +653,7 @@ fn alpha_bitvector_key(
         Bitvector32Term::MemoryLoad(_, pointer) => {
             AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
         }
+        _ => return None,
     })
 }
 
@@ -668,6 +713,7 @@ fn alpha_condition_key(
             alpha_pointer_key(left, bindings, next_binder)?,
             alpha_pointer_key(right, bindings, next_binder)?,
         ),
+        _ => return None,
     })
 }
 

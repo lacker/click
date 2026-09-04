@@ -293,6 +293,8 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::UInt32 => CValue::UInt32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::UInt64 => CValue::UInt64(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,

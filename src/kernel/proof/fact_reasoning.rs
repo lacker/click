@@ -153,7 +153,36 @@ fn signed_term_interval(
         | Bitvector32Term::BitwiseXor(_, _)
         | Bitvector32Term::BitwiseNot(_)
         | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. } => None,
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Int64From32(_)
+        | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::Int64FromUInt32(_)
+        | Bitvector32Term::UInt64FromInt32(_)
+        | Bitvector32Term::UInt64FromInt64(_)
+        | Bitvector32Term::Int64Add(_, _)
+        | Bitvector32Term::Int64Subtract(_, _)
+        | Bitvector32Term::Int64Multiply(_, _)
+        | Bitvector32Term::Int64Divide(_, _)
+        | Bitvector32Term::Int64Remainder(_, _)
+        | Bitvector32Term::Int64ShiftLeft(_, _)
+        | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
+        | Bitvector32Term::Int64BitwiseAnd(_, _)
+        | Bitvector32Term::Int64BitwiseOr(_, _)
+        | Bitvector32Term::Int64BitwiseXor(_, _)
+        | Bitvector32Term::Int64BitwiseNot(_)
+        | Bitvector32Term::UInt64Add(_, _)
+        | Bitvector32Term::UInt64Subtract(_, _)
+        | Bitvector32Term::UInt64Multiply(_, _)
+        | Bitvector32Term::UInt64Divide(_, _)
+        | Bitvector32Term::UInt64Remainder(_, _)
+        | Bitvector32Term::UInt64ShiftLeft(_, _)
+        | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+        | Bitvector32Term::UInt64BitwiseAnd(_, _)
+        | Bitvector32Term::UInt64BitwiseOr(_, _)
+        | Bitvector32Term::UInt64BitwiseXor(_, _)
+        | Bitvector32Term::UInt64BitwiseNot(_) => None,
     }
 }
 
@@ -301,7 +330,36 @@ fn collect_signed_affine_terms(
         | Bitvector32Term::BitwiseXor(_, _)
         | Bitvector32Term::BitwiseNot(_)
         | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. } => return None,
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Int64From32(_)
+        | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::Int64FromUInt32(_)
+        | Bitvector32Term::UInt64FromInt32(_)
+        | Bitvector32Term::UInt64FromInt64(_)
+        | Bitvector32Term::Int64Add(_, _)
+        | Bitvector32Term::Int64Subtract(_, _)
+        | Bitvector32Term::Int64Multiply(_, _)
+        | Bitvector32Term::Int64Divide(_, _)
+        | Bitvector32Term::Int64Remainder(_, _)
+        | Bitvector32Term::Int64ShiftLeft(_, _)
+        | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
+        | Bitvector32Term::Int64BitwiseAnd(_, _)
+        | Bitvector32Term::Int64BitwiseOr(_, _)
+        | Bitvector32Term::Int64BitwiseXor(_, _)
+        | Bitvector32Term::Int64BitwiseNot(_)
+        | Bitvector32Term::UInt64Add(_, _)
+        | Bitvector32Term::UInt64Subtract(_, _)
+        | Bitvector32Term::UInt64Multiply(_, _)
+        | Bitvector32Term::UInt64Divide(_, _)
+        | Bitvector32Term::UInt64Remainder(_, _)
+        | Bitvector32Term::UInt64ShiftLeft(_, _)
+        | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+        | Bitvector32Term::UInt64BitwiseAnd(_, _)
+        | Bitvector32Term::UInt64BitwiseOr(_, _)
+        | Bitvector32Term::UInt64BitwiseXor(_, _)
+        | Bitvector32Term::UInt64BitwiseNot(_) => return None,
     }
     Some(())
 }
@@ -460,7 +518,36 @@ fn signed_affine_term_is_defined(
         | Bitvector32Term::BitwiseXor(_, _)
         | Bitvector32Term::BitwiseNot(_)
         | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. } => false,
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Int64From32(_)
+        | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::Int64FromUInt32(_)
+        | Bitvector32Term::UInt64FromInt32(_)
+        | Bitvector32Term::UInt64FromInt64(_)
+        | Bitvector32Term::Int64Add(_, _)
+        | Bitvector32Term::Int64Subtract(_, _)
+        | Bitvector32Term::Int64Multiply(_, _)
+        | Bitvector32Term::Int64Divide(_, _)
+        | Bitvector32Term::Int64Remainder(_, _)
+        | Bitvector32Term::Int64ShiftLeft(_, _)
+        | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
+        | Bitvector32Term::Int64BitwiseAnd(_, _)
+        | Bitvector32Term::Int64BitwiseOr(_, _)
+        | Bitvector32Term::Int64BitwiseXor(_, _)
+        | Bitvector32Term::Int64BitwiseNot(_)
+        | Bitvector32Term::UInt64Add(_, _)
+        | Bitvector32Term::UInt64Subtract(_, _)
+        | Bitvector32Term::UInt64Multiply(_, _)
+        | Bitvector32Term::UInt64Divide(_, _)
+        | Bitvector32Term::UInt64Remainder(_, _)
+        | Bitvector32Term::UInt64ShiftLeft(_, _)
+        | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+        | Bitvector32Term::UInt64BitwiseAnd(_, _)
+        | Bitvector32Term::UInt64BitwiseOr(_, _)
+        | Bitvector32Term::UInt64BitwiseXor(_, _)
+        | Bitvector32Term::UInt64BitwiseNot(_) => false,
     }
 }
 

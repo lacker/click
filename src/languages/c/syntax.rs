@@ -278,6 +278,8 @@ pub enum C0Type {
     UInt8,
     UInt16,
     UInt32,
+    Int64,
+    UInt64,
     Int32Pointer,
     UInt8Pointer,
     Int32PointerPointer,
@@ -306,6 +308,7 @@ impl CAbi {
             (Self::Lp64, C0Type::UInt8) => (1, 1),
             (Self::Lp64, C0Type::UInt16) => (2, 2),
             (Self::Lp64, C0Type::UInt32) => (4, 4),
+            (Self::Lp64, C0Type::Int64 | C0Type::UInt64) => (8, 8),
             (
                 Self::Lp64,
                 C0Type::Int32Pointer
@@ -459,6 +462,8 @@ pub enum C0Expression {
     Int32Literal(u32),
     UInt8Literal(u8),
     UInt32Literal(u32),
+    Int64Literal(i64),
+    UInt64Literal(u64),
     SizeOfStruct {
         name: String,
         bytes: u32,
@@ -820,6 +825,8 @@ impl C0Type {
             | Self::UInt8
             | Self::UInt16
             | Self::UInt32
+            | Self::Int64
+            | Self::UInt64
             | Self::FunctionPointer(_) => None,
         }
     }
@@ -832,6 +839,8 @@ impl C0Type {
             Self::UInt8 => crate::kernel::CType::UInt8,
             Self::UInt16 => crate::kernel::CType::UInt16,
             Self::UInt32 => crate::kernel::CType::UInt32,
+            Self::Int64 => crate::kernel::CType::Int64,
+            Self::UInt64 => crate::kernel::CType::UInt64,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
@@ -1017,6 +1026,8 @@ impl C0Expression {
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
             Self::UInt32Literal(value) => crate::kernel::c_uint32_literal(*value),
+            Self::Int64Literal(value) => crate::kernel::c_int64_literal(*value),
+            Self::UInt64Literal(value) => crate::kernel::c_uint64_literal(*value),
             Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
                 crate::kernel::c_int32_literal(*bytes)
             }
@@ -1460,6 +1471,8 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
         | C0Expression::UInt32Literal(_)
+        | C0Expression::Int64Literal(_)
+        | C0Expression::UInt64Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => false,
@@ -1488,6 +1501,7 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "short"
             | "long"
             | "size_t"
+            | "ssize_t"
             | "int16_t"
             | "int64_t"
             | "uint16_t"
@@ -2961,6 +2975,11 @@ impl Parser {
                         self.error_at_previous("pointers to uint32 values are not supported yet")
                     );
                 }
+                C0Type::Int64 | C0Type::UInt64 => {
+                    return Err(self.error_at_previous(
+                        "pointers to 64-bit integer values are not supported yet",
+                    ));
+                }
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
                 C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
@@ -3075,6 +3094,14 @@ impl Parser {
             "uint8" | "uint8_t" => C0Type::UInt8,
             "uint16" | "uint16_t" => C0Type::UInt16,
             "uint32" | "uint32_t" => C0Type::UInt32,
+            "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
+            "long" => {
+                if self.peek_ident() == Some("long") {
+                    self.position += 1;
+                }
+                C0Type::Int64
+            }
+            "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
@@ -3085,6 +3112,12 @@ impl Parser {
                 } else if self.peek_ident() == Some("short") {
                     self.position += 1;
                     C0Type::UInt16
+                } else if self.peek_ident() == Some("long") {
+                    self.position += 1;
+                    if self.peek_ident() == Some("long") {
+                        self.position += 1;
+                    }
+                    C0Type::UInt64
                 } else {
                     return Err(self.error_at_previous(
                         "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
@@ -3101,6 +3134,12 @@ impl Parser {
                 if self.peek_ident() == Some("short") {
                     self.position += 1;
                     C0Type::Int16
+                } else if self.peek_ident() == Some("long") {
+                    self.position += 1;
+                    if self.peek_ident() == Some("long") {
+                        self.position += 1;
+                    }
+                    C0Type::Int64
                 } else {
                     return Err(self.error_at_previous(
                         "unsupported integer width `signed`; only `signed short` is modeled among signed standard aliases",
@@ -3111,11 +3150,6 @@ impl Parser {
                 return Err(self.error_at_previous(
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
-            }
-            "long" | "size_t" | "int64_t" | "uint64_t" => {
-                return Err(self.error_at_previous(format!(
-                    "unsupported integer width `{name}`: see the integer-types issue"
-                )));
             }
             "float" | "double" => {
                 return Err(self.error_at_previous(format!(
@@ -5197,14 +5231,20 @@ impl Parser {
                 parsed_type.union_name,
             ) {
                 (
-                    C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32,
+                    C0Type::Int16
+                    | C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::UInt16
+                    | C0Type::UInt32
+                    | C0Type::Int64
+                    | C0Type::UInt64,
                     None,
                     None,
                 ) => parsed_type.c_type,
                 _ => {
-                    return Err(self.error_at_previous(
-                        "casts currently support only `int16`, `int32`, `uint8`, `uint16`, and `uint32` scalar values",
-                    ));
+                    return Err(
+                        self.error_at_previous("casts support only modeled scalar integer values")
+                    );
                 }
             };
             return Ok(C0Expression::Cast {
@@ -5224,13 +5264,31 @@ impl Parser {
                 let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
                     self.error_here(format!("invalid integer literal `{number}`: {reason}"))
                 })?;
-                if magnitude > (i32::MAX as u64) + 1 {
+                let unsigned_suffix = integer_literal_has_unsigned_suffix(&number);
+                let long_suffix = integer_literal_has_long_suffix(&number);
+                if unsigned_suffix {
+                    if long_suffix || magnitude > u32::MAX as u64 {
+                        return Ok(C0Expression::UInt64Literal(0u64.wrapping_sub(magnitude)));
+                    }
+                    return Ok(C0Expression::UInt32Literal(
+                        0u32.wrapping_sub(magnitude as u32),
+                    ));
+                }
+                if magnitude > (i64::MAX as u64) + 1 {
                     return Err(self.error_here(format!(
-                        "negative int32 literal `-{number}` is out of range"
+                        "negative integer literal `-{number}` is out of range"
                     )));
                 }
-                let value = (-(magnitude as i64) as i32) as u32;
-                return Ok(C0Expression::Int32Literal(value));
+                if !long_suffix && magnitude <= (i32::MAX as u64) + 1 {
+                    let value = (-(magnitude as i64) as i32) as u32;
+                    return Ok(C0Expression::Int32Literal(value));
+                }
+                let value = if magnitude == (i64::MAX as u64) + 1 {
+                    i64::MIN
+                } else {
+                    -(magnitude as i64)
+                };
+                return Ok(C0Expression::Int64Literal(value));
             }
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),
@@ -5714,16 +5772,9 @@ impl Parser {
                 None => Ok(C0Expression::Variable(self.resolve_name(&name))),
             },
             Some(Token::Number(number)) => {
-                let value = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                parse_integer_literal_expression(&number).map_err(|reason| {
                     at.error(format!("invalid integer literal `{number}`: {reason}"))
-                })?;
-                if value <= i32::MAX as u64 {
-                    Ok(C0Expression::Int32Literal(value as u32))
-                } else if integer_literal_has_unsigned_suffix(&number) && value <= u32::MAX as u64 {
-                    Ok(C0Expression::UInt32Literal(value as u32))
-                } else {
-                    Err(at.error(format!("int32 literal `{number}` is out of range")))
-                }
+                })
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
@@ -5866,17 +5917,7 @@ fn flatten_array_indices(indexes: Vec<C0Expression>, dimensions: &[u32]) -> C0Ex
 }
 
 fn parse_integer_literal_magnitude(literal: &str) -> Result<u64, &'static str> {
-    let suffix_start = if literal.starts_with("0x") || literal.starts_with("0X") {
-        literal[2..]
-            .find(|character: char| !character.is_ascii_hexdigit())
-            .map_or(literal.len(), |offset| offset + 2)
-    } else {
-        literal
-            .find(|character: char| character.is_ascii_alphabetic())
-            .unwrap_or(literal.len())
-    };
-    let (digits, suffix) = literal.split_at(suffix_start);
-
+    let (digits, suffix) = integer_literal_parts(literal);
     let (digits, radix) = if let Some(hex_digits) = digits.strip_prefix("0x") {
         (hex_digits, 16)
     } else if let Some(hex_digits) = digits.strip_prefix("0X") {
@@ -5903,13 +5944,80 @@ fn parse_integer_literal_magnitude(literal: &str) -> Result<u64, &'static str> {
     })
 }
 
+fn integer_literal_parts(literal: &str) -> (&str, &str) {
+    let suffix_start = if literal.starts_with("0x") || literal.starts_with("0X") {
+        literal[2..]
+            .find(|character: char| !character.is_ascii_hexdigit())
+            .map_or(literal.len(), |offset| offset + 2)
+    } else {
+        literal
+            .find(|character: char| character.is_ascii_alphabetic())
+            .unwrap_or(literal.len())
+    };
+    literal.split_at(suffix_start)
+}
+
+fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'static str> {
+    let magnitude = parse_integer_literal_magnitude(literal)?;
+    let (digits, suffix) = integer_literal_parts(literal);
+    let suffix = suffix.to_ascii_lowercase();
+    let is_hex = digits.starts_with("0x") || digits.starts_with("0X");
+    let has_long = matches!(suffix.as_str(), "l" | "ll" | "ul" | "lu" | "ull" | "llu");
+    let has_unsigned = matches!(suffix.as_str(), "u" | "ul" | "lu" | "ull" | "llu");
+
+    if has_long {
+        if has_unsigned {
+            return if magnitude <= u64::MAX {
+                Ok(C0Expression::UInt64Literal(magnitude))
+            } else {
+                Err("the value is too large")
+            };
+        }
+        return if magnitude <= i64::MAX as u64 {
+            Ok(C0Expression::Int64Literal(magnitude as i64))
+        } else if is_hex && magnitude <= u64::MAX {
+            Ok(C0Expression::UInt64Literal(magnitude))
+        } else {
+            Err("the value is too large for a signed integer literal")
+        };
+    }
+
+    if has_unsigned {
+        return if magnitude <= u32::MAX as u64 {
+            Ok(C0Expression::UInt32Literal(magnitude as u32))
+        } else if magnitude <= u64::MAX {
+            Ok(C0Expression::UInt64Literal(magnitude))
+        } else {
+            Err("the value is too large")
+        };
+    }
+
+    if is_hex && magnitude > i32::MAX as u64 && magnitude <= u32::MAX as u64 {
+        return Ok(C0Expression::UInt32Literal(magnitude as u32));
+    }
+    if magnitude <= i32::MAX as u64 {
+        Ok(C0Expression::Int32Literal(magnitude as u32))
+    } else if magnitude <= i64::MAX as u64 {
+        Ok(C0Expression::Int64Literal(magnitude as i64))
+    } else if is_hex && magnitude <= u64::MAX {
+        Ok(C0Expression::UInt64Literal(magnitude))
+    } else {
+        Err("the value is too large for a signed integer literal")
+    }
+}
+
 fn integer_literal_has_unsigned_suffix(literal: &str) -> bool {
-    literal
+    let (_, suffix) = integer_literal_parts(literal);
+    suffix
         .chars()
-        .skip_while(|character| {
-            character.is_ascii_hexdigit() || *character == 'x' || *character == 'X'
-        })
         .any(|character| character.eq_ignore_ascii_case(&'u'))
+}
+
+fn integer_literal_has_long_suffix(literal: &str) -> bool {
+    let (_, suffix) = integer_literal_parts(literal);
+    suffix
+        .chars()
+        .any(|character| character.eq_ignore_ascii_case(&'l'))
 }
 
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
@@ -6326,6 +6434,8 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::Int32Literal(_)
         | C0Expression::UInt8Literal(_)
         | C0Expression::UInt32Literal(_)
+        | C0Expression::Int64Literal(_)
+        | C0Expression::UInt64Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
@@ -6387,6 +6497,8 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
             | C0Expression::Int32Literal(_)
             | C0Expression::UInt8Literal(_)
             | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
             | C0Expression::SizeOfStruct { .. }
             | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. } => {}

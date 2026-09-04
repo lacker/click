@@ -1071,7 +1071,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_and,
+                    CBitwiseOperation::And,
                 )
             },
         )?,
@@ -1089,7 +1089,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_or,
+                    CBitwiseOperation::Or,
                 )
             },
         )?,
@@ -1107,7 +1107,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_xor,
+                    CBitwiseOperation::Xor,
                 )
             },
         )?,
@@ -2167,6 +2167,45 @@ pub(super) fn c_value_comparison_proposition(
         return Some(Proposition::ConditionIs(condition, value));
     }
 
+    if matches!(left, CValue::UInt64(_)) || matches!(right, CValue::UInt64(_)) {
+        let left = c_value_uint64_term(left)?;
+        let right = c_value_uint64_term(right)?;
+        let condition = match operator {
+            CComparisonOperator::Equal | CComparisonOperator::NotEqual => {
+                ConditionTerm::uint64_equal(left, right)
+            }
+            CComparisonOperator::LessThan => ConditionTerm::uint64_less_than(left, right),
+            CComparisonOperator::LessEqual => ConditionTerm::uint64_less_equal(left, right),
+            CComparisonOperator::GreaterThan => ConditionTerm::uint64_greater_than(left, right),
+            CComparisonOperator::GreaterEqual => ConditionTerm::uint64_greater_equal(left, right),
+        };
+        return Some(Proposition::ConditionIs(
+            condition,
+            !matches!(operator, CComparisonOperator::NotEqual),
+        ));
+    }
+    if matches!(left, CValue::Int64(_)) || matches!(right, CValue::Int64(_)) {
+        let left = c_value_int64_term(left)?;
+        let right = c_value_int64_term(right)?;
+        let condition = match operator {
+            CComparisonOperator::Equal | CComparisonOperator::NotEqual => {
+                ConditionTerm::int64_equal(left, right)
+            }
+            CComparisonOperator::LessThan => ConditionTerm::int64_signed_less_than(left, right),
+            CComparisonOperator::LessEqual => ConditionTerm::int64_signed_less_equal(left, right),
+            CComparisonOperator::GreaterThan => {
+                ConditionTerm::int64_signed_greater_than(left, right)
+            }
+            CComparisonOperator::GreaterEqual => {
+                ConditionTerm::int64_signed_greater_equal(left, right)
+            }
+        };
+        return Some(Proposition::ConditionIs(
+            condition,
+            !matches!(operator, CComparisonOperator::NotEqual),
+        ));
+    }
+
     let unsigned = matches!(left, CValue::UInt32(_)) || matches!(right, CValue::UInt32(_));
     let left = c_value_int32_term(left)?;
     let right = c_value_int32_term(right)?;
@@ -2216,6 +2255,31 @@ fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt8(value)
         | CValue::UInt16(value)
         | CValue::UInt32(value) => Some(value.clone()),
+        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int64(value) => Some(value.clone()),
+        CValue::Int16(value)
+        | CValue::Int32(value)
+        | CValue::UInt8(value)
+        | CValue::UInt16(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
+        CValue::UInt32(value) => Some(Bitvector32Term::int64_from_uint32(value.clone())),
+        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::UInt64(value) => Some(value.clone()),
+        CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value.clone())),
+        CValue::Int16(value)
+        | CValue::Int32(value)
+        | CValue::UInt8(value)
+        | CValue::UInt16(value) => Some(Bitvector32Term::uint64_from_int32(value.clone())),
+        CValue::UInt32(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Void | CValue::Pointer(_) => None,
     }
 }

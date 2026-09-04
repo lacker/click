@@ -74,9 +74,38 @@ impl Bitvector32Term {
     pub(crate) fn as_const(&self) -> Option<u32> {
         match self {
             Self::Constant(value) => Some(*value),
-            Self::Variable(_) | Self::MemoryLoad(_, _) | Self::PureFunctionApplication { .. } => {
-                None
-            }
+            Self::Variable(_)
+            | Self::MemoryLoad(_, _)
+            | Self::PureFunctionApplication { .. }
+            | Self::Int64Constant(_)
+            | Self::UInt64Constant(_)
+            | Self::Int64From32(_)
+            | Self::Int64FromUInt32(_)
+            | Self::UInt64From32(_)
+            | Self::UInt64FromInt32(_)
+            | Self::UInt64FromInt64(_)
+            | Self::Int64Add(_, _)
+            | Self::Int64Subtract(_, _)
+            | Self::Int64Multiply(_, _)
+            | Self::Int64Divide(_, _)
+            | Self::Int64Remainder(_, _)
+            | Self::Int64ShiftLeft(_, _)
+            | Self::Int64ArithmeticShiftRight(_, _)
+            | Self::Int64BitwiseAnd(_, _)
+            | Self::Int64BitwiseOr(_, _)
+            | Self::Int64BitwiseXor(_, _)
+            | Self::Int64BitwiseNot(_)
+            | Self::UInt64Add(_, _)
+            | Self::UInt64Subtract(_, _)
+            | Self::UInt64Multiply(_, _)
+            | Self::UInt64Divide(_, _)
+            | Self::UInt64Remainder(_, _)
+            | Self::UInt64ShiftLeft(_, _)
+            | Self::UInt64LogicalShiftRight(_, _)
+            | Self::UInt64BitwiseAnd(_, _)
+            | Self::UInt64BitwiseOr(_, _)
+            | Self::UInt64BitwiseXor(_, _)
+            | Self::UInt64BitwiseNot(_) => None,
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
@@ -521,6 +550,407 @@ impl Bitvector32Term {
     }
 }
 
+// The original term type is retained as the shared arena for both machine
+// widths.  These helpers use dedicated constructors and constants for 64-bit
+// values, so a 64-bit value can never be mistaken for a wrapped 32-bit one by
+// the existing C0 paths.
+fn int64_constant(term: &Bitvector32Term) -> Option<i64> {
+    match term {
+        Bitvector32Term::Int64Constant(value) => Some(*value),
+        Bitvector32Term::Int64From32(value) => match value.as_ref() {
+            Bitvector32Term::Constant(value) => Some(i64::from(*value as i32)),
+            _ => int64_constant(value),
+        },
+        Bitvector32Term::Int64FromUInt32(value) => match value.as_ref() {
+            Bitvector32Term::Constant(value) => Some(i64::from(*value)),
+            _ => int64_constant(value),
+        },
+        Bitvector32Term::Int64Add(left, right) => {
+            int64_constant(left)?.checked_add(int64_constant(right)?)
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            int64_constant(left)?.checked_sub(int64_constant(right)?)
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            int64_constant(left)?.checked_mul(int64_constant(right)?)
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let left = int64_constant(left)?;
+            let right = int64_constant(right)?;
+            (right != 0 && !(left == i64::MIN && right == -1)).then_some(left / right)
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let left = int64_constant(left)?;
+            let right = int64_constant(right)?;
+            (right != 0 && !(left == i64::MIN && right == -1)).then_some(left % right)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            let left = int64_constant(left)?;
+            let count = int64_shift_count_constant(right)?;
+            (left >= 0 && count < 64)
+                .then_some(left.checked_shl(count)?)
+                .filter(|value| *value >= 0)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            let left = int64_constant(left)?;
+            let count = int64_shift_count_constant(right)?;
+            (count < 64).then_some(left >> count)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            Some(int64_constant(left)? & int64_constant(right)?)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            Some(int64_constant(left)? | int64_constant(right)?)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            Some(int64_constant(left)? ^ int64_constant(right)?)
+        }
+        Bitvector32Term::Int64BitwiseNot(value) => Some(!int64_constant(value)?),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match condition.as_ref() {
+            ConditionTerm::Constant(true) => int64_constant(then_term),
+            ConditionTerm::Constant(false) => int64_constant(else_term),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn uint64_constant(term: &Bitvector32Term) -> Option<u64> {
+    match term {
+        Bitvector32Term::UInt64Constant(value) => Some(*value),
+        Bitvector32Term::UInt64From32(value) => match value.as_ref() {
+            Bitvector32Term::Constant(value) => Some(u64::from(*value)),
+            _ => uint64_constant(value),
+        },
+        Bitvector32Term::UInt64FromInt32(value) => match value.as_ref() {
+            Bitvector32Term::Constant(value) => Some((*value as i32 as i64) as u64),
+            _ => uint64_constant(value),
+        },
+        Bitvector32Term::UInt64FromInt64(value) => match value.as_ref() {
+            Bitvector32Term::Int64Constant(value) => Some(*value as u64),
+            _ => uint64_constant(value),
+        },
+        Bitvector32Term::UInt64Add(left, right) => {
+            Some(uint64_constant(left)?.wrapping_add(uint64_constant(right)?))
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            Some(uint64_constant(left)?.wrapping_sub(uint64_constant(right)?))
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            Some(uint64_constant(left)?.wrapping_mul(uint64_constant(right)?))
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let right = uint64_constant(right)?;
+            (right != 0).then_some(uint64_constant(left)? / right)
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let right = uint64_constant(right)?;
+            (right != 0).then_some(uint64_constant(left)? % right)
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let count = int64_shift_count_constant(right)?;
+            (count < 64).then_some(uint64_constant(left)?.wrapping_shl(count))
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let count = int64_shift_count_constant(right)?;
+            (count < 64).then_some(uint64_constant(left)? >> count)
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            Some(uint64_constant(left)? & uint64_constant(right)?)
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            Some(uint64_constant(left)? | uint64_constant(right)?)
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            Some(uint64_constant(left)? ^ uint64_constant(right)?)
+        }
+        Bitvector32Term::UInt64BitwiseNot(value) => Some(!uint64_constant(value)?),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match condition.as_ref() {
+            ConditionTerm::Constant(true) => uint64_constant(then_term),
+            ConditionTerm::Constant(false) => uint64_constant(else_term),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn int64_shift_count_constant(term: &Bitvector32Term) -> Option<u32> {
+    let value = match term {
+        Bitvector32Term::Constant(value) => u64::from(*value),
+        Bitvector32Term::Int64Constant(value) if *value >= 0 => *value as u64,
+        Bitvector32Term::UInt64Constant(value) => *value,
+        _ => return None,
+    };
+    u32::try_from(value).ok()
+}
+
+impl Bitvector32Term {
+    pub(crate) fn int64_from_32(value: Self) -> Self {
+        match value {
+            Self::Constant(value) => Self::Int64Constant(i64::from(value as i32)),
+            Self::Int64Constant(_) | Self::Int64From32(_) => value,
+            value => Self::Int64From32(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn uint64_from_32(value: Self) -> Self {
+        match value {
+            Self::Constant(value) => Self::UInt64Constant(u64::from(value)),
+            Self::UInt64Constant(_) | Self::UInt64From32(_) => value,
+            value => Self::UInt64From32(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn int64_from_uint32(value: Self) -> Self {
+        match value {
+            Self::Constant(value) => Self::Int64Constant(i64::from(value)),
+            Self::Int64Constant(_) | Self::Int64FromUInt32(_) => value,
+            value => Self::Int64FromUInt32(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn uint64_from_int32(value: Self) -> Self {
+        match value {
+            Self::Constant(value) => Self::UInt64Constant((value as i32 as i64) as u64),
+            Self::UInt64Constant(_) | Self::UInt64FromInt32(_) => value,
+            value => Self::UInt64FromInt32(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn uint64_from_int64(value: Self) -> Self {
+        match value {
+            Self::Int64Constant(value) => Self::UInt64Constant(value as u64),
+            Self::UInt64Constant(_) | Self::UInt64FromInt64(_) => value,
+            value => Self::UInt64FromInt64(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn int64_as_const(&self) -> Option<i64> {
+        int64_constant(self)
+    }
+
+    pub(crate) fn uint64_as_const(&self) -> Option<u64> {
+        uint64_constant(self)
+    }
+
+    fn int64_binary(
+        left: Self,
+        right: Self,
+        operation: impl FnOnce(i64, i64) -> Option<i64>,
+        constructor: impl FnOnce(Box<Self>, Box<Self>) -> Self,
+    ) -> Self {
+        match (int64_constant(&left), int64_constant(&right)) {
+            (Some(left), Some(right)) => operation(left, right)
+                .map(Self::Int64Constant)
+                .unwrap_or_else(|| {
+                    constructor(
+                        Box::new(Self::Int64Constant(left)),
+                        Box::new(Self::Int64Constant(right)),
+                    )
+                }),
+            _ => constructor(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_add(left: Self, right: Self) -> Self {
+        Self::int64_binary(left, right, i64::checked_add, Self::Int64Add)
+    }
+
+    pub(crate) fn int64_subtract(left: Self, right: Self) -> Self {
+        Self::int64_binary(left, right, i64::checked_sub, Self::Int64Subtract)
+    }
+
+    pub(crate) fn int64_multiply(left: Self, right: Self) -> Self {
+        Self::int64_binary(left, right, i64::checked_mul, Self::Int64Multiply)
+    }
+
+    pub(crate) fn int64_divide(left: Self, right: Self) -> Self {
+        Self::int64_binary(
+            left,
+            right,
+            |left, right| {
+                (right != 0 && !(left == i64::MIN && right == -1)).then_some(left / right)
+            },
+            Self::Int64Divide,
+        )
+    }
+
+    pub(crate) fn int64_remainder(left: Self, right: Self) -> Self {
+        Self::int64_binary(
+            left,
+            right,
+            |left, right| {
+                (right != 0 && !(left == i64::MIN && right == -1)).then_some(left % right)
+            },
+            Self::Int64Remainder,
+        )
+    }
+
+    pub(crate) fn int64_shift_left(left: Self, right: Self) -> Self {
+        match (int64_constant(&left), int64_shift_count_constant(&right)) {
+            (Some(left), Some(count)) if left >= 0 && count < 64 => left
+                .checked_shl(count)
+                .filter(|value| *value >= 0)
+                .map(Self::Int64Constant)
+                .unwrap_or_else(|| {
+                    Self::Int64ShiftLeft(Box::new(Self::Int64Constant(left)), Box::new(right))
+                }),
+            _ => Self::Int64ShiftLeft(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_arithmetic_shift_right(left: Self, right: Self) -> Self {
+        match (int64_constant(&left), int64_shift_count_constant(&right)) {
+            (Some(left), Some(count)) if count < 64 => Self::Int64Constant(left >> count),
+            _ => Self::Int64ArithmeticShiftRight(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_bitwise_and(left: Self, right: Self) -> Self {
+        match (int64_constant(&left), int64_constant(&right)) {
+            (Some(left), Some(right)) => Self::Int64Constant(left & right),
+            _ => Self::Int64BitwiseAnd(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_bitwise_or(left: Self, right: Self) -> Self {
+        match (int64_constant(&left), int64_constant(&right)) {
+            (Some(left), Some(right)) => Self::Int64Constant(left | right),
+            _ => Self::Int64BitwiseOr(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_bitwise_xor(left: Self, right: Self) -> Self {
+        match (int64_constant(&left), int64_constant(&right)) {
+            (Some(left), Some(right)) => Self::Int64Constant(left ^ right),
+            _ => Self::Int64BitwiseXor(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_bitwise_not(value: Self) -> Self {
+        match int64_constant(&value) {
+            Some(value) => Self::Int64Constant(!value),
+            None => Self::Int64BitwiseNot(Box::new(value)),
+        }
+    }
+
+    fn uint64_binary(
+        left: Self,
+        right: Self,
+        operation: impl FnOnce(u64, u64) -> Option<u64>,
+        constructor: impl FnOnce(Box<Self>, Box<Self>) -> Self,
+    ) -> Self {
+        match (uint64_constant(&left), uint64_constant(&right)) {
+            (Some(left), Some(right)) => operation(left, right)
+                .map(Self::UInt64Constant)
+                .unwrap_or_else(|| {
+                    constructor(
+                        Box::new(Self::UInt64Constant(left)),
+                        Box::new(Self::UInt64Constant(right)),
+                    )
+                }),
+            _ => constructor(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_add(left: Self, right: Self) -> Self {
+        Self::uint64_binary(
+            left,
+            right,
+            |left, right| Some(left.wrapping_add(right)),
+            Self::UInt64Add,
+        )
+    }
+
+    pub(crate) fn uint64_subtract(left: Self, right: Self) -> Self {
+        Self::uint64_binary(
+            left,
+            right,
+            |left, right| Some(left.wrapping_sub(right)),
+            Self::UInt64Subtract,
+        )
+    }
+
+    pub(crate) fn uint64_multiply(left: Self, right: Self) -> Self {
+        Self::uint64_binary(
+            left,
+            right,
+            |left, right| Some(left.wrapping_mul(right)),
+            Self::UInt64Multiply,
+        )
+    }
+
+    pub(crate) fn uint64_divide(left: Self, right: Self) -> Self {
+        Self::uint64_binary(
+            left,
+            right,
+            |left, right| (right != 0).then_some(left / right),
+            Self::UInt64Divide,
+        )
+    }
+
+    pub(crate) fn uint64_remainder(left: Self, right: Self) -> Self {
+        Self::uint64_binary(
+            left,
+            right,
+            |left, right| (right != 0).then_some(left % right),
+            Self::UInt64Remainder,
+        )
+    }
+
+    pub(crate) fn uint64_shift_left(left: Self, right: Self) -> Self {
+        match (uint64_constant(&left), int64_shift_count_constant(&right)) {
+            (Some(left), Some(count)) if count < 64 => {
+                Self::UInt64Constant(left.wrapping_shl(count))
+            }
+            _ => Self::UInt64ShiftLeft(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_logical_shift_right(left: Self, right: Self) -> Self {
+        match (uint64_constant(&left), int64_shift_count_constant(&right)) {
+            (Some(left), Some(count)) if count < 64 => Self::UInt64Constant(left >> count),
+            _ => Self::UInt64LogicalShiftRight(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_bitwise_and(left: Self, right: Self) -> Self {
+        match (uint64_constant(&left), uint64_constant(&right)) {
+            (Some(left), Some(right)) => Self::UInt64Constant(left & right),
+            _ => Self::UInt64BitwiseAnd(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_bitwise_or(left: Self, right: Self) -> Self {
+        match (uint64_constant(&left), uint64_constant(&right)) {
+            (Some(left), Some(right)) => Self::UInt64Constant(left | right),
+            _ => Self::UInt64BitwiseOr(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_bitwise_xor(left: Self, right: Self) -> Self {
+        match (uint64_constant(&left), uint64_constant(&right)) {
+            (Some(left), Some(right)) => Self::UInt64Constant(left ^ right),
+            _ => Self::UInt64BitwiseXor(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_bitwise_not(value: Self) -> Self {
+        match uint64_constant(&value) {
+            Some(value) => Self::UInt64Constant(!value),
+            None => Self::UInt64BitwiseNot(Box::new(value)),
+        }
+    }
+}
+
 impl PointerOffsetTerm {
     pub fn constant(value: i64) -> Self {
         Self::Constant(value)
@@ -559,6 +989,139 @@ impl PointerOffsetTerm {
 }
 
 impl ConditionTerm {
+    pub(crate) fn int64_signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left < right),
+            _ => Self::Bitvector64SignedLessThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left <= right),
+            _ => Self::Bitvector64SignedLessEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left > right),
+            _ => Self::Bitvector64SignedGreaterThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_greater_equal(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left >= right),
+            _ => Self::Bitvector64SignedGreaterEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left < right),
+            _ => Self::Bitvector64UnsignedLessThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left <= right),
+            _ => Self::Bitvector64UnsignedLessEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left > right),
+            _ => Self::Bitvector64UnsignedGreaterThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left >= right),
+            _ => Self::Bitvector64UnsignedGreaterEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if left == right {
+            return Self::Constant(true);
+        }
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::Bitvector64Equal(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn uint64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if left == right {
+            return Self::Constant(true);
+        }
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::Bitvector64Equal(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_add_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left.checked_add(right).is_none()),
+            _ => Self::Bitvector64SignedAddOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_subtract_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left.checked_sub(right).is_none()),
+            _ => Self::Bitvector64SignedSubtractOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_multiply_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left.checked_mul(right).is_none()),
+            _ => Self::Bitvector64SignedMultiplyOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_divide_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), right.int64_as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant(right == 0 || (left == i64::MIN && right == -1))
+            }
+            _ => Self::Bitvector64SignedDivideOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn int64_signed_shift_left_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.int64_as_const(), int64_shift_count_constant(&right)) {
+            (Some(left), Some(count)) => Self::Constant(
+                count >= 64 || left < 0 || left.checked_shl(count).is_none_or(|result| result < 0),
+            ),
+            _ => Self::Bitvector64SignedShiftLeftOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
     pub(crate) fn unsigned_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         let sign_bit = Bitvector32Term::Constant(0x8000_0000);
         Self::signed_less_than(
@@ -739,6 +1302,8 @@ impl CType {
                 CType::UInt8PointerPointer => 7,
                 CType::Int16 => 8,
                 CType::UInt16 => 9,
+                CType::Int64 => 10,
+                CType::UInt64 => 11,
                 CType::FunctionPointer(_) | CType::Int32Array(_) | CType::UInt8Array(_) => {
                     return None;
                 }
@@ -778,6 +1343,8 @@ impl CType {
             | Self::FunctionPointer(_)
             | Self::Int16
             | Self::UInt16
+            | Self::Int64
+            | Self::UInt64
             | Self::Int32Array(_)
             | Self::UInt8Array(_) => None,
         }
@@ -790,6 +1357,8 @@ impl CType {
             | (Self::Int32, CValue::Int32(_))
             | (Self::UInt8, CValue::UInt8(_))
             | (Self::UInt16, CValue::UInt16(_))
+            | (Self::Int64, CValue::Int64(_))
+            | (Self::UInt64, CValue::UInt64(_))
             | (Self::UInt32, CValue::UInt32(_)) => true,
             (target, CValue::Pointer(pointer)) if target.is_pointer() => {
                 pointer.is_null()
@@ -812,6 +1381,8 @@ impl CType {
             Self::UInt8 => 1,
             Self::UInt16 => 2,
             Self::UInt32 => 4,
+            Self::Int64 => 8,
+            Self::UInt64 => 8,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
@@ -861,6 +1432,8 @@ impl CValue {
             Self::UInt8(_) => CType::UInt8,
             Self::UInt16(_) => CType::UInt16,
             Self::UInt32(_) => CType::UInt32,
+            Self::Int64(_) => CType::Int64,
+            Self::UInt64(_) => CType::UInt64,
             Self::Pointer(pointer) => pointer.c_type(),
         }
     }
@@ -873,6 +1446,8 @@ impl CValue {
             Self::UInt8(_) => 1,
             Self::UInt16(_) => 2,
             Self::UInt32(_) => 4,
+            Self::Int64(_) => 8,
+            Self::UInt64(_) => 8,
             Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
         }
     }

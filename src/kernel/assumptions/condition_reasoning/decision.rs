@@ -508,6 +508,88 @@ impl PureFactContext {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+                ConditionTerm::int64_signed_less_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+                ConditionTerm::int64_signed_less_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+                ConditionTerm::int64_signed_greater_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+                ConditionTerm::int64_signed_greater_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+                ConditionTerm::uint64_less_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+                ConditionTerm::uint64_less_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+                ConditionTerm::uint64_greater_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+                ConditionTerm::uint64_greater_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64Equal(left, right) => ConditionTerm::int64_equal(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+                ConditionTerm::int64_signed_add_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+                ConditionTerm::int64_signed_subtract_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+                ConditionTerm::int64_signed_multiply_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+                ConditionTerm::int64_signed_divide_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+                ConditionTerm::int64_signed_shift_left_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
@@ -586,6 +668,113 @@ impl PureFactContext {
             Bitvector32Term::BitwiseNot(value) => {
                 Bitvector32Term::bitwise_not(self.simplify_bitvector_under_assumptions(value))
             }
+            Bitvector32Term::Int64Constant(value) => Bitvector32Term::Int64Constant(*value),
+            Bitvector32Term::UInt64Constant(value) => Bitvector32Term::UInt64Constant(*value),
+            Bitvector32Term::Int64From32(value) => {
+                Bitvector32Term::int64_from_32(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Int64FromUInt32(value) => {
+                Bitvector32Term::int64_from_uint32(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::UInt64From32(value) => {
+                Bitvector32Term::uint64_from_32(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::UInt64FromInt32(value) => {
+                Bitvector32Term::uint64_from_int32(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::UInt64FromInt64(value) => {
+                Bitvector32Term::uint64_from_int64(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Int64Add(left, right) => Bitvector32Term::int64_add(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64Subtract(left, right) => Bitvector32Term::int64_subtract(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64Multiply(left, right) => Bitvector32Term::int64_multiply(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64Divide(left, right) => Bitvector32Term::int64_divide(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64Remainder(left, right) => Bitvector32Term::int64_remainder(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64ShiftLeft(left, right) => Bitvector32Term::int64_shift_left(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+                Bitvector32Term::int64_arithmetic_shift_right(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            Bitvector32Term::Int64BitwiseAnd(left, right) => Bitvector32Term::int64_bitwise_and(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64BitwiseOr(left, right) => Bitvector32Term::int64_bitwise_or(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64BitwiseXor(left, right) => Bitvector32Term::int64_bitwise_xor(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Int64BitwiseNot(value) => {
+                Bitvector32Term::int64_bitwise_not(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::UInt64Add(left, right) => Bitvector32Term::uint64_add(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64Subtract(left, right) => Bitvector32Term::uint64_subtract(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64Multiply(left, right) => Bitvector32Term::uint64_multiply(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64Divide(left, right) => Bitvector32Term::uint64_divide(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64Remainder(left, right) => Bitvector32Term::uint64_remainder(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64ShiftLeft(left, right) => Bitvector32Term::uint64_shift_left(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+                Bitvector32Term::uint64_logical_shift_right(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            Bitvector32Term::UInt64BitwiseAnd(left, right) => Bitvector32Term::uint64_bitwise_and(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64BitwiseOr(left, right) => Bitvector32Term::uint64_bitwise_or(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64BitwiseXor(left, right) => Bitvector32Term::uint64_bitwise_xor(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UInt64BitwiseNot(value) => Bitvector32Term::uint64_bitwise_not(
+                self.simplify_bitvector_under_assumptions(value),
+            ),
             Bitvector32Term::If {
                 condition,
                 then_term,

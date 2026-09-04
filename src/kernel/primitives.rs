@@ -68,9 +68,11 @@ impl CExecutionEnvironmentVariableIndex {
 pub enum Sort {
     Condition,
     Bitvector32,
+    Bitvector64,
     PointerOffset,
     CType,
     CInt32,
+    CInt64,
     CPointer(CType),
     CValue,
     CMemory,
@@ -82,6 +84,13 @@ pub enum Sort {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Bitvector32Term {
     Constant(u32),
+    /// Signed 64-bit constants are kept in the same term arena as the
+    /// original 32-bit terms so equality, substitution, and memory-load
+    /// indexing continue to share one checked representation.
+    Int64Constant(i64),
+    /// Unsigned 64-bit constants retain all 64 bits; interpreting these as a
+    /// signed value would lose the distinction above `i64::MAX`.
+    UInt64Constant(u64),
     Variable(Variable),
     Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
@@ -117,6 +126,33 @@ pub enum Bitvector32Term {
         arguments: Vec<Bitvector32Term>,
     },
     MemoryLoad(SharedCMemory, Box<Pointer>),
+    Int64From32(Box<Bitvector32Term>),
+    UInt64From32(Box<Bitvector32Term>),
+    Int64FromUInt32(Box<Bitvector32Term>),
+    UInt64FromInt32(Box<Bitvector32Term>),
+    UInt64FromInt64(Box<Bitvector32Term>),
+    Int64Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64Divide(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64Remainder(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64ShiftLeft(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64ArithmeticShiftRight(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64BitwiseAnd(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Int64BitwiseNot(Box<Bitvector32Term>),
+    UInt64Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64Divide(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64Remainder(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64ShiftLeft(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64LogicalShiftRight(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64BitwiseAnd(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    UInt64BitwiseNot(Box<Bitvector32Term>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -144,6 +180,20 @@ pub enum ConditionTerm {
     Bitvector32SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedShiftLeftOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedGreaterEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64UnsignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64UnsignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64UnsignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64UnsignedGreaterEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64Equal(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedAddOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector64SignedShiftLeftOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
     PointerEqual(Box<Pointer>, Box<Pointer>),
 }
@@ -275,6 +325,8 @@ pub enum CValue {
     UInt8(Bitvector32Term),
     UInt16(Bitvector32Term),
     UInt32(Bitvector32Term),
+    Int64(Bitvector32Term),
+    UInt64(Bitvector32Term),
     Pointer(CPointerValue),
 }
 
@@ -286,6 +338,8 @@ pub enum CType {
     UInt8,
     UInt16,
     UInt32,
+    Int64,
+    UInt64,
     Int32Pointer,
     UInt8Pointer,
     Int32PointerPointer,

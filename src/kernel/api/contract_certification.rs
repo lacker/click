@@ -531,7 +531,21 @@ fn condition_fact_mentions_load_of(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_loads(left, &mut loads);
             collect_loads(right, &mut loads);
         }
@@ -586,7 +600,36 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
     }
     fn collect_shallow_term_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
         match term {
-            Bitvector32Term::Constant(_) => {}
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Int64From32(_)
+            | Bitvector32Term::Int64FromUInt32(_)
+            | Bitvector32Term::UInt64From32(_)
+            | Bitvector32Term::UInt64FromInt32(_)
+            | Bitvector32Term::UInt64FromInt64(_)
+            | Bitvector32Term::Int64Add(_, _)
+            | Bitvector32Term::Int64Subtract(_, _)
+            | Bitvector32Term::Int64Multiply(_, _)
+            | Bitvector32Term::Int64Divide(_, _)
+            | Bitvector32Term::Int64Remainder(_, _)
+            | Bitvector32Term::Int64ShiftLeft(_, _)
+            | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
+            | Bitvector32Term::Int64BitwiseAnd(_, _)
+            | Bitvector32Term::Int64BitwiseOr(_, _)
+            | Bitvector32Term::Int64BitwiseXor(_, _)
+            | Bitvector32Term::Int64BitwiseNot(_)
+            | Bitvector32Term::UInt64Add(_, _)
+            | Bitvector32Term::UInt64Subtract(_, _)
+            | Bitvector32Term::UInt64Multiply(_, _)
+            | Bitvector32Term::UInt64Divide(_, _)
+            | Bitvector32Term::UInt64Remainder(_, _)
+            | Bitvector32Term::UInt64ShiftLeft(_, _)
+            | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+            | Bitvector32Term::UInt64BitwiseAnd(_, _)
+            | Bitvector32Term::UInt64BitwiseOr(_, _)
+            | Bitvector32Term::UInt64BitwiseXor(_, _)
+            | Bitvector32Term::UInt64BitwiseNot(_) => {}
             Bitvector32Term::Variable(variable) => {
                 variables.insert(*variable);
             }
@@ -860,7 +903,36 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                     collect_loads(argument, loads);
                 }
             }
-            Bitvector32Term::Constant(_) => {}
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Int64From32(_)
+            | Bitvector32Term::Int64FromUInt32(_)
+            | Bitvector32Term::UInt64From32(_)
+            | Bitvector32Term::UInt64FromInt32(_)
+            | Bitvector32Term::UInt64FromInt64(_)
+            | Bitvector32Term::Int64Add(_, _)
+            | Bitvector32Term::Int64Subtract(_, _)
+            | Bitvector32Term::Int64Multiply(_, _)
+            | Bitvector32Term::Int64Divide(_, _)
+            | Bitvector32Term::Int64Remainder(_, _)
+            | Bitvector32Term::Int64ShiftLeft(_, _)
+            | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
+            | Bitvector32Term::Int64BitwiseAnd(_, _)
+            | Bitvector32Term::Int64BitwiseOr(_, _)
+            | Bitvector32Term::Int64BitwiseXor(_, _)
+            | Bitvector32Term::Int64BitwiseNot(_)
+            | Bitvector32Term::UInt64Add(_, _)
+            | Bitvector32Term::UInt64Subtract(_, _)
+            | Bitvector32Term::UInt64Multiply(_, _)
+            | Bitvector32Term::UInt64Divide(_, _)
+            | Bitvector32Term::UInt64Remainder(_, _)
+            | Bitvector32Term::UInt64ShiftLeft(_, _)
+            | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+            | Bitvector32Term::UInt64BitwiseAnd(_, _)
+            | Bitvector32Term::UInt64BitwiseOr(_, _)
+            | Bitvector32Term::UInt64BitwiseXor(_, _)
+            | Bitvector32Term::UInt64BitwiseNot(_) => {}
         }
     }
 
@@ -878,7 +950,21 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
             | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
             | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedLessThan(left, right)
+            | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right)
+            | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
                 collect_loads(left, loads);
                 collect_loads(right, loads);
             }

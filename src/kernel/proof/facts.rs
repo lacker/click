@@ -791,7 +791,21 @@ fn collect_condition_bitvector_atoms(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
@@ -824,11 +838,38 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         | Bitvector32Term::LogicalShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
+        | Bitvector32Term::BitwiseXor(left, right)
+        | Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
-        Bitvector32Term::BitwiseNot(value) => collect_bitvector_atoms(value, atoms),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value)
+        | Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value) => collect_bitvector_atoms(value, atoms),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -858,7 +899,10 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         Bitvector32Term::MemoryLoad(_, pointer) => {
             collect_pointer_offset_bitvector_atoms(&pointer.offset, atoms)
         }
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_) => {}
     }
 }
 

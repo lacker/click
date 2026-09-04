@@ -22,7 +22,9 @@ fn collect_offset_load_variables_from_value(
         | CValue::Int32(term)
         | CValue::UInt8(term)
         | CValue::UInt16(term)
-        | CValue::UInt32(term) => {
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term) => {
             collect_offset_load_variables_from_term(term, load_variables);
         }
         CValue::Pointer(pointer) => {
@@ -38,7 +40,10 @@ fn collect_offset_load_variables_from_term(
     load_variables: &mut BTreeSet<Variable>,
 ) {
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_) => {}
         Bitvector32Term::MemoryLoad(_, pointer) => {
             collect_offset_load_variables_from_offset(&pointer.offset, load_variables);
         }
@@ -55,6 +60,38 @@ fn collect_offset_load_variables_from_term(
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_offset_load_variables_from_term(left, load_variables);
+            collect_offset_load_variables_from_term(right, load_variables);
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => {
+            collect_offset_load_variables_from_term(value, load_variables);
+        }
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_offset_load_variables_from_term(left, load_variables);
             collect_offset_load_variables_from_term(right, load_variables);
         }
@@ -96,7 +133,9 @@ fn assert_scaled_index_free_of_raw_loads(
     load_variables: &mut BTreeSet<Variable>,
 ) {
     match term {
-        Bitvector32Term::Constant(_) => {}
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
             if crate::kernel::is_load_variable(variable) {
                 load_variables.insert(*variable);
@@ -118,6 +157,38 @@ fn assert_scaled_index_free_of_raw_loads(
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            assert_scaled_index_free_of_raw_loads(left, load_variables);
+            assert_scaled_index_free_of_raw_loads(right, load_variables);
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => {
+            assert_scaled_index_free_of_raw_loads(value, load_variables);
+        }
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             assert_scaled_index_free_of_raw_loads(left, load_variables);
             assert_scaled_index_free_of_raw_loads(right, load_variables);
         }

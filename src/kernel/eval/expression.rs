@@ -86,7 +86,7 @@ pub(in crate::kernel) fn promote_c_int32_path_value(
             add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
-        CValue::UInt32(_) => None,
+        CValue::UInt32(_) | CValue::Int64(_) | CValue::UInt64(_) => None,
         CValue::Pointer(_) => None,
     }
 }
@@ -110,6 +110,32 @@ pub(in crate::kernel) fn promote_c_uint32_path_value(
             add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
+        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+pub(in crate::kernel) fn promote_c_int64_path_value(value: CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int64(value) => Some(value),
+        CValue::Int16(value)
+        | CValue::Int32(value)
+        | CValue::UInt8(value)
+        | CValue::UInt16(value) => Some(Bitvector32Term::int64_from_32(value)),
+        CValue::UInt32(value) => Some(Bitvector32Term::int64_from_uint32(value)),
+        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+pub(in crate::kernel) fn promote_c_uint64_path_value(value: CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::UInt64(value) => Some(value),
+        CValue::UInt8(value) | CValue::UInt16(value) | CValue::UInt32(value) => {
+            Some(Bitvector32Term::uint64_from_32(value))
+        }
+        CValue::Int16(value) | CValue::Int32(value) => {
+            Some(Bitvector32Term::uint64_from_int32(value))
+        }
+        CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value)),
         CValue::Void | CValue::Pointer(_) => None,
     }
 }
@@ -127,6 +153,20 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     match (target_type, value) {
         (CType::Int32, CValue::Int16(value) | CValue::UInt8(value) | CValue::UInt16(value)) => {
             Some(CValue::Int32(value))
+        }
+        (CType::Int32, CValue::UInt32(value)) => Some(CValue::Int32(value)),
+        (CType::Int32, CValue::Int64(value)) => {
+            let value = value.int64_as_const()?;
+            let value = i32::try_from(value).ok()?;
+            Some(CValue::Int32(Bitvector32Term::Constant(value as u32)))
+        }
+        (CType::Int32, CValue::UInt64(value)) => {
+            let value = value.uint64_as_const()?;
+            let value = u32::try_from(value).ok()?;
+            if value > i32::MAX as u32 {
+                return None;
+            }
+            Some(CValue::Int32(Bitvector32Term::Constant(value)))
         }
         (
             CType::UInt32,
@@ -184,6 +224,31 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         (CType::UInt8, CValue::Int32(value)) => {
             add_signed_narrowing_obligations(obligations, assumptions, &value, 0, 255, "uint8")?;
             Some(CValue::UInt8(value))
+        }
+        (CType::Int64, CValue::Int64(value)) => Some(CValue::Int64(value)),
+        (
+            CType::Int64,
+            CValue::Int16(value)
+            | CValue::Int32(value)
+            | CValue::UInt8(value)
+            | CValue::UInt16(value),
+        ) => Some(CValue::Int64(Bitvector32Term::int64_from_32(value))),
+        (CType::Int64, CValue::UInt32(value)) => {
+            Some(CValue::Int64(Bitvector32Term::int64_from_uint32(value)))
+        }
+        (CType::UInt64, CValue::UInt64(value)) => Some(CValue::UInt64(value)),
+        (CType::UInt64, CValue::Int64(value)) => {
+            Some(CValue::UInt64(Bitvector32Term::uint64_from_int64(value)))
+        }
+        (
+            CType::UInt64,
+            CValue::Int16(value)
+            | CValue::Int32(value)
+            | CValue::UInt8(value)
+            | CValue::UInt16(value),
+        ) => Some(CValue::UInt64(Bitvector32Term::uint64_from_int32(value))),
+        (CType::UInt64, CValue::UInt32(value)) => {
+            Some(CValue::UInt64(Bitvector32Term::uint64_from_32(value)))
         }
         _ => None,
     }
@@ -494,7 +559,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_and,
+                    CBitwiseOperation::And,
                 )
             },
         )?,
@@ -511,7 +576,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_or,
+                    CBitwiseOperation::Or,
                 )
             },
         )?,
@@ -528,7 +593,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                     facts,
                     obligations,
                     assumptions,
-                    Bitvector32Term::bitwise_xor,
+                    CBitwiseOperation::Xor,
                 )
             },
         )?,
@@ -1205,6 +1270,66 @@ pub(in crate::kernel) fn c_truthiness_paths(
                     add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
                         .expect("unknown truthiness fact should be consistent");
 
+                    vec![
+                        CTruthinessPath {
+                            is_true: true,
+                            facts: true_facts,
+                            obligations: obligations.clone(),
+                        },
+                        CTruthinessPath {
+                            is_true: false,
+                            facts: false_facts,
+                            obligations,
+                        },
+                    ]
+                }
+            }
+        }
+        CValue::Int64(bits) => {
+            let is_zero = ConditionTerm::int64_equal(bits, Bitvector32Term::Int64Constant(0));
+            match decide_with_facts(assumptions, &facts, &is_zero) {
+                Some(is_zero) => vec![CTruthinessPath {
+                    is_true: !is_zero,
+                    facts,
+                    obligations,
+                }],
+                None => {
+                    let mut true_facts = facts.clone();
+                    add_condition_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                        .expect("unknown truthiness fact should be consistent");
+                    let mut false_facts = facts;
+                    add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
+                        .expect("unknown truthiness fact should be consistent");
+                    vec![
+                        CTruthinessPath {
+                            is_true: true,
+                            facts: true_facts,
+                            obligations: obligations.clone(),
+                        },
+                        CTruthinessPath {
+                            is_true: false,
+                            facts: false_facts,
+                            obligations,
+                        },
+                    ]
+                }
+            }
+        }
+        CValue::UInt64(bits) => {
+            let is_zero = ConditionTerm::uint64_equal(bits, Bitvector32Term::UInt64Constant(0));
+            match decide_with_facts(assumptions, &facts, &is_zero) {
+                Some(is_zero) => vec![CTruthinessPath {
+                    is_true: !is_zero,
+                    facts,
+                    obligations,
+                }],
+                None => {
+                    let mut true_facts = facts.clone();
+                    add_condition_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                        .expect("unknown truthiness fact should be consistent");
+                    let mut false_facts = facts;
+                    add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
+                        .expect("unknown truthiness fact should be consistent");
                     vec![
                         CTruthinessPath {
                             is_true: true,

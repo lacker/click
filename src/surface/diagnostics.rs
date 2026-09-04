@@ -207,6 +207,28 @@ pub(super) fn describe_pure_fact(
                 }
                 ConditionTerm::Bitvector32SignedDivideOverflows(_, _) => "division overflow",
                 ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => "left-shift overflow",
+                ConditionTerm::Bitvector64SignedLessThan(_, _) => "int64 signed less-than",
+                ConditionTerm::Bitvector64SignedLessEqual(_, _) => "int64 signed less-or-equal",
+                ConditionTerm::Bitvector64SignedGreaterThan(_, _) => "int64 signed greater-than",
+                ConditionTerm::Bitvector64SignedGreaterEqual(_, _) => {
+                    "int64 signed greater-or-equal"
+                }
+                ConditionTerm::Bitvector64UnsignedLessThan(_, _) => "uint64 less-than",
+                ConditionTerm::Bitvector64UnsignedLessEqual(_, _) => "uint64 less-or-equal",
+                ConditionTerm::Bitvector64UnsignedGreaterThan(_, _) => "uint64 greater-than",
+                ConditionTerm::Bitvector64UnsignedGreaterEqual(_, _) => "uint64 greater-or-equal",
+                ConditionTerm::Bitvector64Equal(_, _) => "64-bit equality",
+                ConditionTerm::Bitvector64SignedAddOverflows(_, _) => "int64 addition overflow",
+                ConditionTerm::Bitvector64SignedSubtractOverflows(_, _) => {
+                    "int64 subtraction overflow"
+                }
+                ConditionTerm::Bitvector64SignedMultiplyOverflows(_, _) => {
+                    "int64 multiplication overflow"
+                }
+                ConditionTerm::Bitvector64SignedDivideOverflows(_, _) => "int64 division overflow",
+                ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _) => {
+                    "int64 left-shift overflow"
+                }
                 ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
                 ConditionTerm::PointerEqual(_, _) => "pointer equality",
                 ConditionTerm::Constant(_) => "constant condition",
@@ -667,6 +689,8 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         C0Type::Int32
         | C0Type::UInt8
         | C0Type::UInt32
+        | C0Type::Int64
+        | C0Type::UInt64
         | C0Type::Int32Pointer
         | C0Type::Int32Array(_) => 4,
         C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => 8,
@@ -774,6 +798,14 @@ pub(super) fn describe_c_value(
                 describe_bitvector_with_context(value, parameters, arguments)
             )
         }
+        CValue::Int64(value) => format!(
+            "{}i64",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        CValue::UInt64(value) => format!(
+            "{}u64",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
         CValue::Pointer(pointer) => describe_pointer(pointer, parameters, arguments),
     }
 }
@@ -883,6 +915,8 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt8 => "load_uint8",
                 CType::UInt16 => "load_uint16",
                 CType::UInt32 => "load_uint32",
+                CType::Int64 => "load_int64",
+                CType::UInt64 => "load_uint64",
                 CType::Int32Pointer => "load_int32_pointer",
                 CType::UInt8Pointer => "load_uint8_pointer",
                 CType::Int32PointerPointer => "load_int32_pointer_pointer",
@@ -1166,6 +1200,8 @@ pub(super) fn describe_bitvector_with_context(
     }
     match term {
         Bitvector32Term::Constant(value) => format!("{}", *value as i32),
+        Bitvector32Term::Int64Constant(value) => format!("{value}i64"),
+        Bitvector32Term::UInt64Constant(value) => format!("{value}u64"),
         // A diagnostic prints the load represented by a load variable,
         // never the kernel variable's id.
         Bitvector32Term::Variable(variable)
@@ -1220,6 +1256,58 @@ pub(super) fn describe_bitvector_with_context(
             describe_binary_bitvector_with_context(left, "^", right, parameters, arguments)
         }
         Bitvector32Term::BitwiseNot(value) => {
+            format!(
+                "~{}",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value) => format!(
+            "cast64({})",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        Bitvector32Term::Int64Add(left, right) | Bitvector32Term::UInt64Add(left, right) => {
+            describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right) => {
+            describe_binary_bitvector_with_context(left, "-", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right) => {
+            describe_binary_bitvector_with_context(left, "*", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64Divide(left, right) | Bitvector32Term::UInt64Divide(left, right) => {
+            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right) => {
+            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            describe_binary_bitvector_with_context(left, "<<", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            describe_binary_bitvector_with_context(left, "&", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            describe_binary_bitvector_with_context(left, "|", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            describe_binary_bitvector_with_context(left, "^", right, parameters, arguments)
+        }
+        Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
             format!(
                 "~{}",
                 describe_bitvector_with_context(value, parameters, arguments)
@@ -1280,6 +1368,21 @@ pub(super) fn describe_parameter_bitvector(
             }
             CExpression::Value(CValue::UInt16(value))
                 if value == term && parameter.c_type() == C0Type::UInt16 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::UInt32(value))
+                if value == term && parameter.c_type() == C0Type::UInt32 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::Int64(value))
+                if value == term && parameter.c_type() == C0Type::Int64 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::UInt64(value))
+                if value == term && parameter.c_type() == C0Type::UInt64 =>
             {
                 return Some(parameter.name().to_string());
             }
@@ -1366,6 +1469,60 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
             )
         }
         ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            format!(
+                "overflow({} << {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+            describe_binary_condition(left, "<", right)
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            describe_binary_condition(left, "<=", right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            describe_binary_condition(left, ">", right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            describe_binary_condition(left, ">=", right)
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            describe_binary_condition(left, "==", right)
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            format!(
+                "overflow({} + {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            format!(
+                "overflow({} - {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            format!(
+                "overflow({} * {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            format!(
+                "overflow({} / {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             format!(
                 "overflow({} << {})",
                 describe_bitvector(left),

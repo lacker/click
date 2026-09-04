@@ -1015,6 +1015,62 @@ pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
             let (left, right) = binary(left, right);
             ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64Equal(left, right)
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right)
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
             Box::new(canonical_offset_term(left)),
             Box::new(canonical_offset_term(right)),
@@ -1062,7 +1118,10 @@ fn substitute_load_variables(
         )
     }
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => term.clone(),
         Bitvector32Term::MemoryLoad(_, _) => match load_variable_for_term(term) {
             Some((variable, load)) => {
                 if let Some(facts) = facts.as_deref_mut() {
@@ -1126,6 +1185,107 @@ fn substitute_load_variables(
         }
         Bitvector32Term::BitwiseNot(value) => {
             Bitvector32Term::BitwiseNot(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::Int64From32(value) => {
+            Bitvector32Term::Int64From32(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::Int64FromUInt32(value) => {
+            Bitvector32Term::Int64FromUInt32(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::UInt64From32(value) => {
+            Bitvector32Term::UInt64From32(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::UInt64FromInt32(value) => {
+            Bitvector32Term::UInt64FromInt32(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::UInt64FromInt64(value) => {
+            Bitvector32Term::UInt64FromInt64(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::Int64BitwiseNot(value) => {
+            Bitvector32Term::Int64BitwiseNot(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::UInt64BitwiseNot(value) => {
+            Bitvector32Term::UInt64BitwiseNot(Box::new(substitute_load_variables(value, facts)))
+        }
+        Bitvector32Term::Int64Add(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64Add(left, right)
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64Subtract(left, right)
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64Multiply(left, right)
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64Divide(left, right)
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64Remainder(left, right)
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64ShiftLeft(left, right)
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        }
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64BitwiseAnd(left, right)
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64BitwiseOr(left, right)
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::Int64BitwiseXor(left, right)
+        }
+        Bitvector32Term::UInt64Add(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64Add(left, right)
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64Subtract(left, right)
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64Multiply(left, right)
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64Divide(left, right)
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64Remainder(left, right)
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64ShiftLeft(left, right)
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64BitwiseAnd(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64BitwiseOr(left, right)
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            Bitvector32Term::UInt64BitwiseXor(left, right)
         }
         Bitvector32Term::If {
             condition,
@@ -1205,6 +1365,62 @@ fn substitute_load_variables_in_condition(
             let (left, right) = binary(left, right, facts);
             ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64Equal(left, right)
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        }
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = binary(left, right, facts);
+            ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right)
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
             Box::new(substitute_load_variables_in_offset(left, facts)),
             Box::new(substitute_load_variables_in_offset(right, facts)),
@@ -1276,7 +1492,10 @@ pub(crate) fn offsets_have_same_canonical_form(
 /// comparators use to answer load-free mismatches without a walk.
 fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
     match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_) => false,
         Bitvector32Term::MemoryLoad(_, _) => true,
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
@@ -1291,6 +1510,35 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
+            term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => term_mentions_a_memory_load(value),
+        Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
         Bitvector32Term::BitwiseNot(value) => term_mentions_a_memory_load(value),
@@ -1325,7 +1573,21 @@ fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -1500,6 +1762,8 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
         CType::UInt16 => Some(memory.symbolic_uint16_load(pointer)),
         CType::UInt32 => Some(memory.symbolic_uint32_load(pointer)),
+        CType::Int64 => Some(memory.symbolic_int64_load(pointer)),
+        CType::UInt64 => Some(memory.symbolic_uint64_load(pointer)),
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer

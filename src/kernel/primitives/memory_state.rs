@@ -163,6 +163,12 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                     Bitvector32Term::Constant(value) => {
                         let _ = write!(identity, "tc{value};");
                     }
+                    Bitvector32Term::Int64Constant(value) => {
+                        let _ = write!(identity, "ti64c{value};");
+                    }
+                    Bitvector32Term::UInt64Constant(value) => {
+                        let _ = write!(identity, "tu64c{value};");
+                    }
                     Bitvector32Term::Variable(variable) => {
                         if !push_registered_load(
                             &mut identity,
@@ -216,6 +222,111 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         identity.push_str("tbn(");
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Int64From32(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "ti64f32",
+                        *value.clone(),
+                        *value,
+                    ),
+                    Bitvector32Term::UInt64From32(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "tu64f32",
+                        *value.clone(),
+                        *value,
+                    ),
+                    Bitvector32Term::Int64FromUInt32(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "ti64fu32",
+                        *value.clone(),
+                        *value,
+                    ),
+                    Bitvector32Term::UInt64FromInt32(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "tu64fi32",
+                        *value.clone(),
+                        *value,
+                    ),
+                    Bitvector32Term::UInt64FromInt64(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "tu64fi64",
+                        *value.clone(),
+                        *value,
+                    ),
+                    Bitvector32Term::Int64BitwiseNot(value) => {
+                        identity.push_str("ti64bn(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::UInt64BitwiseNot(value) => {
+                        identity.push_str("tu64bn(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Int64Add(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64a", *left, *right)
+                    }
+                    Bitvector32Term::Int64Subtract(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64s", *left, *right)
+                    }
+                    Bitvector32Term::Int64Multiply(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64m", *left, *right)
+                    }
+                    Bitvector32Term::Int64Divide(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64d", *left, *right)
+                    }
+                    Bitvector32Term::Int64Remainder(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64r", *left, *right)
+                    }
+                    Bitvector32Term::Int64ShiftLeft(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64l", *left, *right)
+                    }
+                    Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64ar", *left, *right)
+                    }
+                    Bitvector32Term::Int64BitwiseAnd(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64ba", *left, *right)
+                    }
+                    Bitvector32Term::Int64BitwiseOr(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64bo", *left, *right)
+                    }
+                    Bitvector32Term::Int64BitwiseXor(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ti64bx", *left, *right)
+                    }
+                    Bitvector32Term::UInt64Add(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64a", *left, *right)
+                    }
+                    Bitvector32Term::UInt64Subtract(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64s", *left, *right)
+                    }
+                    Bitvector32Term::UInt64Multiply(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64m", *left, *right)
+                    }
+                    Bitvector32Term::UInt64Divide(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64d", *left, *right)
+                    }
+                    Bitvector32Term::UInt64Remainder(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64r", *left, *right)
+                    }
+                    Bitvector32Term::UInt64ShiftLeft(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64l", *left, *right)
+                    }
+                    Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64lr", *left, *right)
+                    }
+                    Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64ba", *left, *right)
+                    }
+                    Bitvector32Term::UInt64BitwiseOr(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64bo", *left, *right)
+                    }
+                    Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tu64bx", *left, *right)
                     }
                     Bitvector32Term::If {
                         condition,
@@ -304,6 +415,130 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                     }
                     ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
                         push_havoc_condition_binary(&mut identity, &mut tasks, "clo", *left, *right)
+                    }
+                    ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64lt",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64le",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64gt",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64ge",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "cu64lt",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "cu64le",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "cu64gt",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "cu64ge",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64Equal(left, right) => push_havoc_condition_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "c64eq",
+                        *left,
+                        *right,
+                    ),
+                    ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64ao",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64so",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64mo",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64do",
+                            *left,
+                            *right,
+                        )
+                    }
+                    ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+                        push_havoc_condition_binary(
+                            &mut identity,
+                            &mut tasks,
+                            "ci64lo",
+                            *left,
+                            *right,
+                        )
                     }
                     ConditionTerm::PointerOffsetEqual(left, right) => {
                         identity.push_str("coe(");
@@ -1674,6 +1909,20 @@ impl CMemory {
 
     pub(in crate::kernel) fn symbolic_uint32_load(&self, pointer: &Pointer) -> CValue {
         uint32(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_int64_load(&self, pointer: &Pointer) -> CValue {
+        CValue::Int64(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_uint64_load(&self, pointer: &Pointer) -> CValue {
+        CValue::UInt64(Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
         ))
