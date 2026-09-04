@@ -101,6 +101,14 @@ fold-unroll, and term-depth limits, and the deadline. The first chunk
 deletes the six never-fired cuts whose inputs already bound the walk
 (the DAG walks and derivation match by strictly decreasing snapshot ids,
 canonicalization and intervals by the term), with scaling regressions.
+The second chunk replaces the constant-normalization node budget with a
+per-walk map of resolved terms (each term the facts connect is resolved
+once; a term met again in progress is a cycle) and the cell-lookup depth
+with a cycle check on the cell (a lookup of a cell already being looked
+up has no answer; distinct cells nest freely). The guard must be built
+only when its key is new: one built eagerly and discarded on the cycle
+path unregistered the outer lookup and let a call-havoc edge's
+frozen-context proof restart without bound, which a unit test pins.
 
 ## Violated invariant
 

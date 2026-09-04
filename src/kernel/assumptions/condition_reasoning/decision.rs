@@ -755,28 +755,31 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Option<i64> {
-        let mut remaining = CONSTANT_NORMALIZATION_SEARCH_LIMIT;
         match self.signed_constant_after_equality_normalization_inner(
             term,
             &mut BTreeSet::new(),
-            &mut remaining,
+            &mut BTreeMap::new(),
         ) {
             SignedConstantResolution::Known(value) => Some(value),
             SignedConstantResolution::Unknown | SignedConstantResolution::Ambiguous => None,
         }
     }
 
+    /// One walk resolves each term once: `resolved` holds the terms the
+    /// walk has finished, `resolving` the terms in progress. A term reached
+    /// again while in progress is a cycle through the equality facts and
+    /// resolves to nothing on that path. The walk's work is therefore the
+    /// number of distinct terms the facts connect to the query, each scanned
+    /// once, with no node budget.
     fn signed_constant_after_equality_normalization_inner(
         &self,
         term: &Bitvector32Term,
         resolving: &mut BTreeSet<Bitvector32Term>,
-        remaining: &mut usize,
+        resolved: &mut BTreeMap<Bitvector32Term, SignedConstantResolution>,
     ) -> SignedConstantResolution {
-        let Some(next) = remaining.checked_sub(1) else {
-            note_search_truncation();
-            return SignedConstantResolution::Unknown;
-        };
-        *remaining = next;
+        if let Some(done) = resolved.get(term) {
+            return done.clone();
+        }
         if let Some(value) = signed_bitvector_constant(term) {
             return SignedConstantResolution::Known(value);
         }
@@ -801,42 +804,42 @@ impl PureFactContext {
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::add,
             ),
             Bitvector32Term::Subtract(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::subtract,
             ),
             Bitvector32Term::Multiply(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::multiply,
             ),
             Bitvector32Term::Divide(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::divide,
             ),
             Bitvector32Term::Remainder(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::remainder,
             ),
             Bitvector32Term::ShiftLeft(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::shift_left,
             ),
             Bitvector32Term::ArithmeticShiftRight(left, right) => self
@@ -844,32 +847,32 @@ impl PureFactContext {
                     left,
                     right,
                     resolving,
-                    remaining,
+                    resolved,
                     Bitvector32Term::arithmetic_shift_right,
                 ),
             Bitvector32Term::BitwiseAnd(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::bitwise_and,
             ),
             Bitvector32Term::BitwiseOr(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::bitwise_or,
             ),
             Bitvector32Term::BitwiseXor(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
-                remaining,
+                resolved,
                 Bitvector32Term::bitwise_xor,
             ),
             Bitvector32Term::BitwiseNot(value) => self
-                .signed_constant_after_equality_normalization_inner(value, resolving, remaining)
+                .signed_constant_after_equality_normalization_inner(value, resolving, resolved)
                 .map(|value| {
                     Bitvector32Term::bitwise_not(Bitvector32Term::Constant(value as i32 as u32))
                 }),
@@ -881,7 +884,7 @@ impl PureFactContext {
                 Some(condition) => self.signed_constant_after_equality_normalization_inner(
                     if condition { then_term } else { else_term },
                     resolving,
-                    remaining,
+                    resolved,
                 ),
                 None => SignedConstantResolution::Unknown,
             },
@@ -924,17 +927,19 @@ impl PureFactContext {
             };
             if plausibly_equal(left) && self.bitvector_terms_proven_equal(term, left) {
                 result = result.merge(self.signed_constant_after_equality_normalization_inner(
-                    right, resolving, remaining,
+                    right, resolving, resolved,
                 ));
             }
             if plausibly_equal(right) && self.bitvector_terms_proven_equal(term, right) {
-                result = result.merge(self.signed_constant_after_equality_normalization_inner(
-                    left, resolving, remaining,
-                ));
+                result =
+                    result.merge(self.signed_constant_after_equality_normalization_inner(
+                        left, resolving, resolved,
+                    ));
             }
         }
 
         resolving.remove(term);
+        resolved.insert(term.clone(), result.clone());
         if let SignedConstantResolution::Known(known) = result
             && let Some(memo_id) = memo_id
         {
@@ -954,13 +959,13 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
         resolving: &mut BTreeSet<Bitvector32Term>,
-        remaining: &mut usize,
+        resolved: &mut BTreeMap<Bitvector32Term, SignedConstantResolution>,
         operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
     ) -> SignedConstantResolution {
         let left =
-            self.signed_constant_after_equality_normalization_inner(left, resolving, remaining);
+            self.signed_constant_after_equality_normalization_inner(left, resolving, resolved);
         let right =
-            self.signed_constant_after_equality_normalization_inner(right, resolving, remaining);
+            self.signed_constant_after_equality_normalization_inner(right, resolving, resolved);
         match (left, right) {
             (SignedConstantResolution::Ambiguous, _) | (_, SignedConstantResolution::Ambiguous) => {
                 SignedConstantResolution::Ambiguous

@@ -1290,15 +1290,41 @@ impl AtomicMemoryLoadEqualityEvidence {
 }
 
 // The hop predicates reach `decide` and the range-disjointness provers,
-// which reach the cell-source provers again. One nested level is allowed —
-// a hop's range certificate may itself need a single DAG hop to match the
-// form of its base — and the cap makes the recursion depth-gated per
-// conventions.md. Answers computed at depth 1 see the cutoff and are never
+// which reach the cell-source provers again. A lookup already in progress
+// for the same cell is a cycle through the facts and has no answer: the
+// cell's source is what the outer lookup is computing, and an answer
+// invented here would let each nested query pose the next one without
+// end. Distinct cells nest freely, bounded by the cells the facts connect
+// to the query. Answers computed inside another lookup may have met an
+// in-progress cell, are weaker than a top-level answer, and are never
 // memoized.
-const CELL_LOOKUP_DEPTH_LIMIT: u8 = 2;
-
 thread_local! {
-    static CELL_LOOKUP_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    static CELL_LOOKUPS_IN_PROGRESS: std::cell::RefCell<
+        std::collections::BTreeSet<((u32, u32), Pointer)>,
+    > = std::cell::RefCell::new(std::collections::BTreeSet::new());
+}
+
+struct CellLookupGuard {
+    key: ((u32, u32), Pointer),
+}
+
+impl CellLookupGuard {
+    fn enter(memory: &SharedCMemory, pointer: &Pointer) -> Option<Self> {
+        let key = (memory.arena_id(), pointer.clone());
+        // `then`, not `then_some`: a guard built eagerly and discarded on
+        // the cycle path would run `drop` and unregister the outer lookup.
+        CELL_LOOKUPS_IN_PROGRESS
+            .with(|lookups| lookups.borrow_mut().insert(key.clone()))
+            .then(|| Self { key })
+    }
+}
+
+impl Drop for CellLookupGuard {
+    fn drop(&mut self) {
+        CELL_LOOKUPS_IN_PROGRESS.with(|lookups| {
+            lookups.borrow_mut().remove(&self.key);
+        });
+    }
 }
 
 /// Walks a snapshot's derivation edges backwards resolving one cell.
@@ -1344,10 +1370,10 @@ pub(super) fn explicit_dag_check_active() -> bool {
 }
 
 /// True outside any memory-DAG cell lookup. Answers computed inside a
-/// lookup see the `CELL_LOOKUP_DEPTH` cutoff and are weaker than the
-/// depth-zero answer, so they must not be memoized under a depth-free key.
+/// lookup may have met an in-progress cell and are weaker than a top-level
+/// answer, so they must not be memoized under a lookup-free key.
 pub(super) fn memory_dag_cell_lookup_depth_is_zero() -> bool {
-    CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0
+    CELL_LOOKUPS_IN_PROGRESS.with(|lookups| lookups.borrow().is_empty())
 }
 
 /// Runs `body` with the extended DAG bridging enabled (see above).
@@ -1474,15 +1500,12 @@ pub(crate) fn cell_epoch_for_load_variable(
         "canonical form",
         "cell epoch walk",
         || {
-            with_cell_lookup_depth(|| {
-                // Declaring a block, forgetting cached cells, or allocating
-                // another block writes nothing; a name must not change across
-                // them, so the naming walk crosses those edges unconditionally.
-                with_extended_dag_bridging(|| {
-                    memory_dag_cell_source(memory, pointer, &PureFactContext::new(), false)
-                        .node()
-                        .clone()
-                })
+            // Declaring a block, forgetting cached cells, or allocating
+            // another block writes nothing; a name must not change across
+            // them, so the naming walk crosses those edges unconditionally.
+            with_extended_dag_bridging(|| {
+                memory_dag_cell_source(memory, pointer, &PureFactContext::new(), false)
+                    .map(|cell| cell.node().clone())
             })
         },
     );
@@ -1536,6 +1559,23 @@ thread_local! {
 }
 
 fn memory_dag_cell_source(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+    cross_loop_havoc: bool,
+) -> Option<MemoryDagCell> {
+    // A lookup of a cell already being looked up is a cycle and has no
+    // answer; see `CELL_LOOKUPS_IN_PROGRESS`.
+    let _lookup = CellLookupGuard::enter(memory, pointer)?;
+    Some(memory_dag_cell_source_walk(
+        memory,
+        pointer,
+        assumptions,
+        cross_loop_havoc,
+    ))
+}
+
+fn memory_dag_cell_source_walk(
     memory: &SharedCMemory,
     pointer: &Pointer,
     assumptions: &PureFactContext,
@@ -1866,12 +1906,10 @@ pub(super) fn memory_load_equality_evidence_at(
             reason: MemoryDagLoadEqualityReason::CommonSource,
         });
     }
-    let Some((left, right)) = with_cell_lookup_depth(|| {
-        (
-            memory_dag_cell_source(left_memory, pointer, assumptions, true),
-            memory_dag_cell_source(right_memory, pointer, assumptions, true),
-        )
-    }) else {
+    let (Some(left), Some(right)) = (
+        memory_dag_cell_source(left_memory, pointer, assumptions, true),
+        memory_dag_cell_source(right_memory, pointer, assumptions, true),
+    ) else {
         return None;
     };
     if left.node() == right.node() {
@@ -1891,18 +1929,6 @@ pub(super) fn memory_load_equality_evidence_at(
         }
         _ => None,
     }
-}
-
-/// Runs `body` one cell-lookup level deeper, or returns `None` at the cap.
-fn with_cell_lookup_depth<T>(body: impl FnOnce() -> T) -> Option<T> {
-    let depth = CELL_LOOKUP_DEPTH.with(std::cell::Cell::get);
-    if depth >= CELL_LOOKUP_DEPTH_LIMIT {
-        return None;
-    }
-    CELL_LOOKUP_DEPTH.with(|cell| cell.set(depth + 1));
-    let result = body();
-    CELL_LOOKUP_DEPTH.with(|cell| cell.set(depth));
-    Some(result)
 }
 
 /// The [`loads_equal_along_memory_derivations_at`] arm as a term-level test:
@@ -1957,9 +1983,9 @@ pub(super) fn atomic_memory_load_equality_evidence(
     // existing snapshots. Cache those positive answers independently of the
     // derivation generation. A negative answer only means "not connected
     // yet", so it remains generation-scoped and is retried after any new
-    // edge. Only depth-zero answers participate: a nested lookup sees the
-    // depth cutoff and its weaker answer must not shadow the full one.
-    let memo_key = (CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0)
+    // edge. Only top-level answers participate: a nested lookup may meet
+    // an in-progress cell and its weaker answer must not shadow the full one.
+    let memo_key = memory_dag_cell_lookup_depth_is_zero()
         .then(|| super::assumptions::dag_memo_assumptions_id(assumptions))
         .map(|assumptions_id| DagLoadEqualityMemoKey {
             assumptions_id,
@@ -1986,30 +2012,27 @@ pub(super) fn atomic_memory_load_equality_evidence(
         memory_load_equality_evidence_at(left_memory, right_memory, left_pointer, assumptions)
             .map(AtomicMemoryLoadEqualityEvidence::SameCell)
             .or_else(|| {
-                with_cell_lookup_depth(|| {
-                    let left_cell =
-                        memory_dag_cell_source(left_memory, left_pointer, assumptions, true);
-                    let right_cell =
-                        memory_dag_cell_source(right_memory, right_pointer, assumptions, true);
-                    if matches!(
-                        left_cell.resolved_value(left_pointer),
-                        Some(CValue::Int32(value)) if &value == right
-                    ) {
-                        Some(AtomicMemoryLoadEqualityEvidence::LeftResolvesToRight {
-                            left: left_cell,
-                        })
-                    } else if matches!(
-                        right_cell.resolved_value(right_pointer),
-                        Some(CValue::Int32(value)) if &value == left
-                    ) {
-                        Some(AtomicMemoryLoadEqualityEvidence::RightResolvesToLeft {
-                            right: right_cell,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
+                let (Some(left_cell), Some(right_cell)) = (
+                    memory_dag_cell_source(left_memory, left_pointer, assumptions, true),
+                    memory_dag_cell_source(right_memory, right_pointer, assumptions, true),
+                ) else {
+                    return None;
+                };
+                if matches!(
+                    left_cell.resolved_value(left_pointer),
+                    Some(CValue::Int32(value)) if &value == right
+                ) {
+                    Some(AtomicMemoryLoadEqualityEvidence::LeftResolvesToRight { left: left_cell })
+                } else if matches!(
+                    right_cell.resolved_value(right_pointer),
+                    Some(CValue::Int32(value)) if &value == left
+                ) {
+                    Some(AtomicMemoryLoadEqualityEvidence::RightResolvesToLeft {
+                        right: right_cell,
+                    })
+                } else {
+                    None
+                }
             });
     if let Some(key) = memo_key {
         if let Some(evidence) = &result {
@@ -2053,15 +2076,12 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
             let Bitvector32Term::MemoryLoad(memory, pointer) = load else {
                 return false;
             };
-            with_cell_lookup_depth(|| {
-                matches!(
-                    memory_dag_cell_source(memory, pointer, assumptions, true)
-                        .resolved_value(pointer),
-                    Some(CValue::Int32(resolved) | CValue::UInt8(resolved))
-                        if resolved == *value
-                )
-            })
-            .unwrap_or(false)
+            matches!(
+                memory_dag_cell_source(memory, pointer, assumptions, true)
+                    .and_then(|cell| cell.resolved_value(pointer)),
+                Some(CValue::Int32(resolved) | CValue::UInt8(resolved))
+                    if resolved == *value
+            )
         };
         resolves_to(left, right) || resolves_to(right, left)
     });
@@ -3534,6 +3554,31 @@ fn effect_pointer_equality_stops_at_the_verification_deadline() {
             &PureFactContext::new(),
         ));
     });
+}
+
+/// A lookup already in progress for a cell refuses re-entry without
+/// unregistering the outer lookup: the guard is built only when its key is
+/// new, so the refused path drops nothing.
+#[cfg(test)]
+#[test]
+fn cell_lookup_guard_refuses_reentry_and_keeps_the_outer_lookup() {
+    let memory = crate::kernel::intern_c_memory(CMemory::new());
+    let pointer = Pointer {
+        block: "cell".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let outer = CellLookupGuard::enter(&memory, &pointer).expect("the first lookup registers");
+    assert!(!memory_dag_cell_lookup_depth_is_zero());
+    assert!(
+        CellLookupGuard::enter(&memory, &pointer).is_none(),
+        "re-entering the cell is a cycle"
+    );
+    assert!(
+        !memory_dag_cell_lookup_depth_is_zero(),
+        "the refused re-entry leaves the outer lookup registered"
+    );
+    drop(outer);
+    assert!(memory_dag_cell_lookup_depth_is_zero());
 }
 
 /// Canonicalizes the loads inside a binary condition so forms differing

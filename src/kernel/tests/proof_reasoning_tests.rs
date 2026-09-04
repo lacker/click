@@ -4871,3 +4871,28 @@ fn signed_intervals_range_sums_of_any_depth() {
         );
     }
 }
+
+/// The constant-normalization walk has no node budget: a constant reached
+/// through a chain of equalities of any length resolves, since the walk
+/// resolves each term once.
+#[test]
+fn constant_normalization_follows_equality_chains_of_any_length() {
+    for length in [16u64, 32, 64, 128] {
+        let variable = |index: u64| Bitvector32Term::Variable(Variable(7_300_000 + index));
+        let mut assumptions = PureFactContext::new();
+        for index in 0..length {
+            let next = if index + 1 == length {
+                Bitvector32Term::Constant(length as u32)
+            } else {
+                variable(index + 1)
+            };
+            assumptions =
+                assumptions.assume_condition(ConditionTerm::equal(variable(index), next), true);
+        }
+        assert_eq!(
+            assumptions.signed_constant_after_equality_normalization(&variable(0)),
+            Some(length as i64),
+            "a chain of {length} equalities resolves to its constant"
+        );
+    }
+}

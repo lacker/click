@@ -483,7 +483,6 @@ pub(crate) fn clear_assumption_memos() {
 // table cannot alias an old id to different contents.
 const ASSUMPTIONS_MEMO_ID_LIMIT: usize = 20_000;
 const DECIDE_MEMO_LIMIT: usize = 500_000;
-const CONSTANT_NORMALIZATION_SEARCH_LIMIT: usize = 32;
 const SIGNED_INTERVAL_MEMO_LIMIT: usize = 100_000;
 
 /// Content-derived memo identity: equal fact sets share an id, and any
