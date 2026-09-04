@@ -3437,11 +3437,11 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
-    let left = normalize_exact_memory_loads_in_pointer_offset(left, assumptions, 0);
+    let left = normalize_exact_memory_loads_in_pointer_offset(left, assumptions);
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
-    let right = normalize_exact_memory_loads_in_pointer_offset(right, assumptions, 0);
+    let right = normalize_exact_memory_loads_in_pointer_offset(right, assumptions);
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
@@ -3456,135 +3456,319 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
 pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
     offset: &PointerOffsetTerm,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> PointerOffsetTerm {
-    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
-        return offset.clone();
+    enum Task {
+        Visit(PointerOffsetTerm),
+        RebuildAdd,
     }
-    match offset {
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
-        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-            normalize_exact_memory_loads_in_pointer_offset(left, assumptions, depth + 1),
-            normalize_exact_memory_loads_in_pointer_offset(right, assumptions, depth + 1),
-        ),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
-            normalize_exact_memory_loads_in_bitvector(value, assumptions, depth + 1),
-            *byte_width,
-        ),
+
+    let mut tasks = vec![Task::Visit(offset.clone())];
+    let mut results = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(offset) => {
+                crate::instrumentation::record_deterministic_work(1);
+                if crate::instrumentation::deadline_exceeded() {
+                    results.push(offset);
+                    continue;
+                }
+                match offset {
+                    PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {
+                        results.push(offset)
+                    }
+                    PointerOffsetTerm::Add(left, right) => {
+                        tasks.push(Task::RebuildAdd);
+                        tasks.push(Task::Visit(*right));
+                        tasks.push(Task::Visit(*left));
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                        results.push(PointerOffsetTerm::scale_int32(
+                            normalize_exact_memory_loads_in_bitvector(&value, assumptions),
+                            byte_width,
+                        ));
+                    }
+                }
+            }
+            Task::RebuildAdd => {
+                let right = results.pop().expect("visited right pointer offset");
+                let left = results.pop().expect("visited left pointer offset");
+                results.push(PointerOffsetTerm::add(left, right));
+            }
+        }
     }
+    results
+        .pop()
+        .expect("normalization produces one pointer offset")
+}
+
+#[derive(Clone, Copy)]
+enum ExactLoadBinary {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    UnsignedDivide,
+    Remainder,
+    UnsignedRemainder,
+    ShiftLeft,
+    ArithmeticShiftRight,
+    LogicalShiftRight,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+}
+
+enum ExactLoadNormalizationTask {
+    Visit(Bitvector32Term),
+    RebuildBinary(ExactLoadBinary),
+    RebuildNot,
+    RebuildIf(ConditionTerm),
+    RebuildPureFunction { name: String, argument_count: usize },
+    LeaveLoad(Bitvector32Term),
 }
 
 pub(super) fn normalize_exact_memory_loads_in_bitvector(
     term: &Bitvector32Term,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> Bitvector32Term {
-    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
-        return term.clone();
+    fn rebuild_binary(
+        operator: ExactLoadBinary,
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Bitvector32Term {
+        match operator {
+            ExactLoadBinary::Add => Bitvector32Term::add(left, right),
+            ExactLoadBinary::Subtract => Bitvector32Term::subtract(left, right),
+            ExactLoadBinary::Multiply => Bitvector32Term::multiply(left, right),
+            ExactLoadBinary::Divide => Bitvector32Term::divide(left, right),
+            ExactLoadBinary::UnsignedDivide => Bitvector32Term::unsigned_divide(left, right),
+            ExactLoadBinary::Remainder => Bitvector32Term::remainder(left, right),
+            ExactLoadBinary::UnsignedRemainder => Bitvector32Term::unsigned_remainder(left, right),
+            ExactLoadBinary::ShiftLeft => Bitvector32Term::shift_left(left, right),
+            ExactLoadBinary::ArithmeticShiftRight => {
+                Bitvector32Term::arithmetic_shift_right(left, right)
+            }
+            ExactLoadBinary::LogicalShiftRight => Bitvector32Term::logical_shift_right(left, right),
+            ExactLoadBinary::BitwiseAnd => Bitvector32Term::bitwise_and(left, right),
+            ExactLoadBinary::BitwiseOr => Bitvector32Term::bitwise_or(left, right),
+            ExactLoadBinary::BitwiseXor => Bitvector32Term::bitwise_xor(left, right),
+        }
     }
-    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        (
-            normalize_exact_memory_loads_in_bitvector(left, assumptions, depth + 1),
-            normalize_exact_memory_loads_in_bitvector(right, assumptions, depth + 1),
-        )
-    };
-    match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
-        Bitvector32Term::Add(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::add(left, right)
-        }
-        Bitvector32Term::Subtract(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::subtract(left, right)
-        }
-        Bitvector32Term::Multiply(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::multiply(left, right)
-        }
-        Bitvector32Term::Divide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::divide(left, right)
-        }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::unsigned_divide(left, right)
-        }
-        Bitvector32Term::Remainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::remainder(left, right)
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::unsigned_remainder(left, right)
-        }
-        Bitvector32Term::ShiftLeft(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::shift_left(left, right)
-        }
-        Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::arithmetic_shift_right(left, right)
-        }
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::logical_shift_right(left, right)
-        }
-        Bitvector32Term::BitwiseAnd(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_and(left, right)
-        }
-        Bitvector32Term::BitwiseOr(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_or(left, right)
-        }
-        Bitvector32Term::BitwiseXor(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_xor(left, right)
-        }
-        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::bitwise_not(
-            normalize_exact_memory_loads_in_bitvector(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::If {
-            condition,
-            then_term,
-            else_term,
-        } => Bitvector32Term::If {
-            condition: condition.clone(),
-            then_term: Box::new(normalize_exact_memory_loads_in_bitvector(
-                then_term,
-                assumptions,
-                depth + 1,
-            )),
-            else_term: Box::new(normalize_exact_memory_loads_in_bitvector(
-                else_term,
-                assumptions,
-                depth + 1,
-            )),
-        },
-        Bitvector32Term::RangeFold { .. } => term.clone(),
-        Bitvector32Term::PureFunctionApplication { name, arguments } => {
-            Bitvector32Term::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        normalize_exact_memory_loads_in_bitvector(argument, assumptions, depth + 1)
-                    })
-                    .collect(),
+
+    fn push_binary(
+        tasks: &mut Vec<ExactLoadNormalizationTask>,
+        operator: ExactLoadBinary,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    ) {
+        tasks.push(ExactLoadNormalizationTask::RebuildBinary(operator));
+        tasks.push(ExactLoadNormalizationTask::Visit(*right));
+        tasks.push(ExactLoadNormalizationTask::Visit(*left));
+    }
+
+    let mut tasks = vec![ExactLoadNormalizationTask::Visit(term.clone())];
+    let mut results = Vec::new();
+    let mut active_loads = std::collections::HashSet::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            ExactLoadNormalizationTask::Visit(term) => {
+                crate::instrumentation::record_deterministic_work(1);
+                if crate::instrumentation::deadline_exceeded() {
+                    results.push(term);
+                    continue;
+                }
+                match term {
+                    Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {
+                        results.push(term)
+                    }
+                    Bitvector32Term::Add(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Add, left, right)
+                    }
+                    Bitvector32Term::Subtract(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Subtract, left, right)
+                    }
+                    Bitvector32Term::Multiply(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Multiply, left, right)
+                    }
+                    Bitvector32Term::Divide(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Divide, left, right)
+                    }
+                    Bitvector32Term::UnsignedDivide(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UnsignedDivide, left, right)
+                    }
+                    Bitvector32Term::Remainder(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::Remainder, left, right)
+                    }
+                    Bitvector32Term::UnsignedRemainder(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::UnsignedRemainder, left, right)
+                    }
+                    Bitvector32Term::ShiftLeft(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::ShiftLeft, left, right)
+                    }
+                    Bitvector32Term::ArithmeticShiftRight(left, right) => push_binary(
+                        &mut tasks,
+                        ExactLoadBinary::ArithmeticShiftRight,
+                        left,
+                        right,
+                    ),
+                    Bitvector32Term::LogicalShiftRight(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::LogicalShiftRight, left, right)
+                    }
+                    Bitvector32Term::BitwiseAnd(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::BitwiseAnd, left, right)
+                    }
+                    Bitvector32Term::BitwiseOr(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::BitwiseOr, left, right)
+                    }
+                    Bitvector32Term::BitwiseXor(left, right) => {
+                        push_binary(&mut tasks, ExactLoadBinary::BitwiseXor, left, right)
+                    }
+                    Bitvector32Term::BitwiseNot(value) => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildNot);
+                        tasks.push(ExactLoadNormalizationTask::Visit(*value));
+                    }
+                    Bitvector32Term::If {
+                        condition,
+                        then_term,
+                        else_term,
+                    } => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildIf(*condition));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*else_term));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*then_term));
+                    }
+                    Bitvector32Term::RangeFold { .. } => results.push(term),
+                    Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                        let argument_count = arguments.len();
+                        tasks.push(ExactLoadNormalizationTask::RebuildPureFunction {
+                            name,
+                            argument_count,
+                        });
+                        for argument in arguments.into_iter().rev() {
+                            tasks.push(ExactLoadNormalizationTask::Visit(argument));
+                        }
+                    }
+                    load @ Bitvector32Term::MemoryLoad(_, _) => {
+                        if !active_loads.insert(load.clone()) {
+                            results.push(load);
+                            continue;
+                        }
+                        let Bitvector32Term::MemoryLoad(memory, pointer) = &load else {
+                            unreachable!()
+                        };
+                        let resolved = match memory.known_value(pointer) {
+                            Some(CValue::Int32(value)) if value != load => Some(value),
+                            _ => assumptions.resolve_memory_load_term(&load),
+                        };
+                        let Some(resolved) = resolved else {
+                            active_loads.remove(&load);
+                            results.push(load);
+                            continue;
+                        };
+                        tasks.push(ExactLoadNormalizationTask::LeaveLoad(load));
+                        tasks.push(ExactLoadNormalizationTask::Visit(resolved));
+                    }
+                }
+            }
+            ExactLoadNormalizationTask::RebuildBinary(operator) => {
+                let right = results.pop().expect("visited right bitvector term");
+                let left = results.pop().expect("visited left bitvector term");
+                results.push(rebuild_binary(operator, left, right));
+            }
+            ExactLoadNormalizationTask::RebuildNot => {
+                let value = results.pop().expect("visited bitwise-not operand");
+                results.push(Bitvector32Term::bitwise_not(value));
+            }
+            ExactLoadNormalizationTask::RebuildIf(condition) => {
+                let else_term = results.pop().expect("visited else term");
+                let then_term = results.pop().expect("visited then term");
+                results.push(Bitvector32Term::If {
+                    condition: Box::new(condition),
+                    then_term: Box::new(then_term),
+                    else_term: Box::new(else_term),
+                });
+            }
+            ExactLoadNormalizationTask::RebuildPureFunction {
+                name,
+                argument_count,
+            } => {
+                let first = results.len() - argument_count;
+                let arguments = results.split_off(first);
+                results.push(Bitvector32Term::PureFunctionApplication { name, arguments });
+            }
+            ExactLoadNormalizationTask::LeaveLoad(load) => {
+                active_loads.remove(&load);
             }
         }
-        Bitvector32Term::MemoryLoad(memory, pointer) => {
-            if let Some(CValue::Int32(value)) = memory.known_value(pointer)
-                && &value != term
-            {
-                return normalize_exact_memory_loads_in_bitvector(&value, assumptions, depth + 1);
-            }
-            let Some(value) = assumptions.resolve_memory_load_term(term) else {
-                return term.clone();
-            };
-            normalize_exact_memory_loads_in_bitvector(&value, assumptions, depth + 1)
-        }
+    }
+    results
+        .pop()
+        .expect("normalization produces one bitvector term")
+}
+
+#[cfg(test)]
+mod exact_load_normalization_tests {
+    use super::*;
+
+    fn load_chain(length: usize, tail: u32) -> Bitvector32Term {
+        let pointer = Pointer {
+            block: "normalization-load-chain".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        (0..length).fold(Bitvector32Term::Constant(tail), |value, _| {
+            let memory = CMemory::new().store(pointer.clone(), CValue::Int32(value));
+            Bitvector32Term::MemoryLoad(intern_c_memory(memory), Box::new(pointer.clone()))
+        })
+    }
+
+    fn nested_add(length: usize, tail: Bitvector32Term) -> Bitvector32Term {
+        (0..length).fold(tail, |term, _| {
+            Bitvector32Term::Add(Box::new(Bitvector32Term::Constant(0)), Box::new(term))
+        })
+    }
+
+    #[test]
+    fn exact_load_normalization_is_complete_past_the_old_depth_limit() {
+        let term = nested_add(80, load_chain(80, 29));
+        assert_eq!(
+            normalize_exact_memory_loads_in_bitvector(&term, &PureFactContext::new()),
+            Bitvector32Term::Constant(29)
+        );
+
+        let offset = (0..80).fold(
+            PointerOffsetTerm::Int32Scaled {
+                value: Box::new(load_chain(80, 7)),
+                byte_width: 4,
+            },
+            |offset, _| {
+                PointerOffsetTerm::Add(Box::new(PointerOffsetTerm::Constant(0)), Box::new(offset))
+            },
+        );
+        assert_eq!(
+            normalize_exact_memory_loads_in_pointer_offset(&offset, &PureFactContext::new()),
+            PointerOffsetTerm::Constant(28)
+        );
+    }
+
+    #[test]
+    fn exact_load_normalization_scales_near_linearly_with_term_size() {
+        let samples = [16, 32, 64, 128]
+            .into_iter()
+            .map(|length| {
+                let term = nested_add(length, load_chain(length, 31));
+                let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    normalize_exact_memory_loads_in_bitvector(&term, &PureFactContext::new())
+                });
+                assert_eq!(result, Bitvector32Term::Constant(31));
+                assert!(work > 0);
+                (length, work)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
+            "exact-load normalization grew faster than near-linearly: {samples:?}"
+        );
     }
 }
 

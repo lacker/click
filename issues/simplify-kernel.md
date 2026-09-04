@@ -69,6 +69,13 @@ for the low-level kernel API, so its contextual theorem constructor was deleted
 with it rather than deprecated or replaced with a compatibility shim. Memory
 resolution retains only its narrower exact, query-bounded distinctness check.
 
+Structural cleanup is now partially complete. Exact-load materialization and
+normalization follow complete acyclic chains with exact cycle detection, using
+iterative term reconstruction where nesting can be deep. Call-havoc write-set
+markers now use a complete iterative, length-delimited structural encoding;
+two write sets that first differ below the former depth limit produce distinct
+memory endpoints. Both walks have multi-size deterministic-work regressions.
+
 ## Current inventory
 
 Counts below are examples / mdtests, times the bound or route fired, measured
@@ -84,32 +91,21 @@ needed.
    (`src/kernel/proof/fact_reasoning.rs`). `signed_term_interval` silently
    returns no interval for a deeper arithmetic term. Walk the complete term
    iteratively and add a multi-size deep-term scaling regression.
-2. **Exact-load materialization hop limits**, two `for _ in 0..64` chases in
-   `src/kernel/assumptions.rs`, and **exact-load normalization depth**, the
-   `depth >= 64` returns in `src/kernel/memory_provenance.rs`. Follow the
-   complete load chain with an in-progress set keyed by the load query; do not
-   treat a long acyclic chain like a cycle.
-3. **Alternating canonicalization rounds**, `CANONICALIZATION_ROUNDS = 3` in
+2. **Alternating canonicalization rounds**, `CANONICALIZATION_ROUNDS = 3` in
    `src/kernel/assumptions.rs`. The result can depend on how many times
    simplification and equality-class selection alternate. Replace it with a
    fixed point that has an explicit monotone measure or cycle check, or define
    one canonical representation computed directly.
-4. **Canonical order endpoint depth**, `CANONICAL_ORDER_ENDPOINT_DEPTH = 6`
+3. **Canonical order endpoint depth**, `CANONICAL_ORDER_ENDPOINT_DEPTH = 6`
    in `src/kernel/assumptions/proposition_reasoning.rs`. This affects the
    endpoint keys used by context-inconsistency reasoning. Traverse the complete
    endpoint and preserve the bucketing/scaling property with regressions.
-5. **Deep-term canonicalization preflight**, `bitvector_term_deeper_than(...,
+4. **Deep-term canonicalization preflight**, `bitvector_term_deeper_than(...,
    64)` in `src/kernel/api.rs`, used to skip canonicalization in proposition
    reasoning. If the purpose is stack safety, make the canonicalizer iterative;
    a depth predicate must not decide whether an otherwise supported fact can
    be proved.
-6. **Havoc write-set identity depth**, the `depth >= 64` encoders in
-   `src/kernel/primitives/memory_state.rs`. They append the same literal
-   `"depth-limit"` for every deeper suffix even though the call-havoc marker is
-   described as a lossless structural key. Replace this with a genuinely
-   lossless structural/interner identity. Treat possible identity collisions as
-   a certificate/API soundness concern, not merely a performance issue.
-7. **Nested quantified-binder comparison**, called with depth eight from
+5. **Nested quantified-binder comparison**, called with depth eight from
    surface theorem application but implemented in
    `src/kernel/proof/fact_reasoning.rs`. It is a generation-side recognizer, not
    theorem authority. Move it to the surface or make the structural comparison
@@ -198,8 +194,10 @@ comparison now use only that narrower predicate for distinctness.
 1. **Complete:** correct the inventory and operational definition in this issue.
 2. **Complete:** delete the general pointer-distinctness fallback, its exported
    contextual constructor, and route-specific tests.
-3. Replace the structural and fixed-point cuts with complete input-sized walks,
-   landing a scaling regression with each change.
+3. **In progress:** replace the structural and fixed-point cuts with complete
+   input-sized walks, landing a scaling regression with each change. Exact-load
+   traversal and havoc write-set identity are complete; the five items still
+   listed above remain.
 4. Move upper-bound split selection to a surface planner that emits checked
    proof branches.
 5. Move finite context splitting to explicit surface branches/certificates and

@@ -1513,7 +1513,7 @@ impl CMemory {
     ) -> Self {
         let normalized_pointer = Pointer {
             block: pointer.block.clone(),
-            offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions, 0),
+            offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions),
         };
         let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
@@ -1523,7 +1523,6 @@ impl CMemory {
                 offset: normalize_exact_memory_loads_in_pointer_offset(
                     &cell_pointer.offset,
                     assumptions,
-                    0,
                 ),
             };
             pointers_proven_distinct_for_memory_resolution(

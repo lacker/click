@@ -1395,8 +1395,8 @@ pub(in crate::kernel) fn apply_c_int32_multiply(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_multiply_overflows(
-        normalize_exact_memory_loads_in_bitvector(&left, assumptions, 0),
-        normalize_exact_memory_loads_in_bitvector(&right, assumptions, 0),
+        normalize_exact_memory_loads_in_bitvector(&left, assumptions),
+        normalize_exact_memory_loads_in_bitvector(&right, assumptions),
     );
     match decide_with_facts(assumptions, &facts, &overflow) {
         Some(true) => vec![CExpressionPath {

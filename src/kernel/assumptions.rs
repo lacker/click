@@ -792,25 +792,9 @@ pub(in crate::kernel) fn pointer_offsets_equal_after_exact_materialization(
 /// markers must match on both sides, so this never equates loads across an
 /// unresolved havoc. Assumption-free.
 fn loads_equal_by_bounded_snapshot_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
-    fn chase(term: &Bitvector32Term) -> Bitvector32Term {
-        let mut current = term.clone();
-        for _ in 0..64 {
-            let Bitvector32Term::MemoryLoad(memory, pointer) = &current else {
-                break;
-            };
-            let Some(CValue::Int32(value)) = memory.known_value(pointer) else {
-                break;
-            };
-            if value == current {
-                break;
-            }
-            current = value;
-        }
-        current
-    }
     let (Some(left_load), Some(right_load)) = (
-        crate::kernel::eval::viewed_as_memory_load(&chase(left)),
-        crate::kernel::eval::viewed_as_memory_load(&chase(right)),
+        crate::kernel::eval::viewed_as_memory_load(&exact_materialized_load_fixed_point(left)),
+        crate::kernel::eval::viewed_as_memory_load(&exact_materialized_load_fixed_point(right)),
     ) else {
         return false;
     };
@@ -834,24 +818,74 @@ fn bitvector_terms_equal_after_exact_materialization(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
-    fn normalize(term: &Bitvector32Term) -> Bitvector32Term {
-        let mut current = term.clone();
-        for _ in 0..64 {
-            let Bitvector32Term::MemoryLoad(memory, pointer) = &current else {
-                break;
-            };
-            let Some(CValue::Int32(value)) = memory.known_value(pointer) else {
-                break;
-            };
-            if value == current {
-                break;
-            }
-            current = value;
-        }
-        current
+    exact_materialized_load_fixed_point(left) == exact_materialized_load_fixed_point(right)
+}
+
+fn exact_materialized_load_fixed_point(term: &Bitvector32Term) -> Bitvector32Term {
+    let mut current = term.clone();
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current.clone()) {
+        crate::instrumentation::record_deterministic_work(1);
+        let Bitvector32Term::MemoryLoad(memory, pointer) = &current else {
+            break;
+        };
+        let Some(CValue::Int32(value)) = memory.known_value(pointer) else {
+            break;
+        };
+        current = value;
+    }
+    current
+}
+
+#[cfg(test)]
+mod exact_materialization_tests {
+    use super::*;
+
+    fn load_chain(length: usize, tail: u32) -> Bitvector32Term {
+        let pointer = Pointer {
+            block: "exact-load-chain".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        (0..length).fold(Bitvector32Term::Constant(tail), |value, _| {
+            let memory = CMemory::new().store(pointer.clone(), CValue::Int32(value));
+            Bitvector32Term::MemoryLoad(intern_c_memory(memory), Box::new(pointer.clone()))
+        })
     }
 
-    normalize(left) == normalize(right)
+    #[test]
+    fn exact_materialization_follows_an_acyclic_chain_past_the_old_hop_limit() {
+        let chain = load_chain(80, 17);
+        assert_eq!(
+            exact_materialized_load_fixed_point(&chain),
+            Bitvector32Term::Constant(17)
+        );
+        assert!(bitvector_terms_equal_after_exact_materialization(
+            &chain,
+            &Bitvector32Term::Constant(17)
+        ));
+    }
+
+    #[test]
+    fn exact_materialization_work_scales_near_linearly_with_chain_length() {
+        let samples = [16, 32, 64, 128]
+            .into_iter()
+            .map(|length| {
+                let chain = load_chain(length, 23);
+                let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    exact_materialized_load_fixed_point(&chain)
+                });
+                assert_eq!(result, Bitvector32Term::Constant(23));
+                assert!(work > 0);
+                (length, work)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
+            "exact materialization grew faster than near-linearly: {samples:?}"
+        );
+    }
 }
 
 fn proposition_has_free_bitvector_variable(proposition: &Proposition, variable: Variable) -> bool {
