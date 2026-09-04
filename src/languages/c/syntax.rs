@@ -589,6 +589,7 @@ pub struct C0Parameter {
     c_type: C0Type,
     name: String,
     volatile: bool,
+    pointee_volatile: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
     /// The ABI width of one element when the source parameter was declared as
@@ -795,6 +796,7 @@ pub enum C0Statement {
         c_type: C0Type,
         name: String,
         volatile: bool,
+        pointee_volatile: bool,
     },
     DeclareStructValue {
         name: String,
@@ -1257,6 +1259,7 @@ impl C0Parameter {
             c_type,
             name,
             volatile: false,
+            pointee_volatile: false,
             struct_name,
             struct_layout: None,
             array_element_width: None,
@@ -1273,6 +1276,10 @@ impl C0Parameter {
 
     pub fn is_volatile(&self) -> bool {
         self.volatile
+    }
+
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
     }
 
     pub fn struct_name(&self) -> Option<&str> {
@@ -1303,13 +1310,16 @@ impl C0Parameter {
                 crate::kernel::CType::UInt8Pointer,
                 layout,
             )
-            .with_volatile(self.is_volatile());
+            .with_volatile(self.is_volatile())
+            .with_pointee_volatile(self.pointee_is_volatile());
         }
         let c_type = self
             .array_element_width
             .map(|_| crate::kernel::CType::UInt8Pointer)
             .unwrap_or_else(|| self.c_type.to_kernel_type());
-        crate::kernel::c_parameter(self.name.clone(), c_type).with_volatile(self.is_volatile())
+        crate::kernel::c_parameter(self.name.clone(), c_type)
+            .with_volatile(self.is_volatile())
+            .with_pointee_volatile(self.pointee_is_volatile())
     }
 }
 
@@ -1334,6 +1344,19 @@ impl C0Type {
                 | Self::Float32PointerPointer
                 | Self::Float64PointerPointer
                 | Self::FunctionPointer(_)
+        )
+    }
+
+    fn is_scalar_pointer(self) -> bool {
+        matches!(
+            self,
+            Self::Int16Pointer
+                | Self::Int32Pointer
+                | Self::UInt8Pointer
+                | Self::UInt16Pointer
+                | Self::UInt32Pointer
+                | Self::Int64Pointer
+                | Self::UInt64Pointer
         )
     }
 
@@ -1425,9 +1448,13 @@ impl C0Statement {
                 c_type,
                 name,
                 volatile,
-            } => {
-                crate::kernel::c_declare_volatile(name.clone(), c_type.to_kernel_type(), *volatile)
-            }
+                pointee_volatile,
+            } => crate::kernel::c_declare_qualified(
+                name.clone(),
+                c_type.to_kernel_type(),
+                *volatile,
+                *pointee_volatile,
+            ),
             Self::DeclareStructValue { name, layout } => crate::kernel::c_declare_aggregate(
                 name.clone(),
                 layout.to_kernel_aggregate_layout(),
@@ -2361,7 +2388,6 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
-    variable_volatiles: BTreeSet<String>,
     unions: BTreeMap<String, C0UnionLayout>,
     /// The names declared in each open lexical scope, innermost last. The
     /// source name is retained for lookup, while `kernel_name` is the
@@ -2447,7 +2473,6 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
-            variable_volatiles: BTreeSet::new(),
             unions: BTreeMap::new(),
             scopes: Vec::new(),
             next_scoped_name: 0,
@@ -2480,18 +2505,7 @@ impl Parser {
             self.variable_struct_values.remove(&binding.kernel_name);
             self.variable_array_shapes.remove(&binding.kernel_name);
             self.variable_types.remove(&binding.kernel_name);
-            self.variable_volatiles.remove(&binding.kernel_name);
         }
-    }
-
-    fn is_volatile_object_name(&self, source_name: &str) -> bool {
-        let kernel_name = self.resolve_name(source_name);
-        self.variable_volatiles.contains(source_name)
-            || self.variable_volatiles.contains(&kernel_name)
-            || self
-                .globals
-                .get(source_name)
-                .is_some_and(C0Global::is_volatile)
     }
 
     fn resolve_name(&self, source_name: &str) -> String {
@@ -3836,10 +3850,13 @@ impl Parser {
                 ));
             }
             if parsed_type.is_volatile
-                && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+                && (parsed_type.struct_name.is_some()
+                    || parsed_type.enum_name.is_some()
+                    || parsed_type.union_name.is_some()
+                    || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
             {
                 return Err(self.error_here(
-                    "the small volatile model supports only direct scalar integer objects",
+                    "the sequential volatile model supports scalar objects and pointers to scalar objects",
                 ));
             }
             if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
@@ -3856,6 +3873,7 @@ impl Parser {
                     c_type,
                     name: kernel_name,
                     volatile: false,
+                    pointee_volatile: false,
                     struct_layout: None,
                     struct_name: None,
                     array_element_width: None,
@@ -3895,10 +3913,9 @@ impl Parser {
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
+            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
+            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
             self.variable_types.insert(kernel_name.clone(), c_type);
-            if parsed_type.is_volatile {
-                self.variable_volatiles.insert(kernel_name.clone());
-            }
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array && !struct_value {
@@ -3915,7 +3932,8 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
-                        volatile: parsed_type.is_volatile,
+                        volatile: object_volatile,
+                        pointee_volatile,
                         struct_layout: struct_value_layout,
                         struct_name,
                         array_element_width: None,
@@ -3941,7 +3959,8 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
-                        volatile: parsed_type.is_volatile,
+                        volatile: object_volatile,
+                        pointee_volatile,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         struct_name,
                         array_element_width: Some(element_width),
@@ -3956,7 +3975,8 @@ impl Parser {
             parameters.push(C0Parameter {
                 c_type,
                 name: kernel_name,
-                volatile: parsed_type.is_volatile,
+                volatile: object_volatile,
+                pointee_volatile,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
@@ -5262,10 +5282,13 @@ impl Parser {
             ));
         }
         if parsed_type.is_volatile
-            && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+            && (parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
         {
             return Err(self.error_here(
-                "the small volatile model supports only direct scalar integer objects",
+                "the sequential volatile model supports scalar objects and pointers to scalar objects",
             ));
         }
         if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
@@ -5285,6 +5308,7 @@ impl Parser {
                 c_type,
                 name: kernel_name.clone(),
                 volatile: false,
+                pointee_volatile: false,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -5406,9 +5430,8 @@ impl Parser {
                 c_type = C0Type::UInt8Pointer;
             }
             self.variable_types.insert(name.clone(), c_type);
-            if parsed_type.is_volatile {
-                self.variable_volatiles.insert(name.clone());
-            }
+            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
+            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
             }
@@ -5432,7 +5455,8 @@ impl Parser {
             let declaration = C0Statement::Declare {
                 c_type,
                 name: name.clone(),
-                volatile: parsed_type.is_volatile,
+                volatile: object_volatile,
+                pointee_volatile,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -5492,9 +5516,14 @@ impl Parser {
     fn parse_static_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect_ident_spelling("static")?;
         let parsed_type = self.parse_type()?;
-        if parsed_type.is_volatile && parsed_type.c_type.is_pointer() {
+        if parsed_type.is_volatile
+            && (parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
+        {
             return Err(self.error_here(
-                "the small volatile model supports only direct scalar integer objects",
+                "the sequential volatile model supports scalar objects and pointers to scalar objects",
             ));
         }
         if parsed_type.struct_name.is_some()
@@ -5550,9 +5579,6 @@ impl Parser {
             } else {
                 self.variable_types
                     .insert(kernel_name.clone(), parsed_type.c_type);
-                if parsed_type.is_volatile {
-                    self.variable_volatiles.insert(kernel_name.clone());
-                }
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
                     let initializer = self.parse_expression()?;
@@ -5821,6 +5847,9 @@ impl Parser {
             let source_name = self.expect_ident("for-loop local name")?;
             let name = self.declare_name(&source_name)?;
             self.variable_types.insert(name.clone(), parsed_type.c_type);
+            let object_volatile = parsed_type.is_volatile && !parsed_type.c_type.is_pointer();
+            let pointee_volatile =
+                parsed_type.is_volatile && parsed_type.c_type.is_scalar_pointer();
             if self.peek() != Some(&Token::Equal) {
                 return Err(self.error_here("for-loop declarations require an initializer"));
             }
@@ -5830,7 +5859,8 @@ impl Parser {
                 Box::new(C0Statement::Declare {
                     c_type: parsed_type.c_type,
                     name: name.clone(),
-                    volatile: parsed_type.is_volatile,
+                    volatile: object_volatile,
+                    pointee_volatile,
                 }),
                 Box::new(C0Statement::Assign { name, expression }),
             ));
@@ -6688,6 +6718,7 @@ impl Parser {
                     c_type: C0Type::Int32,
                     name: target.clone(),
                     volatile: false,
+                    pointee_volatile: false,
                 });
                 prefix.push(C0Statement::If {
                     condition,
@@ -7199,13 +7230,6 @@ impl Parser {
                 return Ok(C0Expression::FunctionAddress(name));
             }
             let target = self.parse_unary()?;
-            if let C0Expression::Variable(name) = &target
-                && self.is_volatile_object_name(name)
-            {
-                return Err(self.error_here(
-                    "the small volatile model does not support taking a volatile object's address",
-                ));
-            }
             return Ok(C0Expression::AddressOf(Box::new(target)));
         }
 

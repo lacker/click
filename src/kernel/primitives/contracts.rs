@@ -7,6 +7,7 @@ impl CParameter {
             c_type,
             aggregate_layout: None,
             volatile: false,
+            pointee_volatile: false,
         }
     }
 
@@ -26,8 +27,17 @@ impl CParameter {
         self.volatile
     }
 
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    pub fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
         self
     }
 

@@ -1338,6 +1338,7 @@ fn pointer_offset_by_elements_paths(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let pointer_type = pointer.c_type();
+    let pointee_volatile = pointer.pointee_volatile();
     let pointer = pointer.into_pointer();
     let result = pointer.offset_by_typed_elements(offset.clone(), byte_width, unsigned, wide);
     let mut guards = Vec::new();
@@ -1370,6 +1371,7 @@ fn pointer_offset_by_elements_paths(
     apply_pointer_formation_guards(
         result,
         pointer_type,
+        pointee_volatile,
         guards,
         facts,
         obligations,
@@ -1386,6 +1388,7 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let pointer_type = pointer.c_type();
+    let pointee_volatile = pointer.pointee_volatile();
     let pointer = pointer.into_pointer();
     if pointer.block.is_function() && bytes != 0 {
         return vec![CExpressionPath {
@@ -1399,6 +1402,7 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     apply_pointer_formation_guards(
         result,
         pointer_type,
+        pointee_volatile,
         guards,
         facts,
         obligations,
@@ -1565,13 +1569,18 @@ fn pointer_index_from_base(
 fn apply_pointer_formation_guards(
     pointer: Pointer,
     pointer_type: CType,
+    pointee_volatile: bool,
     guards: Vec<PointerFormationGuard>,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let mut normal = vec![CExpressionPath {
-        outcome: CExpressionOutcome::Value(CValue::typed_pointer(pointer, pointer_type)),
+        outcome: CExpressionOutcome::Value(CValue::typed_pointer_with_pointee_volatile(
+            pointer,
+            pointer_type,
+            pointee_volatile,
+        )),
         facts,
         obligations,
     }];

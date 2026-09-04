@@ -85,18 +85,8 @@ fn c0_small_volatile_model_preserves_metadata_and_access_facts() {
 }
 
 #[test]
-fn c0_small_volatile_model_rejects_pointer_aliases() {
+fn c0_small_volatile_model_rejects_unsupported_pointer_depth() {
     for (source, expected) in [
-        (
-            r#"
-            int32 alias() {
-                volatile int32 value;
-                int32 *pointer = &value;
-                return *pointer;
-            }
-            "#,
-            "taking a volatile object's address",
-        ),
         (
             r#"
             int32 array() {
@@ -109,11 +99,11 @@ fn c0_small_volatile_model_rejects_pointer_aliases() {
         (
             r#"
             int32 pointer() {
-                volatile int32 *value;
+                volatile int32 **value;
                 return 0;
             }
             "#,
-            "only direct scalar integer objects",
+            "supports scalar objects and pointers to scalar objects",
         ),
         (
             r#"
@@ -131,6 +121,57 @@ fn c0_small_volatile_model_rejects_pointer_aliases() {
             .expect_err("unsupported volatile shapes must remain rejected");
         assert!(error.message().contains(expected), "{}", error.message());
     }
+}
+
+#[test]
+fn c0_pointer_volatile_accesses_preserve_pointee_metadata_and_order() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 pointer_access() {
+            volatile int32 value = 4;
+            volatile int32 *pointer = &value;
+            *pointer = *pointer + 1;
+            return value;
+        }
+
+        int32 pointer_parameter(volatile int32 *pointer) {
+            return *pointer;
+        }
+        "#,
+    )
+    .expect("pointer-qualified volatile scalars should parse");
+
+    let pointer_parameter = &functions[1].parameters()[0];
+    assert!(!pointer_parameter.is_volatile());
+    assert!(pointer_parameter.pointee_is_volatile());
+    let kernel_parameter = functions[1].to_kernel_function().parameters()[0].clone();
+    assert!(!kernel_parameter.is_volatile());
+    assert!(kernel_parameter.pointee_is_volatile());
+
+    let execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[0].to_kernel_function(),
+        Vec::new(),
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(execution.paths().len(), 1);
+    let accesses = execution.paths()[0]
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            crate::kernel::Proposition::Predicate { name, .. }
+                if name.starts_with("__click_volatile_") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 4);
+    assert!(accesses[0].starts_with("__click_volatile_write_"));
+    assert!(accesses[1].starts_with("__click_volatile_read_"));
+    assert!(accesses[2].starts_with("__click_volatile_write_"));
+    assert!(accesses[3].starts_with("__click_volatile_read_"));
 }
 
 #[test]

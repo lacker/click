@@ -10,16 +10,19 @@ use super::*;
 /// shapes outside that index retain the old exact comparison semantics, but
 /// walk every leading quantifier instead of stopping at an opaque depth.
 fn nested_quantified_candidate_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    let indexed = (
+        quantified_equivalence_index_key(left),
+        quantified_equivalence_index_key(right),
+    );
+    if let (Some(left), Some(right)) = &indexed {
+        return left == right;
+    }
     // Preserve the old common-case cost: most candidates differ in at most
     // their outer binder and need only one exact substitution.
     if quantified_binder_equivalent(left, right) {
         return true;
     }
-    match (
-        quantified_equivalence_index_key(left),
-        quantified_equivalence_index_key(right),
-    ) {
-        (Some(left), Some(right)) => left == right,
+    match indexed {
         (None, None) => nested_quantified_exact_fallback(left, right),
         _ => false,
     }

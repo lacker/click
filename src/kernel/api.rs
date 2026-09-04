@@ -883,10 +883,20 @@ pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
 }
 
 pub fn c_declare_volatile(name: impl Into<String>, c_type: CType, volatile: bool) -> CStatement {
+    c_declare_qualified(name, c_type, volatile, false)
+}
+
+pub fn c_declare_qualified(
+    name: impl Into<String>,
+    c_type: CType,
+    volatile: bool,
+    pointee_volatile: bool,
+) -> CStatement {
     CStatement::Declare {
         name: name.into(),
         c_type,
         volatile,
+        pointee_volatile,
     }
 }
 

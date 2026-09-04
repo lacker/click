@@ -1558,11 +1558,13 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // and make pointer preconditions impossible to lower.
         let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())
             .expect("function arguments were type-checked before building contract views");
-        state.locals.set_typed_volatile(
+        let value = value.with_pointer_pointee_volatile(parameter.pointee_is_volatile());
+        state.locals.set_typed_with_qualifiers(
             parameter.name().to_string(),
             value.clone(),
             parameter.c_type(),
             parameter.is_volatile(),
+            parameter.pointee_is_volatile(),
         );
         if let CValue::Pointer(pointer) = &value {
             let element_width = parameter
@@ -1952,26 +1954,29 @@ pub(super) fn bind_c_function_arguments(
             );
             continue;
         }
-        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
+        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?
+            .with_pointer_pointee_volatile(parameter.pointee_is_volatile());
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             callee_state.memory = callee_state
                 .memory
                 .with_block(slot.block.clone(), value.byte_width())
                 .store(slot.clone(), value.clone());
-            callee_state.locals.set_typed_volatile_at(
+            callee_state.locals.set_typed_qualified(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 slot,
                 parameter.is_volatile(),
+                parameter.pointee_is_volatile(),
             );
         } else {
-            callee_state.locals.set_typed_volatile(
+            callee_state.locals.set_typed_with_qualifiers(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 parameter.is_volatile(),
+                parameter.pointee_is_volatile(),
             );
         }
     }

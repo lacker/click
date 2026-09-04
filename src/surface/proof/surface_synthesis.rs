@@ -15,6 +15,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static LAST_SURFACE_SYNTHESIS_EXHAUSTION: std::cell::Cell<Option<&'static str>> =
         const { std::cell::Cell::new(None) };
+    static SURFACE_SYNTHESIS_BITVECTOR_NESTING: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 struct SurfaceSynthesisScope(Option<SurfaceSynthesisBudget>);
@@ -47,6 +49,33 @@ impl Drop for SurfaceSynthesisScope {
 
 struct SurfaceSynthesisFrame {
     counted: bool,
+}
+
+struct SurfaceBitvectorFrame {
+    outermost: bool,
+}
+
+impl SurfaceBitvectorFrame {
+    fn enter() -> Self {
+        let outermost = SURFACE_SYNTHESIS_BITVECTOR_NESTING.with(|depth| {
+            let outermost = depth.get() == 0;
+            depth.set(depth.get() + 1);
+            outermost
+        });
+        Self { outermost }
+    }
+
+    fn is_outermost(&self) -> bool {
+        self.outermost
+    }
+}
+
+impl Drop for SurfaceBitvectorFrame {
+    fn drop(&mut self) {
+        SURFACE_SYNTHESIS_BITVECTOR_NESTING.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
 }
 
 impl SurfaceSynthesisFrame {
@@ -93,6 +122,106 @@ fn consume_surface_synthesis_work(category: &'static str) -> bool {
         budget.remaining_work -= 1;
         true
     })
+}
+
+fn record_surface_synthesis_exhaustion(category: &'static str) {
+    SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+        if let Some(budget) = slot.borrow_mut().as_mut() {
+            budget.exhausted_category.get_or_insert(category);
+        }
+    });
+}
+
+fn bitvector_term_exceeds_depth_limit(root: &Bitvector32Term) -> bool {
+    let mut pending = vec![(root, 0usize)];
+    while let Some((term, depth)) = pending.pop() {
+        if depth >= SURFACE_SYNTHESIS_DEPTH_LIMIT.saturating_sub(1) {
+            return true;
+        }
+        match term {
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right)
+            | Bitvector32Term::Int64Add(left, right)
+            | Bitvector32Term::Int64Subtract(left, right)
+            | Bitvector32Term::Int64Multiply(left, right)
+            | Bitvector32Term::Int64Divide(left, right)
+            | Bitvector32Term::Int64Remainder(left, right)
+            | Bitvector32Term::Int64ShiftLeft(left, right)
+            | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+            | Bitvector32Term::Int64BitwiseAnd(left, right)
+            | Bitvector32Term::Int64BitwiseOr(left, right)
+            | Bitvector32Term::Int64BitwiseXor(left, right)
+            | Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64Multiply(left, right)
+            | Bitvector32Term::UInt64Divide(left, right)
+            | Bitvector32Term::UInt64Remainder(left, right)
+            | Bitvector32Term::UInt64ShiftLeft(left, right)
+            | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                pending.push((left, depth + 1));
+                pending.push((right, depth + 1));
+            }
+            Bitvector32Term::BitwiseNot(value)
+            | Bitvector32Term::Int64From32(value)
+            | Bitvector32Term::Int64FromUInt32(value)
+            | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::UInt64FromInt32(value)
+            | Bitvector32Term::UInt64FromInt64(value)
+            | Bitvector32Term::Int64BitwiseNot(value)
+            | Bitvector32Term::UInt64BitwiseNot(value) => {
+                pending.push((value, depth + 1));
+            }
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => {
+                pending.push((then_term, depth + 1));
+                pending.push((else_term, depth + 1));
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                pending.push((start, depth + 1));
+                pending.push((end, depth + 1));
+                pending.push((initial, depth + 1));
+                pending.push((body, depth + 1));
+            }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                pending.extend(arguments.iter().map(|argument| (argument, depth + 1)));
+            }
+            Bitvector32Term::MemoryLoad(_, pointer) => {
+                if let PointerOffsetTerm::Int32Scaled { value, .. }
+                | PointerOffsetTerm::Int64Scaled { value, .. } = &pointer.offset
+                {
+                    pending.push((value, depth + 1));
+                }
+            }
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Variable(_) => {}
+        }
+    }
+    false
 }
 
 pub(super) fn surface_synthesis_exhaustion_description() -> Option<String> {
@@ -823,6 +952,11 @@ fn synthesize_surface_bitvector(
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
     let _frame = SurfaceSynthesisFrame::enter("bitvector")?;
+    let bitvector_frame = SurfaceBitvectorFrame::enter();
+    if bitvector_frame.is_outermost() && bitvector_term_exceeds_depth_limit(term) {
+        record_surface_synthesis_exhaustion("bitvector");
+        return None;
+    }
     if let Bitvector32Term::Variable(variable) = term
         && let Some(name) = bound_variables.get(variable)
     {

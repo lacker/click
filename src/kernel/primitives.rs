@@ -221,6 +221,7 @@ pub struct Pointer {
 pub struct CPointerValue {
     pointer: Pointer,
     c_type: CType,
+    pointee_volatile: bool,
 }
 
 impl CPointerValue {
@@ -229,7 +230,11 @@ impl CPointerValue {
             c_type.is_pointer(),
             "C pointer values require a pointer type"
         );
-        Self { pointer, c_type }
+        Self {
+            pointer,
+            c_type,
+            pointee_volatile: false,
+        }
     }
 
     pub(crate) fn pointer(&self) -> &Pointer {
@@ -244,8 +249,21 @@ impl CPointerValue {
         self.c_type
     }
 
+    pub(crate) fn pointee_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
     pub(crate) fn with_type(self, c_type: CType) -> Self {
-        Self::new(self.pointer, c_type)
+        Self {
+            pointer: self.pointer,
+            c_type,
+            pointee_volatile: self.pointee_volatile,
+        }
+    }
+
+    pub(crate) fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
+        self
     }
 
     pub(crate) fn replace_pointer(&mut self, pointer: Pointer) {
@@ -392,6 +410,7 @@ pub struct CLValue {
     pub(super) storage: CLValueStorage,
     pub(super) value_type: CType,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -679,6 +698,7 @@ pub enum CStatement {
         name: String,
         c_type: CType,
         volatile: bool,
+        pointee_volatile: bool,
     },
     /// Declare an address-backed scalar-only aggregate. Aggregate values are
     /// not runtime `CValue`s; their local binding exposes the block base so
@@ -815,6 +835,7 @@ pub struct CParameter {
     pub(super) c_type: CType,
     pub(super) aggregate_layout: Option<CAggregateLayout>,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
 }
 
 /// A linked file-scope scalar. Globals use one stable memory block across all
@@ -1302,16 +1323,19 @@ pub(super) enum CLocalBinding {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     UninitializedObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     GlobalObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     ArrayObject {
         element_type: CType,

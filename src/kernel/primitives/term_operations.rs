@@ -1550,9 +1550,26 @@ impl CValue {
         Self::Pointer(CPointerValue::new(pointer, c_type))
     }
 
+    pub(crate) fn typed_pointer_with_pointee_volatile(
+        pointer: Pointer,
+        c_type: CType,
+        pointee_volatile: bool,
+    ) -> Self {
+        Self::Pointer(CPointerValue::new(pointer, c_type).with_pointee_volatile(pointee_volatile))
+    }
+
     pub(crate) fn retag_pointer(self, c_type: CType) -> Self {
         match self {
             Self::Pointer(pointer) => Self::Pointer(pointer.with_type(c_type)),
+            value => value,
+        }
+    }
+
+    pub(crate) fn with_pointer_pointee_volatile(self, pointee_volatile: bool) -> Self {
+        match self {
+            Self::Pointer(pointer) => {
+                Self::Pointer(pointer.with_pointee_volatile(pointee_volatile))
+            }
             value => value,
         }
     }
@@ -1592,7 +1609,7 @@ impl CValue {
 
 impl CLValue {
     pub(in crate::kernel) fn local(name: impl Into<String>, value_type: CType) -> Self {
-        Self::local_with_volatile(name, value_type, false)
+        Self::local_with_qualifiers(name, value_type, false, false)
     }
 
     pub(in crate::kernel) fn local_with_volatile(
@@ -1600,15 +1617,25 @@ impl CLValue {
         value_type: CType,
         volatile: bool,
     ) -> Self {
+        Self::local_with_qualifiers(name, value_type, volatile, false)
+    }
+
+    pub(in crate::kernel) fn local_with_qualifiers(
+        name: impl Into<String>,
+        value_type: CType,
+        volatile: bool,
+        pointee_volatile: bool,
+    ) -> Self {
         Self {
             storage: CLValueStorage::Local { name: name.into() },
             value_type,
             volatile,
+            pointee_volatile,
         }
     }
 
     pub(in crate::kernel) fn memory(pointer: Pointer, value_type: CType) -> Self {
-        Self::memory_with_volatile(pointer, value_type, false)
+        Self::memory_with_qualifiers(pointer, value_type, false, false)
     }
 
     pub(in crate::kernel) fn memory_with_volatile(
@@ -1616,10 +1643,20 @@ impl CLValue {
         value_type: CType,
         volatile: bool,
     ) -> Self {
+        Self::memory_with_qualifiers(pointer, value_type, volatile, false)
+    }
+
+    pub(in crate::kernel) fn memory_with_qualifiers(
+        pointer: Pointer,
+        value_type: CType,
+        volatile: bool,
+        pointee_volatile: bool,
+    ) -> Self {
         Self {
             storage: CLValueStorage::Memory { pointer },
             value_type,
             volatile,
+            pointee_volatile,
         }
     }
 
@@ -1629,6 +1666,10 @@ impl CLValue {
 
     pub(in crate::kernel) fn is_volatile(&self) -> bool {
         self.volatile
+    }
+
+    pub(in crate::kernel) fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
     }
 
     pub(in crate::kernel) fn pointer(&self, state: &CState) -> Option<Pointer> {
