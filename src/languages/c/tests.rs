@@ -1688,6 +1688,69 @@ fn c0_rejects_embedded_struct_values_outside_member_access() {
 }
 
 #[test]
+fn c0_struct_aggregate_lvalues_support_load_copy_argument_and_return() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 flag;
+        };
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+            int32 tail;
+        };
+
+        struct outer clone(struct outer* source) {
+            return *source;
+        }
+
+        void copy_whole(struct outer* destination, struct outer* source) {
+            *destination = *source;
+        }
+
+        void copy_inner(struct outer* destination, struct outer* source) {
+            destination->inner = source->inner;
+        }
+
+        int32 inspect(struct outer value) {
+            return value.inner.value + value.inner.flag + value.tail;
+        }
+
+        int32 pass_loaded(struct outer* source) {
+            return inspect(*source);
+        }
+        "#,
+    )
+    .expect("direct aggregate lvalues should parse in copies, arguments, and returns");
+
+    let clone = functions
+        .iter()
+        .find(|function| function.name() == "clone")
+        .expect("clone function");
+    assert!(matches!(
+        clone.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::AggregateAddress {
+            struct_name,
+            ..
+        }) if struct_name == "outer"
+    ));
+    for name in [
+        "clone",
+        "copy_whole",
+        "copy_inner",
+        "inspect",
+        "pass_loaded",
+    ] {
+        functions
+            .iter()
+            .find(|function| function.name() == name)
+            .expect("parsed aggregate function")
+            .to_kernel_function();
+    }
+}
+
+#[test]
 fn c0_enum_metadata_preserves_named_values_and_field_shape() {
     #[repr(C)]
     struct HostPacket {

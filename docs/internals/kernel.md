@@ -308,9 +308,11 @@ place while nested member lowering adds the inner field offset before emitting
 the kernel's scalar load or store. Taking the address of a modeled scalar leaf
 uses that same typed lvalue path, so the pointer retains the allocation block
 and the combined ABI offset rather than materializing an aggregate value.
-Direct aggregate loads and copies remain unsupported; resource clauses
-currently name nested leaf fields rather than the aggregate itself. Fixed
-multidimensional arrays of embedded structs and supported scalar fields retain
+Direct whole-struct lvalue loads and copies are lowered into typed leaf loads
+and stores using the same address-backed layout; the kernel still never
+represents a struct as a runtime `CValue`. Resource clauses may name embedded
+aggregates directly and expand into typed leaf ranges while preserving their
+field metadata. Fixed multidimensional arrays of embedded structs and supported scalar fields retain
 their declared shapes in C0 metadata. Indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride or the
 scalar field's element-width stride.

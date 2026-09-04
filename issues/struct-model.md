@@ -29,7 +29,10 @@ pointer arithmetic. Embedded fields and fixed-dimensional embedded-struct arrays
 are represented as aggregate places during C0 parsing and are lowered to scalar
 leaf accesses. Resource clauses may name an embedded aggregate directly; the
 surface parser expands that place into typed leaf ranges while preserving each
-leaf's field metadata. Direct aggregate loads and copies remain unsupported.
+leaf's field metadata. Direct whole-struct lvalue loads and copies now use the
+same address-backed typed leaf semantics, including aggregate arguments and
+returns; aggregate initializers and conditional aggregate expressions remain
+unsupported.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
 complete ABI stride. Union
@@ -130,6 +133,11 @@ Staged mdtests, each with an unchanged C file:
     structs and fixed-dimensional embedded-struct arrays expand into disjoint
     typed leaf ranges, including mixed-width fields.~~ Covered by
     `mdtests/struct_aggregate_resources.md` and the surface metadata regression.
+15. ~~Whole-struct lvalue loads and copies (`dst = *src`, `*dst = *src`, and
+    embedded aggregate assignment) lower to recursive typed leaf copies, and
+    direct aggregate arguments and returns preserve address-backed copy
+    semantics.~~ Covered by `mdtests/struct_aggregate_load_copy.md` and the
+    C0 direct-aggregate lvalue regression.
 
 ## Acceptance criteria
 

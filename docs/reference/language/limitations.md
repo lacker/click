@@ -58,8 +58,11 @@ array of such embedded structs: parameters, locals, assignments, and returns
 use fresh address-backed copies, recursively copying nested fields and array
 elements.
 Data-pointer fields are shallow-copied, so their pointer value is shared even
-though the containing struct storage is fresh. Function-pointer fields, unions,
-direct aggregate loads, packed layout, or
+though the containing struct storage is fresh. Whole-struct lvalue loads and
+copies, such as `dst = *src`, `*dst = *src`, and `dst->inner = src->inner`,
+are lowered to typed leaf copies; aggregate arguments and returns use the same
+address-backed representation. Function-pointer fields, unions,
+aggregate initializers, conditional aggregate expressions, packed layout, or
 address-taking of union members remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and

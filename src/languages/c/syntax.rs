@@ -1823,7 +1823,11 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
             ..
         } => *field_type == C0Type::Int32 && field_struct_name.is_some(),
         C0Expression::UnionField { .. } => false,
-        C0Expression::Call { arguments, .. } => arguments.iter().any(contains_aggregate_value),
+        // Call arguments are checked against the callee's parameter shape
+        // while they are parsed. In particular, a direct aggregate lvalue is
+        // valid when the corresponding parameter is a copyable struct, so it
+        // must not be rejected again by the enclosing expression check.
+        C0Expression::Call { .. } => false,
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
         | C0Expression::PointerOffsetBytes {
@@ -2100,6 +2104,7 @@ struct Parser {
     header_mode: bool,
     source_identity: Option<String>,
     abi: CAbi,
+    current_return_struct_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -2177,6 +2182,7 @@ impl Parser {
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
             abi,
+            current_return_struct_name: None,
         })
     }
 
@@ -2496,7 +2502,13 @@ impl Parser {
         &mut self,
         header: C0FunctionHeader,
     ) -> Result<C0Function, C0SyntaxError> {
-        let mut body = self.parse_block_statement()?;
+        let previous_return_struct_name = std::mem::replace(
+            &mut self.current_return_struct_name,
+            header.return_struct_name.clone(),
+        );
+        let body_result = self.parse_block_statement();
+        self.current_return_struct_name = previous_return_struct_name;
+        let mut body = body_result?;
         body = self.lower_call_expressions(body)?;
         self.pop_scope();
         validate_function_returns(&body, header.return_type)?;
@@ -4208,6 +4220,8 @@ impl Parser {
                     self.position += 1;
                     let expression = if self.peek() == Some(&Token::Semicolon) {
                         C0Expression::Void
+                    } else if self.current_return_struct_name.is_some() {
+                        self.parse_expression_allow_direct_aggregate()?
                     } else {
                         self.parse_expression()?
                     };
@@ -4298,7 +4312,7 @@ impl Parser {
                 Some(other) => {
                     if other == "free" && self.peek_next() == Some(&Token::LParen) {
                         self.position += 1;
-                        let arguments = self.parse_call_arguments()?;
+                        let arguments = self.parse_call_arguments(Some("free"))?;
                         self.expect(Token::Semicolon)?;
                         let [pointer] = arguments.as_slice() else {
                             return Err(self.error_here(format!(
@@ -4316,7 +4330,7 @@ impl Parser {
                                 self.error_here("the allocation result may not be discarded")
                             );
                         }
-                        let arguments = self.parse_call_arguments()?;
+                        let arguments = self.parse_call_arguments(Some(&function_name))?;
                         self.expect(Token::Semicolon)?;
                         Ok(C0Statement::Call {
                             function_name,
@@ -4530,12 +4544,12 @@ impl Parser {
                         && self.peek_next() == Some(&Token::LParen)
                     {
                         let function_name = self.expect_ident("function name")?;
-                        let arguments = self.parse_call_arguments()?;
+                        let arguments = self.parse_call_arguments(Some(&function_name))?;
                         let call =
                             self.call_assignment_statement(name.clone(), function_name, arguments)?;
                         C0Statement::Seq(Box::new(declaration), Box::new(call))
                     } else {
-                        let expression = self.parse_expression()?;
+                        let expression = self.parse_expression_allow_direct_aggregate()?;
                         let copy = self.struct_value_copy_statement(&name, expression)?;
                         C0Statement::Seq(Box::new(declaration), Box::new(copy))
                     }
@@ -4613,7 +4627,7 @@ impl Parser {
                 {
                     let call_start = self.position;
                     let function_name = self.expect_ident("function name")?;
-                    let arguments = self.parse_call_arguments()?;
+                    let arguments = self.parse_call_arguments(Some(&function_name))?;
                     if matches!(self.peek(), Some(Token::Comma | Token::Semicolon)) {
                         let call =
                             self.call_assignment_statement(name.clone(), function_name, arguments)?;
@@ -4702,22 +4716,51 @@ impl Parser {
         target: &str,
         expression: C0Expression,
     ) -> Result<C0Statement, C0SyntaxError> {
-        let source = match expression {
-            C0Expression::Variable(name) => name,
-            _ => {
-                return Err(self.error_here(
-                    "struct value initialization and assignment require another struct value",
-                ));
-            }
-        };
         let target_struct = self
             .variable_struct_values
             .get(target)
+            .cloned()
             .ok_or_else(|| self.error_here(format!("`{target}` is not a struct value")))?;
-        let source_struct = self
-            .variable_struct_values
-            .get(&source)
-            .ok_or_else(|| self.error_here("struct value copies require a struct value source"))?;
+        self.aggregate_copy_statement(
+            C0Expression::Variable(target.to_string()),
+            &target_struct,
+            expression,
+        )
+    }
+
+    fn aggregate_copy_statement(
+        &self,
+        target_pointer: C0Expression,
+        target_struct: &str,
+        expression: C0Expression,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let (source_pointer, source_struct) = match expression {
+            C0Expression::Variable(name) => {
+                let source_struct =
+                    self.variable_struct_values
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.error_here("aggregate copies require a struct value source")
+                        })?;
+                (C0Expression::Variable(name), source_struct)
+            }
+            C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } => (*pointer, struct_name),
+            C0Expression::Load(pointer) => {
+                let source_struct = self.struct_pointer_name(&pointer).ok_or_else(|| {
+                    self.error_here("aggregate loads require a pointer to a declared struct")
+                })?;
+                (*pointer, source_struct)
+            }
+            _ => {
+                return Err(self.error_here(
+                    "aggregate copies require another struct value or a direct struct lvalue load",
+                ));
+            }
+        };
         if target_struct != source_struct {
             return Err(self.error_here(format!(
                 "cannot copy `struct {source_struct}` into `struct {target_struct}`"
@@ -4755,12 +4798,8 @@ impl Parser {
                             .expect("validated struct value field offset"),
                     )
                     .expect("validated struct value field offset");
-                let target_pointer = offset_field_pointer(
-                    C0Expression::Variable(target.to_string()),
-                    element_offset,
-                );
-                let source_pointer =
-                    offset_field_pointer(C0Expression::Variable(source.clone()), element_offset);
+                let target_pointer = offset_field_pointer(target_pointer.clone(), element_offset);
+                let source_pointer = offset_field_pointer(source_pointer.clone(), element_offset);
                 stores.push(C0Statement::Store {
                     pointer: target_pointer,
                     value: C0Expression::Field {
@@ -4893,10 +4932,10 @@ impl Parser {
                 && self.peek_next() == Some(&Token::LParen)
             {
                 let function_name = self.expect_ident("function name")?;
-                let arguments = self.parse_call_arguments()?;
+                let arguments = self.parse_call_arguments(Some(&function_name))?;
                 return self.call_assignment_statement(name, function_name, arguments);
             }
-            let expression = self.parse_expression()?;
+            let expression = self.parse_expression_allow_direct_aggregate()?;
             return self.struct_value_copy_statement(&name, expression);
         }
         let expression = match operator {
@@ -4906,7 +4945,7 @@ impl Parser {
                 {
                     let call_start = self.position;
                     let function_name = self.expect_ident("function name")?;
-                    let arguments = self.parse_call_arguments()?;
+                    let arguments = self.parse_call_arguments(Some(&function_name))?;
                     if self.peek() == Some(&Token::Semicolon) {
                         return self.call_assignment_statement(name, function_name, arguments);
                     }
@@ -4998,7 +5037,8 @@ impl Parser {
     ) -> Result<C0Statement, C0SyntaxError> {
         let target = if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            C0Expression::Load(Box::new(self.parse_unary()?))
+            let pointer = self.parse_unary()?;
+            self.dereference_expression(pointer)
         } else {
             self.parse_postfix()?
         };
@@ -5011,6 +5051,14 @@ impl Parser {
             })?,
         };
         if operator == Token::Equal {
+            if let C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } = &target
+            {
+                let value = self.parse_expression_allow_direct_aggregate()?;
+                return self.aggregate_copy_statement(pointer.as_ref().clone(), struct_name, value);
+            }
             let value = self.parse_expression()?;
             return match target {
                 C0Expression::Load(pointer) => Ok(C0Statement::Store {
@@ -5027,9 +5075,9 @@ impl Parser {
                     value,
                     value_type: Some(field_type),
                 }),
-                C0Expression::AggregateAddress { .. } => {
-                    Err(self.error_here("assigning to an embedded struct value is not supported"))
-                }
+                C0Expression::AggregateAddress { .. } => unreachable!(
+                    "aggregate assignment is handled before scalar memory lvalue matching"
+                ),
                 C0Expression::UnionAddress { .. } => {
                     Err(self.error_here("assigning to a tagged union value is not supported"))
                 }
@@ -5248,11 +5296,25 @@ impl Parser {
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let expression = self.parse_conditional()?;
         if contains_aggregate_value(&expression) {
-            return Err(self.error_here(
-                "embedded struct fields are only supported through member access; struct values are not supported, and tagged union values are not runtime aggregates",
-            ));
+            return Err(self.aggregate_expression_error());
         }
         Ok(expression)
+    }
+
+    fn parse_expression_allow_direct_aggregate(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let expression = self.parse_conditional()?;
+        if contains_aggregate_value(&expression)
+            && !matches!(expression, C0Expression::AggregateAddress { .. })
+        {
+            return Err(self.aggregate_expression_error());
+        }
+        Ok(expression)
+    }
+
+    fn aggregate_expression_error(&self) -> C0SyntaxError {
+        self.error_here(
+            "embedded struct fields are only supported through member access or whole-struct lvalue copies; struct values are not scalar expressions, and tagged union values are not runtime aggregates",
+        )
     }
 
     fn fresh_synthesized_call_name(&mut self) -> String {
@@ -5835,7 +5897,10 @@ impl Parser {
         })
     }
 
-    fn parse_call_arguments(&mut self) -> Result<Vec<C0Expression>, C0SyntaxError> {
+    fn parse_call_arguments(
+        &mut self,
+        function_name: Option<&str>,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
         self.expect(Token::LParen)?;
         let mut arguments = Vec::new();
         if self.peek() == Some(&Token::RParen) {
@@ -5844,7 +5909,19 @@ impl Parser {
         }
 
         loop {
-            arguments.push(self.parse_expression()?);
+            let argument_index = arguments.len();
+            let expression = self.parse_expression_allow_direct_aggregate()?;
+            let known_scalar_parameter = function_name
+                .and_then(|name| self.function_declarations.get(name))
+                .and_then(|function| function.parameters.get(argument_index))
+                .is_some_and(|parameter| !parameter.is_struct_value());
+            if known_scalar_parameter && contains_aggregate_value(&expression) {
+                return Err(self.aggregate_expression_error());
+            }
+            if function_name == Some("free") && contains_aggregate_value(&expression) {
+                return Err(self.error_here("`free` requires a pointer, not an aggregate value"));
+            }
+            arguments.push(expression);
             match self.peek() {
                 Some(Token::Comma) => {
                     self.position += 1;
@@ -6134,7 +6211,8 @@ impl Parser {
 
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            return Ok(C0Expression::Load(Box::new(self.parse_unary()?)));
+            let pointer = self.parse_unary()?;
+            return Ok(self.dereference_expression(pointer));
         }
 
         if self.peek() == Some(&Token::Amp) {
@@ -6176,7 +6254,7 @@ impl Parser {
                             ));
                         }
                     };
-                    let arguments = self.parse_call_arguments()?;
+                    let arguments = self.parse_call_arguments(Some(&function_name))?;
                     expression = C0Expression::Call {
                         function_name,
                         arguments,
@@ -6403,11 +6481,31 @@ impl Parser {
                 self.variable_structs.get(name).cloned()
             }
             C0Expression::Field {
-                field_type: C0Type::Int32Pointer,
+                field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 field_struct_name: Some(struct_name),
                 ..
             } => Some(struct_name.clone()),
+            C0Expression::AddressOf(target) => match target.as_ref() {
+                C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
+                C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
+                _ => None,
+            },
+            C0Expression::Cast { expression, .. } => self.struct_pointer_name(expression),
+            C0Expression::Add(left, _) | C0Expression::Subtract(left, _) => {
+                self.struct_pointer_name(left)
+            }
             _ => None,
+        }
+    }
+
+    fn dereference_expression(&self, pointer: C0Expression) -> C0Expression {
+        if let Some(struct_name) = self.struct_pointer_name(&pointer) {
+            C0Expression::AggregateAddress {
+                pointer: Box::new(pointer),
+                struct_name,
+            }
+        } else {
+            C0Expression::Load(Box::new(pointer))
         }
     }
 

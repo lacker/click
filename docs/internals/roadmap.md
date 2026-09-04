@@ -112,7 +112,10 @@ Likely additions:
   allocation provenance, including row-major indexed cells in
   fixed-dimensional scalar-array fields. Remaining work includes struct values
   containing function pointers or unions and address-taking beyond modeled
-  scalar leaves.
+  scalar leaves. Direct whole-struct lvalue loads and copies, including
+  embedded aggregate assignment and aggregate arguments/returns, now lower to
+  the same recursive typed leaf-copy machinery without a runtime aggregate
+  value.
   Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields
