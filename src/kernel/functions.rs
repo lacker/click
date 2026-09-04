@@ -1144,10 +1144,17 @@ fn add_verified_function_ensure_facts(
                 )));
             }
             facts.push(ExecutionPureFact::certified(wrap_path_context(
-                ensure_path.proposition,
+                ensure_path.proposition.clone(),
                 &ensure_path.facts,
                 &[],
             )));
+            add_normalized_verified_ensure_facts(
+                facts,
+                &ensure_path.proposition,
+                &ensure_assumptions,
+                &ensure_path.facts,
+                &ensure_path.obligations,
+            );
         }
         // Preserve the source identity of a named predicate ensure. The
         // expanded `ensure` above is the operational authority; this exact
@@ -1172,6 +1179,63 @@ fn add_verified_function_ensure_facts(
         }
     }
     Ok(())
+}
+
+/// Publishes direct constant equalities that are consequences of a verified
+/// callee ensure and the caller's already-established path facts. Modular
+/// calls intentionally havoc mutable memory, so a later call may see a
+/// symbolic load rather than the previous call's materialized cell. Keeping
+/// the original ensure is sound but can leave the surface certificate with an
+/// arithmetic chain it cannot express as an exact assumption. These derived
+/// equalities preserve the callee's post-state transition without retaining a
+/// pre-havoc cell.
+fn add_normalized_verified_ensure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
+    ensure: &Proposition,
+    ensure_assumptions: &PureFactContext,
+    ensure_facts: &[ExecutionPureFact],
+    ensure_obligations: &[ProofObligation],
+) {
+    if !ensure_obligations.is_empty()
+        || !facts
+            .iter()
+            .any(|fact| matches!(fact.proposition(), Proposition::CMemoryEffectSummary { .. }))
+        || !crate::kernel::eval::proposition_mentions_registered_load_variable(ensure)
+    {
+        return;
+    }
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = ensure
+    else {
+        return;
+    };
+    let assumptions = assumptions_with_path_context(ensure_assumptions, ensure_facts, &[])
+        .assume_proposition(ensure.clone());
+    let Some(left_value) = assumptions.known_signed_constant_after_normalization(left) else {
+        return;
+    };
+    let Some(right_value) = assumptions.known_signed_constant_after_normalization(right) else {
+        return;
+    };
+    if left_value != right_value {
+        return;
+    }
+    let constant = Bitvector32Term::Constant(left_value as i32 as u32);
+    for term in [left.as_ref(), right.as_ref()] {
+        if signed_bitvector_constant(term).is_some() {
+            continue;
+        }
+        let normalized = wrap_path_context(
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(term.clone()), Box::new(constant.clone())),
+                true,
+            ),
+            ensure_facts,
+            &[],
+        );
+        if !facts.iter().any(|fact| fact.proposition() == &normalized) {
+            facts.push(ExecutionPureFact::certified(normalized));
+        }
+    }
 }
 
 fn allocation_continuity(
