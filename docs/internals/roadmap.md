@@ -102,8 +102,10 @@ Likely additions:
   row-major to typed leaf fields with their complete ABI stride; data-pointer
   fields are shallow-copied with their pointee provenance shared. Modeled
   scalar leaf-field address-taking now preserves nested ABI offsets and
-  allocation provenance. Remaining work includes function-pointer- and
-  union-bearing struct values and address-taking beyond modeled scalar leaves.
+  allocation provenance, including row-major indexed cells in
+  fixed-dimensional scalar-array fields. Remaining work includes struct values
+  containing function pointers or unions and address-taking beyond modeled
+  scalar leaves.
   Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields

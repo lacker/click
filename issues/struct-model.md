@@ -12,7 +12,7 @@ fields.
 Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
-are only `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed
+are only `int16`, `int32`, `uint8`, `uint16`, named enum fields,
 fixed-dimensional scalar arrays, recursively embedded structs, or
 fixed-dimensional arrays of embedded structs can be parameters, locals,
 assignments, and returns by value; each operation uses fresh address-backed
@@ -37,9 +37,10 @@ shallow-copied: the pointer cell is copied, while the pointee remains shared.
 Broader struct-value shapes remain. Compiler- or ABI-dependent layout rules
 are tracked in [multiple-compilers.md](multiple-compilers.md).
 Modeled scalar leaf-field addresses now use the same typed lvalue path as field
-loads and stores, so `&p->field` and `&p->inner.field` preserve allocation
-provenance and the combined ABI offset. Address-taking of union members and
-pointer forms for unsupported scalar widths remain outside this slice.
+loads and stores, so `&p->field`, `&p->inner.field`, and indexed scalar-array
+cells preserve allocation provenance and the combined ABI offset. Address-
+taking of union members and pointer forms for unsupported scalar widths remain
+outside this slice.
 Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
@@ -113,6 +114,11 @@ Staged mdtests, each with an unchanged C file:
     survive by-value copies.~~ Covered by
     `mdtests/struct_multidimensional_scalar_array.md` and the C0 shape and
     row-major lowering regressions.
+12. ~~Addresses of cells in fixed-dimensional scalar-array fields preserve
+    row-major offsets, element width, and allocation provenance, and pointer
+    stores update the selected cell.~~ Covered by
+    `mdtests/struct_scalar_array_element_address.md` and the C0 indexed-lvalue
+    address regressions.
 
 ## Acceptance criteria
 

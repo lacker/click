@@ -309,6 +309,9 @@ multidimensional arrays of embedded structs and supported scalar fields retain
 their declared shapes in C0 metadata. Indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride or the
 scalar field's element-width stride.
+Taking the address of an indexed scalar-array cell uses the same typed lvalue
+path, so the resulting pointer retains the containing allocation and points at
+the flattened cell rather than at an aggregate temporary.
 
 Copyable by-value structs are the first exception to that address-first
 boundary. C0 retains each leaf field name, byte offset, and kernel type in a

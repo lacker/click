@@ -4289,6 +4289,217 @@ fn c0_struct_multidimensional_scalar_array_field_flattens_row_major() {
 }
 
 #[test]
+fn c0_struct_scalar_array_element_address_preserves_row_major_offset() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            int32 values[2][3];
+        };
+
+        int32* address_value(struct packet* packet) {
+            return &packet->values[1][2];
+        }
+        "#,
+    )
+    .expect("address of an inline scalar array element should parse");
+
+    let syntax::C0Statement::Return(syntax::C0Expression::AddressOf(target)) = function.body()
+    else {
+        panic!("array element address should remain an address-of lvalue")
+    };
+    let syntax::C0Expression::Index(base, index) = target.as_ref() else {
+        panic!("array element address should target an indexed lvalue")
+    };
+    assert!(matches!(
+        base.as_ref(),
+        syntax::C0Expression::Field {
+            field_type: syntax::C0Type::Int32Array(6),
+            array_shape: Some(shape),
+            ..
+        } if shape == &[2, 3]
+    ));
+    assert!(matches!(
+        index.as_ref(),
+        syntax::C0Expression::Add(left, right)
+            if matches!(left.as_ref(), syntax::C0Expression::Multiply(multiplier, stride)
+                if matches!(multiplier.as_ref(), syntax::C0Expression::Int32Literal(1))
+                    && matches!(stride.as_ref(), syntax::C0Expression::Int32Literal(3)))
+                && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(2))
+    ));
+
+    let crate::kernel::CStatement::Return(crate::kernel::CExpression::AddressOf(target)) =
+        function.body_kernel_statement()
+    else {
+        panic!("array element address should lower to kernel address-of")
+    };
+    let crate::kernel::CExpression::Index(base, index) = target.as_ref() else {
+        panic!("array element address should preserve indexed lvalue lowering")
+    };
+    assert!(matches!(
+        base.as_ref(),
+        crate::kernel::CExpression::TypedLoad {
+            value_type: crate::kernel::CType::Int32Array(6),
+            ..
+        }
+    ));
+    assert!(matches!(
+        index.as_ref(),
+        crate::kernel::CExpression::Add(left, right)
+            if matches!(left.as_ref(), crate::kernel::CExpression::Multiply(multiplier, stride)
+                if matches!(multiplier.as_ref(), crate::kernel::CExpression::Value(value)
+                    if value == &crate::kernel::int32(1))
+                    && matches!(stride.as_ref(), crate::kernel::CExpression::Value(value)
+                        if value == &crate::kernel::int32(3)))
+                && matches!(right.as_ref(), crate::kernel::CExpression::Value(value)
+                    if value == &crate::kernel::int32(2))
+    ));
+}
+
+#[test]
+fn c0_struct_scalar_array_element_address_executes_at_element_width() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            int32 values[2][3];
+        };
+
+        int32 update_value(struct packet* packet) {
+            int32* value_pointer;
+            value_pointer = &packet->values[1][2];
+            *value_pointer = 7;
+            return packet->values[1][2];
+        }
+        "#,
+    )
+    .expect("address of an inline scalar array element should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let value = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(24),
+    };
+    let local_value_pointer = crate::kernel::Pointer {
+        block: "local:value_pointer".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 10);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 28))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("local:value_pointer", 8)
+                .with_block("packet", 28)
+                .store(
+                    local_value_pointer,
+                    crate::kernel::CValue::pointer(value.clone()),
+                )
+                .store(value, crate::kernel::int32(7)),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("address of an inline scalar array element should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_struct_byte_array_element_address_executes_at_byte_width() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            uint8 bytes[3][2];
+        };
+
+        uint8 update_byte(struct packet* packet) {
+            uint8* byte_pointer;
+            byte_pointer = &packet->bytes[2][1];
+            *byte_pointer = 9;
+            return packet->bytes[2][1];
+        }
+        "#,
+    )
+    .expect("address of an inline byte array element should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let byte = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(6),
+    };
+    let local_byte_pointer = crate::kernel::Pointer {
+        block: "local:byte_pointer".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 2);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 8))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("local:byte_pointer", 8)
+                .with_block("packet", 8)
+                .store(
+                    local_byte_pointer,
+                    crate::kernel::CValue::typed_pointer(
+                        byte.clone(),
+                        crate::kernel::CType::UInt8Pointer,
+                    ),
+                )
+                .store(byte, crate::kernel::uint8(9)),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("address of an inline byte array element should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::uint8(9),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_embedded_struct_array_field_preserves_stride_and_accesses_leaf() {
     #[repr(C)]
     struct HostInner {
