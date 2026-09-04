@@ -150,6 +150,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   parameter retains the ABI stride for indexed field loads and stores.
 - `mdtests/struct_by_value_embedded_copy.md`: by-value structs recursively copy
   fields from an embedded struct into fresh address-backed storage.
+- `mdtests/struct_by_value_pointer_copy.md`: by-value structs shallow-copy data
+  pointers while keeping ordinary-field updates isolated.
 - `mdtests/struct_multidimensional_embedded_array.md`: a fixed multidimensional
   array of embedded structs preserves row-major indexing and ABI element stride.
 

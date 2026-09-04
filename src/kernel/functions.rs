@@ -1819,11 +1819,12 @@ pub(super) fn bind_c_function_arguments(
     Some(callee_state)
 }
 
-/// Copy the modeled scalar cells of an address-backed aggregate into a
-/// distinct destination block. Fixed scalar-array fields are copied one cell
-/// at a time. Missing cells in automatic storage remain missing so an
-/// uninitialized source field stays uninitialized in the copy; opaque/external
-/// source cells are represented by typed symbolic loads.
+/// Copy the modeled cells of an address-backed aggregate into a distinct
+/// destination block. Fixed scalar-array fields are copied one cell at a
+/// time. Pointer fields are shallow-copied: the pointer value is duplicated,
+/// but the pointed-to allocation is not. Missing cells in automatic storage
+/// remain missing so an uninitialized source field stays uninitialized in the
+/// copy; opaque/external source cells are represented by typed symbolic loads.
 pub(super) fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
@@ -1835,6 +1836,10 @@ pub(super) fn copy_aggregate_fields(
             CType::Int32 | CType::UInt8 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer => (field.c_type(), 1),
             _ => continue,
         };
         for index in 0..element_count {
@@ -1853,6 +1858,12 @@ pub(super) fn copy_aggregate_fields(
                     return match element_type {
                         CType::Int32 => Some(int32(0)),
                         CType::UInt8 => Some(uint8(0)),
+                        CType::Int32Pointer
+                        | CType::UInt8Pointer
+                        | CType::Int32PointerPointer
+                        | CType::UInt8PointerPointer => {
+                            Some(CValue::typed_pointer(Pointer::null(), element_type))
+                        }
                         _ => None,
                     };
                 }
@@ -1871,6 +1882,26 @@ pub(super) fn copy_aggregate_fields(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
                     ))),
+                    CType::Int32Pointer
+                    | CType::UInt8Pointer
+                    | CType::Int32PointerPointer
+                    | CType::UInt8PointerPointer => {
+                        let pointee_type = element_type.pointee_type()?;
+                        let load = crate::kernel::canonical_form_of_load(
+                            crate::kernel::intern_c_memory(memory.clone()),
+                            source_field.clone(),
+                        );
+                        Some(CValue::typed_pointer(
+                            Pointer {
+                                block: source_field.block.clone(),
+                                offset: PointerOffsetTerm::scale_int32(
+                                    load,
+                                    i64::from(pointee_type.byte_width()),
+                                ),
+                            },
+                            element_type,
+                        ))
+                    }
                     _ => None,
                 }
             });

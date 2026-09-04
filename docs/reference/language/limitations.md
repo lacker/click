@@ -42,11 +42,14 @@ the ABI-sized struct stride.
 One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. Copyable struct values are also supported when
-every field is `int32`, `uint8`, a named enum field, a fixed one-dimensional
+every field is `int32`, `uint8`, a named enum field, a modeled data pointer, a
+fixed one-dimensional
 array of those scalar elements, or an embedded struct whose fields satisfy the
 same rule: parameters, locals, assignments, and returns use fresh
 address-backed copies, recursively copying nested fields and array elements.
-Struct values containing pointers, unions, or arrays of embedded structs remain
+Data-pointer fields are shallow-copied, so their pointer value is shared even
+though the containing struct storage is fresh. Function-pointer fields, unions,
+or arrays of embedded structs remain
 unsupported, as do direct aggregate loads, aggregate resource segments,
 multidimensional inline arrays of scalar fields, bitfields, packed layout, or
 general field-address expressions. Fixed multidimensional arrays of embedded

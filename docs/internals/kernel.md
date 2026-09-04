@@ -295,14 +295,17 @@ their declared shape in C0 metadata; indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride.
 
 Copyable by-value structs are the first exception to that address-first
-boundary. C0 retains each leaf field name, byte offset, and kernel scalar type
-in a flattened `CAggregateLayout`; embedded fields use qualified names such as
+boundary. C0 retains each leaf field name, byte offset, and kernel type in a
+flattened `CAggregateLayout`; embedded fields use qualified names such as
 `inner.value`. The kernel binds a value to an `AggregateObject` with its own
 local block. Parameter binding, local assignment, and aggregate return
-materialization allocate fresh blocks and recursively copy the modeled scalar
-fields and array elements. The aggregate still has no runtime `CValue`:
-expressions decay to its address for field loads and stores, while pointers,
-unions, and arrays of embedded structs remain outside this by-value slice.
+materialization allocate fresh blocks and recursively copy the modeled scalar,
+array, and data-pointer fields. Pointer fields are shallow copies of typed
+eight-byte pointer values: the destination aggregate gets the same pointer
+provenance, not a duplicate pointee allocation or ownership transfer. The
+aggregate still has no runtime `CValue`: expressions decay to its address for
+field loads and stores, while function-pointer fields, unions, and arrays of
+embedded structs remain outside this by-value slice.
 
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an

@@ -1438,7 +1438,7 @@ fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
     assert!(
         copy_error
             .message()
-            .contains("contains a pointer, embedded struct, or union field")
+            .contains("contains a function pointer, embedded struct, or union field")
     );
 }
 
@@ -3596,11 +3596,149 @@ fn c0_struct_values_flatten_embedded_layout_for_recursive_copies() {
 }
 
 #[test]
-fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
-    let error = syntax::parse_function(
+fn c0_struct_values_preserve_pointer_field_layout_metadata() {
+    #[repr(C)]
+    struct HostPacket {
+        data: *mut i32,
+        length: i32,
+    }
+
+    let function = syntax::parse_function(
         r#"
         struct packet {
             int32* data;
+            int32 length;
+        };
+
+        struct packet identity(struct packet value) {
+            return value;
+        }
+        "#,
+    )
+    .expect("data-pointer struct values should parse");
+
+    let packet = function.structs().get("packet").expect("packet layout");
+    assert_eq!(
+        packet.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        packet.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+    assert_eq!(packet.field("data").unwrap().offset_bytes(), 0);
+    assert_eq!(packet.field("length").unwrap().offset_bytes(), 8);
+
+    let kernel = function.to_kernel_function();
+    let layout = kernel.parameters()[0]
+        .aggregate_layout()
+        .expect("pointer-bearing struct parameter should retain aggregate metadata");
+    assert_eq!(layout.size_bytes(), 16);
+    assert_eq!(layout.fields()[0].name(), "data");
+    assert_eq!(layout.fields()[0].offset_bytes(), 0);
+    assert_eq!(
+        layout.fields()[0].c_type(),
+        crate::kernel::CType::Int32Pointer
+    );
+    assert_eq!(layout.fields()[1].name(), "length");
+    assert_eq!(layout.fields()[1].offset_bytes(), 8);
+    assert_eq!(layout.fields()[1].c_type(), crate::kernel::CType::Int32);
+}
+
+#[test]
+fn c0_struct_value_pointer_parameter_and_return_copy_pointee_identity() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            int32* data;
+            int32 length;
+        };
+
+        struct packet bump(struct packet value) {
+            value.length = 7;
+            return value;
+        }
+        "#,
+    )
+    .expect("pointer-bearing struct function should parse")
+    .to_kernel_function();
+
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let data = crate::kernel::Pointer {
+        block: "data".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("packet", 16)
+            .with_block("data", 4)
+            .store(data.clone(), crate::kernel::int32(2))
+            .store(
+                packet.clone(),
+                crate::kernel::CValue::typed_pointer(
+                    data.clone(),
+                    crate::kernel::CType::Int32Pointer,
+                ),
+            )
+            .store(packet.offset_by_bytes(8), crate::kernel::int32(4)),
+    );
+    let arguments = vec![crate::kernel::c_typed_pointer_value(
+        packet.clone(),
+        crate::kernel::CType::UInt8Pointer,
+    )];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state,
+        function,
+        arguments,
+        Default::default(),
+    )
+    .expect("pointer-bearing struct parameter and return should execute");
+
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Pointer(return_pointer),
+                state: final_state,
+            },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected a pointer-bearing aggregate return");
+    };
+    let return_data = return_pointer.pointer().offset_by_bytes(0);
+    assert_eq!(
+        final_state.memory().load(&return_data),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::CValue::typed_pointer(
+            data,
+            crate::kernel::CType::Int32Pointer,
+        ))
+    );
+    assert_eq!(
+        final_state
+            .memory()
+            .load(&return_pointer.pointer().offset_by_bytes(8)),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(7))
+    );
+    assert_eq!(
+        final_state.memory().load(&packet.offset_by_bytes(8)),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(4))
+    );
+}
+
+#[test]
+fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
+    let error = syntax::parse_function(
+        r#"
+        union payload {
+            int32 number;
+            int32* pointer;
+        };
+
+        struct packet {
+            union payload payload;
         };
 
         struct packet invalid(struct packet value) {
@@ -3608,12 +3746,16 @@ fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
         }
         "#,
     )
-    .expect_err("pointer-bearing struct values should remain outside this slice");
+    .expect_err("union-bearing struct values should remain outside this slice");
 
     assert!(error.message().contains(
-        "int32, uint8, named enum fields, fixed scalar arrays, and embedded struct fields"
+        "int32, uint8, named enum fields, fixed scalar arrays, data-pointer fields, and embedded struct fields"
     ));
-    assert!(error.message().contains("contains a pointer"));
+    assert!(
+        error
+            .message()
+            .contains("contains a function pointer, embedded struct, or union field")
+    );
 }
 
 #[test]

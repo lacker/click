@@ -1192,15 +1192,22 @@ impl Parser {
                 )?;
                 continue;
             }
-            if field.struct_name().is_some()
-                || field.union_name().is_some()
+            if field.union_name().is_some()
+                || (field.struct_name().is_some() && !field.c_type().is_pointer())
                 || !matches!(
                     field.c_type(),
-                    C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
+                    C0Type::Int32
+                        | C0Type::UInt8
+                        | C0Type::Int32Array(_)
+                        | C0Type::UInt8Array(_)
+                        | C0Type::Int32Pointer
+                        | C0Type::UInt8Pointer
+                        | C0Type::Int32PointerPointer
+                        | C0Type::UInt8PointerPointer
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, and embedded struct fields; `struct {struct_name}` contains a pointer, embedded struct, or union field"
+                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, embedded struct, or union field"
                 )));
             }
         }

@@ -27,8 +27,10 @@ are represented as aggregate places during C0 parsing and are lowered to scalar
 leaf accesses; direct aggregate loads, copies, and aggregate resource segments
 remain unsupported. Union members use
 overlapping layout and read-only typed loads; union writes, whole-union values,
-and by-value containers with pointers, unions, or embedded-struct arrays remain
-rejected. Bitfields and broader struct-value
+and by-value containers with function pointers, unions, or embedded-struct
+arrays remain rejected. Data-pointer fields in by-value containers are
+shallow-copied: the pointer cell is copied, while the pointee remains shared.
+Bitfields and broader struct-value
 shapes remain. Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
@@ -67,8 +69,8 @@ Staged mdtests, each with an unchanged C file:
    aliasing).~~ Covered by `mdtests/struct_by_value_scalar_copy.md` and the
    C0/kernel aggregate-layout metadata test. Named enum fields in that shape
    are covered by `mdtests/struct_by_value_enum_copy.md` and
-   `mdtests/struct_by_value_array_copy.md`; pointer and embedded-field value
-   shapes remain open.
+   `mdtests/struct_by_value_array_copy.md`; embedded-struct-array value shapes
+   remain open.
 5. ~~A union of `int32` and `int32*` with a tag field, read only through the
    active member.~~ Covered by `mdtests/struct_tagged_union.md` and the C0
    union-layout/read-only-boundary tests. Arbitrary tag-to-member mappings are
@@ -81,17 +83,22 @@ Staged mdtests, each with an unchanged C file:
 7. ~~A struct containing an embedded struct passed and returned by value,
    with nested updates isolated from the caller.~~ Covered by
    `mdtests/struct_by_value_embedded_copy.md` and the flattened aggregate
-   layout test; pointer-bearing and embedded-struct-array value shapes remain
-   open.
+   layout test; embedded-struct-array value shapes remain open.
+8. ~~A struct containing an `int32*` field passed and returned by value, with
+   pointer bits copied shallowly and pointee writes remaining shared.~~ Covered
+   by `mdtests/struct_by_value_pointer_copy.md` and the C0/kernel aggregate
+   metadata and copy tests.
 
 ## Acceptance criteria
 
-- Field types extend to every supported scalar and to fixed arrays, embedded
-  structs, and enums; layout follows the documented LP64 rules and is tested
-  against `repr(C)`.
+- Field types extend to every supported scalar, data pointer, fixed arrays,
+  embedded structs, and enums; layout follows the documented LP64 rules and is
+  tested against `repr(C)`.
 - Copyable struct-by-value parameters, locals, assignments, and returns are
   modeled as recursive copies with their own local blocks; leaf field names,
-  offsets, and scalar types remain in flattened aggregate metadata.
+  offsets, and scalar/pointer types remain in flattened aggregate metadata.
+- Data-pointer fields in those copies preserve the exact pointer value and
+  provenance without copying the pointee or transferring ownership.
 - Unions and bitfields are either modeled with explicit rules or rejected with
   a diagnostic that names the unsupported construct; no silent approximation.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.
