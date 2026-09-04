@@ -86,14 +86,17 @@ Likely additions:
 - Basic ASCII string literal support now lowers to null-terminated, read-only
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
-- Remaining static-storage work: designated aggregate initializers, other
-  linkage forms, immutable global tables, and initialization ordering. Fixed-size
+- Remaining static-storage work: other linkage forms, immutable global tables,
+  and initialization ordering. Static scalar-field aggregates now accept
+  out-of-order `.field = literal` designators, and their fixed-size
+  one-dimensional arrays accept `[literal] = {...}` element designators with
+  static zero fill. Fixed-size
   one-dimensional scalar global arrays now use stable cross-translation-unit
   or translation-unit-private storage with literal/zero element
   initialization. Fixed-size one-dimensional arrays of supported scalar-field
   aggregates now use the same stable linkage and ABI-sized element storage;
-  designated, incomplete, multidimensional, and dynamically initialized
-  aggregate tables remain open.
+  non-literal designators, incomplete, multidimensional, and dynamically
+  initialized aggregate tables remain open.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use

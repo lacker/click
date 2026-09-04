@@ -5766,10 +5766,30 @@ impl Parser {
     ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         let mut initializers = Vec::new();
-        let mut element_index = 0u32;
+        let mut next_element_index = 0u32;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                if element_index == length {
+                let element_index = if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    let index = self.parse_aggregate_array_designator(object_name, length)?;
+                    self.expect(Token::Equal)?;
+                    next_element_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate array designator index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::Dot) {
+                        return Err(self.error_here(
+                            "aggregate array initializers support only array index designators",
+                        ));
+                    }
+                    let index = next_element_index;
+                    next_element_index = next_element_index
+                        .checked_add(1)
+                        .expect("validated aggregate array initializer index");
+                    index
+                };
+                if element_index >= length {
                     return Err(self.error_here(format!(
                         "too many initializers for aggregate array `{object_name}[{length}]`"
                     )));
@@ -5787,7 +5807,6 @@ impl Parser {
                     struct_name,
                     base_offset,
                 )?);
-                element_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -5814,6 +5833,46 @@ impl Parser {
         Ok(initializers)
     }
 
+    fn parse_aggregate_array_designator(
+        &mut self,
+        object_name: &str,
+        length: u32,
+    ) -> Result<u32, C0SyntaxError> {
+        let index = match self.next() {
+            Some(Token::Number(number)) => {
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid aggregate array designator index `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(magnitude).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "aggregate array designator index `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(Token::CharLiteral(value)) => u32::from(value),
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "aggregate array designators currently require integer literals, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self.error_here(
+                    "aggregate array designators currently require an integer literal",
+                ));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        if index >= length {
+            return Err(self.error_here(format!(
+                "aggregate array designator index `{index}` is out of bounds for `{object_name}[{length}]`"
+            )));
+        }
+        Ok(index)
+    }
+
     fn parse_aggregate_initializer_level(
         &mut self,
         object_name: &str,
@@ -5825,31 +5884,51 @@ impl Parser {
             .get(struct_name)
             .expect("validated aggregate initializer has a layout")
             .fields
-            .values()
-            .cloned()
+            .iter()
+            .map(|(name, field)| (name.clone(), field.clone()))
             .collect::<Vec<_>>();
-        fields.sort_by_key(|field| field.offset_bytes);
+        fields.sort_by_key(|(_, field)| field.offset_bytes);
 
         self.expect(Token::LBrace)?;
         let mut initializers = Vec::new();
-        let mut field_index = 0usize;
+        let mut next_field_index = 0usize;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                let Some(field) = fields.get(field_index) else {
+                let field_index = if self.peek() == Some(&Token::Dot) {
+                    self.position += 1;
+                    let field_name = self.expect_ident("aggregate field name")?;
+                    self.expect(Token::Equal)?;
+                    let Some(index) = fields.iter().position(|(name, _)| name == &field_name)
+                    else {
+                        return Err(self.error_here(format!(
+                            "unknown field `{field_name}` in `struct {struct_name}` initializer"
+                        )));
+                    };
+                    next_field_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::LBracket) {
+                        return Err(self.error_here(
+                            "struct aggregate initializers support only field designators",
+                        ));
+                    }
+                    let index = next_field_index;
+                    next_field_index = next_field_index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                };
+                let Some((_, field)) = fields.get(field_index) else {
                     return Err(self
                         .error_here(format!("too many initializers for `struct {struct_name}`")));
                 };
-                if matches!(self.peek(), Some(Token::Dot | Token::LBracket)) {
-                    return Err(
-                        self.error_here("designated aggregate initializers are not supported")
-                    );
-                }
                 initializers.extend(self.parse_aggregate_initializer_field(
                     object_name,
                     base_offset,
                     field,
                 )?);
-                field_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;

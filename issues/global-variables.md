@@ -54,7 +54,10 @@ for initialized cross-file and function-private aggregate state,
 `mdtests/initialized_aggregate_static_arrays.md` for initialized aggregate
 arrays with cross-file, file-scope-static, and function-local-static storage,
 and `mdtests/aggregate_array_static_effect.md` for rejecting an unauthorized
-indexed aggregate-array write. The three
+indexed aggregate-array write, and
+`mdtests/designated_aggregate_static_objects.md` for designated field and
+array-element initialization across external, file-scope-static, and
+function-local-static storage. The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
@@ -72,19 +75,21 @@ propagation, and indirect-write rejection.
   array block, initialized element-by-element with omitted values set to zero;
   external definitions are shared across translation units and file-scope
   `static` arrays are translation-unit-private.
-- The parser accepts zero-initialized or positionally initialized struct
-  globals and function-local struct statics whose layouts contain supported
-  scalar leaf fields, links compatible external declarations to one
-  definition, zero-fills omitted leaves, and rejects designated initializers.
+- The parser accepts zero-initialized, positionally initialized, or designated
+  struct globals and function-local struct statics whose layouts contain
+  supported scalar leaf fields, links compatible external declarations to one
+  definition, and zero-fills omitted leaves. Designated fields use literal
+  scalar values and may appear in any order.
 - The kernel materializes each supported aggregate as one stable typed-field
   block, using global linkage or function-qualified static storage, applies
-  explicit positional initializer cells once after zero-filling, and keeps
-  that state across calls.
+  explicit initializer cells once after zero-filling, and keeps that state
+  across calls.
 - The parser accepts fixed-size one-dimensional arrays of supported struct
   aggregates at file scope and as function-local statics, requires nested
-  positional element groups, links compatible external declarations to one
-  definition, and zero-fills omitted fields and elements. Multidimensional,
-  incomplete, designated, and dynamic-initialization forms remain rejected.
+  element groups, links compatible external declarations to one definition,
+  accepts literal `[index] = {...}` element designators, and zero-fills omitted
+  fields and elements. Non-literal designators, multidimensional, incomplete,
+  and dynamic-initialization forms remain rejected.
 - The kernel materializes each aggregate array as one stable byte-addressed
   block with complete ABI element stride, zero-fills every leaf, applies
   explicit initializer cells once, and preserves the block across calls.
@@ -107,9 +112,10 @@ propagation, and indirect-write rejection.
   explicit footprint. Array elements use ordinary indexed memory ranges, and a
   global write not named in `mutable` is rejected. Aggregate-array indexed
   fields use the same ABI offsets and effect checks. String literals remain
-  read-only through copied pointers; designated initializers and
-  multidimensional/incomplete arrays, dynamic or non-literal initialization,
-  initialization ordering, and wider literal forms remain open.
+  read-only through copied pointers; automatic/local aggregate designators,
+  non-literal designators, multidimensional/incomplete arrays, dynamic or
+  non-literal initialization, initialization ordering, and wider literal forms
+  remain open.
 - `scripts/check.sh` passes.
 
 Related: [multi-function-files-and-headers.md](multi-function-files-and-headers.md).

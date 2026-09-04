@@ -472,6 +472,90 @@ fn c0_collects_aggregate_arrays() {
 }
 
 #[test]
+fn c0_collects_designated_static_aggregate_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared = {.ready = 1, .value = 7};
+        struct state table[3] = {
+            [2] = {.value = 9},
+            [0] = {.ready = 1}
+        };
+
+        int32 read() {
+            static struct state local = {.value = 3};
+            static struct state entries[3] = {
+                [1] = {.ready = 1, .value = 4}
+            };
+            return shared.value + table[0].ready + table[2].value
+                + local.value + entries[1].value;
+        }
+        "#,
+    )
+    .expect("designated static aggregate initializers should parse");
+
+    let function = &functions[0];
+    let global = &function.global_aggregates()["shared"];
+    let global_initializers = global.initializer().expect("global initializer");
+    assert_eq!(global_initializers.len(), 2);
+    assert_eq!(global_initializers[0].offset_bytes(), 4);
+    assert_eq!(global_initializers[1].offset_bytes(), 0);
+
+    let array = &function.global_aggregate_arrays()["table"];
+    let array_initializers = array.initializer().expect("global array initializer");
+    assert_eq!(array_initializers.len(), 2);
+    assert_eq!(array_initializers[0].offset_bytes(), 16);
+    assert_eq!(array_initializers[1].offset_bytes(), 4);
+
+    let local = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("local aggregate initializer");
+    assert_eq!(local.initializer().len(), 1);
+    assert_eq!(local.initializer()[0].offset_bytes(), 0);
+
+    let local_array = function
+        .static_aggregate_arrays()
+        .values()
+        .next()
+        .expect("local aggregate array initializer");
+    assert_eq!(local_array.initializer().len(), 2);
+    assert_eq!(local_array.initializer()[0].offset_bytes(), 12);
+    assert_eq!(local_array.initializer()[1].offset_bytes(), 8);
+}
+
+#[test]
+fn c0_rejects_unsupported_static_aggregate_designators() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; struct state shared = {.missing = 1}; int32 read() { return 0; }",
+            "unknown field `missing`",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[2] = {1}}; int32 read() { return 0; }",
+            "out of bounds",
+        ),
+        (
+            "int32 index; struct state { int32 value; }; struct state shared[2] = {[index] = {1}}; int32 read() { return 0; }",
+            "require integer literals",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[0] = {[0] = 1}}; int32 read() { return 0; }",
+            "only field designators",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported static aggregate designators must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_rejects_unsupported_aggregate_array_initializers() {
     for (source, expected) in [
         (
@@ -5043,36 +5127,41 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
 }
 
 #[test]
-fn c0_rejects_unsupported_designated_struct_initializer_forms() {
-    for source in [
-        r#"
-        struct packet {
-            int32 value;
-        };
+fn c0_rejects_unsupported_static_aggregate_initializer_forms() {
+    for (source, expected) in [
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
 
-        struct packet packet = {.value = 1};
+            struct packet packets[2] = {.value = 1};
 
-        int32 read() {
-            return packet.value;
-        }
-        "#,
-        r#"
-        struct packet {
-            int32 value;
-        };
+            int32 read() {
+                return packets[0].value;
+            }
+            "#,
+            "only array index designators",
+        ),
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
 
-        int32 read() {
-            static struct packet packet = {.value = 1};
-            return packet.value;
-        }
-        "#,
+            int32 index;
+
+            int32 read() {
+                static struct packet packets[2] = {[index] = {.value = 1}};
+                return packets[0].value;
+            }
+            "#,
+            "require integer literals",
+        ),
     ] {
         let error = syntax::parse_functions(source)
-            .expect_err("static and file-scope designated initializers remain unsupported");
-        assert_eq!(
-            error.message(),
-            "designated aggregate initializers are not supported"
-        );
+            .expect_err("unsupported static aggregate initializer forms must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
     }
 }
 
