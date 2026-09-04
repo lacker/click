@@ -724,7 +724,7 @@ fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option
                 unsigned: false,
             })
         }),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 
@@ -2486,9 +2486,9 @@ pub(in crate::kernel) fn declare_local(
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
-        CType::Int64 | CType::UInt64 => 8,
+        CType::Int64 | CType::UInt64 | CType::Float64 => 8,
         CType::UInt8 => 1,
-        CType::UInt32 => 4,
+        CType::UInt32 | CType::Float32 => 4,
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -2503,6 +2503,10 @@ pub(in crate::kernel) fn declare_local(
         | CType::UInt32PointerPointer
         | CType::Int64PointerPointer
         | CType::UInt64PointerPointer
+        | CType::Float32Pointer
+        | CType::Float64Pointer
+        | CType::Float32PointerPointer
+        | CType::Float64PointerPointer
         | CType::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
             let pointer = CMemory::local_pointer(name);
@@ -2570,6 +2574,26 @@ pub(in crate::kernel) fn declare_local(
             state
                 .locals
                 .set_array_object(name.to_string(), CType::UInt64, length);
+            return state;
+        }
+        CType::Float32Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(4));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Float32, length);
+            return state;
+        }
+        CType::Float64Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(8));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Float64, length);
             return state;
         }
     };

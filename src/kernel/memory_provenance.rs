@@ -264,6 +264,8 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(&term)),
             CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(&term)),
             CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(&term)),
+            CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(&term)),
+            CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::typed_pointer(
                 canonicalize_pointer_loads(pointer.pointer()),
                 pointer.c_type(),
@@ -3592,7 +3594,9 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
                 | CValue::UInt32(term)
                 | CValue::Int64(term)
                 | CValue::UInt64(term) => term.clone(),
-                CValue::Void | CValue::Pointer(_) => return None,
+                CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => {
+                    return None;
+                }
             };
             Some(Proposition::ConditionIs(
                 ConditionTerm::Bitvector32Equal(
@@ -3620,6 +3624,8 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
                 CValue::Int32(_) | CValue::UInt32(_) => 4,
                 CValue::Int64(_) | CValue::UInt64(_) => 8,
                 CValue::Pointer(_) => 4,
+                CValue::Float32(_) => 4,
+                CValue::Float64(_) => 8,
             };
             Some(Proposition::CMemoryLoadable {
                 memory: store.after.clone(),

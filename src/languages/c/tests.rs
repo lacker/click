@@ -6326,3 +6326,140 @@ fn c0_memory_safety_demo_fill_three_ints() {
         }
     );
 }
+
+#[test]
+fn c0_floating_point_storage_types_preserve_abi_layout() {
+    let parsed = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            float value;
+            double total;
+            float samples[2];
+            double wide_samples[2];
+        };
+
+        double identity(float input, double value) {
+            float local;
+            local = input;
+            return value;
+        }
+        "#,
+    )
+    .expect("floating-point storage declarations should parse");
+    let function = parsed.to_kernel_function();
+
+    assert_eq!(function.return_type(), crate::kernel::CType::Float64);
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        crate::kernel::CType::Float32
+    );
+    assert_eq!(
+        function.parameters()[1].c_type(),
+        crate::kernel::CType::Float64
+    );
+
+    let layout = parsed.structs().get("packet").expect("packet layout");
+    assert_eq!(layout.field("tag").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("value").unwrap().offset_bytes(), 4);
+    assert_eq!(layout.field("value").unwrap().byte_width(), 4);
+    assert_eq!(layout.field("total").unwrap().offset_bytes(), 8);
+    assert_eq!(layout.field("total").unwrap().byte_width(), 8);
+    assert_eq!(layout.field("samples").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.field("samples").unwrap().byte_width(), 8);
+    assert_eq!(layout.field("wide_samples").unwrap().offset_bytes(), 24);
+    assert_eq!(layout.field("wide_samples").unwrap().byte_width(), 16);
+    assert_eq!(layout.alignment_bytes(), 8);
+    assert_eq!(layout.size_bytes(), 40);
+}
+
+#[test]
+fn c0_floating_point_literals_use_declared_binary_formats() {
+    let single = syntax::parse_function("float single() { return 1.5f; }")
+        .expect("binary32 literal should parse");
+    assert_eq!(
+        single.body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float32Literal(1.5f32.to_bits(),))
+    );
+
+    let double = syntax::parse_function("double double_value() { return 1.5; }")
+        .expect("binary64 literal should parse");
+    assert_eq!(
+        double.body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float64Literal(1.5f64.to_bits(),))
+    );
+
+    let hex = syntax::parse_function("double hex() { return 0x1.0p0; }")
+        .expect_err("hexadecimal floating-point literals must remain unsupported");
+    assert!(
+        hex.to_string()
+            .contains("hexadecimal floating-point literals are not supported in C0")
+    );
+
+    let suffix = syntax::parse_function("double extended() { return 1.0L; }")
+        .expect_err("long-double literal suffix must remain unsupported");
+    assert!(
+        suffix
+            .to_string()
+            .contains("long double literals are not modeled in C0")
+    );
+}
+
+#[test]
+fn c0_floating_point_storage_initializers_cover_static_local_arrays_and_calloc() {
+    let functions = syntax::parse_functions(
+        r#"
+        float file_value = 1.5f;
+        double file_zero;
+
+        float load_storage() {
+            static float stored = 2.5f;
+            float local_values[2] = {1.5f};
+            double wide_values[2] = {2.5};
+            return stored;
+        }
+
+        float* allocate_storage() {
+            float* values;
+            values = calloc(2, sizeof(float));
+            return values;
+        }
+        "#,
+    )
+    .expect("floating-point storage initializers should parse");
+
+    let load = &functions[0];
+    assert_eq!(
+        load.globals()["file_value"].initializer(),
+        Some(&syntax::C0Expression::Float32Literal(1.5f32.to_bits()))
+    );
+    assert_eq!(
+        load.globals()["file_zero"].initializer(),
+        Some(&syntax::C0Expression::Float64Literal(0))
+    );
+    let stored = load
+        .static_locals()
+        .values()
+        .next()
+        .expect("static floating-point local");
+    assert_eq!(
+        stored.initializer(),
+        &syntax::C0Expression::Float32Literal(2.5f32.to_bits())
+    );
+    assert_eq!(
+        load.to_kernel_function().static_variables()[0].initial_value(),
+        &crate::kernel::CValue::Float32(
+            crate::kernel::Bitvector32Term::Constant(2.5f32.to_bits(),)
+        )
+    );
+
+    let allocate = functions
+        .iter()
+        .find(|function| function.name() == "allocate_storage")
+        .expect("floating-point allocator function");
+    assert_eq!(allocate.return_type(), syntax::C0Type::Float32Pointer);
+    assert_eq!(
+        allocate.to_kernel_function().return_type(),
+        crate::kernel::CType::Float32Pointer
+    );
+}

@@ -146,7 +146,12 @@ pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvecto
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
         | CValue::UInt32(bits) => Some(simp_bitvector(bits)),
-        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::Int64(_)
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -157,7 +162,11 @@ fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
             Some(Bitvector32Term::int64_from_32(bits.clone()))
         }
         CValue::UInt32(bits) => Some(Bitvector32Term::int64_from_uint32(bits.clone())),
-        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -169,7 +178,7 @@ fn promoted_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
             Some(Bitvector32Term::uint64_from_int32(bits.clone()))
         }
         CValue::UInt32(bits) => Some(Bitvector32Term::uint64_from_32(bits.clone())),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 

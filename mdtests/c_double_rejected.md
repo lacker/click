@@ -1,8 +1,8 @@
-# C0 rejects floating-point declarations
+# C0 rejects unsupported floating-point literal forms
 
 ```c filename=c_double_rejected.c
 int32 c_double_rejected() {
-    double value;
+    double value = 0x1.0p0;
     return 0;
 }
 ```
@@ -16,5 +16,5 @@ int32 c_double_rejected() {
 ```
 
 ```expect
-fail: unsupported C type `double`: floating-point values are not modeled in C0
+fail: hexadecimal floating-point literals are not supported in C0
 ```

@@ -24,13 +24,60 @@ fn collect_offset_load_variables_from_value(
         | CValue::UInt16(term)
         | CValue::UInt32(term)
         | CValue::Int64(term)
-        | CValue::UInt64(term) => {
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => {
             collect_offset_load_variables_from_term(term, load_variables);
         }
         CValue::Pointer(pointer) => {
             collect_offset_load_variables_from_offset(&pointer.offset, load_variables);
         }
     }
+}
+
+#[test]
+fn floating_values_keep_their_declared_width_and_opaque_payload() {
+    let float_pointer = Pointer {
+        block: "float-storage".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let float_value = CValue::Float32(Bitvector32Term::Constant(0x8000_0000));
+    let float_memory = CMemory::new()
+        .with_block("float-storage", 4)
+        .store(float_pointer.clone(), float_value.clone());
+    assert_eq!(float_value.c_type(), CType::Float32);
+    assert_eq!(float_value.byte_width(), 4);
+    assert!(CType::Float32.accepts(&float_value));
+    assert_eq!(
+        float_memory.load(&float_pointer),
+        CExpressionOutcome::Value(float_value.clone())
+    );
+    assert_eq!(
+        float_memory.symbolic_float32_load(&float_pointer).c_type(),
+        CType::Float32
+    );
+
+    let double_pointer = Pointer {
+        block: "double-storage".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let double_value = CValue::Float64(Bitvector32Term::UInt64Constant(0x7ff8_0000_0000_0001));
+    let double_memory = CMemory::new()
+        .with_block("double-storage", 8)
+        .store(double_pointer.clone(), double_value.clone());
+    assert_eq!(double_value.c_type(), CType::Float64);
+    assert_eq!(double_value.byte_width(), 8);
+    assert!(CType::Float64.accepts(&double_value));
+    assert_eq!(
+        double_memory.load(&double_pointer),
+        CExpressionOutcome::Value(double_value)
+    );
+    assert_eq!(
+        double_memory
+            .symbolic_float64_load(&double_pointer)
+            .c_type(),
+        CType::Float64
+    );
 }
 
 /// Walks a term in value position: load atoms are legitimate here, but

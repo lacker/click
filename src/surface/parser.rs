@@ -1152,6 +1152,8 @@ impl Parser {
                 C0Type::Int64
             }
             "uint64" | "unsigned long" | "size_t" | "uint64_t" => C0Type::UInt64,
+            "float" => C0Type::Float32,
+            "double" => C0Type::Float64,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
@@ -1194,11 +1196,6 @@ impl Parser {
                 return Err(self.error(
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
-            }
-            "float" | "double" => {
-                return Err(self.error(format!(
-                    "unsupported C type `{spelling}`: floating-point values are not modeled in C0"
-                )));
             }
             "volatile" => {
                 return Err(self.error("the `volatile` qualifier is not supported in C0"));
@@ -1273,16 +1270,24 @@ impl Parser {
                         | C0Type::UInt32
                         | C0Type::Int64
                         | C0Type::UInt64
+                        | C0Type::Float32
+                        | C0Type::Float64
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
+                        | C0Type::Float32Array(_)
+                        | C0Type::Float64Array(_)
                         | C0Type::Int32Pointer
                         | C0Type::UInt8Pointer
+                        | C0Type::Float32Pointer
+                        | C0Type::Float64Pointer
                         | C0Type::Int32PointerPointer
                         | C0Type::UInt8PointerPointer
+                        | C0Type::Float32PointerPointer
+                        | C0Type::Float64PointerPointer
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
+                    "struct-by-value currently supports modeled integer and floating-point fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
                 )));
             }
         }

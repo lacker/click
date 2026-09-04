@@ -244,7 +244,21 @@ impl C0Global {
 
     pub(crate) fn to_kernel_global(&self) -> Option<crate::kernel::CGlobal> {
         let initializer = self.initializer.as_ref()?;
-        let value = kernel_integer_literal_value(self.c_type, initializer)?;
+        let value = match self.c_type {
+            C0Type::Float32 => match initializer {
+                C0Expression::Float32Literal(bits) => {
+                    crate::kernel::float32(crate::kernel::Bitvector32Term::Constant(*bits))
+                }
+                _ => return None,
+            },
+            C0Type::Float64 => match initializer {
+                C0Expression::Float64Literal(bits) => {
+                    crate::kernel::float64(crate::kernel::Bitvector32Term::UInt64Constant(*bits))
+                }
+                _ => return None,
+            },
+            _ => kernel_integer_literal_value(self.c_type, initializer)?,
+        };
         Some(
             crate::kernel::CGlobal::new_with_kernel_name(
                 self.name.clone(),
@@ -365,6 +379,8 @@ fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
         C0Type::UInt32 => C0Type::UInt32Array(length),
         C0Type::Int64 => C0Type::Int64Array(length),
         C0Type::UInt64 => C0Type::UInt64Array(length),
+        C0Type::Float32 => C0Type::Float32Array(length),
+        C0Type::Float64 => C0Type::Float64Array(length),
         _ => return None,
     })
 }
@@ -373,18 +389,24 @@ fn kernel_integer_literal_value(
     c_type: C0Type,
     initializer: &C0Expression,
 ) -> Option<crate::kernel::CValue> {
-    let bits = match initializer {
-        C0Expression::Int32Literal(value) => *value,
-        C0Expression::UInt8Literal(value) => u32::from(*value),
-        C0Expression::UInt32Literal(value) => *value,
-        _ => return None,
-    };
     Some(match c_type {
-        C0Type::Int16 => crate::kernel::int16(bits),
-        C0Type::Int32 => crate::kernel::int32(bits),
-        C0Type::UInt8 => crate::kernel::uint8(bits),
-        C0Type::UInt16 => crate::kernel::uint16(bits),
-        C0Type::UInt32 => crate::kernel::uint32(bits),
+        C0Type::Float32 => match initializer {
+            C0Expression::Float32Literal(bits) => {
+                crate::kernel::float32(crate::kernel::Bitvector32Term::Constant(*bits))
+            }
+            _ => return None,
+        },
+        C0Type::Float64 => match initializer {
+            C0Expression::Float64Literal(bits) => {
+                crate::kernel::float64(crate::kernel::Bitvector32Term::UInt64Constant(*bits))
+            }
+            _ => return None,
+        },
+        C0Type::Int16 => crate::kernel::int16(initializer_integer_bits(initializer)?),
+        C0Type::Int32 => crate::kernel::int32(initializer_integer_bits(initializer)?),
+        C0Type::UInt8 => crate::kernel::uint8(initializer_integer_bits(initializer)?),
+        C0Type::UInt16 => crate::kernel::uint16(initializer_integer_bits(initializer)?),
+        C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(initializer)?),
         _ => return None,
     })
 }
@@ -513,18 +535,24 @@ impl C0StaticLocal {
     }
 
     pub(crate) fn to_kernel_static(&self) -> Option<crate::kernel::CStaticLocal> {
-        let bits = match &self.initializer {
-            C0Expression::Int32Literal(value) => *value,
-            C0Expression::UInt8Literal(value) => u32::from(*value),
-            C0Expression::UInt32Literal(value) => *value,
-            _ => return None,
-        };
         let value = match self.c_type {
-            C0Type::Int16 => crate::kernel::int16(bits),
-            C0Type::Int32 => crate::kernel::int32(bits),
-            C0Type::UInt8 => crate::kernel::uint8(bits),
-            C0Type::UInt16 => crate::kernel::uint16(bits),
-            C0Type::UInt32 => crate::kernel::uint32(bits),
+            C0Type::Float32 => match &self.initializer {
+                C0Expression::Float32Literal(bits) => {
+                    crate::kernel::float32(crate::kernel::Bitvector32Term::Constant(*bits))
+                }
+                _ => return None,
+            },
+            C0Type::Float64 => match &self.initializer {
+                C0Expression::Float64Literal(bits) => {
+                    crate::kernel::float64(crate::kernel::Bitvector32Term::UInt64Constant(*bits))
+                }
+                _ => return None,
+            },
+            C0Type::Int16 => crate::kernel::int16(initializer_integer_bits(&self.initializer)?),
+            C0Type::Int32 => crate::kernel::int32(initializer_integer_bits(&self.initializer)?),
+            C0Type::UInt8 => crate::kernel::uint8(initializer_integer_bits(&self.initializer)?),
+            C0Type::UInt16 => crate::kernel::uint16(initializer_integer_bits(&self.initializer)?),
+            C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(&self.initializer)?),
             _ => return None,
         };
         Some(
@@ -536,6 +564,23 @@ impl C0StaticLocal {
             )
             .with_volatile(self.is_volatile()),
         )
+    }
+}
+
+fn initializer_integer_bits(initializer: &C0Expression) -> Option<u32> {
+    match initializer {
+        C0Expression::Int32Literal(value) => Some(*value),
+        C0Expression::UInt8Literal(value) => Some(u32::from(*value)),
+        C0Expression::UInt32Literal(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn zero_initializer(c_type: C0Type) -> C0Expression {
+    match c_type {
+        C0Type::Float32 => C0Expression::Float32Literal(0),
+        C0Type::Float64 => C0Expression::Float64Literal(0),
+        _ => C0Expression::Int32Literal(0),
     }
 }
 
@@ -628,6 +673,8 @@ pub enum C0Type {
     UInt32,
     Int64,
     UInt64,
+    Float32,
+    Float64,
     Int16Pointer,
     UInt16Pointer,
     Int32Pointer,
@@ -635,6 +682,8 @@ pub enum C0Type {
     UInt32Pointer,
     Int64Pointer,
     UInt64Pointer,
+    Float32Pointer,
+    Float64Pointer,
     Int16PointerPointer,
     UInt16PointerPointer,
     Int32PointerPointer,
@@ -642,6 +691,8 @@ pub enum C0Type {
     UInt32PointerPointer,
     Int64PointerPointer,
     UInt64PointerPointer,
+    Float32PointerPointer,
+    Float64PointerPointer,
     /// A callback signature identified by a stable, structural signature key.
     /// The key is shared with the kernel type and is deliberately opaque to
     /// ordinary C expressions: function pointers are callable, not objects.
@@ -653,6 +704,8 @@ pub enum C0Type {
     UInt32Array(u32),
     Int64Array(u32),
     UInt64Array(u32),
+    Float32Array(u32),
+    Float64Array(u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -672,6 +725,8 @@ impl CAbi {
             (Self::Lp64, C0Type::UInt16) => (2, 2),
             (Self::Lp64, C0Type::UInt32) => (4, 4),
             (Self::Lp64, C0Type::Int64 | C0Type::UInt64) => (8, 8),
+            (Self::Lp64, C0Type::Float32) => (4, 4),
+            (Self::Lp64, C0Type::Float64) => (8, 8),
             (
                 Self::Lp64,
                 C0Type::Int32Pointer
@@ -681,13 +736,17 @@ impl CAbi {
                 | C0Type::UInt32Pointer
                 | C0Type::Int64Pointer
                 | C0Type::UInt64Pointer
+                | C0Type::Float32Pointer
+                | C0Type::Float64Pointer
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
-                | C0Type::UInt64PointerPointer,
+                | C0Type::UInt64PointerPointer
+                | C0Type::Float32PointerPointer
+                | C0Type::Float64PointerPointer,
             ) => (8, 8),
             (Self::Lp64, C0Type::FunctionPointer(_)) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
@@ -699,6 +758,8 @@ impl CAbi {
             (Self::Lp64, C0Type::Int64Array(length) | C0Type::UInt64Array(length)) => {
                 (length.saturating_mul(8), 8)
             }
+            (Self::Lp64, C0Type::Float32Array(length)) => (length.saturating_mul(4), 4),
+            (Self::Lp64, C0Type::Float64Array(length)) => (length.saturating_mul(8), 8),
         }
     }
 }
@@ -845,6 +906,12 @@ pub enum C0Expression {
     UInt32Literal(u32),
     Int64Literal(i64),
     UInt64Literal(u64),
+    /// The IEEE-754 binary32 representation, kept opaque until float
+    /// operations are modeled in a later slice.
+    Float32Literal(u32),
+    /// The IEEE-754 binary64 representation, kept opaque until float
+    /// operations are modeled in a later slice.
+    Float64Literal(u64),
     SizeOfStruct {
         name: String,
         bytes: u32,
@@ -1264,6 +1331,8 @@ impl C0Type {
                 | Self::UInt32PointerPointer
                 | Self::Int64PointerPointer
                 | Self::UInt64PointerPointer
+                | Self::Float32PointerPointer
+                | Self::Float64PointerPointer
                 | Self::FunctionPointer(_)
         )
     }
@@ -1277,6 +1346,8 @@ impl C0Type {
             Self::UInt32Pointer | Self::UInt32Array(_) => Some(Self::UInt32),
             Self::Int64Pointer | Self::Int64Array(_) => Some(Self::Int64),
             Self::UInt64Pointer | Self::UInt64Array(_) => Some(Self::UInt64),
+            Self::Float32Pointer | Self::Float32Array(_) => Some(Self::Float32),
+            Self::Float64Pointer | Self::Float64Array(_) => Some(Self::Float64),
             Self::Int16PointerPointer => Some(Self::Int16Pointer),
             Self::UInt16PointerPointer => Some(Self::UInt16Pointer),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
@@ -1284,6 +1355,8 @@ impl C0Type {
             Self::UInt32PointerPointer => Some(Self::UInt32Pointer),
             Self::Int64PointerPointer => Some(Self::Int64Pointer),
             Self::UInt64PointerPointer => Some(Self::UInt64Pointer),
+            Self::Float32PointerPointer => Some(Self::Float32Pointer),
+            Self::Float64PointerPointer => Some(Self::Float64Pointer),
             Self::Void
             | Self::Int16
             | Self::Int32
@@ -1292,6 +1365,8 @@ impl C0Type {
             | Self::UInt32
             | Self::Int64
             | Self::UInt64
+            | Self::Float32
+            | Self::Float64
             | Self::FunctionPointer(_) => None,
         }
     }
@@ -1306,6 +1381,8 @@ impl C0Type {
             Self::UInt32 => crate::kernel::CType::UInt32,
             Self::Int64 => crate::kernel::CType::Int64,
             Self::UInt64 => crate::kernel::CType::UInt64,
+            Self::Float32 => crate::kernel::CType::Float32,
+            Self::Float64 => crate::kernel::CType::Float64,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::Int16Pointer => crate::kernel::CType::Int16Pointer,
             Self::UInt16Pointer => crate::kernel::CType::UInt16Pointer,
@@ -1313,6 +1390,8 @@ impl C0Type {
             Self::UInt32Pointer => crate::kernel::CType::UInt32Pointer,
             Self::Int64Pointer => crate::kernel::CType::Int64Pointer,
             Self::UInt64Pointer => crate::kernel::CType::UInt64Pointer,
+            Self::Float32Pointer => crate::kernel::CType::Float32Pointer,
+            Self::Float64Pointer => crate::kernel::CType::Float64Pointer,
             Self::Int16PointerPointer => crate::kernel::CType::Int16PointerPointer,
             Self::UInt16PointerPointer => crate::kernel::CType::UInt16PointerPointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
@@ -1320,6 +1399,8 @@ impl C0Type {
             Self::UInt32PointerPointer => crate::kernel::CType::UInt32PointerPointer,
             Self::Int64PointerPointer => crate::kernel::CType::Int64PointerPointer,
             Self::UInt64PointerPointer => crate::kernel::CType::UInt64PointerPointer,
+            Self::Float32PointerPointer => crate::kernel::CType::Float32PointerPointer,
+            Self::Float64PointerPointer => crate::kernel::CType::Float64PointerPointer,
             Self::FunctionPointer(signature) => crate::kernel::CType::FunctionPointer(signature),
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
@@ -1328,6 +1409,8 @@ impl C0Type {
             Self::UInt32Array(length) => crate::kernel::CType::UInt32Array(length),
             Self::Int64Array(length) => crate::kernel::CType::Int64Array(length),
             Self::UInt64Array(length) => crate::kernel::CType::UInt64Array(length),
+            Self::Float32Array(length) => crate::kernel::CType::Float32Array(length),
+            Self::Float64Array(length) => crate::kernel::CType::Float64Array(length),
         }
     }
 }
@@ -1512,6 +1595,8 @@ impl C0Expression {
             Self::UInt32Literal(value) => crate::kernel::c_uint32_literal(*value),
             Self::Int64Literal(value) => crate::kernel::c_int64_literal(*value),
             Self::UInt64Literal(value) => crate::kernel::c_uint64_literal(*value),
+            Self::Float32Literal(bits) => crate::kernel::c_float32_literal(*bits),
+            Self::Float64Literal(bits) => crate::kernel::c_float64_literal(*bits),
             Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
                 crate::kernel::c_int32_literal(*bytes)
             }
@@ -1734,6 +1819,18 @@ fn validate_global_initializer(
     c_type: C0Type,
     initializer: &C0Expression,
 ) -> Result<(), C0SyntaxError> {
+    if matches!(c_type, C0Type::Float32 | C0Type::Float64) {
+        let matches_type = matches!(
+            (c_type, initializer),
+            (C0Type::Float32, C0Expression::Float32Literal(_))
+                | (C0Type::Float64, C0Expression::Float64Literal(_))
+        );
+        return if matches_type {
+            Ok(())
+        } else {
+            Err(parser.error_here("floating-point global initializer has the wrong type"))
+        };
+    }
     let bits = match initializer {
         C0Expression::Int32Literal(value) => u64::from(*value),
         C0Expression::UInt8Literal(value) => u64::from(*value),
@@ -1766,6 +1863,18 @@ fn validate_static_initializer(
     c_type: C0Type,
     initializer: &C0Expression,
 ) -> Result<(), C0SyntaxError> {
+    if matches!(c_type, C0Type::Float32 | C0Type::Float64) {
+        let matches_type = matches!(
+            (c_type, initializer),
+            (C0Type::Float32, C0Expression::Float32Literal(_))
+                | (C0Type::Float64, C0Expression::Float64Literal(_))
+        );
+        return if matches_type {
+            Ok(())
+        } else {
+            Err(parser.error_here("floating-point static initializer has the wrong type"))
+        };
+    }
     let bits = match initializer {
         C0Expression::Int32Literal(value) => u64::from(*value),
         C0Expression::UInt8Literal(value) => u64::from(*value),
@@ -2000,6 +2109,8 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         | C0Expression::UInt32Literal(_)
         | C0Expression::Int64Literal(_)
         | C0Expression::UInt64Literal(_)
+        | C0Expression::Float32Literal(_)
+        | C0Expression::Float64Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => false,
@@ -2482,12 +2593,20 @@ impl Parser {
                         | C0Type::UInt32
                         | C0Type::Int64
                         | C0Type::UInt64
+                        | C0Type::Float32
+                        | C0Type::Float64
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
+                        | C0Type::Float32Array(_)
+                        | C0Type::Float64Array(_)
                         | C0Type::Int32Pointer
                         | C0Type::UInt8Pointer
+                        | C0Type::Float32Pointer
+                        | C0Type::Float64Pointer
                         | C0Type::Int32PointerPointer
                         | C0Type::UInt8PointerPointer
+                        | C0Type::Float32PointerPointer
+                        | C0Type::Float64PointerPointer
                 )
             {
                 return Err(self.error_here(format!(
@@ -2820,11 +2939,17 @@ impl Parser {
             || parsed_type.union_name.is_some()
             || !matches!(
                 parsed_type.c_type,
-                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+                C0Type::Int16
+                    | C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::UInt16
+                    | C0Type::UInt32
+                    | C0Type::Float32
+                    | C0Type::Float64
             )
         {
             return Err(self.error_here(
-                "file-scope declarations currently support only scalar integer globals",
+                "file-scope declarations currently support only scalar integer and floating-point globals",
             ));
         }
         if self.header_mode && !is_extern {
@@ -2858,7 +2983,7 @@ impl Parser {
                 } else if is_extern {
                     None
                 } else {
-                    Some(vec![C0Expression::Int32Literal(0); length as usize])
+                    Some(vec![zero_initializer(parsed_type.c_type); length as usize])
                 };
                 self.register_global_array_declaration(
                     name.clone(),
@@ -2904,7 +3029,7 @@ impl Parser {
                 } else if is_extern {
                     None
                 } else {
-                    Some(C0Expression::Int32Literal(0))
+                    Some(zero_initializer(parsed_type.c_type))
                 };
                 self.register_global_declaration(
                     name.clone(),
@@ -3027,7 +3152,7 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        values.resize(length as usize, C0Expression::Int32Literal(0));
+        values.resize(length as usize, zero_initializer(element_type));
         Ok(values)
     }
 
@@ -3537,10 +3662,13 @@ impl Parser {
         }
         let (c_type, array_shape) = if self.peek() == Some(&Token::LBracket) {
             if base_type.struct_name.is_some()
-                || !matches!(base_type.c_type, C0Type::Int32 | C0Type::UInt8)
+                || !matches!(
+                    base_type.c_type,
+                    C0Type::Int32 | C0Type::UInt8 | C0Type::Float32 | C0Type::Float64
+                )
             {
                 return Err(self.error_here(
-                    "inline scalar arrays in structs currently support only int32 and uint8 elements",
+                    "inline scalar arrays in structs currently support int32, uint8, float, and double elements",
                 ));
             }
             let mut dimensions = Vec::new();
@@ -3590,6 +3718,8 @@ impl Parser {
             let c_type = match base_type.c_type {
                 C0Type::Int32 => C0Type::Int32Array(element_count),
                 C0Type::UInt8 => C0Type::UInt8Array(element_count),
+                C0Type::Float32 => C0Type::Float32Array(element_count),
+                C0Type::Float64 => C0Type::Float64Array(element_count),
                 _ => unreachable!("validated scalar struct array element type"),
             };
             (c_type, array_shape)
@@ -3606,15 +3736,23 @@ impl Parser {
                 | C0Type::UInt32
                 | C0Type::Int64
                 | C0Type::UInt64
+                | C0Type::Float32
+                | C0Type::Float64
                 | C0Type::Int32Pointer
                 | C0Type::UInt8Pointer
+                | C0Type::Float32Pointer
+                | C0Type::Float64Pointer
                 | C0Type::Int32PointerPointer
                 | C0Type::UInt8PointerPointer
+                | C0Type::Float32PointerPointer
+                | C0Type::Float64PointerPointer
                 | C0Type::Int32Array(_)
                 | C0Type::UInt8Array(_)
+                | C0Type::Float32Array(_)
+                | C0Type::Float64Array(_)
         ) {
             return Err(self.error_here(format!(
-                "struct `{struct_name}` fields currently support int16, int32, uint8, uint16, uint32, int64, uint64, enum, fixed scalar arrays, and pointer fields",
+                "struct `{struct_name}` fields currently support modeled integer and floating-point scalars, fixed scalar arrays, and pointer fields",
             )));
         }
         let (field_size, field_alignment) = match c_type {
@@ -3847,13 +3985,13 @@ impl Parser {
             Some(Token::Ident(name)) => self.parse_named_type(name)?,
             Some(token) => {
                 return Err(self.error_at_previous(format!(
-                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, `enum`, or `struct`, got {}",
+                    "expected type `void`, integer, `float`, `double`, `enum`, or `struct`, got {}",
                     token.describe()
                 )));
             }
             None => {
                 return Err(self.error_here(
-                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, `enum`, or `struct`, got end of input",
+                    "expected type `void`, integer, `float`, `double`, `enum`, or `struct`, got end of input",
                 ));
             }
         };
@@ -3869,6 +4007,8 @@ impl Parser {
                 C0Type::UInt32 => C0Type::UInt32Pointer,
                 C0Type::Int64 => C0Type::Int64Pointer,
                 C0Type::UInt64 => C0Type::UInt64Pointer,
+                C0Type::Float32 => C0Type::Float32Pointer,
+                C0Type::Float64 => C0Type::Float64Pointer,
                 C0Type::Int16Pointer => C0Type::Int16PointerPointer,
                 C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
@@ -3876,6 +4016,8 @@ impl Parser {
                 C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
                 C0Type::Int64Pointer => C0Type::Int64PointerPointer,
                 C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
+                C0Type::Float32Pointer => C0Type::Float32PointerPointer,
+                C0Type::Float64Pointer => C0Type::Float64PointerPointer,
                 C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
                 C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
@@ -3888,6 +4030,11 @@ impl Parser {
                         self.error_at_previous("pointer depth beyond `**` is not supported")
                     );
                 }
+                C0Type::Float32PointerPointer | C0Type::Float64PointerPointer => {
+                    return Err(
+                        self.error_at_previous("pointer depth beyond `**` is not supported")
+                    );
+                }
                 C0Type::Int32Array(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Int16Array(_)
@@ -3895,6 +4042,9 @@ impl Parser {
                 | C0Type::UInt32Array(_)
                 | C0Type::Int64Array(_)
                 | C0Type::UInt64Array(_) => {
+                    return Err(self.error_at_previous("pointer-to-array types are not supported"));
+                }
+                C0Type::Float32Array(_) | C0Type::Float64Array(_) => {
                     return Err(self.error_at_previous("pointer-to-array types are not supported"));
                 }
                 C0Type::FunctionPointer(_) => {
@@ -4020,6 +4170,8 @@ impl Parser {
                 C0Type::Int64
             }
             "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
+            "float" => C0Type::Float32,
+            "double" => C0Type::Float64,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
@@ -4069,11 +4221,6 @@ impl Parser {
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
             }
-            "float" | "double" => {
-                return Err(self.error_at_previous(format!(
-                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
-                )));
-            }
             "volatile" => {
                 return Err(
                     self.error_at_previous("the `volatile` qualifier is not supported in C0")
@@ -4109,6 +4256,8 @@ impl Parser {
             C0Type::UInt32 => C0Type::UInt32Pointer,
             C0Type::Int64 => C0Type::Int64Pointer,
             C0Type::UInt64 => C0Type::UInt64Pointer,
+            C0Type::Float32 => C0Type::Float32Pointer,
+            C0Type::Float64 => C0Type::Float64Pointer,
             C0Type::Int16Pointer => C0Type::Int16PointerPointer,
             C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
             C0Type::Int32Pointer => C0Type::Int32PointerPointer,
@@ -4169,6 +4318,8 @@ impl Parser {
                 C0Type::UInt32 => (C0Type::UInt32Array, 4u32, "uint32".to_string(), false),
                 C0Type::Int64 => (C0Type::Int64Array, 8u32, "int64".to_string(), false),
                 C0Type::UInt64 => (C0Type::UInt64Array, 8u32, "uint64".to_string(), false),
+                C0Type::Float32 => (C0Type::Float32Array, 4u32, "float".to_string(), false),
+                C0Type::Float64 => (C0Type::Float64Array, 8u32, "double".to_string(), false),
                 _ => return Err(self.error_here("only scalar local arrays are supported")),
             }
         };
@@ -4574,20 +4725,23 @@ impl Parser {
             C0Type::UInt32Array(length) => (length, C0Type::UInt32),
             C0Type::Int64Array(length) => (length, C0Type::Int64),
             C0Type::UInt64Array(length) => (length, C0Type::UInt64),
+            C0Type::Float32Array(length) => (length, C0Type::Float32),
+            C0Type::Float64Array(length) => (length, C0Type::Float64),
             _ => unreachable!("array initializer called for a scalar type"),
         };
+        let zero = zero_initializer(element_type);
         let mut values = Vec::new();
         let dimensions = array_shape
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| vec![length]);
-        self.parse_array_initializer_level(name, &dimensions, 0, &mut values)?;
+        self.parse_array_initializer_level(name, &dimensions, 0, &mut values, &zero)?;
 
         let mut stores = Vec::with_capacity(length as usize);
         for index in 0..length {
             let value = values
                 .get(index as usize)
                 .cloned()
-                .unwrap_or(C0Expression::Int32Literal(0));
+                .unwrap_or_else(|| zero.clone());
             stores.push(C0Statement::Store {
                 pointer: C0Expression::Add(
                     Box::new(C0Expression::Variable(name.to_string())),
@@ -4606,6 +4760,7 @@ impl Parser {
         dimensions: &[u32],
         depth: usize,
         values: &mut Vec<C0Expression>,
+        zero: &C0Expression,
     ) -> Result<(), C0SyntaxError> {
         let child_width = dimensions[depth + 1..]
             .iter()
@@ -4634,7 +4789,7 @@ impl Parser {
                             dimensions.len() - depth - 1
                         )));
                     }
-                    self.parse_array_initializer_level(name, dimensions, depth + 1, values)?;
+                    self.parse_array_initializer_level(name, dimensions, depth + 1, values, zero)?;
                 }
                 children += 1;
                 match self.peek() {
@@ -4666,7 +4821,7 @@ impl Parser {
             .checked_mul(child_width)
             .expect("validated array shape has a representable length");
         for _ in present..expected {
-            values.push(C0Expression::Int32Literal(0));
+            values.push(zero.clone());
         }
         Ok(())
     }
@@ -4857,7 +5012,13 @@ impl Parser {
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
-                if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+                if matches!(
+                    c_type,
+                    C0Type::Int32Array(_)
+                        | C0Type::UInt8Array(_)
+                        | C0Type::Float32Array(_)
+                        | C0Type::Float64Array(_)
+                ) {
                     if parsed_type.struct_name.is_some() {
                         return Err(self.error_here(
                             "local array initializers for struct arrays are not supported",
@@ -4917,11 +5078,17 @@ impl Parser {
             || parsed_type.union_name.is_some()
             || !matches!(
                 parsed_type.c_type,
-                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+                C0Type::Int16
+                    | C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::UInt16
+                    | C0Type::UInt32
+                    | C0Type::Float32
+                    | C0Type::Float64
             )
         {
             return Err(self.error_here(
-                "function-local `static` declarations currently support only scalar integer types",
+                "function-local `static` declarations currently support only scalar integer and floating-point types",
             ));
         }
 
@@ -4939,7 +5106,7 @@ impl Parser {
                     self.position += 1;
                     self.parse_static_array_initializer(&source_name, parsed_type.c_type, length)?
                 } else {
-                    vec![C0Expression::Int32Literal(0); length as usize]
+                    vec![zero_initializer(parsed_type.c_type); length as usize]
                 };
                 self.variable_types.insert(
                     kernel_name.clone(),
@@ -4968,7 +5135,7 @@ impl Parser {
                     validate_static_initializer(self, parsed_type.c_type, &initializer)?;
                     initializer
                 } else {
-                    C0Expression::Int32Literal(0)
+                    zero_initializer(parsed_type.c_type)
                 };
                 self.static_locals.insert(
                     kernel_name.clone(),
@@ -5070,7 +5237,7 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        values.resize(length as usize, C0Expression::Int32Literal(0));
+        values.resize(length as usize, zero_initializer(element_type));
         Ok(values)
     }
 
@@ -5142,13 +5309,21 @@ impl Parser {
                 | C0Type::UInt16
                 | C0Type::UInt32
                 | C0Type::Int64
-                | C0Type::UInt64 => (field.c_type, 1),
+                | C0Type::UInt64
+                | C0Type::Float32
+                | C0Type::Float64 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
+                C0Type::Float32Array(length) => (C0Type::Float32, length),
+                C0Type::Float64Array(length) => (C0Type::Float64, length),
                 C0Type::Int32Pointer
                 | C0Type::UInt8Pointer
+                | C0Type::Float32Pointer
+                | C0Type::Float64Pointer
                 | C0Type::Int32PointerPointer
-                | C0Type::UInt8PointerPointer => (field.c_type, 1),
+                | C0Type::UInt8PointerPointer
+                | C0Type::Float32PointerPointer
+                | C0Type::Float64PointerPointer => (field.c_type, 1),
                 _ => unreachable!("validated struct value field shape"),
             };
             let element_width = element_type.abi_size_bytes();
@@ -5585,7 +5760,9 @@ impl Parser {
                         | C0Type::Int32Pointer
                         | C0Type::UInt32Pointer
                         | C0Type::Int64Pointer
-                        | C0Type::UInt64Pointer,
+                        | C0Type::UInt64Pointer
+                        | C0Type::Float32Pointer
+                        | C0Type::Float64Pointer,
                     ) => {
                         let target_element = self
                             .variable_types
@@ -5613,7 +5790,9 @@ impl Parser {
                         | C0Type::UInt8PointerPointer
                         | C0Type::UInt32PointerPointer
                         | C0Type::Int64PointerPointer
-                        | C0Type::UInt64PointerPointer,
+                        | C0Type::UInt64PointerPointer
+                        | C0Type::Float32PointerPointer
+                        | C0Type::Float64PointerPointer,
                     ) => matches!(
                         element_size,
                         C0Expression::Int32Literal(8)
@@ -5624,7 +5803,9 @@ impl Parser {
                                     | C0Type::UInt8Pointer
                                     | C0Type::UInt32Pointer
                                     | C0Type::Int64Pointer
-                                    | C0Type::UInt64Pointer,
+                                    | C0Type::UInt64Pointer
+                                    | C0Type::Float32Pointer
+                                    | C0Type::Float64Pointer,
                                 struct_name: None,
                                 ..
                             }
@@ -7084,9 +7265,17 @@ impl Parser {
                 None => Ok(C0Expression::Variable(self.resolve_name(&name))),
             },
             Some(Token::Number(number)) => {
-                parse_integer_literal_expression(&number).map_err(|reason| {
-                    at.error(format!("invalid integer literal `{number}`: {reason}"))
-                })
+                if is_floating_literal(&number) {
+                    parse_float_literal_expression(&number).map_err(|reason| {
+                        at.error(format!(
+                            "invalid floating-point literal `{number}`: {reason}"
+                        ))
+                    })
+                } else {
+                    parse_integer_literal_expression(&number).map_err(|reason| {
+                        at.error(format!("invalid integer literal `{number}`: {reason}"))
+                    })
+                }
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::StringLiteral(bytes)) => Ok(C0Expression::Variable(
@@ -7323,6 +7512,39 @@ fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'sta
     }
 }
 
+fn is_floating_literal(literal: &str) -> bool {
+    !literal.starts_with("0x")
+        && !literal.starts_with("0X")
+        && literal
+            .chars()
+            .any(|character| matches!(character, '.' | 'e' | 'E'))
+}
+
+fn parse_float_literal_expression(literal: &str) -> Result<C0Expression, &'static str> {
+    let (number, suffix) = match literal.chars().last() {
+        Some(character) if character.is_ascii_alphabetic() => {
+            literal.split_at(literal.len() - character.len_utf8())
+        }
+        _ => (literal, ""),
+    };
+    match suffix {
+        "" => number
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| C0Expression::Float64Literal(value.to_bits()))
+            .ok_or("value is not a finite binary64 literal"),
+        "f" | "F" => number
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| C0Expression::Float32Literal(value.to_bits()))
+            .ok_or("value is not a finite binary32 literal"),
+        "l" | "L" => Err("long double literals are not modeled in C0"),
+        _ => Err("unsupported floating-point literal suffix"),
+    }
+}
+
 fn integer_literal_has_unsigned_suffix(literal: &str) -> bool {
     let (_, suffix) = integer_literal_parts(literal);
     suffix
@@ -7397,10 +7619,31 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
                 while index < chars.len() && chars[index].is_ascii_hexdigit() {
                     index += 1;
                 }
+                if matches!(chars.get(index), Some('.' | 'p' | 'P')) {
+                    return Err(C0SyntaxError::at(
+                        position,
+                        "hexadecimal floating-point literals are not supported in C0",
+                    ));
+                }
             } else {
                 index += 1;
                 while index < chars.len() && chars[index].is_ascii_digit() {
                     index += 1;
+                }
+                if chars.get(index) == Some(&'.') {
+                    index += 1;
+                    while index < chars.len() && chars[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                }
+                if matches!(chars.get(index), Some('e' | 'E')) {
+                    index += 1;
+                    if matches!(chars.get(index), Some('+' | '-')) {
+                        index += 1;
+                    }
+                    while index < chars.len() && chars[index].is_ascii_digit() {
+                        index += 1;
+                    }
                 }
             }
             while index < chars.len() && chars[index].is_ascii_alphabetic() {
@@ -7762,6 +8005,8 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::UInt32Literal(_)
         | C0Expression::Int64Literal(_)
         | C0Expression::UInt64Literal(_)
+        | C0Expression::Float32Literal(_)
+        | C0Expression::Float64Literal(_)
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
@@ -7825,6 +8070,8 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
             | C0Expression::UInt32Literal(_)
             | C0Expression::Int64Literal(_)
             | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
             | C0Expression::SizeOfStruct { .. }
             | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. } => {}

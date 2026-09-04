@@ -1,10 +1,10 @@
 # Model floating-point values
 
-The kernel has no floating-point value or arithmetic type, and the C0 parser
-rejects `float` and `double`. Real C libraries commonly use `double` for
-numeric fields, including the pilot json-c target. Keep this as one issue, but
-land the work in the ordered slices below so that each commit has a usable,
-checkable boundary.
+The kernel now has typed opaque storage values for `float` and `double`, but it
+does not yet model their arithmetic or other value semantics. Real C libraries
+commonly use `double` for numeric fields, including the pilot json-c target.
+Keep this as one issue, but land the work in the ordered slices below so that
+each commit has a usable, checkable boundary.
 
 ## Violated invariant
 

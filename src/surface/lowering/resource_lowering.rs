@@ -62,7 +62,11 @@ pub(in crate::surface) fn initial_call_state(
             | C0Type::UInt8PointerPointer
             | C0Type::UInt32PointerPointer
             | C0Type::Int64PointerPointer
-            | C0Type::UInt64PointerPointer => {
+            | C0Type::UInt64PointerPointer
+            | C0Type::Float32Pointer
+            | C0Type::Float64Pointer
+            | C0Type::Float32PointerPointer
+            | C0Type::Float64PointerPointer => {
                 let c_type = parameter.c_type();
                 let kernel_c_type = parameter.to_kernel_parameter().c_type();
                 // Struct array parameters are lowered to byte pointers in the
@@ -128,13 +132,25 @@ pub(in crate::surface) fn initial_call_state(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
+            C0Type::Float32 => {
+                arguments.push(CExpression::Value(CValue::Float32(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
+            C0Type::Float64 => {
+                arguments.push(CExpression::Value(CValue::Float64(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
             C0Type::Int32Array(_)
             | C0Type::UInt8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)
             | C0Type::UInt32Array(_)
             | C0Type::Int64Array(_)
-            | C0Type::UInt64Array(_) => {
+            | C0Type::UInt64Array(_)
+            | C0Type::Float32Array(_)
+            | C0Type::Float64Array(_) => {
                 return Err(ClickError::new(format!(
                     "array parameter `{}` should have lowered to a pointer",
                     parameter.name()

@@ -1357,6 +1357,8 @@ impl CType {
                 CType::UInt32Pointer => 14,
                 CType::Int64Pointer => 15,
                 CType::UInt64Pointer => 16,
+                CType::Float32 => 17,
+                CType::Float64 => 18,
                 CType::Int16PointerPointer
                 | CType::UInt16PointerPointer
                 | CType::UInt32PointerPointer
@@ -1369,7 +1371,13 @@ impl CType {
                 | CType::UInt16Array(_)
                 | CType::UInt32Array(_)
                 | CType::Int64Array(_)
-                | CType::UInt64Array(_) => {
+                | CType::UInt64Array(_)
+                | CType::Float32Pointer
+                | CType::Float64Pointer
+                | CType::Float32PointerPointer
+                | CType::Float64PointerPointer
+                | CType::Float32Array(_)
+                | CType::Float64Array(_) => {
                     return None;
                 }
             })
@@ -1404,6 +1412,8 @@ impl CType {
             Self::UInt32 => Some(Self::UInt32Pointer),
             Self::Int64 => Some(Self::Int64Pointer),
             Self::UInt64 => Some(Self::UInt64Pointer),
+            Self::Float32 => Some(Self::Float32Pointer),
+            Self::Float64 => Some(Self::Float64Pointer),
             Self::Int16Pointer => Some(Self::Int16PointerPointer),
             Self::UInt16Pointer => Some(Self::UInt16PointerPointer),
             Self::Int32Pointer => Some(Self::Int32PointerPointer),
@@ -1411,6 +1421,8 @@ impl CType {
             Self::UInt32Pointer => Some(Self::UInt32PointerPointer),
             Self::Int64Pointer => Some(Self::Int64PointerPointer),
             Self::UInt64Pointer => Some(Self::UInt64PointerPointer),
+            Self::Float32Pointer => Some(Self::Float32PointerPointer),
+            Self::Float64Pointer => Some(Self::Float64PointerPointer),
             Self::Void
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
@@ -1426,7 +1438,11 @@ impl CType {
             | Self::UInt16Array(_)
             | Self::UInt32Array(_)
             | Self::Int64Array(_)
-            | Self::UInt64Array(_) => None,
+            | Self::UInt64Array(_)
+            | Self::Float32PointerPointer
+            | Self::Float64PointerPointer
+            | Self::Float32Array(_)
+            | Self::Float64Array(_) => None,
         }
     }
 
@@ -1439,6 +1455,8 @@ impl CType {
             | (Self::UInt16, CValue::UInt16(_))
             | (Self::Int64, CValue::Int64(_))
             | (Self::UInt64, CValue::UInt64(_))
+            | (Self::Float32, CValue::Float32(_))
+            | (Self::Float64, CValue::Float64(_))
             | (Self::UInt32, CValue::UInt32(_)) => true,
             (target, CValue::Pointer(pointer)) if target.is_pointer() => {
                 pointer.is_null()
@@ -1463,6 +1481,8 @@ impl CType {
             Self::UInt32 => 4,
             Self::Int64 => 8,
             Self::UInt64 => 8,
+            Self::Float32 => 4,
+            Self::Float64 => 8,
             Self::Int16Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
@@ -1470,6 +1490,8 @@ impl CType {
             Self::UInt32Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int64Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt64Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Float32Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Float64Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int16PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
@@ -1477,12 +1499,16 @@ impl CType {
             Self::UInt32PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int64PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::UInt64PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::Float32PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::Float64PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
             Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
             Self::Int16Array(length) | Self::UInt16Array(length) => length.saturating_mul(2),
             Self::UInt32Array(length) => length.saturating_mul(4),
             Self::Int64Array(length) | Self::UInt64Array(length) => length.saturating_mul(8),
+            Self::Float32Array(length) => length.saturating_mul(4),
+            Self::Float64Array(length) => length.saturating_mul(8),
         }
     }
 
@@ -1502,6 +1528,10 @@ impl CType {
             Self::UInt32PointerPointer => Some(Self::UInt32Pointer),
             Self::Int64PointerPointer => Some(Self::Int64Pointer),
             Self::UInt64PointerPointer => Some(Self::UInt64Pointer),
+            Self::Float32Pointer => Some(Self::Float32),
+            Self::Float64Pointer => Some(Self::Float64),
+            Self::Float32PointerPointer => Some(Self::Float32Pointer),
+            Self::Float64PointerPointer => Some(Self::Float64Pointer),
             _ => None,
         }
     }
@@ -1537,6 +1567,8 @@ impl CValue {
             Self::UInt32(_) => CType::UInt32,
             Self::Int64(_) => CType::Int64,
             Self::UInt64(_) => CType::UInt64,
+            Self::Float32(_) => CType::Float32,
+            Self::Float64(_) => CType::Float64,
             Self::Pointer(pointer) => pointer.c_type(),
         }
     }
@@ -1551,6 +1583,8 @@ impl CValue {
             Self::UInt32(_) => 4,
             Self::Int64(_) => 8,
             Self::UInt64(_) => 8,
+            Self::Float32(_) => 4,
+            Self::Float64(_) => 8,
             Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
         }
     }

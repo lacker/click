@@ -52,9 +52,15 @@ impl CGlobal {
         assert!(
             matches!(
                 c_type,
-                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+                CType::Int16
+                    | CType::Int32
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::Float32
+                    | CType::Float64
             ),
-            "C globals currently support scalar integer types only"
+            "C globals currently support scalar integer and floating-point types only"
         );
         assert_eq!(
             initial_value.c_type(),
@@ -163,9 +169,15 @@ impl CStaticLocal {
         assert!(
             matches!(
                 c_type,
-                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+                CType::Int16
+                    | CType::Int32
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::Float32
+                    | CType::Float64
             ),
-            "C static locals currently support scalar integer types only"
+            "C static locals currently support scalar integer and floating-point types only"
         );
         assert_eq!(
             initial_value.c_type(),

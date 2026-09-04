@@ -273,7 +273,9 @@ impl<'a> Proof<'a> {
             | CValue::UInt16(_)
             | CValue::UInt32(_)
             | CValue::Int64(_)
-            | CValue::UInt64(_) => {
+            | CValue::UInt64(_)
+            | CValue::Float32(_)
+            | CValue::Float64(_) => {
                 unreachable!("unsupported choice sort above")
             }
         };

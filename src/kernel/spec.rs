@@ -2255,7 +2255,12 @@ fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt8(value)
         | CValue::UInt16(value)
         | CValue::UInt32(value) => Some(value.clone()),
-        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::Int64(_)
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -2267,7 +2272,11 @@ fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt8(value)
         | CValue::UInt16(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
         CValue::UInt32(value) => Some(Bitvector32Term::int64_from_uint32(value.clone())),
-        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -2280,6 +2289,6 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt8(value)
         | CValue::UInt16(value) => Some(Bitvector32Term::uint64_from_int32(value.clone())),
         CValue::UInt32(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }

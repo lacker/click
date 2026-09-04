@@ -2323,6 +2323,8 @@ pub(super) fn havoc_loop_modified_locals(
             CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
             CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next())),
             CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
+            CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next())),
+            CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next())),
             // A pointer local reassigned in the body (`p = p + 1`) must not
             // keep its entry value across the abstract iteration, exactly as
             // the join abstraction treats it; an invariant must relate it.
@@ -2339,7 +2341,11 @@ pub(super) fn havoc_loop_modified_locals(
             | CType::UInt8PointerPointer
             | CType::UInt32PointerPointer
             | CType::Int64PointerPointer
-            | CType::UInt64PointerPointer => {
+            | CType::UInt64PointerPointer
+            | CType::Float32Pointer
+            | CType::Float64Pointer
+            | CType::Float32PointerPointer
+            | CType::Float64PointerPointer => {
                 CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
             }
             CType::FunctionPointer(_) => {
@@ -2353,7 +2359,9 @@ pub(super) fn havoc_loop_modified_locals(
             | CType::UInt16Array(_)
             | CType::UInt32Array(_)
             | CType::Int64Array(_)
-            | CType::UInt64Array(_) => continue,
+            | CType::UInt64Array(_)
+            | CType::Float32Array(_)
+            | CType::Float64Array(_) => continue,
         };
         sync_stack_local(&mut state, &name, &value);
         state.locals.set_typed(name, value, c_type);

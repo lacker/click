@@ -1672,6 +1672,8 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         CType::UInt32 => CValue::UInt32(Bitvector32Term::Variable(variable)),
         CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variable)),
         CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variable)),
+        CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variable)),
+        CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variable)),
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -1685,7 +1687,13 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         | CType::UInt8PointerPointer
         | CType::UInt32PointerPointer
         | CType::Int64PointerPointer
-        | CType::UInt64PointerPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
+        | CType::UInt64PointerPointer
+        | CType::Float32Pointer
+        | CType::Float64Pointer
+        | CType::Float32PointerPointer
+        | CType::Float64PointerPointer => {
+            CValue::typed_pointer(Pointer::symbolic(variable), c_type)
+        }
         CType::FunctionPointer(_) => {
             CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
         }
@@ -1695,7 +1703,9 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         | CType::UInt16Array(_)
         | CType::UInt32Array(_)
         | CType::Int64Array(_)
-        | CType::UInt64Array(_) => {
+        | CType::UInt64Array(_)
+        | CType::Float32Array(_)
+        | CType::Float64Array(_) => {
             unreachable!("C functions cannot return array values")
         }
     }

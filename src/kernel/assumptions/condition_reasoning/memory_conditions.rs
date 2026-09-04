@@ -196,7 +196,9 @@ impl PureFactContext {
             | CValue::UInt32(value)
             | CValue::Int64(value)
             | CValue::UInt64(value) => value,
-            CValue::Void | CValue::Pointer(_) => return None,
+            CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => {
+                return None;
+            }
         };
         let value = if viewed == *term {
             value

@@ -699,7 +699,9 @@ fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Vari
         | CValue::UInt16(bits)
         | CValue::UInt32(bits)
         | CValue::Int64(bits)
-        | CValue::UInt64(bits) => collect_bitvector_bound_variables(bits, variables),
+        | CValue::UInt64(bits)
+        | CValue::Float32(bits)
+        | CValue::Float64(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bound_variables(pointer, variables),
         CValue::Void => {}
     }
@@ -3078,6 +3080,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
         CValue::UInt32(bits) => uint32(substitute_bitvector_variable(bits, from, to)),
         CValue::Int64(bits) => CValue::Int64(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt64(bits) => CValue::UInt64(substitute_bitvector_variable(bits, from, to)),
+        CValue::Float32(bits) => CValue::Float32(substitute_bitvector_variable(bits, from, to)),
+        CValue::Float64(bits) => CValue::Float64(substitute_bitvector_variable(bits, from, to)),
         CValue::Pointer(pointer) => CValue::typed_pointer(
             substitute_bitvector_variable_in_pointer(pointer.pointer(), from, to),
             pointer.c_type(),
@@ -3463,7 +3467,9 @@ fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &P
         | CValue::UInt16(_)
         | CValue::UInt32(_)
         | CValue::Int64(_)
-        | CValue::UInt64(_) => value.clone(),
+        | CValue::UInt64(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => value.clone(),
     }
 }
 

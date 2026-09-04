@@ -356,11 +356,13 @@ the supported LP64 host ABI.
 
 ## Floating-point semantic boundary
 
-The kernel currently has no floating-point `CType`, `CValue`, symbolic term, or
-memory load/store case. The C0 frontend rejects floating-point declarations,
-and the source expander rejects floating-point environment directives, so this
-absence cannot silently turn a C floating-point operation into integer or
-mathematical-real reasoning.
+The kernel models `float` and `double` as typed opaque payloads in `CType` and
+`CValue`. Slice 1 carries those payloads through parameters, locals, structs,
+arrays, allocation, typed memory loads/stores, and copies at their declared
+widths. It does not consume them as integer or mathematical-real operands:
+arithmetic, comparisons, conditions, and conversions remain unsupported until
+later slices. The source expander still rejects floating-point environment
+directives.
 
 The future C model is deliberately fixed to the supported LP64 ABI: `float` is
 IEEE-754 binary32 with size and alignment 4, and `double` is IEEE-754 binary64
@@ -382,11 +384,13 @@ an out-of-range value. Classification predicates and raw representation casts
 are separate modeled interfaces, not permissions to inspect or reinterpret
 kernel internals.
 
-Until that model exists, unsupported floating-point syntax must remain an
-actionable, source-positioned frontend diagnostic. A proof cannot claim a
-floating-point result merely because an implementation language can evaluate
-`f32` or `f64`; the symbolic semantics and certificate checker must agree on
-the exact width, rounding, exceptional values, and conversion rules first.
+Unsupported floating-point syntax must remain an actionable, source-positioned
+frontend diagnostic. Slice 1 accepts decimal literals only as typed payloads;
+hexadecimal literals and unsupported suffixes remain rejected. A proof cannot
+claim a floating-point result merely because an implementation language can
+evaluate `f32` or `f64`; the symbolic semantics and certificate checker must
+agree on the exact width, rounding, exceptional values, and conversion rules
+before operations are added.
 
 Named unions are represented on the C0 side as address-backed layouts. Every
 modeled member has offset zero, and a member read lowers to a kernel typed load

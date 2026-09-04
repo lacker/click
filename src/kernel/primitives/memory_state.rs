@@ -2066,6 +2066,20 @@ impl CMemory {
         ))
     }
 
+    pub(in crate::kernel) fn symbolic_float32_load(&self, pointer: &Pointer) -> CValue {
+        CValue::Float32(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_float64_load(&self, pointer: &Pointer) -> CValue {
+        CValue::Float64(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
     pub(in crate::kernel) fn symbolic_pointer_load(
         &self,
         pointer: &Pointer,

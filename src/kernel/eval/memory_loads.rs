@@ -1994,6 +1994,8 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::UInt32 => Some(memory.symbolic_uint32_load(pointer)),
         CType::Int64 => Some(memory.symbolic_int64_load(pointer)),
         CType::UInt64 => Some(memory.symbolic_uint64_load(pointer)),
+        CType::Float32 => Some(memory.symbolic_float32_load(pointer)),
+        CType::Float64 => Some(memory.symbolic_float64_load(pointer)),
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -2012,6 +2014,14 @@ pub(in crate::kernel) fn symbolic_load_value(
             value_type.pointee_type()?.byte_width(),
             value_type,
         )),
+        CType::Float32Pointer
+        | CType::Float64Pointer
+        | CType::Float32PointerPointer
+        | CType::Float64PointerPointer => Some(memory.symbolic_pointer_load(
+            pointer,
+            value_type.pointee_type()?.byte_width(),
+            value_type,
+        )),
         CType::FunctionPointer(_) => None,
         CType::Int32Array(_)
         | CType::UInt8Array(_)
@@ -2019,7 +2029,9 @@ pub(in crate::kernel) fn symbolic_load_value(
         | CType::UInt16Array(_)
         | CType::UInt32Array(_)
         | CType::Int64Array(_)
-        | CType::UInt64Array(_) => None,
+        | CType::UInt64Array(_)
+        | CType::Float32Array(_)
+        | CType::Float64Array(_) => None,
     }
 }
 

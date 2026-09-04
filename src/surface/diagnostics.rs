@@ -694,6 +694,8 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::Int32Array(_)
         | C0Type::UInt32Array(_) => 4,
         C0Type::Int64 | C0Type::UInt64 | C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
+        C0Type::Float32 | C0Type::Float32Array(_) => 4,
+        C0Type::Float64 | C0Type::Float64Array(_) => 8,
         C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int64Pointer
@@ -704,7 +706,11 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int64PointerPointer
-        | C0Type::UInt64PointerPointer => 8,
+        | C0Type::UInt64PointerPointer
+        | C0Type::Float32Pointer
+        | C0Type::Float64Pointer
+        | C0Type::Float32PointerPointer
+        | C0Type::Float64PointerPointer => 8,
         C0Type::FunctionPointer(_) => 8,
     }
 }
@@ -815,6 +821,14 @@ pub(super) fn describe_c_value(
         ),
         CValue::UInt64(value) => format!(
             "{}u64",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        CValue::Float32(value) => format!(
+            "{}f32",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        CValue::Float64(value) => format!(
+            "{}f64",
             describe_bitvector_with_context(value, parameters, arguments)
         ),
         CValue::Pointer(pointer) => describe_pointer(pointer, parameters, arguments),
@@ -928,6 +942,8 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt32 => "load_uint32",
                 CType::Int64 => "load_int64",
                 CType::UInt64 => "load_uint64",
+                CType::Float32 => "load_float",
+                CType::Float64 => "load_double",
                 CType::Int16Pointer => "load_int16_pointer",
                 CType::UInt16Pointer => "load_uint16_pointer",
                 CType::Int32Pointer => "load_int32_pointer",
@@ -942,6 +958,10 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt32PointerPointer => "load_uint32_pointer_pointer",
                 CType::Int64PointerPointer => "load_int64_pointer_pointer",
                 CType::UInt64PointerPointer => "load_uint64_pointer_pointer",
+                CType::Float32Pointer => "load_float_pointer",
+                CType::Float64Pointer => "load_double_pointer",
+                CType::Float32PointerPointer => "load_float_pointer_pointer",
+                CType::Float64PointerPointer => "load_double_pointer_pointer",
                 CType::FunctionPointer(_) => "load_function_pointer",
                 CType::Int32Array(_)
                 | CType::UInt8Array(_)
@@ -949,7 +969,9 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 | CType::UInt16Array(_)
                 | CType::UInt32Array(_)
                 | CType::Int64Array(_)
-                | CType::UInt64Array(_) => {
+                | CType::UInt64Array(_)
+                | CType::Float32Array(_)
+                | CType::Float64Array(_) => {
                     return format!("*{}", describe_c_expression(pointer));
                 }
             };

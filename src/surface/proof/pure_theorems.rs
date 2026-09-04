@@ -295,6 +295,12 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt64 => CValue::UInt64(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Float32 => {
+                    CValue::Float32(Bitvector32Term::Variable(Variable(index as u64)))
+                }
+                C0Type::Float64 => {
+                    CValue::Float64(Bitvector32Term::Variable(Variable(index as u64)))
+                }
                 C0Type::Int16Pointer | C0Type::Int16Array(_) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
@@ -379,13 +385,39 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::UInt64Pointer,
                 ),
+                C0Type::Float32Pointer | C0Type::Float32Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            4,
+                        ),
+                    },
+                    CType::Float32Pointer,
+                ),
+                C0Type::Float64Pointer | C0Type::Float64Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            8,
+                        ),
+                    },
+                    CType::Float64Pointer,
+                ),
                 C0Type::Int32PointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
-                | C0Type::UInt64PointerPointer => {
+                | C0Type::UInt64PointerPointer
+                | C0Type::Float32PointerPointer
+                | C0Type::Float64PointerPointer => {
                     let element_width = parameter
                         .c_type()
                         .pointee_type()

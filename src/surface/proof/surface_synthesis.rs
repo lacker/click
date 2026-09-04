@@ -1255,7 +1255,10 @@ fn synthesize_local_aggregate_field(
                         | CValue::UInt32(value)
                         | CValue::Int64(value)
                         | CValue::UInt64(value) => value,
-                        CValue::Pointer(_) | CValue::Void => return None,
+                        CValue::Pointer(_)
+                        | CValue::Void
+                        | CValue::Float32(_)
+                        | CValue::Float64(_) => return None,
                     };
                     if value_term != *term {
                         return None;

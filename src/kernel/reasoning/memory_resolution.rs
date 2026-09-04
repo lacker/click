@@ -1188,6 +1188,8 @@ fn cell_disjoint_from_load_by_constant_offset(
         CValue::UInt8(_) => 1,
         CValue::UInt32(_) => 4,
         CValue::Int64(_) | CValue::UInt64(_) => 8,
+        CValue::Float32(_) => 4,
+        CValue::Float64(_) => 8,
         CValue::Pointer(_) => return false,
     };
     cell_shift + cell_width <= load_shift || load_shift + MAX_SCALAR_LOAD_BYTES <= cell_shift
@@ -1206,6 +1208,8 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
         | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::Int64(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::UInt64(Bitvector32Term::MemoryLoad(source, source_pointer))
+        | CValue::Float32(Bitvector32Term::MemoryLoad(source, source_pointer))
+        | CValue::Float64(Bitvector32Term::MemoryLoad(source, source_pointer))
             if source_pointer.as_ref() == cell_pointer =>
         {
             Some(source.clone())
@@ -1216,6 +1220,8 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
         | CValue::UInt8(Bitvector32Term::Variable(variable))
         | CValue::Int64(Bitvector32Term::Variable(variable))
         | CValue::UInt64(Bitvector32Term::Variable(variable))
+        | CValue::Float32(Bitvector32Term::Variable(variable))
+        | CValue::Float64(Bitvector32Term::Variable(variable))
             if crate::kernel::eval::is_load_variable(variable) =>
         {
             let (source, source_pointer) =
@@ -1230,7 +1236,9 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
         | CValue::UInt32(_)
         | CValue::Int64(_)
         | CValue::UInt64(_)
-        | CValue::Pointer(_) => None,
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 

@@ -87,7 +87,7 @@ pub(in crate::kernel) fn promote_c_int32_path_value(
             Some(value)
         }
         CValue::UInt32(_) | CValue::Int64(_) | CValue::UInt64(_) => None,
-        CValue::Pointer(_) => None,
+        CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 
@@ -110,7 +110,12 @@ pub(in crate::kernel) fn promote_c_uint32_path_value(
             add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
-        CValue::Void | CValue::Int64(_) | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::Int64(_)
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -122,7 +127,11 @@ pub(in crate::kernel) fn promote_c_int64_path_value(value: CValue) -> Option<Bit
         | CValue::UInt8(value)
         | CValue::UInt16(value) => Some(Bitvector32Term::int64_from_32(value)),
         CValue::UInt32(value) => Some(Bitvector32Term::int64_from_uint32(value)),
-        CValue::Void | CValue::UInt64(_) | CValue::Pointer(_) => None,
+        CValue::Void
+        | CValue::UInt64(_)
+        | CValue::Pointer(_)
+        | CValue::Float32(_)
+        | CValue::Float64(_) => None,
     }
 }
 
@@ -136,7 +145,7 @@ pub(in crate::kernel) fn promote_c_uint64_path_value(value: CValue) -> Option<Bi
             Some(Bitvector32Term::uint64_from_int32(value))
         }
         CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value)),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 
@@ -250,6 +259,8 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         (CType::UInt64, CValue::UInt32(value)) => {
             Some(CValue::UInt64(Bitvector32Term::uint64_from_32(value)))
         }
+        (CType::Float32, CValue::Float32(value)) => Some(CValue::Float32(value)),
+        (CType::Float64, CValue::Float64(value)) => Some(CValue::Float64(value)),
         _ => None,
     }
 }
@@ -1407,6 +1418,9 @@ pub(in crate::kernel) fn c_truthiness_paths(
                     ]
                 }
             }
+        }
+        CValue::Float32(_) | CValue::Float64(_) => {
+            unreachable!("floating-point truthiness is outside the storage slice")
         }
         CValue::Pointer(pointer) => {
             let is_null = pointer_is_null_condition(pointer.pointer().clone());

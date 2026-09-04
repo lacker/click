@@ -1322,7 +1322,7 @@ fn pointer_index_term(
         CValue::UInt32(value) => Some((Bitvector32Term::uint64_from_32(value), true, true)),
         CValue::Int64(value) => Some((value, false, true)),
         CValue::UInt64(value) => Some((value, true, true)),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 
@@ -2285,7 +2285,7 @@ fn promote_c_shift_count(
         }
         CValue::Int64(value) => Some((value, false)),
         CValue::UInt64(value) => Some((value, true)),
-        CValue::Void | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
 
@@ -2388,7 +2388,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 apply_c_int32_shift_left_valid_count,
             )
         }
-        CValue::Void | CValue::Pointer(_) => {
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => {
             vec![c_type_mismatch_expression_path(facts, obligations)]
         }
     }
@@ -2525,7 +2525,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 },
             )
         }
-        CValue::Void | CValue::Pointer(_) => {
+        CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => {
             vec![c_type_mismatch_expression_path(facts, obligations)]
         }
     }

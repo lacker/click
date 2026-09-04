@@ -1064,7 +1064,9 @@ pub(in crate::kernel) fn collect_c_value_bitvector_variables(
         | CValue::UInt16(bits)
         | CValue::UInt32(bits)
         | CValue::Int64(bits)
-        | CValue::UInt64(bits) => collect_bitvector_variables(bits, variables),
+        | CValue::UInt64(bits)
+        | CValue::Float32(bits)
+        | CValue::Float64(bits) => collect_bitvector_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
     }
 }

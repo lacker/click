@@ -64,6 +64,14 @@ pub fn uint64(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt64(bits.into())
 }
 
+pub fn float32(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::Float32(bits.into())
+}
+
+pub fn float64(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::Float64(bits.into())
+}
+
 /// True when `pointer` addresses within a live heap allocation of `memory`,
 /// matching allocation keys either structurally or up to exact
 /// materialization of the loads embedded in the key and pointer forms.
@@ -561,6 +569,8 @@ fn abstract_c_state_for_join_across_with_policy(
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
                 CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
                 CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
+                CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next())),
+                CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next())),
                 CType::Int16Pointer
                 | CType::UInt16Pointer
                 | CType::Int32Pointer
@@ -574,7 +584,11 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::UInt8PointerPointer
                 | CType::UInt32PointerPointer
                 | CType::Int64PointerPointer
-                | CType::UInt64PointerPointer => {
+                | CType::UInt64PointerPointer
+                | CType::Float32Pointer
+                | CType::Float64Pointer
+                | CType::Float32PointerPointer
+                | CType::Float64PointerPointer => {
                     CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
                 }
                 CType::FunctionPointer(_) => {
@@ -586,7 +600,9 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::UInt16Array(_)
                 | CType::UInt32Array(_)
                 | CType::Int64Array(_)
-                | CType::UInt64Array(_) => {
+                | CType::UInt64Array(_)
+                | CType::Float32Array(_)
+                | CType::Float64Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
                 }
             }
@@ -699,6 +715,14 @@ pub fn c_int64_literal(value: i64) -> CExpression {
 
 pub fn c_uint64_literal(value: u64) -> CExpression {
     CExpression::Value(uint64(Bitvector32Term::UInt64Constant(value)))
+}
+
+pub fn c_float32_literal(bits: u32) -> CExpression {
+    CExpression::Value(float32(Bitvector32Term::Constant(bits)))
+}
+
+pub fn c_float64_literal(bits: u64) -> CExpression {
+    CExpression::Value(float64(Bitvector32Term::UInt64Constant(bits)))
 }
 
 pub fn c_pointer_value(pointer: Pointer) -> CExpression {
@@ -5132,4 +5156,179 @@ pub(super) fn prove_c_while_invariant_rule(
         &[],
         &[],
     )))
+}
+/// True when a term's nesting depth exceeds the limit, counting through
+/// embedded memory snapshots. Bounded walk: returns as soon as the limit is
+/// crossed, so the check itself stays shallow-stack on pathological terms.
+pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -> bool {
+    fn term_depth_exceeds(term: &Bitvector32Term, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match term {
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Variable(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_) => false,
+            Bitvector32Term::MemoryLoad(memory, pointer) => {
+                memory_depth_exceeds(memory, remaining - 1)
+                    || pointer_depth_exceeds(pointer, remaining - 1)
+            }
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            Bitvector32Term::Int64From32(value)
+            | Bitvector32Term::Int64FromUInt32(value)
+            | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::UInt64FromInt32(value)
+            | Bitvector32Term::UInt64FromInt64(value)
+            | Bitvector32Term::Int64BitwiseNot(value)
+            | Bitvector32Term::UInt64BitwiseNot(value) => term_depth_exceeds(value, remaining - 1),
+            Bitvector32Term::Int64Add(left, right)
+            | Bitvector32Term::Int64Subtract(left, right)
+            | Bitvector32Term::Int64Multiply(left, right)
+            | Bitvector32Term::Int64Divide(left, right)
+            | Bitvector32Term::Int64Remainder(left, right)
+            | Bitvector32Term::Int64ShiftLeft(left, right)
+            | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+            | Bitvector32Term::Int64BitwiseAnd(left, right)
+            | Bitvector32Term::Int64BitwiseOr(left, right)
+            | Bitvector32Term::Int64BitwiseXor(left, right)
+            | Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64Multiply(left, right)
+            | Bitvector32Term::UInt64Divide(left, right)
+            | Bitvector32Term::UInt64Remainder(left, right)
+            | Bitvector32Term::UInt64ShiftLeft(left, right)
+            | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            Bitvector32Term::BitwiseNot(value) => term_depth_exceeds(value, remaining - 1),
+            Bitvector32Term::If {
+                condition,
+                then_term,
+                else_term,
+            } => {
+                condition_depth_exceeds(condition, remaining - 1)
+                    || term_depth_exceeds(then_term, remaining - 1)
+                    || term_depth_exceeds(else_term, remaining - 1)
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                term_depth_exceeds(start, remaining - 1)
+                    || term_depth_exceeds(end, remaining - 1)
+                    || term_depth_exceeds(initial, remaining - 1)
+                    || term_depth_exceeds(body, remaining - 1)
+            }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => arguments
+                .iter()
+                .any(|argument| term_depth_exceeds(argument, remaining - 1)),
+        }
+    }
+    fn condition_depth_exceeds(condition: &ConditionTerm, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match condition {
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedLessThan(left, right)
+            | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right)
+            | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => {
+                offset_depth_exceeds(left, remaining - 1)
+                    || offset_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::PointerEqual(left, right) => {
+                pointer_depth_exceeds(left, remaining - 1)
+                    || pointer_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
+        }
+    }
+    fn pointer_depth_exceeds(pointer: &Pointer, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        offset_depth_exceeds(&pointer.offset, remaining - 1)
+    }
+    fn offset_depth_exceeds(offset: &PointerOffsetTerm, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match offset {
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+            PointerOffsetTerm::Add(left, right) => {
+                offset_depth_exceeds(left, remaining - 1)
+                    || offset_depth_exceeds(right, remaining - 1)
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => {
+                term_depth_exceeds(value, remaining - 1)
+            }
+        }
+    }
+    fn memory_depth_exceeds(memory: &CMemory, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        memory.cells.iter().any(|(pointer, value)| {
+            pointer_depth_exceeds(pointer, remaining - 1)
+                || match value {
+                    CValue::Void => false,
+                    CValue::Int16(term)
+                    | CValue::Int32(term)
+                    | CValue::UInt8(term)
+                    | CValue::UInt16(term)
+                    | CValue::UInt32(term)
+                    | CValue::Int64(term)
+                    | CValue::UInt64(term)
+                    | CValue::Float32(term)
+                    | CValue::Float64(term) => term_depth_exceeds(term, remaining - 1),
+                    CValue::Pointer(pointer) => pointer_depth_exceeds(pointer, remaining - 1),
+                }
+        })
+    }
+    term_depth_exceeds(term, limit)
 }

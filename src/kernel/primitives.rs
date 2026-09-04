@@ -336,6 +336,12 @@ pub enum CValue {
     UInt32(Bitvector32Term),
     Int64(Bitvector32Term),
     UInt64(Bitvector32Term),
+    /// Opaque IEEE-754 binary32 payload. Slice 1 only preserves and moves the
+    /// representation; no integer or real arithmetic may consume this term.
+    Float32(Bitvector32Term),
+    /// Opaque IEEE-754 binary64 payload. Slice 1 only preserves and moves the
+    /// representation; no integer or real arithmetic may consume this term.
+    Float64(Bitvector32Term),
     Pointer(CPointerValue),
 }
 
@@ -349,6 +355,8 @@ pub enum CType {
     UInt32,
     Int64,
     UInt64,
+    Float32,
+    Float64,
     Int16Pointer,
     UInt16Pointer,
     Int32Pointer,
@@ -356,6 +364,8 @@ pub enum CType {
     UInt32Pointer,
     Int64Pointer,
     UInt64Pointer,
+    Float32Pointer,
+    Float64Pointer,
     Int16PointerPointer,
     UInt16PointerPointer,
     Int32PointerPointer,
@@ -363,6 +373,8 @@ pub enum CType {
     UInt32PointerPointer,
     Int64PointerPointer,
     UInt64PointerPointer,
+    Float32PointerPointer,
+    Float64PointerPointer,
     FunctionPointer(u64),
     Int32Array(u32),
     UInt8Array(u32),
@@ -371,6 +383,8 @@ pub enum CType {
     UInt32Array(u32),
     Int64Array(u32),
     UInt64Array(u32),
+    Float32Array(u32),
+    Float64Array(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
