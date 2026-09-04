@@ -1089,8 +1089,31 @@ pub(super) fn c_function_contract_certification_assumptions(
     selection_assumptions: &PureFactContext,
     authorized_theorem_facts: &[Proposition],
 ) -> Option<PureFactContext> {
-    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
+    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    if function
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.aggregate_layout().is_some())
+    {
+        let argument_values = arguments
+            .iter()
+            .map(|argument| match argument {
+                CExpression::Value(value) => Some(value.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        entry_state = match prepare_function_contract_entry_state_with_values(
+            caller_state,
+            function,
+            &argument_values,
+            &assumptions,
+            &mut budget,
+        ) {
+            Ok(Ok(state)) => state,
+            Ok(Err(_)) | Err(_) => return None,
+        };
+    }
     // Resource-backed loadability is authoritative only after the exact
     // entry resource context has been expanded. Keep the expansion as a
     // capability check here; the propositions it produces are still added

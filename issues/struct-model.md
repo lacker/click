@@ -34,8 +34,9 @@ same address-backed typed leaf semantics, including aggregate arguments and
 returns. Positional aggregate initializers for copyable struct-valued locals
 now use the same recursive typed leaf stores, including nested structs,
 fixed-dimensional scalar arrays, fixed-dimensional embedded-struct arrays, and
-zero-fill for omitted members. Conditional aggregate expressions remain
-unsupported.
+zero-fill for omitted members. Conditional aggregate expressions over
+copyable structs now lower lazily to a fresh address-backed temporary and
+copy only the selected branch.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
 complete ABI stride. Union
@@ -154,6 +155,12 @@ Staged mdtests, each with an unchanged C file:
     arrays, pointer fields, and omitted members that become zero.~~ Covered by
     `mdtests/struct_aggregate_initializer.md`. Designated initializers and
     initializers for arrays of structs remain separate follow-up slices.
+18. ~~A conditional expression over two copyable struct values evaluates its
+    condition first, copies only the selected branch into fresh storage, and
+    supports assignment, aggregate arguments, and aggregate returns.~~ Covered
+    by `mdtests/struct_conditional_value.md` and the C0 conditional-lowering
+    regression. Mixed struct types and tagged-union conditionals remain
+    rejected.
 
 ## Acceptance criteria
 
@@ -182,6 +189,10 @@ Staged mdtests, each with an unchanged C file:
   recursive typed leaf stores, preserve source declaration order and nested
   array shape, and zero-fill omitted members; unsupported designated and
   struct-array initializer forms remain explicitly rejected.
+- Conditional expressions over copyable structs require matching struct types,
+  evaluate only the selected branch, and materialize a fresh address-backed
+  aggregate before assignment, argument passing, or return. Tagged-union and
+  mixed-struct conditionals remain rejected.
 - `scripts/check.sh` passes.
 
 Related: [c-type-spellings.md](c-type-spellings.md) for `typedef`;

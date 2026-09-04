@@ -2563,6 +2563,7 @@ struct Parser {
     scopes: Vec<Vec<ScopeBinding>>,
     next_scoped_name: u32,
     next_synthesized_call: u32,
+    next_synthesized_aggregate: u32,
     next_string_literal: u32,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
@@ -2644,6 +2645,7 @@ impl Parser {
             scopes: Vec::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
+            next_synthesized_aggregate: 0,
             next_string_literal: 0,
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
@@ -2999,7 +3001,6 @@ impl Parser {
         let body_result = self.parse_block_statement();
         self.current_return_struct_name = previous_return_struct_name;
         let mut body = body_result?;
-        body = self.lower_call_expressions(body)?;
         self.pop_scope();
         validate_function_returns(&body, header.return_type)?;
         if header.return_type == C0Type::Void {
@@ -4740,9 +4741,11 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
         self.expect(Token::RBrace)?;
+        let body = balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip);
+        let body = self.lower_call_expressions(body)?;
         self.pop_scope();
 
-        Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
+        Ok(body)
     }
 
     /// Parses the first supported C `switch` shape: a compound statement whose
@@ -6021,7 +6024,7 @@ impl Parser {
     }
 
     fn struct_value_copy_statement(
-        &self,
+        &mut self,
         target: &str,
         expression: C0Expression,
     ) -> Result<C0Statement, C0SyntaxError> {
@@ -6038,6 +6041,17 @@ impl Parser {
     }
 
     fn aggregate_copy_statement(
+        &mut self,
+        target_pointer: C0Expression,
+        target_struct: &str,
+        expression: C0Expression,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let (prefix, expression) = self.lower_expression_calls(expression)?;
+        let copy = self.aggregate_copy_statement_raw(target_pointer, target_struct, expression)?;
+        Ok(prepend_statements(prefix, copy))
+    }
+
+    fn aggregate_copy_statement_raw(
         &self,
         target_pointer: C0Expression,
         target_struct: &str,
@@ -6628,7 +6642,7 @@ impl Parser {
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let expression = self.parse_conditional()?;
-        if contains_aggregate_value(&expression) {
+        if self.expression_contains_aggregate(&expression) {
             return Err(self.aggregate_expression_error());
         }
         Ok(expression)
@@ -6636,8 +6650,8 @@ impl Parser {
 
     fn parse_expression_allow_direct_aggregate(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let expression = self.parse_conditional()?;
-        if contains_aggregate_value(&expression)
-            && !matches!(expression, C0Expression::AggregateAddress { .. })
+        if self.expression_contains_aggregate(&expression)
+            && self.aggregate_struct_name(&expression).is_none()
         {
             return Err(self.aggregate_expression_error());
         }
@@ -6648,6 +6662,140 @@ impl Parser {
         self.error_here(
             "embedded struct fields are only supported through member access or whole-struct lvalue copies; struct values are not scalar expressions, and tagged union values are not runtime aggregates",
         )
+    }
+
+    fn aggregate_struct_name(&self, expression: &C0Expression) -> Option<String> {
+        match expression {
+            C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
+            C0Expression::Call { function_name, .. } => self
+                .function_declarations
+                .get(function_name)
+                .and_then(|function| function.return_struct_name.clone()),
+            C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
+            C0Expression::Field {
+                field_type: C0Type::Int32,
+                field_struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
+            C0Expression::Field { .. } => None,
+            C0Expression::Load(pointer) => self.struct_pointer_name(pointer),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_struct = self.aggregate_struct_name(then_branch);
+                let else_struct = self.aggregate_struct_name(else_branch);
+                (then_struct == else_struct)
+                    .then_some(then_struct)
+                    .flatten()
+            }
+            C0Expression::UnionAddress { .. }
+            | C0Expression::UnionField { .. }
+            | C0Expression::Void
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::Cast { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::LessThan(_, _)
+            | C0Expression::LessEqual(_, _)
+            | C0Expression::GreaterThan(_, _)
+            | C0Expression::GreaterEqual(_, _)
+            | C0Expression::Equal(_, _)
+            | C0Expression::NotEqual(_, _)
+            | C0Expression::Not(_)
+            | C0Expression::And(_, _)
+            | C0Expression::Or(_, _)
+            | C0Expression::Add(_, _)
+            | C0Expression::Subtract(_, _)
+            | C0Expression::Multiply(_, _)
+            | C0Expression::Divide(_, _)
+            | C0Expression::Remainder(_, _)
+            | C0Expression::ShiftLeft(_, _)
+            | C0Expression::ShiftRight(_, _)
+            | C0Expression::BitwiseAnd(_, _)
+            | C0Expression::BitwiseOr(_, _)
+            | C0Expression::BitwiseXor(_, _)
+            | C0Expression::BitwiseNot(_)
+            | C0Expression::Index(_, _) => None,
+        }
+    }
+
+    fn expression_contains_aggregate(&self, expression: &C0Expression) -> bool {
+        if contains_aggregate_value(expression) || self.aggregate_struct_name(expression).is_some()
+        {
+            return true;
+        }
+        match expression {
+            C0Expression::Call { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::Void
+            | C0Expression::Variable(_)
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. }
+            | C0Expression::UnionField { .. } => false,
+            C0Expression::Cast { expression, .. }
+            | C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | C0Expression::Not(expression)
+            | C0Expression::BitwiseNot(expression)
+            | C0Expression::Load(expression) => self.expression_contains_aggregate(expression),
+            C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression_contains_aggregate(condition)
+                    || self.expression_contains_aggregate(then_branch)
+                    || self.expression_contains_aggregate(else_branch)
+            }
+            C0Expression::Field { .. } => false,
+            C0Expression::LessThan(left, right)
+            | C0Expression::LessEqual(left, right)
+            | C0Expression::GreaterThan(left, right)
+            | C0Expression::GreaterEqual(left, right)
+            | C0Expression::Equal(left, right)
+            | C0Expression::NotEqual(left, right)
+            | C0Expression::And(left, right)
+            | C0Expression::Or(left, right)
+            | C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right)
+            | C0Expression::Remainder(left, right)
+            | C0Expression::ShiftLeft(left, right)
+            | C0Expression::ShiftRight(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right)
+            | C0Expression::Index(left, right) => {
+                self.expression_contains_aggregate(left)
+                    || self.expression_contains_aggregate(right)
+            }
+        }
     }
 
     fn fresh_synthesized_call_name(&mut self) -> String {
@@ -6663,6 +6811,45 @@ impl Parser {
                 return name;
             }
         }
+    }
+
+    fn fresh_synthesized_aggregate_name(&mut self) -> String {
+        loop {
+            let name = format!(
+                "__click_aggregate_result{}",
+                self.next_synthesized_aggregate
+            );
+            self.next_synthesized_aggregate = self.next_synthesized_aggregate.saturating_add(1);
+            let already_used = self.variable_types.contains_key(&name)
+                || self
+                    .scopes
+                    .iter()
+                    .any(|scope| scope.iter().any(|binding| binding.kernel_name == name));
+            if !already_used {
+                return name;
+            }
+        }
+    }
+
+    fn declare_synthesized_aggregate(
+        &mut self,
+        struct_name: &str,
+    ) -> Result<(String, C0StructLayout), C0SyntaxError> {
+        let layout = self.structs.get(struct_name).cloned().ok_or_else(|| {
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        let name = self.fresh_synthesized_aggregate_name();
+        // This name is a lowering artifact, not a C declaration. Keep its
+        // layout metadata in the parser-wide table so later lowering passes
+        // can still recognize the generated aggregate expression after the
+        // source block that introduced it has closed.
+        self.variable_types
+            .insert(name.clone(), struct_value_type(&layout));
+        self.variable_structs
+            .insert(name.clone(), struct_name.to_string());
+        self.variable_struct_values
+            .insert(name.clone(), struct_name.to_string());
+        Ok((name, layout))
     }
 
     fn fresh_string_literal_name(&mut self, bytes: Vec<u8>) -> String {
@@ -6696,10 +6883,177 @@ impl Parser {
         &mut self,
         statement: C0Statement,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if !statement_contains_embedded_call(&statement) {
+        if !self.statement_contains_lowerable_expression(&statement) {
             return Ok(statement);
         }
         self.lower_statement_calls(statement)
+    }
+
+    /// Keep the common no-call path iterative. The parser deliberately
+    /// represents long straight-line blocks as deeply nested sequences, so a
+    /// recursive lowering walk here would consume the small parser stack even
+    /// when there is nothing to lower.
+    fn statement_contains_lowerable_expression(&self, statement: &C0Statement) -> bool {
+        let mut statements = vec![statement];
+        while let Some(statement) = statements.pop() {
+            match statement {
+                C0Statement::Assign { expression, .. }
+                | C0Statement::HeapAllocate {
+                    bytes: expression, ..
+                }
+                | C0Statement::HeapFree {
+                    pointer: expression,
+                }
+                | C0Statement::Return(expression) => {
+                    if self.expression_contains_lowerable_expression(expression) {
+                        return true;
+                    }
+                }
+                C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
+                    if arguments
+                        .iter()
+                        .any(|expression| self.expression_contains_lowerable_expression(expression))
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Store { pointer, value, .. } => {
+                    if self.expression_contains_lowerable_expression(pointer)
+                        || self.expression_contains_lowerable_expression(value)
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Update {
+                    target, operand, ..
+                } => {
+                    if self.expression_contains_lowerable_expression(target)
+                        || self.expression_contains_lowerable_expression(operand)
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Seq(first, second) => {
+                    statements.push(first);
+                    statements.push(second);
+                }
+                C0Statement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(then_branch);
+                    statements.push(else_branch);
+                }
+                C0Statement::While { condition, body }
+                | C0Statement::DoWhile { condition, body } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(body);
+                }
+                C0Statement::For {
+                    initializer,
+                    condition,
+                    step,
+                    body,
+                } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(initializer);
+                    statements.push(step);
+                    statements.push(body);
+                }
+                C0Statement::Switch { expression, cases } => {
+                    if self.expression_contains_lowerable_expression(expression) {
+                        return true;
+                    }
+                    for case in cases {
+                        statements.push(&case.body);
+                    }
+                }
+                C0Statement::Skip
+                | C0Statement::Break
+                | C0Statement::Continue
+                | C0Statement::Declare { .. }
+                | C0Statement::DeclareStructValue { .. } => {}
+            }
+        }
+        false
+    }
+
+    fn expression_contains_lowerable_expression(&self, expression: &C0Expression) -> bool {
+        let mut expressions = vec![expression];
+        while let Some(expression) = expressions.pop() {
+            if self.aggregate_struct_name(expression).is_some() {
+                return true;
+            }
+            match expression {
+                C0Expression::Call { .. } => return true,
+                C0Expression::Cast { expression, .. }
+                | C0Expression::AddressOf(expression)
+                | C0Expression::PointerOffsetBytes {
+                    pointer: expression,
+                    ..
+                }
+                | C0Expression::Not(expression)
+                | C0Expression::BitwiseNot(expression)
+                | C0Expression::Load(expression) => expressions.push(expression),
+                C0Expression::AggregateAddress { pointer, .. }
+                | C0Expression::UnionAddress { pointer, .. }
+                | C0Expression::Field { pointer, .. }
+                | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
+                C0Expression::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    expressions.push(condition);
+                    expressions.push(then_branch);
+                    expressions.push(else_branch);
+                }
+                C0Expression::LessThan(left, right)
+                | C0Expression::LessEqual(left, right)
+                | C0Expression::GreaterThan(left, right)
+                | C0Expression::GreaterEqual(left, right)
+                | C0Expression::Equal(left, right)
+                | C0Expression::NotEqual(left, right)
+                | C0Expression::And(left, right)
+                | C0Expression::Or(left, right)
+                | C0Expression::Add(left, right)
+                | C0Expression::Subtract(left, right)
+                | C0Expression::Multiply(left, right)
+                | C0Expression::Divide(left, right)
+                | C0Expression::Remainder(left, right)
+                | C0Expression::ShiftLeft(left, right)
+                | C0Expression::ShiftRight(left, right)
+                | C0Expression::BitwiseAnd(left, right)
+                | C0Expression::BitwiseOr(left, right)
+                | C0Expression::BitwiseXor(left, right)
+                | C0Expression::Index(left, right) => {
+                    expressions.push(left);
+                    expressions.push(right);
+                }
+                C0Expression::Void
+                | C0Expression::Variable(_)
+                | C0Expression::FunctionAddress(_)
+                | C0Expression::Int32Literal(_)
+                | C0Expression::UInt8Literal(_)
+                | C0Expression::UInt32Literal(_)
+                | C0Expression::Int64Literal(_)
+                | C0Expression::UInt64Literal(_)
+                | C0Expression::Float32Literal(_)
+                | C0Expression::Float64Literal(_)
+                | C0Expression::SizeOfStruct { .. }
+                | C0Expression::SizeOfUnion { .. }
+                | C0Expression::SizeOfType { .. } => {}
+            }
+        }
+        false
     }
 
     fn lower_statement_calls(
@@ -6987,6 +7341,23 @@ impl Parser {
                     ));
                 }
                 let (mut prefix, arguments) = self.lower_call_arguments(arguments)?;
+                let return_struct_name = self
+                    .function_declarations
+                    .get(&function_name)
+                    .and_then(|function| function.return_struct_name.clone());
+                if let Some(struct_name) = return_struct_name {
+                    let (target, layout) = self.declare_synthesized_aggregate(&struct_name)?;
+                    prefix.push(C0Statement::DeclareStructValue {
+                        name: target.clone(),
+                        layout,
+                    });
+                    prefix.push(C0Statement::CallAssign {
+                        target: target.clone(),
+                        function_name,
+                        arguments,
+                    });
+                    return Ok((prefix, C0Expression::Variable(target)));
+                }
                 let target = self.fresh_synthesized_call_name();
                 prefix.push(C0Statement::CallAssign {
                     target: target.clone(),
@@ -7013,6 +7384,38 @@ impl Parser {
                 let (mut prefix, condition) = self.lower_expression_calls(*condition)?;
                 let (then_prefix, then_branch) = self.lower_expression_calls(*then_branch)?;
                 let (else_prefix, else_branch) = self.lower_expression_calls(*else_branch)?;
+                let then_struct = self.aggregate_struct_name(&then_branch);
+                let else_struct = self.aggregate_struct_name(&else_branch);
+                if then_struct != else_struct && (then_struct.is_some() || else_struct.is_some()) {
+                    return Err(self.error_here(
+                        "conditional aggregate branches must have the same struct type",
+                    ));
+                }
+                if let Some(struct_name) = then_struct {
+                    let (target, layout) = self.declare_synthesized_aggregate(&struct_name)?;
+                    let then_copy = self.aggregate_copy_statement_raw(
+                        C0Expression::Variable(target.clone()),
+                        &struct_name,
+                        then_branch,
+                    )?;
+                    let else_copy = self.aggregate_copy_statement_raw(
+                        C0Expression::Variable(target.clone()),
+                        &struct_name,
+                        else_branch,
+                    )?;
+                    let then_statement = prepend_statements(then_prefix, then_copy);
+                    let else_statement = prepend_statements(else_prefix, else_copy);
+                    prefix.push(C0Statement::DeclareStructValue {
+                        name: target.clone(),
+                        layout,
+                    });
+                    prefix.push(C0Statement::If {
+                        condition,
+                        then_branch: Box::new(then_statement),
+                        else_branch: Box::new(else_statement),
+                    });
+                    return Ok((prefix, C0Expression::Variable(target)));
+                }
                 if then_prefix.is_empty() && else_prefix.is_empty() {
                     return Ok((
                         prefix,
@@ -7221,10 +7624,20 @@ impl Parser {
         if self.peek() != Some(&Token::Question) {
             return Ok(condition);
         }
+        if self.expression_contains_aggregate(&condition) {
+            return Err(self.aggregate_expression_error());
+        }
         self.position += 1;
-        let then_branch = self.parse_expression()?;
+        let then_branch = self.parse_expression_allow_direct_aggregate()?;
         self.expect(Token::Colon)?;
-        let else_branch = self.parse_conditional()?;
+        let else_branch = self.parse_expression_allow_direct_aggregate()?;
+        let then_struct = self.aggregate_struct_name(&then_branch);
+        let else_struct = self.aggregate_struct_name(&else_branch);
+        if then_struct != else_struct && (then_struct.is_some() || else_struct.is_some()) {
+            return Err(
+                self.error_here("conditional aggregate branches must have the same struct type")
+            );
+        }
         Ok(C0Expression::Conditional {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
@@ -7250,10 +7663,10 @@ impl Parser {
                 .and_then(|name| self.function_declarations.get(name))
                 .and_then(|function| function.parameters.get(argument_index))
                 .is_some_and(|parameter| !parameter.is_struct_value());
-            if known_scalar_parameter && contains_aggregate_value(&expression) {
+            if known_scalar_parameter && self.expression_contains_aggregate(&expression) {
                 return Err(self.aggregate_expression_error());
             }
-            if function_name == Some("free") && contains_aggregate_value(&expression) {
+            if function_name == Some("free") && self.expression_contains_aggregate(&expression) {
                 return Err(self.error_here("`free` requires a pointer, not an aggregate value"));
             }
             arguments.push(expression);
@@ -8642,95 +9055,6 @@ fn prepend_condition_check_before_loop_continues(
     }
 }
 
-fn statement_contains_embedded_call(statement: &C0Statement) -> bool {
-    let mut statements = vec![statement];
-    while let Some(statement) = statements.pop() {
-        match statement {
-            C0Statement::Assign { expression, .. }
-            | C0Statement::HeapAllocate {
-                bytes: expression, ..
-            }
-            | C0Statement::HeapFree {
-                pointer: expression,
-            }
-            | C0Statement::Return(expression) => {
-                if expression_contains_embedded_call(expression) {
-                    return true;
-                }
-            }
-            C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
-                if arguments.iter().any(expression_contains_embedded_call) {
-                    return true;
-                }
-            }
-            C0Statement::Store { pointer, value, .. } => {
-                if expression_contains_embedded_call(pointer)
-                    || expression_contains_embedded_call(value)
-                {
-                    return true;
-                }
-            }
-            C0Statement::Update {
-                target, operand, ..
-            } => {
-                if expression_contains_embedded_call(target)
-                    || expression_contains_embedded_call(operand)
-                {
-                    return true;
-                }
-            }
-            C0Statement::Seq(first, second) => {
-                statements.push(first);
-                statements.push(second);
-            }
-            C0Statement::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(then_branch);
-                statements.push(else_branch);
-            }
-            C0Statement::While { condition, body } | C0Statement::DoWhile { condition, body } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(body);
-            }
-            C0Statement::For {
-                initializer,
-                condition,
-                step,
-                body,
-            } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(initializer);
-                statements.push(step);
-                statements.push(body);
-            }
-            C0Statement::Switch { expression, cases } => {
-                if expression_contains_embedded_call(expression) {
-                    return true;
-                }
-                for case in cases {
-                    statements.push(&case.body);
-                }
-            }
-            C0Statement::Skip
-            | C0Statement::Break
-            | C0Statement::Continue
-            | C0Statement::Declare { .. }
-            | C0Statement::DeclareStructValue { .. } => {}
-        }
-    }
-    false
-}
-
 fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosition> {
     match expression {
         C0Expression::Call {
@@ -8793,73 +9117,6 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
     }
-}
-
-fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
-    let mut expressions = vec![expression];
-    while let Some(expression) = expressions.pop() {
-        match expression {
-            C0Expression::Call { .. } => return true,
-            C0Expression::Cast { expression, .. }
-            | C0Expression::AddressOf(expression)
-            | C0Expression::PointerOffsetBytes {
-                pointer: expression,
-                ..
-            }
-            | C0Expression::Not(expression)
-            | C0Expression::BitwiseNot(expression)
-            | C0Expression::Load(expression) => expressions.push(expression),
-            C0Expression::AggregateAddress { pointer, .. }
-            | C0Expression::UnionAddress { pointer, .. }
-            | C0Expression::Field { pointer, .. }
-            | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
-            C0Expression::Conditional {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                expressions.push(condition);
-                expressions.push(then_branch);
-                expressions.push(else_branch);
-            }
-            C0Expression::LessThan(left, right)
-            | C0Expression::LessEqual(left, right)
-            | C0Expression::GreaterThan(left, right)
-            | C0Expression::GreaterEqual(left, right)
-            | C0Expression::Equal(left, right)
-            | C0Expression::NotEqual(left, right)
-            | C0Expression::And(left, right)
-            | C0Expression::Or(left, right)
-            | C0Expression::Add(left, right)
-            | C0Expression::Subtract(left, right)
-            | C0Expression::Multiply(left, right)
-            | C0Expression::Divide(left, right)
-            | C0Expression::Remainder(left, right)
-            | C0Expression::ShiftLeft(left, right)
-            | C0Expression::ShiftRight(left, right)
-            | C0Expression::BitwiseAnd(left, right)
-            | C0Expression::BitwiseOr(left, right)
-            | C0Expression::BitwiseXor(left, right)
-            | C0Expression::Index(left, right) => {
-                expressions.push(left);
-                expressions.push(right);
-            }
-            C0Expression::Void
-            | C0Expression::Variable(_)
-            | C0Expression::FunctionAddress(_)
-            | C0Expression::Int32Literal(_)
-            | C0Expression::UInt8Literal(_)
-            | C0Expression::UInt32Literal(_)
-            | C0Expression::Int64Literal(_)
-            | C0Expression::UInt64Literal(_)
-            | C0Expression::Float32Literal(_)
-            | C0Expression::Float64Literal(_)
-            | C0Expression::SizeOfStruct { .. }
-            | C0Expression::SizeOfUnion { .. }
-            | C0Expression::SizeOfType { .. } => {}
-        }
-    }
-    false
 }
 
 fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {

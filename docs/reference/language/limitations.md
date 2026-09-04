@@ -68,7 +68,9 @@ Positional aggregate initializers for copyable struct-valued locals support
 nested structs, fixed-dimensional scalar arrays, embedded-struct arrays, and
 zero-filled omitted members; designated initializers and initializers for
 arrays of structs remain unsupported. Function-pointer fields, unions,
-conditional aggregate expressions, packed layout, or address-taking of union
+conditional expressions over copyable structs require matching branch types
+and copy only the selected branch into fresh address-backed storage.
+Function-pointer fields, unions, packed layout, or address-taking of union
 members remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and

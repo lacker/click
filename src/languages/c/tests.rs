@@ -6253,6 +6253,35 @@ fn c0_syntax_lowers_calls_in_conditional_expression_branches() {
 }
 
 #[test]
+fn c0_syntax_lowers_aggregate_conditional_call_argument() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct inner { int32 value; uint8 enabled; };
+        struct packet { uint8 tag; struct inner inner; int32 tail; };
+        int32 sum_packet(struct packet packet) {
+            return packet.tag + packet.inner.value + packet.inner.enabled + packet.tail;
+        }
+        int32 caller() {
+            struct packet left = {3, {4, 1}, 5};
+            struct packet right = {20, {30, 2}, 40};
+            int32 result = sum_packet(0 ? left : right);
+            return result;
+        }
+        "#,
+    )
+    .expect("aggregate conditional input parses");
+    let caller = functions
+        .iter()
+        .find(|function| function.name() == "caller")
+        .expect("caller");
+    let debug = format!("{:?}", caller.body());
+    assert!(debug.contains("DeclareStructValue"));
+    assert!(debug.contains("If {"));
+    assert!(debug.contains("CallAssign"));
+    assert!(!debug.contains("Conditional {"));
+}
+
+#[test]
 fn c0_syntax_lowers_calls_in_reevaluated_loop_conditions() {
     let function = syntax::parse_function(
         r#"

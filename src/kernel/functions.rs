@@ -1158,6 +1158,30 @@ fn add_verified_function_ensure_facts(
                 &ensure_path.facts,
                 &[],
             )));
+            let mut specialized_assumptions = assumptions_with_path_context(
+                &ensure_assumptions,
+                &ensure_path.facts,
+                &ensure_path.obligations,
+            );
+            let mut specialized = ensure_path.proposition.clone();
+            let mut specialized_any_premise = false;
+            while let Proposition::Implies(premise, body) = specialized {
+                if !specialized_assumptions.proves(&premise) {
+                    specialized = Proposition::Implies(premise, body);
+                    break;
+                }
+                specialized_assumptions =
+                    specialized_assumptions.assume_proposition((*premise).clone());
+                specialized = *body;
+                specialized_any_premise = true;
+            }
+            if specialized_any_premise {
+                facts.push(ExecutionPureFact::certified(wrap_path_context(
+                    specialized,
+                    &ensure_path.facts,
+                    &[],
+                )));
+            }
             add_normalized_verified_ensure_facts(
                 facts,
                 &ensure_path.proposition,
@@ -2622,7 +2646,7 @@ fn prepare_function_resource_transfer(
             resource,
             CResourceFact::View(CResource::Memory(range))
                 if range.base().block.starts_with("local:")
-                    && caller_state.memory().has_block(&range.base().block)
+                    && callee_state.memory().has_block(&range.base().block)
         ) {
             continue;
         }

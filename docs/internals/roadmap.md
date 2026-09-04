@@ -125,7 +125,9 @@ Likely additions:
   return storage. Positional initializers for copyable struct-valued locals
   recursively write typed leaves and zero-fill omitted members, including
   nested structs and fixed-dimensional scalar or embedded-struct arrays.
-  Bitfields and other compiler-dependent layout rules are tracked in the
+  Conditional expressions over copyable struct values now use fresh
+  address-backed temporaries and branch-local recursive copies; mixed-struct
+  and union conditionals remain outside the model. Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
