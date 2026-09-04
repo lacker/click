@@ -38,7 +38,10 @@ conditional slice now combines those bounded atoms with `!`, `&&`, `||`, and
 parentheses using normal precedence and short-circuit evaluation. The comparison
 slice now supports bounded `==` and `!=` comparisons between integer or character
 literals, literal-valued macros, and `defined(NAME)`, including their use inside
-the existing boolean expressions.
+the existing boolean expressions. The first function-like macro slice now
+supports one-parameter calls with balanced nested arguments, ordinary
+substitution, bounded replacement rescanning, and source-named diagnostics for
+wrong arity, recursion, stringification, and token pasting.
 
 ## Violated invariant
 
@@ -54,8 +57,8 @@ with `#include "types.h"` that holds the struct declarations, and a standard
 header include (`#include <stdint.h>`) that is accepted and contributes only
 the names Click already knows. A positive macro mdtest shares literal-only
 object-like definitions from a local header across more than one source file.
-Negative mdtests show that an unresolvable include or a multi-token/function-like
-macro produces a positioned diagnostic naming the construct rather than
+Negative mdtests show that an unresolvable include or an unsupported macro form
+produces a positioned diagnostic naming the construct rather than
 "unexpected character". A conditional-compilation mdtest includes unsupported
 code and a missing include in an inactive branch, plus a negative test for a
 general conditional expression.
@@ -78,12 +81,18 @@ general conditional expression.
   uses in comments and quoted literals remain untouched, and redefinitions or
   other macro forms receive source-named diagnostics. `#undef NAME` removes a
   macro and permits a later literal redefinition.
-- Function-like and multi-token macros, system headers other than the modeled
+- One-parameter function-like macros perform ordinary substitution with
+  balanced nested arguments and bounded replacement rescanning across source
+  files and included headers. Wrong arity, recursive expansion, stringification,
+  and token pasting receive source-named diagnostics.
+- Function-like macros with more than one parameter, stringification, token
+  pasting, multi-token object-like macros, system headers other than the modeled
   `<stdint.h>`, relational comparisons, arithmetic, ternaries, and other
   general conditional expressions remain explicitly unsupported until a
-  documented allowlist or preprocessor subset is implemented. Bounded `==` and
-  `!=` comparisons are supported between integer or character literals,
-  literal-valued macros, and `defined(NAME)`.
+  documented allowlist or preprocessor subset is implemented. One-parameter
+  function-like macros with ordinary substitution and bounded rescanning are
+  supported. Bounded `==` and `!=` comparisons are supported between integer or
+  character literals, literal-valued macros, and `defined(NAME)`.
 - The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
   previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif`
   with those same conditions, `#if defined(NAME)`, `#if !defined(NAME)`,

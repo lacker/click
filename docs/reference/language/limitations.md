@@ -84,15 +84,16 @@ forward prototypes. Project-local quoted includes such as
 `#include "include/types.h"` are resolved relative to the including source when
 the named header is supplied in the source bundle. Headers are declaration-only
 and may contain supported structs, typedefs, enums, and prototypes. System
-header includes other than the modeled no-op `<stdint.h>`, function-like or
-multi-token macros, macro redefinitions without an intervening `#undef`,
+header includes other than the modeled no-op `<stdint.h>`, function-like macros
+with more than one parameter, stringification, token pasting, or multi-token
+object-like macros, macro redefinitions without an intervening `#undef`,
 relational comparisons, arithmetic, ternaries, and other general conditional
 expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
 when both operands are integer or character literals, literal-valued macros, or
 `defined(NAME)`.
-except for canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
-`#pragma once`, and
-the bounded conditional subset. C0 does support object-like macros whose
+Canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
+`#pragma once`, and the bounded conditional subset are supported. C0 also
+supports object-like macros whose
 replacement is one integer or character literal; those macros are expanded in
 translation-unit order across a source file and its local headers, and `#undef NAME`
 removes one from the active macro state. The bounded
@@ -102,6 +103,11 @@ conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a previously defined
 parentheses. `#elif` with those same conditions, `#else`, and `#endif` are
 supported, including nesting; unsupported active conditions receive a
 diagnostic.
+
+One-parameter function-like macros are also supported with ordinary argument
+substitution, balanced nested calls, and bounded rescanning of replacements.
+They are expanded in source order across a source file and its local headers.
+Recursive expansion and unsupported parameter features receive diagnostics.
 
 ## Type support is still narrow
 

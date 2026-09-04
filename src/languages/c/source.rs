@@ -2,9 +2,9 @@
 //!
 //! This is deliberately a small source expander, not a general C preprocessor.
 //! It expands supplied project-local headers, a narrow literal-only macro
-//! subset, a bounded conditional-compilation subset, and rejects all other
-//! preprocessor directives so the C0 parser never silently verifies a
-//! different program.
+//! subset, a bounded one-parameter function-like macro subset, a bounded
+//! conditional-compilation subset, and rejects all other preprocessor
+//! directives so the C0 parser never silently verifies a different program.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -54,7 +54,10 @@ enum SourceDirective {
     Include(String),
     SystemInclude(String),
     HeaderGuardDefine(String),
-    MacroDefinition { name: String, value: String },
+    MacroDefinition {
+        name: String,
+        definition: MacroDefinition,
+    },
     MacroUndefine(String),
     ConditionalStart(Conditional),
     ConditionalElif(Conditional),
@@ -62,6 +65,24 @@ enum SourceDirective {
     ConditionalEnd,
     PragmaOnce,
     Unsupported(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MacroDefinition {
+    ObjectLike(String),
+    FunctionLike {
+        parameter: String,
+        replacement: String,
+    },
+}
+
+impl MacroDefinition {
+    fn object_value(&self) -> Option<&str> {
+        match self {
+            Self::ObjectLike(value) => Some(value),
+            Self::FunctionLike { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,7 +138,8 @@ struct ConditionalFrame {
 
 /// Returns the normalized project-local headers directly included by a source.
 /// Unsupported system headers and preprocessor directives are rejected. The
-/// supported literal-only object-like macro definitions are accepted.
+/// supported object-like and one-parameter function-like macro definitions are
+/// accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
     let analysis = analyze_source(source_path, source)?;
     collect_local_include_paths(source_path, &analysis)
@@ -167,7 +189,7 @@ fn expand_source<'a>(
     stack: &mut Vec<String>,
     dependencies: &mut BTreeSet<String>,
     expanded_once: &mut BTreeSet<String>,
-    macros: &mut BTreeMap<String, String>,
+    macros: &mut BTreeMap<String, MacroDefinition>,
     defined_macros: &mut BTreeSet<String>,
     include_site: Option<(&str, usize)>,
     expanded: &mut String,
@@ -194,11 +216,10 @@ fn expand_source<'a>(
         let line_number = index + 1;
         let Some(directive) = analysis.directives.get(&line_number) else {
             if active != ConditionalTruth::False {
-                expanded.push_str(&expand_macros_in_line(
-                    line,
-                    macros,
-                    &mut macro_block_comment,
-                ));
+                let expanded_line =
+                    expand_macros_in_line(line, macros, &mut macro_block_comment)
+                        .map_err(|message| CSourceError::new(source_path, line_number, message))?;
+                expanded.push_str(&expanded_line);
             }
             expanded.push('\n');
             continue;
@@ -308,7 +329,7 @@ fn expand_source<'a>(
                 expanded.push('\n');
             }
             SourceDirective::SystemInclude(_) => expanded.push('\n'),
-            SourceDirective::MacroDefinition { name, value }
+            SourceDirective::MacroDefinition { name, definition }
                 if active != ConditionalTruth::False =>
             {
                 if !defined_macros.insert(name.clone()) {
@@ -318,7 +339,7 @@ fn expand_source<'a>(
                         format!("macro `{name}` is redefined"),
                     ));
                 }
-                macros.insert(name.clone(), value.clone());
+                macros.insert(name.clone(), definition.clone());
                 // Keep a line for the removed directive so source positions in
                 // the following C code remain aligned with the original file.
                 expanded.push('\n');
@@ -463,11 +484,11 @@ fn collect_local_include_paths(
                 }
             }
             SourceDirective::SystemInclude(_) => {}
-            SourceDirective::MacroDefinition { name, value }
+            SourceDirective::MacroDefinition { name, definition }
                 if active == ConditionalTruth::True =>
             {
                 if defined_macros.insert(name.clone()) {
-                    macros.insert(name.clone(), value.clone());
+                    macros.insert(name.clone(), definition.clone());
                 } else {
                     return Err(CSourceError::new(
                         source_path,
@@ -507,7 +528,7 @@ fn collect_local_include_paths(
 fn evaluate_condition(
     condition: &Conditional,
     directive_name: &str,
-    macros: &BTreeMap<String, String>,
+    macros: &BTreeMap<String, MacroDefinition>,
     defined_macros: &BTreeSet<String>,
 ) -> Result<ConditionalTruth, String> {
     match condition {
@@ -520,7 +541,7 @@ fn evaluate_condition(
             "unsupported conditional expression `#{directive_name} {value}`; expected `0` or `1`, or a supported comparison"
         )),
         Conditional::Macro(name) => {
-            let Some(value) = macros.get(name) else {
+            let Some(value) = macros.get(name).and_then(MacroDefinition::object_value) else {
                 return Err(format!(
                     "unsupported conditional expression `#{directive_name} {name}`; expected a previously defined literal macro"
                 ));
@@ -588,7 +609,7 @@ fn unsupported_condition_message(expression: &str) -> String {
 
 fn evaluate_condition_for_discovery(
     condition: &Conditional,
-    macros: &BTreeMap<String, String>,
+    macros: &BTreeMap<String, MacroDefinition>,
     defined_macros: &BTreeSet<String>,
     may_have_external_macros: bool,
 ) -> ConditionalTruth {
@@ -603,6 +624,7 @@ fn evaluate_condition_for_discovery(
         Conditional::ValueLiteral(_) => ConditionalTruth::Unknown,
         Conditional::Macro(name) => macros
             .get(name)
+            .and_then(MacroDefinition::object_value)
             .and_then(|value| macro_condition_truth(value))
             .unwrap_or(ConditionalTruth::Unknown),
         Conditional::Ifdef(name) => {
@@ -706,7 +728,7 @@ fn evaluate_condition_for_discovery(
 fn evaluate_comparison_operand(
     condition: &Conditional,
     directive_name: &str,
-    macros: &BTreeMap<String, String>,
+    macros: &BTreeMap<String, MacroDefinition>,
     defined_macros: &BTreeSet<String>,
 ) -> Result<u64, String> {
     match condition {
@@ -717,7 +739,7 @@ fn evaluate_comparison_operand(
             )
         }),
         Conditional::Macro(name) => {
-            let Some(value) = macros.get(name) else {
+            let Some(value) = macros.get(name).and_then(MacroDefinition::object_value) else {
                 return Err(format!(
                     "unsupported conditional expression `#{directive_name}`; expected `{name}` to be a previously defined literal macro"
                 ));
@@ -737,7 +759,7 @@ fn evaluate_comparison_operand(
 
 fn comparison_operand_for_discovery(
     condition: &Conditional,
-    macros: &BTreeMap<String, String>,
+    macros: &BTreeMap<String, MacroDefinition>,
     defined_macros: &BTreeSet<String>,
     may_have_external_macros: bool,
 ) -> Option<u64> {
@@ -746,6 +768,7 @@ fn comparison_operand_for_discovery(
         Conditional::ValueLiteral(value) => preprocessor_literal_value(value),
         Conditional::Macro(name) => macros
             .get(name)
+            .and_then(MacroDefinition::object_value)
             .and_then(|value| preprocessor_literal_value(value)),
         Conditional::Defined(name) => {
             if defined_macros.contains(name) {
@@ -1051,16 +1074,19 @@ fn parse_directive<'a>(
             )));
         };
         if trailing.starts_with('(') {
-            return Ok(Some(SourceDirective::Unsupported(
-                "function-like macros are not supported; use an object-like literal macro"
-                    .to_string(),
-            )));
+            return Ok(Some(match parse_function_macro_definition(trailing) {
+                Ok(definition) => SourceDirective::MacroDefinition { name, definition },
+                Err(message) => SourceDirective::Unsupported(message.to_string()),
+            }));
         }
         if trailing_comments_only(trailing) {
             return Ok(Some(SourceDirective::HeaderGuardDefine(name)));
         }
         if let Some(value) = parse_macro_literal(trailing.trim_start()) {
-            return Ok(Some(SourceDirective::MacroDefinition { name, value }));
+            return Ok(Some(SourceDirective::MacroDefinition {
+                name,
+                definition: MacroDefinition::ObjectLike(value),
+            }));
         }
         return Ok(Some(SourceDirective::Unsupported(format!(
             "unsupported macro definition `#{directive}`; expected one integer or character literal"
@@ -1303,6 +1329,32 @@ fn parse_macro_literal(input: &str) -> Option<String> {
     trailing_comments_only(trailing).then(|| literal.to_string())
 }
 
+fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'static str> {
+    let Some(close) = input.find(')') else {
+        return Err(
+            "malformed function-like macro; expected exactly one identifier parameter and a replacement",
+        );
+    };
+    let parameters = input[1..close].trim();
+    let (parameter, trailing) = split_identifier(parameters);
+    let Some(parameter) = parameter.filter(|_| trailing_comments_only(trailing)) else {
+        return Err("function-like macros currently support exactly one identifier parameter");
+    };
+    let replacement = input[close + 1..].trim_start();
+    if replacement.contains('#') {
+        return Err("function-like macro stringification and token pasting are not supported");
+    }
+    let replacement = if trailing_comments_only(replacement) {
+        String::new()
+    } else {
+        replacement.trim_end().to_string()
+    };
+    Ok(MacroDefinition::FunctionLike {
+        parameter,
+        replacement,
+    })
+}
+
 fn preprocessor_literal_value(literal: &str) -> Option<u64> {
     if literal.starts_with('\'') {
         return preprocessor_character_literal_value(literal);
@@ -1425,11 +1477,28 @@ fn macro_character_literal_end(input: &str) -> Option<usize> {
 
 fn expand_macros_in_line(
     line: &str,
-    macros: &BTreeMap<String, String>,
+    macros: &BTreeMap<String, MacroDefinition>,
     in_block_comment: &mut bool,
-) -> String {
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut expanded = String::with_capacity(line.len());
+) -> Result<String, String> {
+    let mut state = MacroExpansionState::default();
+    expand_macro_text(line, macros, in_block_comment, &mut state)
+}
+
+#[derive(Default)]
+struct MacroExpansionState {
+    active: Vec<String>,
+}
+
+const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
+
+fn expand_macro_text(
+    text: &str,
+    macros: &BTreeMap<String, MacroDefinition>,
+    in_block_comment: &mut bool,
+    state: &mut MacroExpansionState,
+) -> Result<String, String> {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut expanded = String::with_capacity(text.len());
     let mut index = 0;
     while index < chars.len() {
         if *in_block_comment {
@@ -1439,7 +1508,7 @@ fn expand_macros_in_line(
             }
             if index + 1 == chars.len() {
                 expanded.extend(chars[start..].iter().copied());
-                return expanded;
+                return Ok(expanded);
             }
             index += 2;
             expanded.extend(chars[start..index].iter().copied());
@@ -1470,8 +1539,178 @@ fn expand_macros_in_line(
                 index += 1;
             }
             let name = chars[start..index].iter().collect::<String>();
-            if let Some(value) = macros.get(&name) {
-                expanded.push_str(value);
+            let Some(definition) = macros.get(&name).cloned() else {
+                expanded.extend(chars[start..index].iter().copied());
+                continue;
+            };
+            match definition {
+                MacroDefinition::ObjectLike(value) => {
+                    expanded.push_str(&expand_macro_replacement(&name, &value, macros, state)?);
+                }
+                MacroDefinition::FunctionLike {
+                    parameter,
+                    replacement,
+                } if chars.get(index) == Some(&'(') => {
+                    let (arguments, end) = parse_macro_arguments(&chars, index, &name)?;
+                    expanded.push_str(&expand_function_macro(
+                        &name,
+                        &parameter,
+                        &replacement,
+                        &arguments,
+                        macros,
+                        state,
+                    )?);
+                    index = end;
+                }
+                MacroDefinition::FunctionLike { .. } => {
+                    expanded.extend(chars[start..index].iter().copied());
+                }
+            }
+            continue;
+        }
+        expanded.push(chars[index]);
+        index += 1;
+    }
+    Ok(expanded)
+}
+
+fn expand_macro_replacement(
+    name: &str,
+    replacement: &str,
+    macros: &BTreeMap<String, MacroDefinition>,
+    state: &mut MacroExpansionState,
+) -> Result<String, String> {
+    enter_macro(name, state)?;
+    let mut replacement_comments = false;
+    let result = expand_macro_text(replacement, macros, &mut replacement_comments, state);
+    state.active.pop();
+    result
+}
+
+fn expand_function_macro(
+    name: &str,
+    parameter: &str,
+    replacement: &str,
+    arguments: &[String],
+    macros: &BTreeMap<String, MacroDefinition>,
+    state: &mut MacroExpansionState,
+) -> Result<String, String> {
+    if arguments.len() != 1 || arguments[0].trim().is_empty() {
+        return Err(format!(
+            "macro `{name}` expects exactly one non-empty argument"
+        ));
+    }
+    let mut argument_comments = false;
+    let argument = expand_macro_text(arguments[0].trim(), macros, &mut argument_comments, state)?;
+    let substituted = substitute_macro_parameter(replacement, parameter, &argument);
+    expand_macro_replacement(name, &substituted, macros, state)
+}
+
+fn enter_macro(name: &str, state: &mut MacroExpansionState) -> Result<(), String> {
+    if state.active.iter().any(|active| active == name) {
+        return Err(format!(
+            "recursive macro expansion involving `{name}` is not supported"
+        ));
+    }
+    if state.active.len() >= MAX_MACRO_EXPANSION_DEPTH {
+        return Err(format!(
+            "macro expansion exceeded the depth limit of {MAX_MACRO_EXPANSION_DEPTH}"
+        ));
+    }
+    state.active.push(name.to_string());
+    Ok(())
+}
+
+fn parse_macro_arguments(
+    chars: &[char],
+    open: usize,
+    name: &str,
+) -> Result<(Vec<String>, usize), String> {
+    let mut arguments = Vec::new();
+    let mut argument_start = open + 1;
+    let mut nested_parentheses = 0;
+    let mut index = open + 1;
+    while index < chars.len() {
+        if chars[index] == '\'' || chars[index] == '"' {
+            index = quoted_literal_end(chars, index, chars[index]);
+            continue;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'/') {
+            return Err(format!(
+                "unterminated invocation of function-like macro `{name}`"
+            ));
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            if index + 1 == chars.len() {
+                return Err(format!(
+                    "unterminated comment in invocation of function-like macro `{name}`"
+                ));
+            }
+            index += 2;
+            continue;
+        }
+        match chars[index] {
+            '(' => nested_parentheses += 1,
+            ')' if nested_parentheses == 0 => {
+                arguments.push(chars[argument_start..index].iter().collect());
+                return Ok((arguments, index + 1));
+            }
+            ')' => nested_parentheses -= 1,
+            ',' if nested_parentheses == 0 => {
+                arguments.push(chars[argument_start..index].iter().collect());
+                argument_start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Err(format!(
+        "unterminated invocation of function-like macro `{name}`"
+    ))
+}
+
+fn substitute_macro_parameter(replacement: &str, parameter: &str, argument: &str) -> String {
+    let chars = replacement.chars().collect::<Vec<_>>();
+    let mut expanded = String::with_capacity(replacement.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'/') {
+            expanded.extend(chars[index..].iter().copied());
+            break;
+        }
+        if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+            let start = index;
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            if index + 1 < chars.len() {
+                index += 2;
+            } else {
+                index = chars.len();
+            }
+            expanded.extend(chars[start..index].iter().copied());
+            continue;
+        }
+        if chars[index] == '\'' || chars[index] == '"' {
+            let start = index;
+            index = quoted_literal_end(&chars, index, chars[index]);
+            expanded.extend(chars[start..index].iter().copied());
+            continue;
+        }
+        if is_identifier_start(chars[index]) {
+            let start = index;
+            index += 1;
+            while index < chars.len() && is_identifier_continue(chars[index]) {
+                index += 1;
+            }
+            let name = chars[start..index].iter().collect::<String>();
+            if name == parameter {
+                expanded.push_str(argument);
             } else {
                 expanded.extend(chars[start..index].iter().copied());
             }
@@ -1797,14 +2036,85 @@ mod tests {
         let cases = [
             ("#define LIMIT (1 + 2)\n", "unsupported macro definition"),
             (
-                "#define LIMIT(value) value\n",
-                "function-like macros are not supported",
+                "#define LIMIT(left, right) left\n",
+                "exactly one identifier parameter",
+            ),
+            (
+                "#define LIMIT(value) #value\n",
+                "stringification and token pasting are not supported",
             ),
         ];
         for (source, expected) in cases {
             let error = local_include_paths("main.c", source).unwrap_err();
             assert!(error.to_string().contains(expected));
         }
+    }
+
+    #[test]
+    fn one_parameter_function_macros_expand_across_headers_and_nested_calls() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#include "macros.h"
+int32 run(int32 value) { return APPLY(INCREMENT(value)); }
+int32 nested(int32 value) { return TWICE(INCREMENT((value + value))); }
+int32 preserved(int32 value) { /* APPLY(value) */ return value; }
+"##,
+            ),
+            (
+                "macros.h",
+                r##"#ifndef MACROS_H
+#define MACROS_H
+#define INCREMENT(value) ((value) + 1)
+#define TWICE(value) ((value) + (value))
+#define APPLY(value) TWICE(value)
+#endif
+"##,
+            ),
+        ]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(
+            expanded
+                .source()
+                .contains("int32 run(int32 value) { return ((((value) + 1)) + (((value) + 1))); }")
+        );
+        assert!(expanded.source().contains(
+            "int32 nested(int32 value) { return (((((value + value)) + 1)) + ((((value + value)) + 1))); }"
+        ));
+        assert!(
+            expanded
+                .source()
+                .contains("int32 preserved(int32 value) { /* APPLY(value) */ return value; }")
+        );
+        assert!(!expanded.source().contains("INCREMENT("));
+        assert!(!expanded.source().contains("TWICE("));
+        assert!(!expanded.source().contains("return APPLY("));
+        assert!(expanded.dependencies().contains("macros.h"));
+    }
+
+    #[test]
+    fn function_macro_invocations_report_arity_and_recursion_errors() {
+        let too_many = BTreeMap::from([(
+            "main.c",
+            "#define WRAP(value) (value)\nint32 run() { return WRAP(1, 2); }\n",
+        )]);
+        let error = expand_includes("main.c", &too_many).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("macro `WRAP` expects exactly one non-empty argument")
+        );
+
+        let recursive = BTreeMap::from([(
+            "main.c",
+            "#define LOOP(value) LOOP(value)\nint32 run() { return LOOP(1); }\n",
+        )]);
+        let error = expand_includes("main.c", &recursive).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("recursive macro expansion involving `LOOP`")
+        );
     }
 
     #[test]
