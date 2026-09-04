@@ -175,6 +175,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/struct_aggregate_initializer.md`: positional struct initializers
   recursively initialize nested fields and arrays, including zero-filled
   omitted members.
+- `mdtests/struct_designated_initializer.md`: designated struct initializers
+  select fields out of declaration order, including nested embedded fields.
 - `mdtests/struct_conditional_value.md`: conditional expressions over
   copyable structs lazily copy only the selected branch into fresh storage.
 

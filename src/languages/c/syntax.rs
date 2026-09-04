@@ -6069,19 +6069,38 @@ impl Parser {
         self.expect(Token::LBrace)?;
         let mut stores = Vec::new();
         let mut field_index = 0usize;
+        let mut has_designated_initializer = false;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                let Some(field) = fields.get(field_index) else {
-                    return Err(self
-                        .error_here(format!("too many initializers for `struct {struct_name}`")));
-                };
-                if matches!(self.peek(), Some(Token::Dot | Token::LBracket)) {
-                    return Err(
-                        self.error_here("designated aggregate initializers are not supported")
+                if self.peek() == Some(&Token::Dot) {
+                    has_designated_initializer = true;
+                    let (designated_index, parent_pointer, field) = self
+                        .parse_struct_field_designator(
+                            target_pointer.clone(),
+                            struct_name,
+                            &fields,
+                        )?;
+                    stores.extend(self.parse_struct_initializer_field(parent_pointer, &field)?);
+                    // C continues positional initialization after the
+                    // top-level field selected by a designator. Nested field
+                    // designators therefore advance past their outer field.
+                    field_index = designated_index + 1;
+                } else {
+                    if self.peek() == Some(&Token::LBracket) {
+                        return Err(self.error_here(
+                            "array designators in struct initializers are not supported",
+                        ));
+                    }
+                    let Some(field) = fields.get(field_index) else {
+                        return Err(self.error_here(format!(
+                            "too many initializers for `struct {struct_name}`"
+                        )));
+                    };
+                    stores.extend(
+                        self.parse_struct_initializer_field(target_pointer.clone(), field)?,
                     );
+                    field_index += 1;
                 }
-                stores.extend(self.parse_struct_initializer_field(target_pointer.clone(), field)?);
-                field_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -6106,10 +6125,81 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        for field in fields.iter().skip(field_index) {
-            stores.extend(self.zero_struct_initializer_field(target_pointer.clone(), field));
+        if has_designated_initializer {
+            // A designated initializer may arrive out of declaration order or
+            // initialize only a nested leaf. Start from a complete zero value
+            // so every omitted member has the same semantics as a positional
+            // initializer, then apply explicit stores in source order.
+            let mut zero_stores =
+                self.zero_struct_initializer_level(target_pointer.clone(), struct_name);
+            zero_stores.extend(stores);
+            stores = zero_stores;
+        } else {
+            for field in fields.iter().skip(field_index) {
+                stores.extend(self.zero_struct_initializer_field(target_pointer.clone(), field));
+            }
         }
         Ok(stores)
+    }
+
+    /// Parses one or more `.field` designators for a struct initializer. The
+    /// returned pointer addresses the parent of the final field, so the
+    /// ordinary field initializer path can retain all of its nested aggregate
+    /// and scalar-array handling.
+    fn parse_struct_field_designator(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        root_fields: &[C0StructField],
+    ) -> Result<(usize, C0Expression, C0StructField), C0SyntaxError> {
+        let mut current_struct_name = struct_name.to_string();
+        let mut parent_pointer = target_pointer;
+        let mut root_index = None;
+
+        loop {
+            self.expect(Token::Dot)?;
+            let field_name = self.expect_ident("struct field designator")?;
+            let layout = self.structs.get(&current_struct_name).ok_or_else(|| {
+                self.error_here(format!(
+                    "unknown struct declaration `{current_struct_name}`"
+                ))
+            })?;
+            let field = layout.fields.get(&field_name).cloned().ok_or_else(|| {
+                self.error_here(format!(
+                    "struct `{current_struct_name}` has no field `{field_name}`"
+                ))
+            })?;
+
+            if root_index.is_none() {
+                root_index = root_fields
+                    .iter()
+                    .position(|candidate| candidate.offset_bytes == field.offset_bytes);
+            }
+
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("array designators in struct initializers are not supported")
+                );
+            }
+            if self.peek() == Some(&Token::Dot) {
+                if field.array_element_width.is_some()
+                    || field.c_type != C0Type::Int32
+                    || field.struct_name.is_none()
+                {
+                    return Err(self
+                        .error_here("nested field designators require an embedded struct field"));
+                }
+                parent_pointer = offset_field_pointer(parent_pointer, field.offset_bytes);
+                current_struct_name = field
+                    .struct_name
+                    .expect("embedded struct designator has a struct name");
+                continue;
+            }
+
+            self.expect(Token::Equal)?;
+            let root_index = root_index.expect("root field designator belongs to the root layout");
+            return Ok((root_index, parent_pointer, field));
+        }
     }
 
     fn parse_struct_initializer_field(

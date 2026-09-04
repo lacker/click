@@ -494,6 +494,28 @@ fn c0_rejects_unsupported_aggregate_array_initializers() {
 }
 
 #[test]
+fn c0_struct_designated_initializers_reject_unsupported_designators() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {[0] = 1}; return 0; }",
+            "array designators in struct initializers are not supported",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {.missing = 1}; return 0; }",
+            "struct `state` has no field `missing`",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {.value.more = 1}; return 0; }",
+            "nested field designators require an embedded struct field",
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported struct initializer designators must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_file_static_arrays_are_qualified_by_translation_unit() {
     let alpha = syntax::parse_functions_for_source(
         "static int32 values[2] = {1, 2}; int32 read_alpha() { return values[0]; }",
@@ -4893,24 +4915,37 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
 }
 
 #[test]
-fn c0_rejects_designated_struct_initializers_explicitly() {
-    let error = syntax::parse_function(
+fn c0_rejects_unsupported_designated_struct_initializer_forms() {
+    for source in [
         r#"
         struct packet {
             int32 value;
         };
 
-        int32 invalid() {
-            struct packet packet = {.value = 1};
+        struct packet packet = {.value = 1};
+
+        int32 read() {
             return packet.value;
         }
         "#,
-    )
-    .expect_err("designated struct initializers remain outside this slice");
-    assert_eq!(
-        error.message(),
-        "designated aggregate initializers are not supported"
-    );
+        r#"
+        struct packet {
+            int32 value;
+        };
+
+        int32 read() {
+            static struct packet packet = {.value = 1};
+            return packet.value;
+        }
+        "#,
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("static and file-scope designated initializers remain unsupported");
+        assert_eq!(
+            error.message(),
+            "designated aggregate initializers are not supported"
+        );
+    }
 }
 
 #[test]

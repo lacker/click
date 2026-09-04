@@ -161,6 +161,11 @@ Staged mdtests, each with an unchanged C file:
     by `mdtests/struct_conditional_value.md` and the C0 conditional-lowering
     regression. Mixed struct types and tagged-union conditionals remain
     rejected.
+19. ~~A copyable struct-valued local accepts field designators in any order,
+    including nested embedded-struct designators, while omitted members remain
+    zero.~~ Covered by `mdtests/struct_designated_initializer.md`. Array
+    designators and designated initializers for static/file-scope aggregates
+    remain separate follow-up slices.
 
 ## Acceptance criteria
 
@@ -187,8 +192,11 @@ Staged mdtests, each with an unchanged C file:
   checking remains unchanged and the returned object remains fresh.
 - Positional aggregate initializers for copyable struct-valued locals lower to
   recursive typed leaf stores, preserve source declaration order and nested
-  array shape, and zero-fill omitted members; unsupported designated and
-  struct-array initializer forms remain explicitly rejected.
+  array shape, and zero-fill omitted members; unsupported struct-array
+  initializer forms remain explicitly rejected. Designated field initializers
+  for those locals may select scalar or nested embedded-struct fields in any
+  order, with omitted leaves zero-filled; array designators and static/file-
+  scope designated initializers remain explicitly rejected.
 - Conditional expressions over copyable structs require matching struct types,
   evaluate only the selected branch, and materialize a fresh address-backed
   aggregate before assignment, argument passing, or return. Tagged-union and
