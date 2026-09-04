@@ -106,6 +106,28 @@ fn c0_collects_static_scalar_locals_with_stable_kernel_names() {
 }
 
 #[test]
+fn c0_collects_string_literals_with_terminators() {
+    let functions = syntax::parse_functions(
+        r#"
+        uint8* literal() {
+            return "ok\n";
+        }
+        "#,
+    )
+    .expect("string literals should parse in pointer returns");
+
+    let function = &functions[0];
+    assert_eq!(function.string_literals().len(), 1);
+    let literal = &function.string_literals()[0];
+    assert_eq!(literal.bytes(), b"ok\n\0");
+    assert_eq!(
+        function.to_kernel_function().string_literals()[0].bytes(),
+        b"ok\n\0"
+    );
+    assert!(matches!(function.body(), syntax::C0Statement::Return(_)));
+}
+
+#[test]
 fn c0_rejects_unsupported_static_local_shapes() {
     let error = syntax::parse_functions(
         r#"

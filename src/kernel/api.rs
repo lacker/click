@@ -1714,7 +1714,15 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     };
     let paths = paths
         .into_iter()
-        .map(|path| {
+        .map(|mut path| {
+            if let Some(memory) = statement_outcome_memory(&path.outcome) {
+                path.facts.extend(
+                    memory
+                        .string_literal_loadable_facts()
+                        .into_iter()
+                        .map(ExecutionPureFact::certified),
+                );
+            }
             let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
             let proposition = if execution_semantics == CExecutionSemantics::EXECUTE_BODIES {
@@ -1839,7 +1847,33 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
             );
         }
     };
+    let paths = paths
+        .into_iter()
+        .map(|mut path| {
+            if let Some(memory) = statement_outcome_memory(&path.outcome) {
+                path.facts.extend(
+                    memory
+                        .string_literal_loadable_facts()
+                        .into_iter()
+                        .map(ExecutionPureFact::certified),
+                );
+            }
+            path
+        })
+        .collect();
     symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
+}
+
+fn statement_outcome_memory(outcome: &CStatementOutcome) -> Option<&CMemory> {
+    match outcome {
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state) => Some(state.memory()),
+        CStatementOutcome::Return { state, .. } => Some(state.memory()),
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => None,
+    }
 }
 
 #[cfg(test)]

@@ -83,11 +83,11 @@ Likely additions:
 - More integer types:
   pointer/array forms of `size_t`, `ssize_t`, and `uint64`, and
   well-specified casts/promotions.
-- `char` and string literal support:
-  null-terminated byte arrays, read-only static storage, and byte/string
-  predicates in the standard library.
+- Basic ASCII string literal support now lowers to null-terminated, read-only
+  function-owned byte arrays; remaining work includes `char`, wider literal
+  forms, and byte/string predicates in the standard library.
 - Remaining static-storage work: aggregate static objects, other linkage forms,
-  immutable global tables, and string constants.
+  immutable global tables, and initialization ordering.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use

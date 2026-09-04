@@ -819,6 +819,14 @@ pub struct CStaticLocal {
     pub(super) initial_value: CValue,
 }
 
+/// A function's embedded C string constant. The bytes include the trailing
+/// NUL and are installed in a stable read-only memory block at function entry.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStringLiteral {
+    pub(super) name: String,
+    pub(super) bytes: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateField {
     pub(super) name: String,
@@ -894,6 +902,7 @@ pub struct CFunction {
     pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) static_variables: Vec<CStaticLocal>,
+    pub(super) string_literals: Vec<CStringLiteral>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1350,6 +1359,7 @@ impl std::hash::Hash for CHeapMemory {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CBlock {
     pub(super) size: Bitvector32Term,
+    pub(super) read_only: bool,
 }
 
 /// An interned, immutable memory snapshot for embedding inside terms.

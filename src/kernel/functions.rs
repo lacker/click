@@ -227,7 +227,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             execution_semantics,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+            let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
                 &arguments_path.obligations,
                 &body_path.facts,
@@ -281,6 +281,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                     None,
                 )
             };
+
+            append_string_literal_loadable_facts(function, &outcome, &mut facts);
 
             paths.push(CFunctionPath {
                 outcome,
@@ -394,7 +396,7 @@ pub(super) fn execute_c_function_verification_paths(
             },
         )?;
         for body_path in body_paths {
-            let Some((facts, obligations)) = crate::instrumentation::measure_operation(
+            let Some((mut facts, obligations)) = crate::instrumentation::measure_operation(
                 function.name(),
                 "independent kernel execution",
                 "verification fact merge",
@@ -455,6 +457,8 @@ pub(super) fn execute_c_function_verification_paths(
                     None,
                 )
             };
+
+            append_string_literal_loadable_facts(function, &outcome, &mut facts);
 
             paths.push(CFunctionPath {
                 outcome,
@@ -1096,11 +1100,13 @@ fn execute_verified_function_rule(
         return_state.resources = return_resources;
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
+        let outcome = CFunctionOutcome::Return {
+            value: result,
+            state: return_state,
+        };
+        append_string_literal_loadable_facts(function, &outcome, &mut facts);
         paths.push(CFunctionPath {
-            outcome: CFunctionOutcome::Return {
-                value: result,
-                state: return_state,
-            },
+            outcome,
             facts,
             obligations,
         });
@@ -1812,6 +1818,31 @@ fn argument_binding_error(function: &CFunction, values: &[CValue]) -> String {
     }
 }
 
+/// A function-level path carries the loadability of its own string literals
+/// across the call boundary. This is intentionally derived from the function
+/// metadata rather than by scanning all read-only memory, so a call summary
+/// cannot accidentally certify an unrelated block.
+fn append_string_literal_loadable_facts(
+    function: &CFunction,
+    outcome: &CFunctionOutcome,
+    facts: &mut Vec<ExecutionPureFact>,
+) {
+    let CFunctionOutcome::Return { state, .. } = outcome else {
+        return;
+    };
+    for literal in function.string_literals() {
+        let base = CMemory::string_literal_pointer(function.name(), literal.name());
+        let proposition = Proposition::CMemoryLoadable {
+            memory: state.memory.clone(),
+            base,
+            bytes: Bitvector32Term::Constant(literal.bytes().len() as u32),
+        };
+        if !facts.iter().any(|fact| fact.proposition() == &proposition) {
+            facts.push(ExecutionPureFact::certified(proposition));
+        }
+    }
+}
+
 pub(super) fn bind_c_function_arguments(
     caller_state: &CState,
     function: &CFunction,
@@ -1914,6 +1945,44 @@ pub(super) fn bind_c_function_arguments(
 /// for the whole symbolic execution, not once per call frame.
 pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
     let mut state = state.clone();
+    for literal in function.string_literals() {
+        let slot = CMemory::string_literal_pointer(function.name(), literal.name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .with_read_only_block(slot.block.clone(), literal.bytes().len() as u32);
+            for (offset, byte) in literal.bytes().iter().copied().enumerate() {
+                state.memory = state.memory.store(
+                    Pointer {
+                        block: slot.block.clone(),
+                        offset: PointerOffsetTerm::Constant(offset as i64),
+                    },
+                    uint8(u32::from(byte)),
+                );
+            }
+        }
+        state.locals.set_array_object_at(
+            literal.name().to_string(),
+            CType::UInt8,
+            literal.bytes().len() as u32,
+            slot.clone(),
+        );
+        let literal_resource = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            slot,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(literal.bytes().len() as u32),
+            1,
+        ));
+        if !state
+            .resources
+            .contains_exact_representation(&literal_resource)
+        {
+            state.resources = state
+                .resources
+                .clone()
+                .unchecked_with_fact(literal_resource);
+        }
+    }
     for global in function.global_variables() {
         let slot = CMemory::global_pointer(global.kernel_name());
         if !state.memory.has_block(&slot.block) {

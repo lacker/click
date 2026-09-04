@@ -377,6 +377,15 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
                 }];
             }
+            if state.memory.is_read_only_block(&pointer.block) {
+                return vec![CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::InvalidMemory,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            }
             let is_external = is_external_memory_pointer(&pointer);
             let authorized_range = is_external
                 .then(|| {

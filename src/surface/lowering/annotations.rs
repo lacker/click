@@ -30,6 +30,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
+        result_type: CType::Int32,
         entry_values: BTreeMap::new(),
         parameter_array_element_types: definition
             .parameters()
@@ -85,6 +86,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
+        result_type: CType::Int32,
         entry_values: BTreeMap::new(),
         parameter_array_element_types: definition
             .parameters()
@@ -191,6 +193,11 @@ pub(in crate::surface) fn annotated_function(
         predicate_environment,
         click_function_environment,
         entry_state,
+        result_type: if parsed_function.return_struct_name().is_some() {
+            CType::UInt8Pointer
+        } else {
+            parsed_function.return_type().to_kernel_type()
+        },
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
         parameter_array_element_types: parsed_function
             .parameters()
@@ -255,6 +262,18 @@ pub(in crate::surface) fn annotated_function(
                 .filter_map(syntax::C0StaticLocal::to_kernel_static)
                 .collect(),
         )
+        .with_string_literals(
+            parsed_function
+                .string_literals()
+                .iter()
+                .map(|literal| {
+                    crate::kernel::CStringLiteral::new(
+                        literal.name().to_string(),
+                        literal.bytes().to_vec(),
+                    )
+                })
+                .collect(),
+        )
         .with_resource_summary(resource_requires, resource_ensures)
         .with_resource_constructors(resource_constructors)
         .with_composite_resource_definitions(composite_resource_definitions(
@@ -297,6 +316,11 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         predicate_environment,
         click_function_environment,
         entry_state,
+        result_type: if parsed_function.return_struct_name().is_some() {
+            CType::UInt8Pointer
+        } else {
+            parsed_function.return_type().to_kernel_type()
+        },
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
         parameter_array_element_types: parsed_function
             .parameters()
@@ -348,6 +372,7 @@ fn fixed_state_elaboration<'a>(
         predicate_environment,
         click_function_environment,
         entry_state,
+        result_type: result.map(CValue::c_type).unwrap_or(CType::Int32),
         entry_values,
         parameter_array_element_types: array_element_types,
         quantified_values: BTreeMap::new(),
@@ -483,6 +508,7 @@ pub(in crate::surface) fn elaborate_pure_function_definitions(
             predicate_environment: &predicate_environment,
             click_function_environment,
             entry_state: &entry_state,
+            result_type: CType::Int32,
             entry_values: BTreeMap::new(),
             parameter_array_element_types: array_element_types,
             quantified_values: BTreeMap::new(),
@@ -531,6 +557,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
+        result_type: CType::Int32,
         entry_values: BTreeMap::new(),
         parameter_array_element_types: parameters
             .iter()
@@ -575,6 +602,7 @@ pub(in crate::surface) fn function_contract_summary(
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
+        result_type: parsed_function.return_type().to_kernel_type(),
         entry_values: BTreeMap::new(),
         parameter_array_element_types: parsed_function
             .parameters()
@@ -921,6 +949,7 @@ struct AnnotationLowerer<'a> {
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
+    result_type: CType,
     entry_values: BTreeMap<String, CValue>,
     parameter_array_element_types: BTreeMap<String, CType>,
     quantified_values: BTreeMap<String, CValue>,
@@ -1121,7 +1150,8 @@ impl AnnotationLowerer<'_> {
                         .lower_contract_segment_base_to_spec(&segment.base, &segment_environment)?,
                     start: self.lower_c_fragment_to_spec(&segment.start, &segment_environment)?,
                     end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
-                    element_width: self.contract_segment_element_width(segment),
+                    element_width: self
+                        .contract_segment_element_width(segment, &segment_environment),
                 })
             }
             ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
@@ -1627,13 +1657,14 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    fn contract_segment_element_width(&self, segment: &ContractSegment) -> u32 {
-        self.c_expression_array_element_type(
-            &segment.base,
-            &SpecElaborationContext::for_function_contract(),
-        )
-        .unwrap_or(CType::Int32)
-        .byte_width()
+    fn contract_segment_element_width(
+        &self,
+        segment: &ContractSegment,
+        environment: &SpecElaborationContext,
+    ) -> u32 {
+        self.c_expression_array_element_type(&segment.base, environment)
+            .unwrap_or(CType::Int32)
+            .byte_width()
     }
 
     fn lower_contract_segment_base_to_spec(
@@ -1656,7 +1687,7 @@ impl AnnotationLowerer<'_> {
                     base: self.lower_contract_segment_base_to_spec(&segment.base, &environment)?,
                     start: self.lower_c_fragment_to_spec(&segment.start, &environment)?,
                     end: self.lower_c_fragment_to_spec(&segment.end, &environment)?,
-                    element_width: self.contract_segment_element_width(segment),
+                    element_width: self.contract_segment_element_width(segment, &environment),
                 })
             }
             ResourceSubject::Declared {
@@ -2087,7 +2118,8 @@ impl AnnotationLowerer<'_> {
                         &CExpression::Variable(name.clone()),
                         environment,
                     )?,
-                    element_type: self.array_ref_element_type_for_name(name),
+                    element_type: self
+                        .array_ref_element_type_for_name_in_environment(name, environment),
                 })
             }
             ContractExpression::Add(left, right) => {
@@ -2197,10 +2229,27 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    fn array_ref_element_type_for_name(&self, name: &str) -> CType {
+    fn array_ref_element_type_for_name_in_environment(
+        &self,
+        name: &str,
+        environment: &SpecElaborationContext,
+    ) -> CType {
         self.parameter_array_element_types
             .get(name)
             .copied()
+            .or_else(|| {
+                (name == "result")
+                    .then(|| self.result_type.pointee_type())
+                    .flatten()
+            })
+            .or_else(|| {
+                environment.values.get(name).and_then(|value| match value {
+                    SpecExpression::Value(CValue::Pointer(pointer)) => {
+                        pointer.c_type().pointee_type()
+                    }
+                    _ => None,
+                })
+            })
             .unwrap_or(CType::Int32)
     }
 
@@ -2214,7 +2263,9 @@ impl AnnotationLowerer<'_> {
                 .array_refs
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
-                .unwrap_or_else(|| self.array_ref_element_type_for_name(name)),
+                .unwrap_or_else(|| {
+                    self.array_ref_element_type_for_name_in_environment(name, environment)
+                }),
             ContractExpression::Field { lowered, .. } => self
                 .c_expression_array_element_type(lowered, environment)
                 .unwrap_or(CType::Int32),
@@ -2252,11 +2303,12 @@ impl AnnotationLowerer<'_> {
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
                 .or_else(|| {
-                    matches!(
-                        environment.values.get(name),
-                        Some(SpecExpression::Value(CValue::Pointer(_)))
-                    )
-                    .then(|| self.array_ref_element_type_for_name(name))
+                    environment.values.get(name).and_then(|value| match value {
+                        SpecExpression::Value(CValue::Pointer(pointer)) => {
+                            pointer.c_type().pointee_type()
+                        }
+                        _ => None,
+                    })
                 }),
             ContractExpression::CFragment(expression)
             | ContractExpression::Field {
@@ -2286,7 +2338,20 @@ impl AnnotationLowerer<'_> {
                 .array_refs
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
-                .or_else(|| self.parameter_array_element_types.get(name).copied()),
+                .or_else(|| self.parameter_array_element_types.get(name).copied())
+                .or_else(|| {
+                    (name == "result")
+                        .then(|| self.result_type.pointee_type())
+                        .flatten()
+                })
+                .or_else(|| {
+                    environment.values.get(name).and_then(|value| match value {
+                        SpecExpression::Value(CValue::Pointer(pointer)) => {
+                            pointer.c_type().pointee_type()
+                        }
+                        _ => None,
+                    })
+                }),
             CExpression::TypedLoad { value_type, .. } => match value_type {
                 CType::Int32Array(_) => Some(CType::Int32),
                 CType::UInt8Array(_) => Some(CType::UInt8),

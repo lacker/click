@@ -8,8 +8,10 @@ declarations, exactly one linked external definition, per-translation-unit
 file-scope `static` storage, literal or zero initialization, shared storage
 across calls, `old(global)`, and one-cell contract footprints. Function-local
 scalar `static` objects are also initialized once per program state with stable
-function-qualified storage. Aggregate globals/statics, initialization ordering,
-and string literals remain unsupported. The `cstr` predicate layer still
+function-qualified storage. Basic ASCII C string literals are now lowered to
+function-owned, NUL-terminated, read-only `uint8` storage and remain stable
+through calls. Aggregate globals/statics, initialization ordering, and wider
+string-literal forms remain unsupported. The `cstr` predicate layer still
 exists only on the spec side over uint8 buffers.
 
 ## Violated invariant
@@ -23,14 +25,13 @@ function-local persistent state can be verified.
 
 The landed regressions are `mdtests/file_scope_globals.md` for cross-translation
 unit external state, `mdtests/file_scope_static_globals.md` for independent
-internal-linkage state, and `mdtests/static_scalar_locals.md` for one-time
-function-local static storage. Remaining staged regressions are:
+internal-linkage state, `mdtests/static_scalar_locals.md` for one-time
+function-local static storage, and `mdtests/string_literals.md`,
+`mdtests/string_literals_call.md`, plus `mdtests/string_literals_reject_write.md`
+for stable read-only literal storage, call-summary propagation, and
+indirect-write rejection. Remaining staged regressions are:
 
-1. A function returning a string literal (`return "ok";`) with a postcondition
-   that the result is a read-only null-terminated byte array with
-   `cstr_len(result, 2)` (three bytes of storage including the terminator;
-   `cstr_len` is defined in `stdlib/prelude.click`).
-2. A negative test: a function that writes to global state not named in its
+1. A negative test: a function that writes to global state not named in its
    `mutable` clause fails effect certification.
 
 ## Acceptance criteria
@@ -52,7 +53,9 @@ function-local static storage. Remaining staged regressions are:
   contracts.
 - Effect certification treats scalar global and file-scope static writes like
   any other footprint write, and function-local static writes require the same
-  explicit footprint. Aggregate storage and string literals remain open.
+  explicit footprint. String literals remain read-only through copied pointers;
+  aggregate static storage, initialization ordering, and wider literal forms
+  remain open.
 - `scripts/check.sh` passes.
 
 Related: [multi-function-files-and-headers.md](multi-function-files-and-headers.md).

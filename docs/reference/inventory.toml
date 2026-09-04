@@ -290,6 +290,10 @@ id = "c0.expression.char-literal"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.string-literal"
+path = "reference/language/c0.md#string-literals"
+
+[[item]]
 id = "c0.expression.null-pointer"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 

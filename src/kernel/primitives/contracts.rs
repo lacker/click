@@ -120,6 +120,28 @@ impl CStaticLocal {
     }
 }
 
+impl CStringLiteral {
+    pub fn new(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        assert_eq!(
+            bytes.last(),
+            Some(&0),
+            "C string literals require a NUL terminator"
+        );
+        Self {
+            name: name.into(),
+            bytes,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 impl CFunction {
     pub fn new(
         return_type: CType,
@@ -147,6 +169,7 @@ impl CFunction {
             predicate_unfoldings: Vec::new(),
             global_variables: Vec::new(),
             static_variables: Vec::new(),
+            string_literals: Vec::new(),
         }
     }
 
@@ -157,6 +180,11 @@ impl CFunction {
 
     pub fn with_static_variables(mut self, static_variables: Vec<CStaticLocal>) -> Self {
         self.static_variables = static_variables;
+        self
+    }
+
+    pub fn with_string_literals(mut self, string_literals: Vec<CStringLiteral>) -> Self {
+        self.string_literals = string_literals;
         self
     }
 
@@ -247,6 +275,10 @@ impl CFunction {
 
     pub fn static_variables(&self) -> &[CStaticLocal] {
         &self.static_variables
+    }
+
+    pub fn string_literals(&self) -> &[CStringLiteral] {
+        &self.string_literals
     }
 
     pub(crate) fn function_pointer_type(&self) -> CType {

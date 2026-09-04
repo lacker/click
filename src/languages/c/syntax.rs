@@ -80,6 +80,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.octal-literal",
     "expression.integer-literal-suffix",
     "expression.char-literal",
+    "expression.string-literal",
     "expression.null-pointer",
     "expression.address-of",
     "expression.cast",
@@ -126,6 +127,31 @@ pub struct C0Function {
     unions: BTreeMap<String, C0UnionLayout>,
     globals: BTreeMap<String, C0Global>,
     static_locals: BTreeMap<String, C0StaticLocal>,
+    string_literals: Vec<C0StringLiteral>,
+}
+
+/// One string literal occurring in a C function. The hidden name is emitted
+/// into the C0 expression tree as an array object; `bytes` includes the
+/// required terminating NUL byte.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StringLiteral {
+    name: String,
+    bytes: Vec<u8>,
+}
+
+impl C0StringLiteral {
+    fn new(name: String, mut bytes: Vec<u8>) -> Self {
+        bytes.push(0);
+        Self { name, bytes }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 /// A file-scope scalar declaration collected from one C translation unit.
@@ -679,6 +705,7 @@ impl C0Function {
             unions: BTreeMap::new(),
             globals: BTreeMap::new(),
             static_locals: BTreeMap::new(),
+            string_literals: Vec::new(),
         }
     }
 
@@ -720,6 +747,10 @@ impl C0Function {
 
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
+    }
+
+    pub fn string_literals(&self) -> &[C0StringLiteral] {
+        &self.string_literals
     }
 
     pub(crate) fn with_globals(mut self, globals: BTreeMap<String, C0Global>) -> Self {
@@ -764,6 +795,17 @@ impl C0Function {
                 self.static_locals
                     .values()
                     .filter_map(C0StaticLocal::to_kernel_static)
+                    .collect(),
+            )
+            .with_string_literals(
+                self.string_literals
+                    .iter()
+                    .map(|literal| {
+                        crate::kernel::CStringLiteral::new(
+                            literal.name.clone(),
+                            literal.bytes.clone(),
+                        )
+                    })
                     .collect(),
             )
     }
@@ -1735,6 +1777,7 @@ enum Token {
     Ident(String),
     Number(String),
     CharLiteral(u8),
+    StringLiteral(Vec<u8>),
     LParen,
     RParen,
     LBracket,
@@ -1792,13 +1835,16 @@ impl Token {
             Self::CharLiteral(value) => {
                 format!("character literal `{}`", (*value as char).escape_default())
             }
+            Self::StringLiteral(value) => {
+                format!("string literal with {} bytes", value.len())
+            }
             other => format!("`{}`", other.form()),
         }
     }
 
     fn form(&self) -> &'static str {
         match self {
-            Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) => "",
+            Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) | Self::StringLiteral(_) => "",
             Self::LParen => "(",
             Self::RParen => ")",
             Self::LBracket => "[",
@@ -1903,11 +1949,13 @@ struct Parser {
     scopes: Vec<Vec<ScopeBinding>>,
     next_scoped_name: u32,
     next_synthesized_call: u32,
+    next_string_literal: u32,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
     static_locals: BTreeMap<String, C0StaticLocal>,
+    string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
     abi: CAbi,
@@ -1977,11 +2025,13 @@ impl Parser {
             scopes: Vec::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
+            next_string_literal: 0,
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
             static_locals: BTreeMap::new(),
+            string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
             abi,
@@ -2311,6 +2361,7 @@ impl Parser {
         }
 
         let static_locals = std::mem::take(&mut self.static_locals);
+        let string_literals = std::mem::take(&mut self.string_literals);
         Ok(C0Function {
             return_type: header.return_type,
             return_struct_name: header.return_struct_name,
@@ -2322,6 +2373,7 @@ impl Parser {
             unions: self.unions.clone(),
             globals: self.globals.clone(),
             static_locals,
+            string_literals,
         })
     }
 
@@ -4901,6 +4953,33 @@ impl Parser {
         }
     }
 
+    fn fresh_string_literal_name(&mut self, bytes: Vec<u8>) -> String {
+        loop {
+            let name = format!("__click_string_literal{}", self.next_string_literal);
+            self.next_string_literal = self.next_string_literal.saturating_add(1);
+            let already_used = self.variable_types.contains_key(&name)
+                || self
+                    .scopes
+                    .iter()
+                    .any(|scope| scope.iter().any(|binding| binding.kernel_name == name));
+            if already_used {
+                continue;
+            }
+            let length = bytes
+                .len()
+                .checked_add(1)
+                .and_then(|length| u32::try_from(length).ok())
+                .expect("validated string literal length fits in u32");
+            self.variable_types
+                .insert(name.clone(), C0Type::UInt8Array(length));
+            self.variable_array_shapes
+                .insert(name.clone(), vec![length]);
+            self.string_literals
+                .push(C0StringLiteral::new(name.clone(), bytes));
+            return name;
+        }
+    }
+
     fn lower_call_expressions(
         &mut self,
         statement: C0Statement,
@@ -6217,6 +6296,9 @@ impl Parser {
                 })
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
+            Some(Token::StringLiteral(bytes)) => Ok(C0Expression::Variable(
+                self.fresh_string_literal_name(bytes),
+            )),
             Some(Token::LParen) => {
                 let expression = self.parse_expression()?;
                 self.expect(Token::RParen)?;
@@ -6538,6 +6620,15 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             let (value, next_index) =
                 parse_char_literal(&chars, index).map_err(|error| error.with_position(position))?;
             tokens.push(Token::CharLiteral(value));
+            positions.push(position);
+            index = next_index;
+            continue;
+        }
+
+        if ch == '"' {
+            let (value, next_index) = parse_string_literal(&chars, index)
+                .map_err(|error| error.with_position(position))?;
+            tokens.push(Token::StringLiteral(value));
             positions.push(position);
             index = next_index;
             continue;
@@ -6986,6 +7077,52 @@ fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0Syn
     }
 
     Ok((value, end + 1))
+}
+
+fn parse_string_literal(chars: &[char], start: usize) -> Result<(Vec<u8>, usize), C0SyntaxError> {
+    let mut value = Vec::new();
+    let mut index = start + 1;
+    while let Some(ch) = chars.get(index).copied() {
+        match ch {
+            '"' => return Ok((value, index + 1)),
+            '\\' => {
+                let Some(escaped) = chars.get(index + 1).copied() else {
+                    return Err(C0SyntaxError::new("unterminated string literal"));
+                };
+                let byte = match escaped {
+                    'n' => b'\n',
+                    'r' => b'\r',
+                    't' => b'\t',
+                    '0' => b'\0',
+                    '\\' => b'\\',
+                    '\'' => b'\'',
+                    '"' => b'"',
+                    other => {
+                        return Err(C0SyntaxError::new(format!(
+                            "unsupported string escape `\\{other}`"
+                        )));
+                    }
+                };
+                value.push(byte);
+                index += 2;
+            }
+            '\n' | '\r' => {
+                return Err(C0SyntaxError::new(
+                    "string literals may not contain an unescaped newline",
+                ));
+            }
+            other if other.is_ascii() => {
+                value.push(other as u8);
+                index += 1;
+            }
+            _ => {
+                return Err(C0SyntaxError::new(
+                    "only ASCII string literals are supported",
+                ));
+            }
+        }
+    }
+    Err(C0SyntaxError::new("unterminated string literal"))
 }
 
 fn is_ident_start(ch: char) -> bool {

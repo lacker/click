@@ -1002,15 +1002,30 @@ impl CBlock {
     pub fn new(size: u32) -> Self {
         Self {
             size: Bitvector32Term::Constant(size),
+            read_only: false,
+        }
+    }
+
+    pub fn read_only(size: u32) -> Self {
+        Self {
+            size: Bitvector32Term::Constant(size),
+            read_only: true,
         }
     }
 
     pub(in crate::kernel) fn with_symbolic_size(size: Bitvector32Term) -> Self {
-        Self { size }
+        Self {
+            size,
+            read_only: false,
+        }
     }
 
     pub fn size(&self) -> &Bitvector32Term {
         &self.size
+    }
+
+    pub(in crate::kernel) fn is_read_only(&self) -> bool {
+        self.read_only
     }
 }
 
@@ -1068,6 +1083,18 @@ impl CMemory {
         }
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::new(size));
+        record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
+        self
+    }
+
+    pub(in crate::kernel) fn with_read_only_block(
+        mut self,
+        block: impl Into<PointerBlock>,
+        size: u32,
+    ) -> Self {
+        let block = block.into();
+        let base = intern_c_memory_ref(&self);
+        std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::read_only(size));
         record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
         self
     }
@@ -1843,6 +1870,13 @@ impl CMemory {
         }
     }
 
+    pub(in crate::kernel) fn string_literal_pointer(function: &str, name: &str) -> Pointer {
+        Pointer {
+            block: format!("string:{function}:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(in crate::kernel) fn static_pointer(function: &str, name: &str) -> Pointer {
         Pointer {
             block: format!("static:{function}:{name}").into(),
@@ -1859,6 +1893,10 @@ impl CMemory {
 
     pub(crate) fn has_block(&self, block: &PointerBlock) -> bool {
         self.blocks.contains_key(block)
+    }
+
+    pub(in crate::kernel) fn is_read_only_block(&self, block: &PointerBlock) -> bool {
+        self.blocks.get(block).is_some_and(CBlock::is_read_only)
     }
 
     pub(in crate::kernel) fn block_size(&self, block: &PointerBlock) -> Option<&Bitvector32Term> {
@@ -1879,9 +1917,34 @@ impl CMemory {
         pointer: &Pointer,
         byte_width: u32,
     ) -> bool {
+        // Read-only blocks are created only for fully materialized C string
+        // literals. Their bytes are stable for the lifetime of the program,
+        // so any in-bounds byte range is loadable even when it spans the
+        // literal's individual uint8 cells.
+        if self.is_read_only_block(&pointer.block) {
+            return self.access_in_bounds(pointer, byte_width);
+        }
         self.cells
             .get(pointer)
             .is_some_and(|value| value.byte_width() == byte_width)
+    }
+
+    pub(in crate::kernel) fn string_literal_loadable_facts(&self) -> Vec<Proposition> {
+        self.blocks
+            .iter()
+            .filter_map(|(block, contents)| {
+                (contents.is_read_only() && block.starts_with("string:")).then(|| {
+                    Proposition::CMemoryLoadable {
+                        memory: self.clone(),
+                        base: Pointer {
+                            block: block.clone(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        bytes: contents.size().clone(),
+                    }
+                })
+            })
+            .collect()
     }
 
     pub(in crate::kernel) fn can_store_concretely(
@@ -1889,7 +1952,9 @@ impl CMemory {
         pointer: &Pointer,
         value: &CValue,
     ) -> bool {
-        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, value.byte_width())
+        !self.is_read_only_block(&pointer.block)
+            && (self.cells.contains_key(pointer)
+                || self.access_in_bounds(pointer, value.byte_width()))
     }
 
     pub(in crate::kernel) fn access_in_bounds(&self, pointer: &Pointer, byte_width: u32) -> bool {

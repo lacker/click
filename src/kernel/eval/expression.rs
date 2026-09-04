@@ -1094,6 +1094,7 @@ pub(in crate::kernel) fn is_external_memory_pointer(pointer: &Pointer) -> bool {
     !pointer.block.starts_with("local:")
         && !pointer.block.starts_with("global:")
         && !pointer.block.starts_with("static:")
+        && !pointer.block.starts_with("string:")
         && !pointer.block.starts_with("havoc:")
 }
 
