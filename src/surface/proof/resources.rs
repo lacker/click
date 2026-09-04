@@ -653,6 +653,11 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
             )));
         }
+        ResourceClause::MemoryAggregate { .. } => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
+            )));
+        }
     };
     if abstract_resource.owned_quantity_term().is_some() {
         let count_witness = ClickProposition::Comparison {
@@ -1009,6 +1014,12 @@ fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             ResourceSubject::Memory(segment.clone())
         }
+        ResourceClause::MemoryAggregate { segments, .. } => ResourceSubject::Memory(
+            segments
+                .first()
+                .expect("aggregate resource clause has at least one segment")
+                .clone(),
+        ),
         ResourceClause::Declared {
             kind,
             name,
@@ -2967,6 +2978,15 @@ pub(super) fn instantiate_resource_clause(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             instantiate_contract_segment(segment, substitutions)?,
         )),
+        ResourceClause::MemoryAggregate { access, segments } => {
+            Ok(ResourceClause::MemoryAggregate {
+                access: *access,
+                segments: segments
+                    .iter()
+                    .map(|segment| instantiate_contract_segment(segment, substitutions))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
         ResourceClause::Declared {
             access,
             kind,
@@ -3021,6 +3041,7 @@ fn materialize_composite_resource_cells(
             lowered.memory_own_range().map(|range| (segment, range))
         }
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
+        ResourceClause::MemoryAggregate { .. } => None,
     }) else {
         return memory;
     };

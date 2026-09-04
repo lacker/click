@@ -494,6 +494,10 @@ impl Parser {
         if condition.is_some() {
             self.expect(Token::RBrace)?;
         }
+        contains = contains
+            .into_iter()
+            .flat_map(expand_aggregate_resource_clause)
+            .collect();
         Ok(CompositeResourceBody {
             condition,
             contains,
@@ -705,6 +709,15 @@ impl Parser {
         self.expect(Token::RBrace)?;
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+
+        let requires: Vec<Requirement> = requires
+            .into_iter()
+            .flat_map(expand_aggregate_requirement)
+            .collect();
+        let ensures: Vec<EnsureClause> = ensures
+            .into_iter()
+            .flat_map(expand_aggregate_ensure_clause)
+            .collect();
 
         Ok(TheoremDefinition {
             name,
@@ -944,6 +957,19 @@ impl Parser {
         }
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+
+        let requires: Vec<Requirement> = requires
+            .into_iter()
+            .flat_map(expand_aggregate_requirement)
+            .collect();
+        let constructs: Vec<ResourceClause> = constructs
+            .into_iter()
+            .flat_map(expand_aggregate_resource_clause)
+            .collect();
+        let ensures: Vec<EnsureClause> = ensures
+            .into_iter()
+            .flat_map(expand_aggregate_ensure_clause)
+            .collect();
 
         let requirement_label_indices = requires
             .iter()
@@ -1481,7 +1507,14 @@ impl Parser {
         {
             return self.parse_declared_resource_call_with_access(access);
         }
-        let segment = self.parse_current_contract_segment()?;
+        let segments = self.parse_current_contract_segments()?;
+        if segments.len() > 1 {
+            return Ok(ResourceClause::MemoryAggregate { access, segments });
+        }
+        let segment = segments
+            .into_iter()
+            .next()
+            .expect("resource target parser returns at least one segment");
         Ok(match access {
             ResourceAccessMode::Own => ResourceClause::OwnMemory(segment),
             ResourceAccessMode::View => ResourceClause::ViewMemory(segment),
@@ -2641,6 +2674,23 @@ impl Parser {
     }
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        let segments = self.parse_current_contract_segments_inner(false)?;
+        let [segment] = segments.as_slice() else {
+            return Err(
+                self.error("aggregate contract segments are only supported in resource clauses")
+            );
+        };
+        Ok(segment.clone())
+    }
+
+    fn parse_current_contract_segments(&mut self) -> Result<Vec<ContractSegment>, ClickError> {
+        self.parse_current_contract_segments_inner(true)
+    }
+
+    fn parse_current_contract_segments_inner(
+        &mut self,
+        allow_aggregates: bool,
+    ) -> Result<Vec<ContractSegment>, ClickError> {
         if self.peek_ident() == Some("object") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
             let expression = self.parse_contract_expression()?;
@@ -2668,13 +2718,13 @@ impl Parser {
                     layout.size_bytes()
                 )));
             }
-            return Ok(ContractSegment {
+            return Ok(vec![ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(layout.size_bytes() / 4)),
                 surface: ContractSegmentSurface::Object(struct_name.clone()),
-            });
+            }]);
         }
         let (mut surface_base, mut base) = if self.peek() == Some(&Token::Amp) {
             self.position += 1;
@@ -2829,17 +2879,33 @@ impl Parser {
                 {
                     let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
                     self.validate_field_place(&field)?;
-                    return Ok(Self::field_segment_from_metadata(base, &field_name, &field));
+                    return Ok(vec![Self::field_segment_from_metadata(
+                        base,
+                        &field_name,
+                        &field,
+                    )]);
                 }
                 if let Some(base_struct_name) = &struct_name
                     && self.struct_layouts.contains_key(base_struct_name)
                 {
                     let field =
                         self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                    if field.struct_name.is_some() && !field.c_type.is_pointer() {
+                        if !allow_aggregates {
+                            return Err(self.error(
+                                "aggregate struct fields are only supported in resource clauses",
+                            ));
+                        }
+                        return self.aggregate_field_segments(base, &field_name, &field);
+                    }
                     self.validate_field_place(&field)?;
-                    return Ok(Self::field_segment_from_metadata(base, &field_name, &field));
+                    return Ok(vec![Self::field_segment_from_metadata(
+                        base,
+                        &field_name,
+                        &field,
+                    )]);
                 }
-                return self.resolve_field_segment(base, &field_name);
+                return Ok(vec![self.resolve_field_segment(base, &field_name)?]);
             }
             let (
                 lowered,
@@ -2895,7 +2961,7 @@ impl Parser {
             struct_array_shape = next_array_shape;
         }
         if let Some((name, element_width, element_type)) = indexed_scalar_field {
-            return Ok(ContractSegment {
+            return Ok(vec![ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
                 start: CExpression::Value(int32(0)),
@@ -2905,7 +2971,7 @@ impl Parser {
                     element_width: Some(element_width),
                     element_type: Some(element_type),
                 },
-            });
+            }]);
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
@@ -2916,7 +2982,7 @@ impl Parser {
         let end = contract_expression_as_c_fragment(&end_expression)
             .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
         self.expect(Token::RBracket)?;
-        Ok(ContractSegment {
+        Ok(vec![ContractSegment {
             state: ContractSegmentState::Current,
             base,
             start,
@@ -2926,7 +2992,182 @@ impl Parser {
                 start: start_expression,
                 end: end_expression,
             },
-        })
+        }])
+    }
+
+    fn aggregate_field_segments(
+        &self,
+        base: CExpression,
+        field_name: &str,
+        field: &ResolvedField,
+    ) -> Result<Vec<ContractSegment>, ClickError> {
+        let Some(struct_name) = field.struct_name.as_deref() else {
+            return Err(self.error(format!(
+                "aggregate field `{field_name}` has no embedded struct layout"
+            )));
+        };
+        if let Some(element_width) = field.array_element_width {
+            let shape = field.array_shape.as_deref().ok_or_else(|| {
+                self.error(format!(
+                    "embedded struct array field `{field_name}` has no shape metadata"
+                ))
+            })?;
+            let element_count = shape.iter().try_fold(1u32, |count, length| {
+                count.checked_mul(*length).ok_or_else(|| {
+                    self.error(format!(
+                        "embedded struct array field `{field_name}` is too large"
+                    ))
+                })
+            })?;
+            let mut segments = Vec::new();
+            for flat_index in 0..element_count {
+                let element_offset = field
+                    .offset_bytes
+                    .checked_add(flat_index.checked_mul(element_width).ok_or_else(|| {
+                        self.error(format!(
+                            "embedded struct array field `{field_name}` offset overflows"
+                        ))
+                    })?)
+                    .ok_or_else(|| {
+                        self.error(format!(
+                            "embedded struct array field `{field_name}` offset overflows"
+                        ))
+                    })?;
+                let path = row_major_index_path(flat_index, shape);
+                self.append_aggregate_leaf_segments(
+                    &mut segments,
+                    base.clone(),
+                    struct_name,
+                    element_offset,
+                    &format!("{field_name}{path}"),
+                )?;
+            }
+            return Ok(segments);
+        }
+
+        let mut segments = Vec::new();
+        self.append_aggregate_leaf_segments(
+            &mut segments,
+            base,
+            struct_name,
+            field.offset_bytes,
+            field_name,
+        )?;
+        Ok(segments)
+    }
+
+    fn append_aggregate_leaf_segments(
+        &self,
+        segments: &mut Vec<ContractSegment>,
+        base: CExpression,
+        struct_name: &str,
+        base_offset: u32,
+        name_prefix: &str,
+    ) -> Result<(), ClickError> {
+        let layout = self.struct_layouts.get(struct_name).ok_or_else(|| {
+            self.error(format!(
+                "unknown embedded struct declaration `{struct_name}`"
+            ))
+        })?;
+        let mut fields = layout.fields().iter().collect::<Vec<_>>();
+        fields.sort_by_key(|(name, field)| (field.offset_bytes(), (*name).clone()));
+        for (field_name, _field) in fields {
+            let resolved = self.resolve_struct_field_metadata(struct_name, field_name)?;
+            let full_name = format!("{name_prefix}.{field_name}");
+            if let Some(nested_name) = resolved
+                .struct_name
+                .as_deref()
+                .filter(|_| !resolved.c_type.is_pointer())
+            {
+                if resolved.array_element_width.is_some() {
+                    self.append_aggregate_array_leaf_segments(
+                        segments,
+                        base.clone(),
+                        base_offset,
+                        &resolved,
+                        nested_name,
+                        &full_name,
+                    )?;
+                } else {
+                    let nested_offset = base_offset
+                        .checked_add(resolved.offset_bytes)
+                        .ok_or_else(|| self.error("aggregate field offset overflows"))?;
+                    self.append_aggregate_leaf_segments(
+                        segments,
+                        base.clone(),
+                        nested_name,
+                        nested_offset,
+                        &full_name,
+                    )?;
+                }
+                continue;
+            }
+            if resolved.union_name.is_some() {
+                return Err(self.error(format!(
+                    "aggregate field `{full_name}` contains an unsupported union"
+                )));
+            }
+            let absolute_offset = base_offset
+                .checked_add(resolved.offset_bytes)
+                .ok_or_else(|| self.error("aggregate field offset overflows"))?;
+            let absolute_end = base_offset
+                .checked_add(resolved.slot_end_bytes)
+                .ok_or_else(|| self.error("aggregate field extent overflows"))?;
+            let mut absolute = resolved.clone();
+            absolute.offset_bytes = absolute_offset;
+            absolute.slot_end_bytes = absolute_end;
+            self.validate_field_place(&absolute)?;
+            segments.push(Self::field_segment_from_metadata(
+                base.clone(),
+                &full_name,
+                &absolute,
+            ));
+        }
+        Ok(())
+    }
+
+    fn append_aggregate_array_leaf_segments(
+        &self,
+        segments: &mut Vec<ContractSegment>,
+        base: CExpression,
+        base_offset: u32,
+        field: &ResolvedField,
+        struct_name: &str,
+        name_prefix: &str,
+    ) -> Result<(), ClickError> {
+        let element_width = field.array_element_width.ok_or_else(|| {
+            self.error(format!(
+                "aggregate field `{name_prefix}` has no element width"
+            ))
+        })?;
+        let shape = field.array_shape.as_deref().ok_or_else(|| {
+            self.error(format!(
+                "aggregate field `{name_prefix}` has no shape metadata"
+            ))
+        })?;
+        let element_count = shape.iter().try_fold(1u32, |count, length| {
+            count
+                .checked_mul(*length)
+                .ok_or_else(|| self.error(format!("aggregate field `{name_prefix}` is too large")))
+        })?;
+        for flat_index in 0..element_count {
+            let offset = base_offset
+                .checked_add(field.offset_bytes)
+                .ok_or_else(|| self.error("aggregate field offset overflows"))?
+                .checked_add(flat_index.checked_mul(element_width).ok_or_else(|| {
+                    self.error(format!("aggregate field `{name_prefix}` offset overflows"))
+                })?)
+                .ok_or_else(|| self.error("aggregate field offset overflows"))?;
+            let path = row_major_index_path(flat_index, shape);
+            self.append_aggregate_leaf_segments(
+                segments,
+                base.clone(),
+                struct_name,
+                offset,
+                &format!("{name_prefix}{path}"),
+            )?;
+        }
+        Ok(())
     }
 
     fn resolve_field_segment(
@@ -2981,6 +3222,7 @@ impl Parser {
             };
         }
         let element_width = match field.c_type {
+            C0Type::UInt8 => 1,
             C0Type::Int16 | C0Type::UInt16 => 2,
             C0Type::Int64 | C0Type::UInt64 => 8,
             _ => 4,
@@ -3190,6 +3432,12 @@ impl Parser {
                 return Err(
                     self.error("64-bit field places require eight-byte alignment and width")
                 );
+            }
+            return Ok(());
+        }
+        if field.c_type == C0Type::UInt8 {
+            if field.byte_width != 1 || field.slot_end_bytes < field.offset_bytes {
+                return Err(self.error("uint8 field places require one-byte width"));
             }
             return Ok(());
         }
@@ -4168,6 +4416,68 @@ impl Parser {
     }
 }
 
+fn expand_aggregate_resource_clause(resource: ResourceClause) -> Vec<ResourceClause> {
+    match resource {
+        ResourceClause::MemoryAggregate { access, segments } => segments
+            .into_iter()
+            .map(|segment| match access {
+                ResourceAccessMode::Own => ResourceClause::OwnMemory(segment),
+                ResourceAccessMode::View => ResourceClause::ViewMemory(segment),
+            })
+            .collect(),
+        ResourceClause::Quantified { quantity, resource } => {
+            expand_aggregate_resource_clause(*resource)
+                .into_iter()
+                .map(|resource| ResourceClause::Quantified {
+                    quantity: quantity.clone(),
+                    resource: Box::new(resource),
+                })
+                .collect()
+        }
+        resource => vec![resource],
+    }
+}
+
+fn expand_aggregate_requirement(requirement: Requirement) -> Vec<Requirement> {
+    match requirement {
+        Requirement::Labeled { label, requirement } => expand_aggregate_requirement(*requirement)
+            .into_iter()
+            .map(|requirement| Requirement::Labeled {
+                label: label.clone(),
+                requirement: Box::new(requirement),
+            })
+            .collect(),
+        Requirement::Resource(resource) => expand_aggregate_resource_clause(resource)
+            .into_iter()
+            .map(Requirement::Resource)
+            .collect(),
+        requirement => vec![requirement],
+    }
+}
+
+fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
+    let EnsureClause {
+        name,
+        ensure,
+        proof,
+    } = clause;
+    match ensure {
+        Ensure::Resource(resource) => expand_aggregate_resource_clause(resource)
+            .into_iter()
+            .map(|resource| EnsureClause {
+                name: name.clone(),
+                ensure: Ensure::Resource(resource),
+                proof: proof.clone(),
+            })
+            .collect(),
+        ensure => vec![EnsureClause {
+            name,
+            ensure,
+            proof,
+        }],
+    }
+}
+
 fn flatten_array_indices(indexes: Vec<CExpression>, dimensions: &[u32]) -> CExpression {
     let mut terms = Vec::with_capacity(indexes.len());
     for (index, expression) in indexes.into_iter().enumerate() {
@@ -4196,6 +4506,19 @@ fn flatten_array_indices(indexes: Vec<CExpression>, dimensions: &[u32]) -> CExpr
         offset = CExpression::Add(Box::new(offset), Box::new(term));
     }
     offset
+}
+
+fn row_major_index_path(flat_index: u32, shape: &[u32]) -> String {
+    let mut remaining = flat_index;
+    let mut indexes = vec![0; shape.len()];
+    for (dimension, length) in shape.iter().enumerate().rev() {
+        indexes[dimension] = remaining % *length;
+        remaining /= *length;
+    }
+    indexes
+        .into_iter()
+        .map(|index| format!("[{index}]"))
+        .collect()
 }
 
 fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExpression {

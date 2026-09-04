@@ -295,6 +295,20 @@ pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) ->
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)
         ),
+        ResourceClause::MemoryAggregate { access, segments } => {
+            let verb = match access {
+                ResourceAccessMode::Own => "owns",
+                ResourceAccessMode::View => "views",
+            };
+            format!(
+                "{verb} aggregate {{{}}}",
+                segments
+                    .iter()
+                    .map(describe_contract_segment)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
         ResourceClause::Declared {
             access,
             name,
@@ -825,6 +839,7 @@ pub(super) fn validate_resource_clause(
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => Ok(()),
+        ResourceClause::MemoryAggregate { .. } => Ok(()),
         ResourceClause::Quantified { quantity, resource } => {
             validate_contract_expression_calls(quantity, click_functions, context)?;
             let actual =

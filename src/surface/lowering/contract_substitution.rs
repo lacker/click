@@ -642,6 +642,11 @@ fn collect_resource_clause_binding_names(resource: &ResourceClause, names: &mut 
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_contract_segment_binding_names(segment, names)
         }
+        ResourceClause::MemoryAggregate { segments, .. } => {
+            for segment in segments {
+                collect_contract_segment_binding_names(segment, names);
+            }
+        }
         ResourceClause::Quantified { quantity, resource } => {
             collect_contract_expression_binding_names(quantity, names);
             collect_resource_clause_binding_names(resource, names);
@@ -885,6 +890,13 @@ fn rewrite_resource_clause_exact(
     match resource {
         ResourceClause::ViewMemory(segment) => (ResourceClause::ViewMemory(segment.clone()), false),
         ResourceClause::OwnMemory(segment) => (ResourceClause::OwnMemory(segment.clone()), false),
+        ResourceClause::MemoryAggregate { access, segments } => (
+            ResourceClause::MemoryAggregate {
+                access: *access,
+                segments: segments.clone(),
+            },
+            false,
+        ),
         ResourceClause::Quantified { quantity, resource } => {
             let (quantity, quantity_changed) =
                 rewrite_contract_expression_exact(quantity, source, target);
@@ -1214,6 +1226,15 @@ pub(in crate::surface) fn apply_contract_lets_to_resource_clause(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
+        ResourceClause::MemoryAggregate { access, segments } => {
+            Ok(ResourceClause::MemoryAggregate {
+                access,
+                segments: segments
+                    .into_iter()
+                    .map(|segment| apply_contract_lets_to_segment(segment, bindings))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
         ResourceClause::Declared {
             access,
             kind,

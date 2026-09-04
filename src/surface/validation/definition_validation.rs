@@ -1685,6 +1685,7 @@ fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
         ResourceClause::Quantified { resource, .. } => declared_composite_resource_name(resource),
         ResourceClause::ViewMemory(_)
         | ResourceClause::OwnMemory(_)
+        | ResourceClause::MemoryAggregate { .. }
         | ResourceClause::Declared { .. } => None,
     }
 }
@@ -1703,7 +1704,9 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                         name,
                         ..
                     } => Some(name.clone()),
-                    ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => None,
+                    ResourceClause::ViewMemory(_)
+                    | ResourceClause::OwnMemory(_)
+                    | ResourceClause::MemoryAggregate { .. } => None,
                     ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
                 })
                 .filter(|dependency| {

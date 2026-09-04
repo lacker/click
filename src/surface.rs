@@ -521,6 +521,14 @@ pub enum Ensure {
 pub enum ResourceClause {
     ViewMemory(ContractSegment),
     OwnMemory(ContractSegment),
+    /// A source-level aggregate place expanded into its typed leaf memory
+    /// ranges. The kernel resource algebra remains a collection of ordinary
+    /// typed memory facts; this node preserves the fact that one contract
+    /// clause requested the complete aggregate.
+    MemoryAggregate {
+        access: ResourceAccessMode,
+        segments: Vec<ContractSegment>,
+    },
     Quantified {
         quantity: ContractExpression,
         resource: Box<ResourceClause>,
@@ -747,6 +755,11 @@ fn collect_current_resource_clause_variables(
     match resource {
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_current_segment_variables(segment, names);
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => {
+            for segment in segments {
+                collect_current_segment_variables(segment, names);
+            }
         }
         ResourceClause::Quantified { quantity, resource } => {
             collect_current_contract_expression_variables(quantity, names);

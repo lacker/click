@@ -59,7 +59,7 @@ use fresh address-backed copies, recursively copying nested fields and array
 elements.
 Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Function-pointer fields, unions,
-direct aggregate loads, aggregate resource segments, packed layout, or
+direct aggregate loads, packed layout, or
 address-taking of union members remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and
@@ -73,12 +73,12 @@ Bitfields and other compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Named enums use
 the four-byte scalar ABI representation; their enumerators are resolved to
 int32 values in C expressions, while enum parameters, returns, locals, arrays,
-and anonymous declarations remain unsupported. Aggregate fields are not
-resource segments; resource clauses must name a leaf field.
-Click contracts can use field places with `views` and the owned-resource verbs,
-and explicit ranges such as `owns owner[0..3]` remain useful for broader
-footprints. The supported ABI is LP64; other target ABIs are rejected rather
-than approximated.
+and anonymous declarations remain unsupported. Click contracts can use field
+places with `views` and the owned-resource verbs, including direct embedded
+aggregate places. Such a clause expands into typed leaf ranges, preserving
+mixed field widths and ABI metadata. Explicit ranges such as `owns owner[0..3]`
+remain useful for broader footprints. The supported ABI is LP64; other target
+ABIs are rejected rather than approximated.
 
 ## External C functions
 

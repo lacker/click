@@ -1769,6 +1769,59 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
 }
 
 #[test]
+fn aggregate_resource_places_expand_to_typed_nested_leaf_segments() {
+    let c_source = r#"
+        struct inner {
+            int32 count;
+            uint8 flag;
+        };
+
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+        };
+
+        int32 read_inner(struct outer* packet) {
+            return packet->inner.count;
+        }
+    "#;
+    let click_source = r#"
+        verifying "aggregate_resource_places.c";
+
+        int32 read_inner(struct outer* packet) {
+            views packet->inner;
+            ensures result == packet->inner.count;
+        }
+    "#;
+    let file = parse_c0_click_file(click_source, &[("aggregate_resource_places.c", c_source)])
+        .expect("aggregate resource places should parse");
+    let function = &file.function_blocks()[0];
+    let resources = function
+        .requires()
+        .iter()
+        .filter_map(|requirement| match requirement {
+            Requirement::Resource(ResourceClause::ViewMemory(segment)) => Some(segment),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resources.len(), 2);
+    assert_eq!(resources[0].start, CExpression::Value(int32(1)));
+    assert_eq!(resources[0].end, CExpression::Value(int32(2)));
+    assert_eq!(resources[0].field_element_width(), Some(4));
+    assert_eq!(resources[1].start, CExpression::Value(int32(8)));
+    assert_eq!(resources[1].end, CExpression::Value(int32(12)));
+    assert_eq!(resources[1].field_element_width(), Some(1));
+    assert!(matches!(
+        &resources[0].surface,
+        ContractSegmentSurface::Field { name, .. } if name == "inner.count"
+    ));
+    assert!(matches!(
+        &resources[1].surface,
+        ContractSegmentSurface::Field { name, .. } if name == "inner.flag"
+    ));
+}
+
+#[test]
 fn parses_pilot_struct_field_mutable_effect() {
     let source = r#"
             verifying "json_object_set_ref_count.c";

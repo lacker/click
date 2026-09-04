@@ -835,6 +835,23 @@ fn collect_owned_resource_memory_segments_inner(
             output.push(segment);
             Ok(())
         }
+        ResourceClause::MemoryAggregate { access, segments } => {
+            if *access == ResourceAccessMode::View {
+                return Ok(());
+            }
+            for segment in segments {
+                collect_owned_resource_memory_segments_inner(
+                    &ResourceClause::OwnMemory(segment.clone()),
+                    resource_environment,
+                    parameters,
+                    lowerer,
+                    output,
+                    active_resources,
+                    active_guard.clone(),
+                )?;
+            }
+            Ok(())
+        }
         ResourceClause::Declared {
             access: ResourceAccessMode::View,
             ..

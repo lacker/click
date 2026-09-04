@@ -132,11 +132,11 @@ pub(in crate::surface) fn initial_call_state(
         if let Some((name, bytes)) = concrete_loadable_block(requirement, parameters, &arguments)? {
             loadable_ranges.insert(name, bytes);
         }
-        if let Requirement::Resource(resource) = requirement.inner()
-            && let Some((name, bytes)) =
-                concrete_access_resource_block(resource, parameters, &arguments)?
-        {
-            loadable_ranges.insert(name, bytes);
+        if let Requirement::Resource(resource) = requirement.inner() {
+            for (name, bytes) in concrete_access_resource_blocks(resource, parameters, &arguments)?
+            {
+                loadable_ranges.insert(name, bytes);
+            }
         }
     }
 
@@ -245,13 +245,21 @@ fn materialize_symbolic_access_resource_cells(
     arguments: &[CExpression],
 ) -> Result<CMemory, ClickError> {
     for requirement in requires {
-        let Requirement::Resource(
-            ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment),
-        ) = requirement.inner()
-        else {
+        let Requirement::Resource(resource) = requirement.inner() else {
             continue;
         };
-        memory = materialize_access_segment_cells(memory, segment, parameters, arguments)?;
+        match resource {
+            ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+                memory = materialize_access_segment_cells(memory, segment, parameters, arguments)?;
+            }
+            ResourceClause::MemoryAggregate { segments, .. } => {
+                for segment in segments {
+                    memory =
+                        materialize_access_segment_cells(memory, segment, parameters, arguments)?;
+                }
+            }
+            ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => {}
+        }
     }
     Ok(memory)
 }
@@ -583,10 +591,32 @@ pub(in crate::surface) fn lower_resource_clause(
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<CResourceFact, ClickError> {
+    if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
+        let mut facts = lower_resource_clause_facts(resource, parameters, arguments, memory)?;
+        if facts.len() != 1 {
+            return Err(ClickError::new(format!(
+                "resource clause expands to {} typed memory facts where one fact is required",
+                facts.len()
+            )));
+        }
+        return Ok(facts.pop().expect("resource clause fact count was checked"));
+    }
     let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
     let state = CState::new().with_memory(memory.clone());
     lower_resource_clause_with_values(resource, parameters, &values, &state, None)
+}
+
+pub(in crate::surface) fn lower_resource_clause_facts(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    let values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    let state = CState::new().with_memory(memory.clone());
+    lower_resource_clause_facts_with_values(resource, parameters, &values, &state, None)
 }
 
 pub(in crate::surface) fn lower_resource_clause_at_state(
@@ -595,6 +625,17 @@ pub(in crate::surface) fn lower_resource_clause_at_state(
     arguments: &[CExpression],
     state: &CState,
 ) -> Result<CResourceFact, ClickError> {
+    if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
+        let mut facts =
+            lower_resource_clause_facts_at_state(resource, parameters, arguments, state)?;
+        if facts.len() != 1 {
+            return Err(ClickError::new(format!(
+                "resource clause expands to {} typed memory facts where one fact is required",
+                facts.len()
+            )));
+        }
+        return Ok(facts.pop().expect("resource clause fact count was checked"));
+    }
     let mut values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
     values.extend(
@@ -606,6 +647,23 @@ pub(in crate::surface) fn lower_resource_clause_at_state(
     lower_resource_clause_with_values(resource, parameters, &values, state, None)
 }
 
+pub(in crate::surface) fn lower_resource_clause_facts_at_state(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    let mut values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    values.extend(
+        state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone())),
+    );
+    lower_resource_clause_facts_with_values(resource, parameters, &values, state, None)
+}
+
 pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -613,6 +671,18 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     state: &CState,
     result: &CValue,
 ) -> Result<CResourceFact, ClickError> {
+    if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
+        let mut facts = lower_resource_clause_facts_at_state_with_result(
+            resource, parameters, arguments, state, result,
+        )?;
+        if facts.len() != 1 {
+            return Err(ClickError::new(format!(
+                "resource clause expands to {} typed memory facts where one fact is required",
+                facts.len()
+            )));
+        }
+        return Ok(facts.pop().expect("resource clause fact count was checked"));
+    }
     let mut values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
     values.extend(
@@ -624,6 +694,24 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     lower_resource_clause_with_values(resource, parameters, &values, state, Some(result))
 }
 
+pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    result: &CValue,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    let mut values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    values.extend(
+        state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone())),
+    );
+    lower_resource_clause_facts_with_values(resource, parameters, &values, state, Some(result))
+}
+
 fn lower_resource_clause_with_values(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -632,6 +720,9 @@ fn lower_resource_clause_with_values(
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     match resource {
+        ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
+            "aggregate resource clauses require batch lowering",
+        )),
         ResourceClause::Quantified { quantity, resource } => {
             let quantity = resource_argument_to_c_expression(quantity)?;
             let assumptions = PureFactContext::new();
@@ -762,6 +853,64 @@ fn lower_resource_clause_with_values(
                 ResourceAccessMode::View => CResourceFact::View(resource),
             })
         }
+    }
+}
+
+fn lower_resource_clause_facts_with_values(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    state: &CState,
+    result: Option<&CValue>,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    match resource {
+        ResourceClause::MemoryAggregate { access, segments } => segments
+            .iter()
+            .map(|segment| {
+                let leaf = match access {
+                    ResourceAccessMode::Own => ResourceClause::OwnMemory(segment.clone()),
+                    ResourceAccessMode::View => ResourceClause::ViewMemory(segment.clone()),
+                };
+                lower_resource_clause_with_values(&leaf, parameters, values, state, result)
+            })
+            .collect(),
+        ResourceClause::Quantified { quantity, resource } => {
+            let quantity = resource_argument_to_c_expression(quantity)?;
+            let assumptions = PureFactContext::new();
+            let array_refs = array_refs_for_parameters(parameters, values, state.memory());
+            let quantity = crate::surface::proof::evaluate_c_fragment_through_kernel(
+                &quantity,
+                &assumptions,
+                values,
+                &array_refs,
+                state,
+                result,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not lower declared resource quantity: {message}"
+                ))
+            })?;
+            let CValue::Int32(quantity) = quantity else {
+                return Err(ClickError::new(
+                    "declared resource quantity must evaluate to int32",
+                ));
+            };
+            lower_resource_clause_facts_with_values(resource, parameters, values, state, result)?
+                .into_iter()
+                .map(|lowered| {
+                    let CResourceFact::Own(resource, _) = lowered else {
+                        return Err(ClickError::new(
+                            "declared resource quantity requires owned authority",
+                        ));
+                    };
+                    Ok(CResourceFact::own_quantity(resource, quantity.clone()))
+                })
+                .collect()
+        }
+        _ => Ok(vec![lower_resource_clause_with_values(
+            resource, parameters, values, state, result,
+        )?]),
     }
 }
 
@@ -928,24 +1077,42 @@ pub(in crate::surface) fn resource_clause_loadable_prop(
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<Option<Proposition>, ClickError> {
-    let range = match resource {
-        ResourceClause::ViewMemory(_) => {
+    let ranges = match resource {
+        ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
-            let range = lowered
-                .memory_view_range()
-                .expect("viewed memory clause should lower to viewed memory");
-            range.clone()
+            vec![
+                lowered
+                    .memory_view_range()
+                    .or_else(|| lowered.memory_own_range())
+                    .expect("memory clause should lower to a memory range")
+                    .clone(),
+            ]
         }
-        ResourceClause::OwnMemory(_) => {
-            let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
-            let range = lowered
-                .memory_own_range()
-                .expect("owned memory clause should lower to owned memory");
-            range.clone()
+        ResourceClause::MemoryAggregate { .. } => {
+            lower_resource_clause_facts(resource, parameters, arguments, memory)?
+                .into_iter()
+                .map(|lowered| {
+                    lowered
+                        .memory_view_range()
+                        .or_else(|| lowered.memory_own_range())
+                        .expect("aggregate memory clause should lower to memory ranges")
+                        .clone()
+                })
+                .collect()
         }
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
-    Ok(Some(memory_range_loadable_prop(memory, &range)))
+    let mut propositions = ranges
+        .iter()
+        .map(|range| memory_range_loadable_prop(memory, range))
+        .collect::<Vec<_>>();
+    let first = propositions
+        .drain(..1)
+        .next()
+        .expect("memory resource clause has at least one range");
+    Ok(Some(propositions.into_iter().fold(first, |left, right| {
+        Proposition::And(Box::new(left), Box::new(right))
+    })))
 }
 
 pub(in crate::surface) fn memory_range_loadable_prop(
@@ -1009,46 +1176,59 @@ pub(in crate::surface) fn concrete_loadable_block(
     }
 }
 
-pub(in crate::surface) fn concrete_access_resource_block(
+pub(in crate::surface) fn concrete_access_resource_blocks(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
-    let segment = match resource {
-        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => segment,
-        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
+) -> Result<Vec<(String, ConcreteMemoryRangeSeed)>, ClickError> {
+    let segments = match resource {
+        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+            vec![segment]
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => segments.iter().collect(),
+        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => {
+            return Ok(Vec::new());
+        }
     };
-    let state = CState::new();
-    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
-        return Ok(None);
-    };
-    let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
-        (&segment.start, &segment.end)
-    else {
-        return Ok(None);
-    };
-    if end < start {
-        return Err(ClickError::new(format!(
-            "resource segment has an end before its start: {start}..{end}"
-        )));
-    }
-    let element_width = contract_segment_element_width(parameters, &segment.source);
-    let element_count = end - start;
-    let bytes = element_count
-        .checked_mul(element_width)
-        .ok_or_else(|| ClickError::new("`write` segment overflows byte count"))?;
-    Ok(Some((
-        format!("{:?}", segment.source),
-        ConcreteMemoryRangeSeed {
-            base: offset_pointer_by_elements(segment.base, segment.start, element_width),
-            bytes,
-            element_width,
-            element_type: (!contract_expression_is_struct_array(parameters, &segment.source.base))
+    let mut result = Vec::new();
+    for segment in segments {
+        let state = CState::new();
+        let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
+        else {
+            continue;
+        };
+        let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+            (&segment.start, &segment.end)
+        else {
+            continue;
+        };
+        if end < start {
+            return Err(ClickError::new(format!(
+                "resource segment has an end before its start: {start}..{end}"
+            )));
+        }
+        let element_width = contract_segment_element_width(parameters, &segment.source);
+        let element_count = end - start;
+        let bytes = element_count
+            .checked_mul(element_width)
+            .ok_or_else(|| ClickError::new("`write` segment overflows byte count"))?;
+        result.push((
+            format!("{:?}", segment.source),
+            ConcreteMemoryRangeSeed {
+                base: offset_pointer_by_elements(segment.base, segment.start, element_width),
+                bytes,
+                element_width,
+                element_type: (!contract_expression_is_struct_array(
+                    parameters,
+                    &segment.source.base,
+                ))
                 .then(|| contract_segment_element_type(parameters, &segment.source)),
-            struct_layout: contract_expression_struct_layout(parameters, &segment.source.base)
-                .cloned(),
-        },
-    )))
+                struct_layout: contract_expression_struct_layout(parameters, &segment.source.base)
+                    .cloned(),
+            },
+        ));
+    }
+    Ok(result)
 }
 
 pub(in crate::surface) fn loadable_base_and_bytes(

@@ -27,8 +27,10 @@ indexing and resource ranges. Fixed one-dimensional `int32` and `uint8` arrays
 are preserved as inline field shapes and indexed through their element-width
 pointer arithmetic. Embedded fields and fixed-dimensional embedded-struct arrays
 are represented as aggregate places during C0 parsing and are lowered to scalar
-leaf accesses; direct aggregate loads, copies, and aggregate resource segments
-remain unsupported. Fixed-dimensional embedded-struct arrays in by-value
+leaf accesses. Resource clauses may name an embedded aggregate directly; the
+surface parser expands that place into typed leaf ranges while preserving each
+leaf's field metadata. Direct aggregate loads and copies remain unsupported.
+Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
 complete ABI stride. Union
 members use overlapping layout and read-only typed loads; union writes,
@@ -124,6 +126,10 @@ Staged mdtests, each with an unchanged C file:
     types, LP64 offsets, typed leaf loads/stores, and by-value copy semantics.~~
     Covered by `mdtests/struct_wide_scalar_fields.md` and the C0 layout and
     aggregate-copy regressions.
+14. ~~Direct `views`, `owns`, `consumes`, and `produces` clauses over embedded
+    structs and fixed-dimensional embedded-struct arrays expand into disjoint
+    typed leaf ranges, including mixed-width fields.~~ Covered by
+    `mdtests/struct_aggregate_resources.md` and the surface metadata regression.
 
 ## Acceptance criteria
 

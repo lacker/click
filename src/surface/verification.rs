@@ -2385,6 +2385,9 @@ fn resource_clause_to_resource_spec_with_parameters(
                 ),
             ),
         )),
+        ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
+            "aggregate resource clauses must be expanded before one resource spec is required",
+        )),
         ResourceClause::Declared {
             access,
             kind,
@@ -2457,6 +2460,15 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             substitute_contract_segment(segment, substitutions)?,
         )),
+        ResourceClause::MemoryAggregate { access, segments } => {
+            Ok(ResourceClause::MemoryAggregate {
+                access: *access,
+                segments: segments
+                    .iter()
+                    .map(|segment| substitute_contract_segment(segment, substitutions))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
         ResourceClause::Declared {
             access,
             kind,
@@ -2515,6 +2527,9 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
             segment.start.clone(),
             segment.end.clone(),
         ))),
+        ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
+            "aggregate resource clauses must be expanded before one resource spec is required",
+        )),
         ResourceClause::Declared {
             access,
             kind,

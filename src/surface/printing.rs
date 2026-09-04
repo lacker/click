@@ -547,6 +547,14 @@ fn format_resource_target(resource: &ResourceClause) -> String {
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             describe_contract_segment(segment)
         }
+        ResourceClause::MemoryAggregate { segments, .. } => format!(
+            "aggregate {{{}}}",
+            segments
+                .iter()
+                .map(describe_contract_segment)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ResourceClause::Declared { .. } => format_resource_call(resource),
     }
 }
@@ -556,6 +564,7 @@ fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
         ResourceClause::Quantified { resource, .. } => resource_access(resource),
         ResourceClause::ViewMemory(_) => ResourceAccessMode::View,
         ResourceClause::OwnMemory(_) => ResourceAccessMode::Own,
+        ResourceClause::MemoryAggregate { access, .. } => *access,
         ResourceClause::Declared { access, .. } => *access,
     }
 }

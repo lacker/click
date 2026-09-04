@@ -42,16 +42,25 @@ pub(super) fn prove_ensure_resource(
             )
         )));
     };
-    let expected = lower_resource_clause_at_state_with_result(
+    let expected = lower_resource_clause_facts_at_state_with_result(
         resource, parameters, arguments, post_state, result,
     )?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    if post_state
-        .resources()
-        .satisfies_fact(&expected, &assumptions)
-    {
+    if expected.iter().all(|expected| {
+        post_state
+            .resources()
+            .satisfies_fact(expected, &assumptions)
+    }) {
         return Ok(());
     }
+    let expected = expected
+        .iter()
+        .find(|expected| {
+            !post_state
+                .resources()
+                .satisfies_fact(expected, &assumptions)
+        })
+        .expect("resource ensure has an unsatisfied fact");
     Err(ClickError::new(format!(
         "`{claim_label}` failed on path {path_index}: {}",
         describe_missing_resource_fact(
