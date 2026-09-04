@@ -5650,6 +5650,33 @@ impl Parser {
         Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
     }
 
+    fn parse_local_struct_array_initializer(
+        &mut self,
+        name: &str,
+        struct_name: &str,
+        array_shape: &[u32],
+    ) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() != Some(&Token::LBrace) {
+            return Err(self.error_here(
+                "local struct array elements require nested `{...}` initializer groups",
+            ));
+        }
+        let element_width = self
+            .structs
+            .get(struct_name)
+            .expect("validated local struct array has a layout")
+            .size_bytes;
+        let stores = self.parse_embedded_struct_array_initializer_level(
+            C0Expression::Variable(name.to_string()),
+            struct_name,
+            array_shape,
+            0,
+            0,
+            element_width,
+        )?;
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
     fn parse_array_initializer_level(
         &mut self,
         name: &str,
@@ -6705,13 +6732,15 @@ impl Parser {
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
                 ) {
-                    if parsed_type.struct_name.is_some() {
-                        return Err(self.error_here(
-                            "local array initializers for struct arrays are not supported",
-                        ));
-                    }
-                    let initializer =
-                        self.parse_local_array_initializer(&name, c_type, array_shape.as_deref())?;
+                    let initializer = if let Some(struct_name) = parsed_type.struct_name.as_deref()
+                    {
+                        let dimensions = array_shape.as_deref().expect(
+                            "local struct array initializers retain their declared dimensions",
+                        );
+                        self.parse_local_struct_array_initializer(&name, struct_name, dimensions)?
+                    } else {
+                        self.parse_local_array_initializer(&name, c_type, array_shape.as_deref())?
+                    };
                     C0Statement::Seq(Box::new(declaration), Box::new(initializer))
                 } else if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)

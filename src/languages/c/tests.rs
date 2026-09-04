@@ -4120,6 +4120,134 @@ fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
 }
 
 #[test]
+fn c0_syntax_lowers_local_struct_array_initializers() {
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 enabled;
+        };
+
+        struct item {
+            uint8 tag;
+            struct inner inner;
+            int32 values[2];
+        };
+
+        int32 local_struct_array_initializer() {
+            struct item items[2] = {
+                {1, {10, 1}, {2}},
+                {2, {20}, {3, 4}}
+            };
+            return items[0].tag + items[0].inner.value
+                + items[0].inner.enabled + items[0].values[0]
+                + items[0].values[1] + items[1].tag
+                + items[1].inner.value + items[1].inner.enabled
+                + items[1].values[0] + items[1].values[1];
+        }
+        "#,
+    )
+    .expect("local struct array initializers should parse")
+    .to_kernel_function();
+
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:items", 40)
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                },
+                crate::kernel::uint8(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(4),
+                },
+                crate::kernel::int32(10),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(8),
+                },
+                crate::kernel::uint8(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(12),
+                },
+                crate::kernel::int32(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(16),
+                },
+                crate::kernel::int32(0),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(20),
+                },
+                crate::kernel::uint8(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(24),
+                },
+                crate::kernel::int32(20),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(28),
+                },
+                crate::kernel::uint8(0),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(32),
+                },
+                crate::kernel::int32(3),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(36),
+                },
+                crate::kernel::int32(4),
+            ),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local struct array initializers should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(43),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_struct_array_parameter_retains_abi_stride() {
     let function = syntax::parse_function(
         r#"

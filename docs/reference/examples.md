@@ -142,6 +142,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/local_array_loop_frame.md`: local array frame behavior.
 - `mdtests/local_array_decays_to_helper.md`: array-to-pointer function call.
 - `mdtests/local_array_rejects_assignment.md`: direct array assignment fails.
+- `mdtests/local_struct_array_initializer.md`: positional initialization of
+  local arrays of structs, including nested fields and zero-filled omissions.
 
 ## Structs
 

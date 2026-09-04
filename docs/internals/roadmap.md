@@ -128,6 +128,9 @@ Likely additions:
   return storage. Positional initializers for copyable struct-valued locals
   recursively write typed leaves and zero-fill omitted members, including
   nested structs and fixed-dimensional scalar or embedded-struct arrays.
+  Fixed-dimensional local arrays of copyable structs now accept nested
+  positional element groups and zero-fill omitted fields and elements using
+  the complete ABI-sized element stride.
   Conditional expressions over copyable struct values now use fresh
   address-backed temporaries and branch-local recursive copies; mixed-struct
   and union conditionals remain outside the model. Bitfields and other compiler-dependent layout rules are tracked in the

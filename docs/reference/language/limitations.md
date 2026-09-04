@@ -64,12 +64,12 @@ are lowered to typed leaf copies; aggregate arguments and returns use the same
 address-backed representation. Pointer-backed aggregate returns can state
 field-wise postconditions over mixed-width and nested fields; the returned
 aggregate is still a fresh copy rather than an alias of the source.
-Positional aggregate initializers for copyable struct-valued locals support
-nested structs, fixed-dimensional scalar arrays, embedded-struct arrays, and
-zero-filled omitted members. Designated field initializers for those locals
-support scalar and nested embedded-struct fields; static/file-scope designated
-initializers, array designators, and initializers for arrays of structs remain
-unsupported. Function-pointer fields, unions,
+Positional aggregate initializers for copyable struct-valued locals and
+fixed-dimensional local arrays of those structs support nested structs,
+fixed-dimensional scalar arrays, embedded-struct arrays, nested element groups,
+and zero-filled omitted members and elements. Designated field initializers for
+those locals support scalar and nested embedded-struct fields; static/file-scope
+designated initializers and array designators remain unsupported. Function-pointer fields, unions,
 conditional expressions over copyable structs require matching branch types
 and copy only the selected branch into fresh address-backed storage.
 Function-pointer fields, unions, packed layout, or address-taking of union
