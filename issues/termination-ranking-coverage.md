@@ -29,11 +29,13 @@ regressions are in `mdtests/c_decreases_lexicographic_loop.md` and
 `mdtests/c_decreases_rejects_non_decreasing_lexicographic_loop.md`. A nested
 loop with its own ranking is now summarized as a terminating opaque phase for
 the enclosing loop; `mdtests/c_decreases_nested_loop.md` covers an outer first
-component that decreases after the phase. Numeric and structural recursive
-calls inside a separately ranked loop are now checked under the loop guard;
+component that decreases after the phase. Numeric recursive calls inside a
+separately ranked loop are now checked under the loop guard;
 `mdtests/c_decreases_recursive_in_loop.md` covers the numeric case and
 `mdtests/c_decreases_recursive_in_loop_rejects_same_measure.md` pins the
-negative edge.
+negative edge. Structural-resource recursion inside a ranked loop is tracked
+separately in [termination-structural-loop-proof.md](termination-structural-loop-proof.md)
+because the surface proof driver still stops while exposing the folded child.
 
 ## Intended regression
 
@@ -56,15 +58,16 @@ non-decreasing must expect `fail: ... does not decrease`.
   one loop's back-edge paths. Separately ranked nested loops are supported as
   opaque terminating phases; aliases for enclosing ranking variables written
   by the phase are forgotten, so enclosing invariants must establish their
-  post-phase nonnegativity. A recursive call inside a loop requires both the
+  post-phase nonnegativity. A numeric recursive call inside a loop requires both the
   loop's own checked ranking and the caller/callee function-level ranking;
   the loop guard is included when establishing the recursive argument's
   nonnegativity. The recursive measure parameter must remain unchanged by
   assignments, updates, allocation results, and call results. Structural
-  recursive calls use the same finite-loop boundary while still requiring an
-  active guard and a direct contained child. Recursive calls whose descent
-  depends on a changing lexicographic caller measure remain outside this
-  slice.
+  recursive calls inside ranked loops remain open because the surface proof
+  driver must expose their folded direct child; see
+  [termination-structural-loop-proof.md](termination-structural-loop-proof.md).
+  Recursive calls whose descent depends on a changing lexicographic caller
+  measure also remain outside this slice.
 - The surface plan carries the expression and the kernel re-lowers and checks
   it, in keeping with the untrusted-plan design in `docs/internals/kernel.md`.
 - The mdtests above pass; `scripts/check.sh` passes.

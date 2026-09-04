@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 15
+## Functionality gaps: 16
 
 C language coverage:
 
@@ -42,6 +42,7 @@ C language coverage:
 Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
+- [Certify structural recursion inside ranked loops](termination-structural-loop-proof.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 
