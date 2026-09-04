@@ -29,7 +29,9 @@ branches for `#if 0`, `#if 1`, `#if NAME` when `NAME` is a known 0/1 literal,
 `#ifdef`, `#ifndef`, `#else`, and `#endif`, including nesting, while keeping
 general preprocessor expressions unsupported. The follow-up conditional slice
 now supports ordered `#elif` chains with the same bounded conditions and skips
-conditions in branches that cannot be selected.
+conditions in branches that cannot be selected. The macro-state slice now
+supports `#undef NAME`, including re-inclusion of a canonical guarded header
+after its guard macro is undefined.
 
 ## Violated invariant
 
@@ -67,7 +69,8 @@ general conditional expression.
 - Object-like macros with one supported integer or character literal are
   expanded in source order across a translation unit and its included headers;
   uses in comments and quoted literals remain untouched, and redefinitions or
-  other macro forms receive source-named diagnostics.
+  other macro forms receive source-named diagnostics. `#undef NAME` removes a
+  macro and permits a later literal redefinition.
 - Function-like and multi-token macros, system headers other than the modeled
   `<stdint.h>`, general conditional expressions, and other preprocessor
   directives remain explicitly unsupported until a documented allowlist or

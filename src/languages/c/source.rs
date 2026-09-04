@@ -55,6 +55,7 @@ enum SourceDirective {
     SystemInclude(String),
     HeaderGuardDefine(String),
     MacroDefinition { name: String, value: String },
+    MacroUndefine(String),
     ConditionalStart(Conditional),
     ConditionalElif(Conditional),
     ConditionalElse,
@@ -75,7 +76,6 @@ enum Conditional {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceAnalysis {
     directives: BTreeMap<usize, SourceDirective>,
-    guarded: bool,
     header_guard_define_line: Option<usize>,
 }
 
@@ -159,9 +159,6 @@ fn expand_source<'a>(
     let analysis = analyze_source(source_path, source)?;
     if expanded_once.contains(source_path) {
         return Ok(());
-    }
-    if analysis.guarded {
-        expanded_once.insert(source_path.to_string());
     }
     if let Some(cycle_start) = stack.iter().position(|path| path == source_path) {
         let mut cycle = stack[cycle_start..].to_vec();
@@ -311,6 +308,12 @@ fn expand_source<'a>(
                 expanded.push('\n');
             }
             SourceDirective::MacroDefinition { .. } => expanded.push('\n'),
+            SourceDirective::MacroUndefine(name) if active != ConditionalTruth::False => {
+                defined_macros.remove(name);
+                macros.remove(name);
+                expanded.push('\n');
+            }
+            SourceDirective::MacroUndefine(_) => expanded.push('\n'),
             SourceDirective::HeaderGuardDefine(name) if active != ConditionalTruth::False => {
                 if analysis.header_guard_define_line != Some(line_number) {
                     return Err(CSourceError::new(
@@ -458,6 +461,11 @@ fn collect_local_include_paths(
                 }
             }
             SourceDirective::MacroDefinition { .. } => {}
+            SourceDirective::MacroUndefine(name) if active != ConditionalTruth::False => {
+                defined_macros.remove(name);
+                macros.remove(name);
+            }
+            SourceDirective::MacroUndefine(_) => {}
             SourceDirective::HeaderGuardDefine(name) if active == ConditionalTruth::True => {
                 if analysis.header_guard_define_line != Some(line_number) {
                     return Err(CSourceError::new(
@@ -624,11 +632,10 @@ fn analyze_source(source_path: &str, source: &str) -> Result<SourceAnalysis, CSo
             )
         })
         .collect();
-    let (guarded, header_guard_define_line) = header_guard_shape(&framing, &directives);
+    let header_guard_define_line = header_guard_shape(&framing, &directives);
 
     Ok(SourceAnalysis {
         directives,
-        guarded,
         header_guard_define_line,
     })
 }
@@ -699,7 +706,7 @@ fn validate_conditional_structure(
 fn header_guard_shape(
     framing: &[&SignificantLine],
     directives: &BTreeMap<usize, SourceDirective>,
-) -> (bool, Option<usize>) {
+) -> Option<usize> {
     let valid = framing.len() >= 3
         && matches!(
             framing[0],
@@ -723,12 +730,12 @@ fn header_guard_shape(
             _ => false,
         };
     if !valid {
-        return (false, None);
+        return None;
     }
     let define_line = directives.iter().find_map(|(line, directive)| {
         matches!(directive, SourceDirective::HeaderGuardDefine(_)).then_some(*line)
     });
-    (true, define_line)
+    define_line
 }
 
 fn parse_directive<'a>(
@@ -860,6 +867,17 @@ fn parse_directive<'a>(
         return Ok(Some(SourceDirective::Unsupported(format!(
             "unsupported macro definition `#{directive}`; expected one integer or character literal"
         ))));
+    }
+    if let Some(rest) = directive.strip_prefix("undef")
+        && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
+    {
+        let (name, trailing) = split_identifier(rest.trim_start());
+        if let Some(name) = name.filter(|_| trailing_comments_only(trailing)) {
+            return Ok(Some(SourceDirective::MacroUndefine(name)));
+        }
+        return Ok(Some(SourceDirective::Unsupported(
+            "malformed macro undefinition; expected `#undef NAME`".to_string(),
+        )));
     }
     if directive
         .strip_prefix("else")
@@ -1358,6 +1376,61 @@ mod tests {
             let error = local_include_paths("main.c", source).unwrap_err();
             assert!(error.to_string().contains(expected));
         }
+    }
+
+    #[test]
+    fn undefines_remove_macros_and_allow_later_redefinition() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#define FEATURE 0
+#undef FEATURE
+#ifdef FEATURE
+int32 wrong(void) { return 0; }
+#else
+#define FEATURE 1
+#if FEATURE
+#include "config.h"
+#endif
+#endif
+int32 run(void) { return VALUE; }
+"##,
+            ),
+            ("config.h", "#define VALUE 4\n"),
+        ]);
+        assert_eq!(
+            local_include_paths("main.c", sources["main.c"]).unwrap(),
+            ["config.h"]
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 run(void) { return 4; }"));
+        assert!(!expanded.source().contains("wrong(void)"));
+
+        let malformed = local_include_paths("main.c", "#undef\n").unwrap_err();
+        assert!(
+            malformed
+                .to_string()
+                .contains("malformed macro undefinition")
+        );
+    }
+
+    #[test]
+    fn undefining_a_header_guard_allows_a_later_include() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                "#include \"guard.h\"\n#undef GUARD_H\n#include \"guard.h\"\n",
+            ),
+            (
+                "guard.h",
+                "#ifndef GUARD_H\n#define GUARD_H\ntypedef int32 shared_t;\n#endif\n",
+            ),
+        ]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert_eq!(
+            expanded.source().matches("typedef int32 shared_t;").count(),
+            2
+        );
     }
 
     #[test]

@@ -78,12 +78,14 @@ forward prototypes. Project-local quoted includes such as
 the named header is supplied in the source bundle. Headers are declaration-only
 and may contain supported structs, typedefs, enums, and prototypes. System
 header includes other than the modeled no-op `<stdint.h>`, function-like or
-multi-token macros, macro redefinitions, general conditional expressions, and
-other preprocessor directives remain unsupported except for canonical
-whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`), `#pragma once`, and
+multi-token macros, macro redefinitions without an intervening `#undef`, general
+conditional expressions, and other preprocessor directives remain unsupported
+except for canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
+`#pragma once`, and
 the bounded conditional subset. C0 does support object-like macros whose
 replacement is one integer or character literal; those macros are expanded in
-translation-unit order across a source file and its local headers. The bounded
+translation-unit order across a source file and its local headers, and `#undef NAME`
+removes one from the active macro state. The bounded
 conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a previously defined
 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif` with those same
 conditions, `#else`, and `#endif`, including nesting; unsupported active
