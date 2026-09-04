@@ -166,6 +166,7 @@ pub struct C0Global {
     c_type: C0Type,
     initializer: Option<C0Expression>,
     file_static: bool,
+    volatile: bool,
 }
 
 impl C0Global {
@@ -176,6 +177,7 @@ impl C0Global {
             c_type,
             initializer: None,
             file_static: false,
+            volatile: false,
         }
     }
 
@@ -186,6 +188,7 @@ impl C0Global {
             c_type,
             initializer: Some(initializer),
             file_static: false,
+            volatile: false,
         }
     }
 
@@ -201,6 +204,7 @@ impl C0Global {
             c_type,
             initializer: Some(initializer),
             file_static: true,
+            volatile: false,
         }
     }
 
@@ -228,15 +232,27 @@ impl C0Global {
         self.initializer.as_ref()
     }
 
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
+    }
+
+    fn with_volatile(mut self, volatile: bool) -> Self {
+        self.volatile = volatile;
+        self
+    }
+
     pub(crate) fn to_kernel_global(&self) -> Option<crate::kernel::CGlobal> {
         let initializer = self.initializer.as_ref()?;
         let value = kernel_integer_literal_value(self.c_type, initializer)?;
-        Some(crate::kernel::CGlobal::new_with_kernel_name(
-            self.name.clone(),
-            self.kernel_name.clone(),
-            self.c_type.to_kernel_type(),
-            value,
-        ))
+        Some(
+            crate::kernel::CGlobal::new_with_kernel_name(
+                self.name.clone(),
+                self.kernel_name.clone(),
+                self.c_type.to_kernel_type(),
+                value,
+            )
+            .with_volatile(self.is_volatile()),
+        )
     }
 }
 
@@ -381,6 +397,7 @@ pub struct C0StaticLocal {
     kernel_name: String,
     c_type: C0Type,
     initializer: C0Expression,
+    volatile: bool,
 }
 
 impl C0StaticLocal {
@@ -395,6 +412,7 @@ impl C0StaticLocal {
             kernel_name,
             c_type,
             initializer,
+            volatile: false,
         }
     }
 
@@ -414,6 +432,15 @@ impl C0StaticLocal {
         &self.initializer
     }
 
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
+    }
+
+    fn with_volatile(mut self, volatile: bool) -> Self {
+        self.volatile = volatile;
+        self
+    }
+
     pub(crate) fn to_kernel_static(&self) -> Option<crate::kernel::CStaticLocal> {
         let bits = match &self.initializer {
             C0Expression::Int32Literal(value) => *value,
@@ -429,12 +456,15 @@ impl C0StaticLocal {
             C0Type::UInt32 => crate::kernel::uint32(bits),
             _ => return None,
         };
-        Some(crate::kernel::CStaticLocal::new(
-            self.source_name.clone(),
-            self.kernel_name.clone(),
-            self.c_type.to_kernel_type(),
-            value,
-        ))
+        Some(
+            crate::kernel::CStaticLocal::new(
+                self.source_name.clone(),
+                self.kernel_name.clone(),
+                self.c_type.to_kernel_type(),
+                value,
+            )
+            .with_volatile(self.is_volatile()),
+        )
     }
 }
 
@@ -442,6 +472,7 @@ impl C0StaticLocal {
 pub struct C0Parameter {
     c_type: C0Type,
     name: String,
+    volatile: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
     /// The ABI width of one element when the source parameter was declared as
@@ -457,6 +488,7 @@ struct ParsedType {
     struct_name: Option<String>,
     enum_name: Option<String>,
     union_name: Option<String>,
+    is_volatile: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -630,6 +662,7 @@ pub enum C0Statement {
     Declare {
         c_type: C0Type,
         name: String,
+        volatile: bool,
     },
     DeclareStructValue {
         name: String,
@@ -1074,6 +1107,7 @@ impl C0Parameter {
         Self {
             c_type,
             name,
+            volatile: false,
             struct_name,
             struct_layout: None,
             array_element_width: None,
@@ -1086,6 +1120,10 @@ impl C0Parameter {
 
     pub fn c_type(&self) -> C0Type {
         self.c_type
+    }
+
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
     }
 
     pub fn struct_name(&self) -> Option<&str> {
@@ -1115,13 +1153,14 @@ impl C0Parameter {
                 self.name.clone(),
                 crate::kernel::CType::UInt8Pointer,
                 layout,
-            );
+            )
+            .with_volatile(self.is_volatile());
         }
         let c_type = self
             .array_element_width
             .map(|_| crate::kernel::CType::UInt8Pointer)
             .unwrap_or_else(|| self.c_type.to_kernel_type());
-        crate::kernel::c_parameter(self.name.clone(), c_type)
+        crate::kernel::c_parameter(self.name.clone(), c_type).with_volatile(self.is_volatile())
     }
 }
 
@@ -1217,8 +1256,12 @@ impl C0Statement {
             Self::Skip => crate::kernel::c_skip(),
             Self::Break => crate::kernel::c_break(),
             Self::Continue => crate::kernel::c_continue(),
-            Self::Declare { c_type, name } => {
-                crate::kernel::c_declare(name.clone(), c_type.to_kernel_type())
+            Self::Declare {
+                c_type,
+                name,
+                volatile,
+            } => {
+                crate::kernel::c_declare_volatile(name.clone(), c_type.to_kernel_type(), *volatile)
             }
             Self::DeclareStructValue { name, layout } => crate::kernel::c_declare_aggregate(
                 name.clone(),
@@ -2083,6 +2126,7 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
+    variable_volatiles: BTreeSet<String>,
     unions: BTreeMap<String, C0UnionLayout>,
     /// The names declared in each open lexical scope, innermost last. The
     /// source name is retained for lookup, while `kernel_name` is the
@@ -2167,6 +2211,7 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
+            variable_volatiles: BTreeSet::new(),
             unions: BTreeMap::new(),
             scopes: Vec::new(),
             next_scoped_name: 0,
@@ -2198,7 +2243,18 @@ impl Parser {
             self.variable_struct_values.remove(&binding.kernel_name);
             self.variable_array_shapes.remove(&binding.kernel_name);
             self.variable_types.remove(&binding.kernel_name);
+            self.variable_volatiles.remove(&binding.kernel_name);
         }
+    }
+
+    fn is_volatile_object_name(&self, source_name: &str) -> bool {
+        let kernel_name = self.resolve_name(source_name);
+        self.variable_volatiles.contains(source_name)
+            || self.variable_volatiles.contains(&kernel_name)
+            || self
+                .globals
+                .get(source_name)
+                .is_some_and(C0Global::is_volatile)
     }
 
     fn resolve_name(&self, source_name: &str) -> String {
@@ -2359,8 +2415,9 @@ impl Parser {
     }
 
     fn is_type_start(&self) -> bool {
-        self.peek_ident()
-            .is_some_and(|name| is_builtin_type_start(name) || self.typedefs.contains_key(name))
+        self.peek_ident().is_some_and(|name| {
+            name == "volatile" || is_builtin_type_start(name) || self.typedefs.contains_key(name)
+        })
     }
 
     /// The source position of the next unconsumed token, or of the end of
@@ -2539,6 +2596,9 @@ impl Parser {
 
     fn parse_function_header(&mut self) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.is_volatile {
+            return Err(self.error_here("volatile qualifies objects, not function return types"));
+        }
         if parsed_return_type.union_name.is_some() {
             return Err(self.error_here(
                 "tagged union return values are not supported; access an active scalar member",
@@ -2696,6 +2756,11 @@ impl Parser {
                 name.clone()
             };
             let array_length = self.parse_global_array_length(&name)?;
+            if parsed_type.is_volatile && array_length.is_some() {
+                return Err(self.error_here(
+                    "the small volatile model supports only direct scalar integer objects",
+                ));
+            }
             if let Some(length) = array_length {
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     if is_extern {
@@ -2768,11 +2833,16 @@ impl Parser {
                                     parsed_type.c_type,
                                     initializer,
                                 )
+                                .with_volatile(parsed_type.is_volatile)
                             } else {
                                 C0Global::definition(name.clone(), parsed_type.c_type, initializer)
+                                    .with_volatile(parsed_type.is_volatile)
                             }
                         })
-                        .unwrap_or_else(|| C0Global::declaration(name.clone(), parsed_type.c_type)),
+                        .unwrap_or_else(|| {
+                            C0Global::declaration(name.clone(), parsed_type.c_type)
+                                .with_volatile(parsed_type.is_volatile)
+                        }),
                 )?;
                 self.variable_types.insert(kernel_name, parsed_type.c_type);
             }
@@ -2893,6 +2963,11 @@ impl Parser {
                 return Err(
                     self.error_here(format!("conflicting declarations for global `{name}`"))
                 );
+            }
+            if previous.is_volatile() != declaration.is_volatile() {
+                return Err(self.error_here(format!(
+                    "conflicting volatile qualifiers for global `{name}`"
+                )));
             }
             if previous.is_file_static() != declaration.is_file_static() {
                 return Err(self.error_here(format!(
@@ -3120,6 +3195,11 @@ impl Parser {
         base_type: &ParsedType,
         union_name: &str,
     ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
+        if base_type.is_volatile {
+            return Err(self.error_here(
+                "the small volatile model does not support volatile struct or union fields",
+            ));
+        }
         if base_type.struct_name.is_some() || base_type.union_name.is_some() {
             return Err(self.error_here(format!(
                 "union `{union_name}` fields may not contain embedded structs or unions"
@@ -3257,6 +3337,11 @@ impl Parser {
         ),
         C0SyntaxError,
     > {
+        if base_type.is_volatile {
+            return Err(self.error_here(
+                "the small volatile model does not support volatile struct or union fields",
+            ));
+        }
         if let Some(enum_name) = base_type.enum_name.as_deref() {
             if !self.enums.contains_key(enum_name) {
                 return Err(self.error_here(format!("unknown enum declaration `{enum_name}`")));
@@ -3485,6 +3570,18 @@ impl Parser {
                     "enum parameters are not supported; use enum values in struct fields",
                 ));
             }
+            if parsed_type.is_volatile
+                && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+            {
+                return Err(self.error_here(
+                    "the small volatile model supports only direct scalar integer objects",
+                ));
+            }
+            if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile function-pointer objects",
+                ));
+            }
             if let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
             {
@@ -3493,6 +3590,7 @@ impl Parser {
                 parameters.push(C0Parameter {
                     c_type,
                     name: kernel_name,
+                    volatile: false,
                     struct_layout: None,
                     struct_name: None,
                     array_element_width: None,
@@ -3508,6 +3606,11 @@ impl Parser {
             }
             let name = self.expect_ident("parameter name")?;
             let kernel_name = self.declare_name(&name)?;
+            if parsed_type.is_volatile && self.peek() == Some(&Token::LBracket) {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile array parameters",
+                ));
+            }
             let struct_array =
                 parsed_type.struct_name.is_some() && self.peek() == Some(&Token::LBracket);
             let struct_value = is_plain_struct_type(&parsed_type) && !struct_array;
@@ -3528,6 +3631,9 @@ impl Parser {
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
             self.variable_types.insert(kernel_name.clone(), c_type);
+            if parsed_type.is_volatile {
+                self.variable_volatiles.insert(kernel_name.clone());
+            }
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array && !struct_value {
@@ -3544,6 +3650,7 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
+                        volatile: parsed_type.is_volatile,
                         struct_layout: struct_value_layout,
                         struct_name,
                         array_element_width: None,
@@ -3569,6 +3676,7 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
+                        volatile: parsed_type.is_volatile,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         struct_name,
                         array_element_width: Some(element_width),
@@ -3583,6 +3691,7 @@ impl Parser {
             parameters.push(C0Parameter {
                 c_type,
                 name: kernel_name,
+                volatile: parsed_type.is_volatile,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
@@ -3599,6 +3708,12 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
+        let is_volatile = if self.peek_ident() == Some("volatile") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
         let parsed = match self.next() {
             Some(Token::Ident(name)) if name == "struct" => ParsedType {
                 // C0 has no struct-value representation. Keep the tag on the
@@ -3609,6 +3724,7 @@ impl Parser {
                 struct_name: Some(self.expect_ident("struct name")?),
                 enum_name: None,
                 union_name: None,
+                is_volatile: false,
             },
             Some(Token::Ident(name)) if name == "union" => ParsedType {
                 // A union has no runtime aggregate value in C0. Keep its tag
@@ -3626,6 +3742,7 @@ impl Parser {
                     }
                     Some(union_name)
                 },
+                is_volatile: false,
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
@@ -3640,6 +3757,7 @@ impl Parser {
                     }
                     Some(enum_name)
                 },
+                is_volatile: false,
             },
             Some(Token::Ident(name)) => self.parse_named_type(name)?,
             Some(token) => {
@@ -3719,6 +3837,7 @@ impl Parser {
             struct_name: parsed.struct_name,
             enum_name: parsed.enum_name,
             union_name: parsed.union_name,
+            is_volatile: is_volatile || parsed.is_volatile,
         })
     }
 
@@ -3741,6 +3860,11 @@ impl Parser {
         if self.peek() != Some(&Token::RParen) {
             loop {
                 let parsed_type = self.parse_type()?;
+                if parsed_type.is_volatile {
+                    return Err(self.error_here(
+                        "volatile function-pointer parameters are not supported by the small model",
+                    ));
+                }
                 if parsed_type.struct_name.is_some() || parsed_type.c_type == C0Type::Void {
                     return Err(self.error_here(
                         "function-pointer parameters must use modeled non-struct types",
@@ -3884,6 +4008,7 @@ impl Parser {
             struct_name: None,
             enum_name: None,
             union_name: None,
+            is_volatile: false,
         })
     }
 
@@ -4476,6 +4601,18 @@ impl Parser {
                 "enum local declarations are not supported; use enum values in struct fields",
             ));
         }
+        if parsed_type.is_volatile
+            && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+        {
+            return Err(self.error_here(
+                "the small volatile model supports only direct scalar integer objects",
+            ));
+        }
+        if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
+            return Err(self.error_here(
+                "the small volatile model does not support volatile function-pointer objects",
+            ));
+        }
         if self.peek() == Some(&Token::LParen) {
             let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
@@ -4487,6 +4624,7 @@ impl Parser {
             let declaration = C0Statement::Declare {
                 c_type,
                 name: kernel_name.clone(),
+                volatile: false,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -4564,6 +4702,23 @@ impl Parser {
                 continue;
             }
             let (mut c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+            if parsed_type.is_volatile
+                && (array_shape.is_some()
+                    || matches!(
+                        c_type,
+                        C0Type::Int16Array(_)
+                            | C0Type::UInt8Array(_)
+                            | C0Type::UInt16Array(_)
+                            | C0Type::UInt32Array(_)
+                            | C0Type::Int64Array(_)
+                            | C0Type::UInt64Array(_)
+                            | C0Type::Int32Array(_)
+                    ))
+            {
+                return Err(
+                    self.error_here("the small volatile model does not support volatile arrays")
+                );
+            }
             if parsed_type.struct_name.is_some()
                 && parsed_type.c_type == C0Type::Int32Pointer
                 && array_shape.is_none()
@@ -4587,6 +4742,9 @@ impl Parser {
                 c_type = C0Type::UInt8Pointer;
             }
             self.variable_types.insert(name.clone(), c_type);
+            if parsed_type.is_volatile {
+                self.variable_volatiles.insert(name.clone());
+            }
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
             }
@@ -4610,6 +4768,7 @@ impl Parser {
             let declaration = C0Statement::Declare {
                 c_type,
                 name: name.clone(),
+                volatile: parsed_type.is_volatile,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -4663,6 +4822,11 @@ impl Parser {
     fn parse_static_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect_ident_spelling("static")?;
         let parsed_type = self.parse_type()?;
+        if parsed_type.is_volatile && parsed_type.c_type.is_pointer() {
+            return Err(self.error_here(
+                "the small volatile model supports only direct scalar integer objects",
+            ));
+        }
         if parsed_type.struct_name.is_some()
             || parsed_type.enum_name.is_some()
             || parsed_type.union_name.is_some()
@@ -4686,6 +4850,9 @@ impl Parser {
             }
             self.variable_types
                 .insert(kernel_name.clone(), parsed_type.c_type);
+            if parsed_type.is_volatile {
+                self.variable_volatiles.insert(kernel_name.clone());
+            }
             let initializer = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
                 let initializer = self.parse_expression()?;
@@ -4696,7 +4863,8 @@ impl Parser {
             };
             self.static_locals.insert(
                 kernel_name.clone(),
-                C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer),
+                C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
+                    .with_volatile(parsed_type.is_volatile),
             );
             if self.peek() != Some(&Token::Comma) {
                 break;
@@ -4849,6 +5017,11 @@ impl Parser {
         if is_plain_struct_type(&parsed_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
         }
+        if parsed_type.is_volatile && parsed_type.c_type.is_pointer() {
+            return Err(self.error_here(
+                "the small volatile model supports only direct scalar integer objects",
+            ));
+        }
         let mut initializers = Vec::new();
         loop {
             let source_name = self.expect_ident("for-loop local name")?;
@@ -4863,6 +5036,7 @@ impl Parser {
                 Box::new(C0Statement::Declare {
                     c_type: parsed_type.c_type,
                     name: name.clone(),
+                    volatile: parsed_type.is_volatile,
                 }),
                 Box::new(C0Statement::Assign { name, expression }),
             ));
@@ -5713,6 +5887,7 @@ impl Parser {
                 prefix.push(C0Statement::Declare {
                     c_type: C0Type::Int32,
                     name: target.clone(),
+                    volatile: false,
                 });
                 prefix.push(C0Statement::If {
                     condition,
@@ -6223,7 +6398,15 @@ impl Parser {
                 self.position += 1;
                 return Ok(C0Expression::FunctionAddress(name));
             }
-            return Ok(C0Expression::AddressOf(Box::new(self.parse_unary()?)));
+            let target = self.parse_unary()?;
+            if let C0Expression::Variable(name) = &target
+                && self.is_volatile_object_name(name)
+            {
+                return Err(self.error_here(
+                    "the small volatile model does not support taking a volatile object's address",
+                ));
+            }
+            return Ok(C0Expression::AddressOf(Box::new(target)));
         }
 
         if self.peek() == Some(&Token::Bang) {
@@ -6801,7 +6984,9 @@ impl Parser {
     fn is_type_start_at(&self, offset: usize) -> bool {
         match self.peek_n(offset) {
             Some(Token::Ident(name)) => {
-                is_builtin_type_start(name) || self.typedefs.contains_key(name)
+                name == "volatile"
+                    || is_builtin_type_start(name)
+                    || self.typedefs.contains_key(name)
             }
             _ => false,
         }

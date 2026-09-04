@@ -78,6 +78,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                     facts,
                     obligations,
                     assumptions,
+                    &mut budget.next_kernel_variable,
                 )),
                 CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                     paths.push(CStatementExecutionPath {
@@ -243,6 +244,7 @@ fn execute_c_lvalue_update_paths(
                             facts,
                             obligations,
                             assumptions,
+                            &mut budget.next_kernel_variable,
                         )),
                         CExpressionOutcome::UndefinedBehavior(error) => {
                             paths.push(CStatementExecutionPath {
@@ -295,6 +297,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
+    next_kernel_variable: &mut u64,
 ) -> Vec<CStatementExecutionPath> {
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -311,6 +314,9 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             assumptions.assume_proposition(fact)
         });
     let mut facts = facts;
+    let is_volatile = lvalue.is_volatile();
+    let value_type = lvalue.value_type;
+    let volatile_pointer = is_volatile.then(|| lvalue.pointer(state)).flatten();
     if lvalue.value_type == CType::Int32 {
         let range_result = match &value {
             CValue::Int16(value) => {
@@ -345,7 +351,18 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
         CLValueStorage::Local { name } => {
             let mut state = state.clone();
             sync_stack_local(&mut state, &name, &value);
-            state.locals.set_typed(name, value, lvalue.value_type);
+            if let Some(pointer) = volatile_pointer {
+                facts.push(volatile_access_fact(
+                    next_kernel_variable,
+                    true,
+                    pointer,
+                    value_type,
+                    value.clone(),
+                ));
+            }
+            state
+                .locals
+                .set_typed_volatile(name, value, value_type, is_volatile);
             vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
@@ -442,7 +459,21 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             if let Some(name) = state.locals.name_for_slot(&pointer)
                 && let Some(c_type) = state.locals.scalar_object_type(name)
             {
-                state.locals.set_typed(name.to_string(), value, c_type);
+                state.locals.set_typed_volatile(
+                    name.to_string(),
+                    value.clone(),
+                    c_type,
+                    is_volatile,
+                );
+            }
+            if is_volatile {
+                facts.push(volatile_access_fact(
+                    next_kernel_variable,
+                    true,
+                    pointer,
+                    value_type,
+                    value,
+                ));
             }
             vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
@@ -1708,11 +1739,15 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             }
             paths
         }
-        CStatement::Declare { name, c_type } => {
+        CStatement::Declare {
+            name,
+            c_type,
+            volatile,
+        } => {
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
             } else {
-                CStatementOutcome::Normal(declare_local(state, name, *c_type))
+                CStatementOutcome::Normal(declare_local(state, name, *c_type, *volatile))
             };
             vec![CStatementExecutionPath {
                 outcome,
@@ -2440,7 +2475,12 @@ pub(in crate::kernel) fn execute_c_while_paths(
     Ok(paths)
 }
 
-pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
+pub(in crate::kernel) fn declare_local(
+    state: &CState,
+    name: &str,
+    c_type: CType,
+    volatile: bool,
+) -> CState {
     let mut state = state.clone();
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
@@ -2534,8 +2574,14 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         }
     };
     let pointer = CMemory::local_pointer(name);
-    state.memory = state.memory.with_block(pointer.block, byte_width);
-    state.locals.set_uninitialized(name.to_string(), c_type);
+    state.memory = state.memory.with_block(pointer.block.clone(), byte_width);
+    if volatile {
+        state
+            .locals
+            .set_uninitialized_at(name.to_string(), c_type, pointer, true);
+    } else {
+        state.locals.set_uninitialized(name.to_string(), c_type);
+    }
     state
 }
 

@@ -1558,10 +1558,11 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // and make pointer preconditions impossible to lower.
         let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())
             .expect("function arguments were type-checked before building contract views");
-        state.locals.set_typed(
+        state.locals.set_typed_volatile(
             parameter.name().to_string(),
             value.clone(),
             parameter.c_type(),
+            parameter.is_volatile(),
         );
         if let CValue::Pointer(pointer) = &value {
             let element_width = parameter
@@ -1864,7 +1865,7 @@ pub(super) fn bind_c_function_arguments(
         // the current C type model, so only scalar parameter objects need a
         // callee stack slot here.
         .filter(|parameter| {
-            address_taken.contains(parameter.name())
+            (address_taken.contains(parameter.name()) || parameter.is_volatile())
                 && matches!(
                     parameter.c_type(),
                     CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
@@ -1922,16 +1923,20 @@ pub(super) fn bind_c_function_arguments(
                 .memory
                 .with_block(slot.block.clone(), value.byte_width())
                 .store(slot.clone(), value.clone());
-            callee_state.locals.set_typed_at(
+            callee_state.locals.set_typed_volatile_at(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 slot,
+                parameter.is_volatile(),
             );
         } else {
-            callee_state
-                .locals
-                .set_typed(parameter.name().to_string(), value, parameter.c_type());
+            callee_state.locals.set_typed_volatile(
+                parameter.name().to_string(),
+                value,
+                parameter.c_type(),
+                parameter.is_volatile(),
+            );
         }
     }
     Some(callee_state)
@@ -1995,11 +2000,15 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             global.kernel_name().to_string(),
             global.c_type(),
             slot.clone(),
+            global.is_volatile(),
         );
         if global.kernel_name() != global.name() && !state.locals.contains_name(global.name()) {
-            state
-                .locals
-                .set_global_at(global.name().to_string(), global.c_type(), slot);
+            state.locals.set_global_at(
+                global.name().to_string(),
+                global.c_type(),
+                slot,
+                global.is_volatile(),
+            );
         }
     }
     for global_array in function.global_arrays() {
@@ -2050,6 +2059,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             static_local.kernel_name().to_string(),
             static_local.c_type(),
             slot.clone(),
+            static_local.is_volatile(),
         );
         // Contract C fragments use the source spelling. A nested static may
         // have a kernel-only name to distinguish it from another object in a
@@ -2062,6 +2072,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 static_local.source_name().to_string(),
                 static_local.c_type(),
                 slot,
+                static_local.is_volatile(),
             );
         }
     }

@@ -1,9 +1,10 @@
-# C0 rejects volatile declarations
+# C0 rejects unsupported volatile aliases
 
 ```c filename=c_volatile_rejected.c
 int32 c_volatile_rejected() {
     volatile int32 value;
-    return 0;
+    int32 *pointer = &value;
+    return *pointer;
 }
 ```
 
@@ -16,5 +17,5 @@ int32 c_volatile_rejected() {
 ```
 
 ```expect
-fail: the `volatile` qualifier is not supported in C0
+fail: taking a volatile object's address
 ```

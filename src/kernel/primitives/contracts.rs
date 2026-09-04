@@ -6,6 +6,7 @@ impl CParameter {
             name: name.into(),
             c_type,
             aggregate_layout: None,
+            volatile: false,
         }
     }
 
@@ -19,6 +20,15 @@ impl CParameter {
 
     pub fn aggregate_layout(&self) -> Option<&CAggregateLayout> {
         self.aggregate_layout.as_ref()
+    }
+
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
+    }
+
+    pub fn with_volatile(mut self, volatile: bool) -> Self {
+        self.volatile = volatile;
+        self
     }
 
     pub fn with_aggregate_layout(mut self, layout: CAggregateLayout) -> Self {
@@ -56,6 +66,7 @@ impl CGlobal {
             kernel_name: kernel_name.into(),
             c_type,
             initial_value,
+            volatile: false,
         }
     }
 
@@ -73,6 +84,15 @@ impl CGlobal {
 
     pub fn initial_value(&self) -> &CValue {
         &self.initial_value
+    }
+
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
+    }
+
+    pub fn with_volatile(mut self, volatile: bool) -> Self {
+        self.volatile = volatile;
+        self
     }
 }
 
@@ -157,6 +177,7 @@ impl CStaticLocal {
             kernel_name: kernel_name.into(),
             c_type,
             initial_value,
+            volatile: false,
         }
     }
 
@@ -174,6 +195,15 @@ impl CStaticLocal {
 
     pub fn initial_value(&self) -> &CValue {
         &self.initial_value
+    }
+
+    pub fn is_volatile(&self) -> bool {
+        self.volatile
+    }
+
+    pub fn with_volatile(mut self, volatile: bool) -> Self {
+        self.volatile = volatile;
+        self
     }
 }
 

@@ -1544,21 +1544,43 @@ impl CValue {
 
 impl CLValue {
     pub(in crate::kernel) fn local(name: impl Into<String>, value_type: CType) -> Self {
+        Self::local_with_volatile(name, value_type, false)
+    }
+
+    pub(in crate::kernel) fn local_with_volatile(
+        name: impl Into<String>,
+        value_type: CType,
+        volatile: bool,
+    ) -> Self {
         Self {
             storage: CLValueStorage::Local { name: name.into() },
             value_type,
+            volatile,
         }
     }
 
     pub(in crate::kernel) fn memory(pointer: Pointer, value_type: CType) -> Self {
+        Self::memory_with_volatile(pointer, value_type, false)
+    }
+
+    pub(in crate::kernel) fn memory_with_volatile(
+        pointer: Pointer,
+        value_type: CType,
+        volatile: bool,
+    ) -> Self {
         Self {
             storage: CLValueStorage::Memory { pointer },
             value_type,
+            volatile,
         }
     }
 
     pub fn value_type(&self) -> CType {
         self.value_type
+    }
+
+    pub(in crate::kernel) fn is_volatile(&self) -> bool {
+        self.volatile
     }
 
     pub(in crate::kernel) fn pointer(&self, state: &CState) -> Option<Pointer> {

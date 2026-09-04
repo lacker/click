@@ -37,7 +37,7 @@ C language coverage:
 - [Model forward and backward goto edges](goto.md)
 - [Model floating-point values](floating-point.md)
 - [Model variadic functions](variadic-functions.md)
-- [Model volatile objects](volatile-objects.md)
+- [Model sequential scalar volatile objects](volatile-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 
 Semantics and reasoning:

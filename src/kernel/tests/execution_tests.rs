@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn volatile_parameter_accesses_emit_ordered_facts() {
+    let function = c_function(
+        CType::Int32,
+        "volatile_read",
+        vec![c_parameter("value", CType::Int32).with_volatile(true)],
+        CStatement::Seq(
+            std::sync::Arc::new(CStatement::Assign {
+                name: "value".to_string(),
+                expression: c_int32_literal(8),
+            }),
+            std::sync::Arc::new(CStatement::Return(c_variable("value"))),
+        ),
+    );
+    let bound = bind_c_function_arguments(&CState::new(), &function, &[int32(7)])
+        .expect("volatile parameter should bind");
+    let paths = execute_c_statement_paths(
+        &bound,
+        function.body(),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("volatile parameter body should execute");
+    let accesses = paths[0]
+        .facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::Predicate { name, .. } if name.starts_with("__click_volatile_") => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 2);
+    assert!(accesses[0].starts_with("__click_volatile_write_"));
+    assert!(accesses[1].starts_with("__click_volatile_read_"));
+    assert_ne!(accesses[0], accesses[1]);
+}
+
+#[test]
 fn scalar_local_updates_share_memory_and_resource_state() {
     let before = CState::new();
     let after = before.clone().with_local("x", int32(1));

@@ -544,6 +544,7 @@ fn abstract_c_state_for_join_across_with_policy(
             value,
             c_type,
             slot,
+            ..
         } = binding
         else {
             continue;
@@ -854,9 +855,14 @@ pub fn c_heap_free(pointer: CExpression) -> CStatement {
 }
 
 pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
+    c_declare_volatile(name, c_type, false)
+}
+
+pub fn c_declare_volatile(name: impl Into<String>, c_type: CType, volatile: bool) -> CStatement {
     CStatement::Declare {
         name: name.into(),
         c_type,
+        volatile,
     }
 }
 

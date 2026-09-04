@@ -377,6 +377,7 @@ pub enum CType {
 pub struct CLValue {
     pub(super) storage: CLValueStorage,
     pub(super) value_type: CType,
+    pub(super) volatile: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -663,6 +664,7 @@ pub enum CStatement {
     Declare {
         name: String,
         c_type: CType,
+        volatile: bool,
     },
     /// Declare an address-backed scalar-only aggregate. Aggregate values are
     /// not runtime `CValue`s; their local binding exposes the block base so
@@ -798,6 +800,7 @@ pub struct CParameter {
     pub(super) name: String,
     pub(super) c_type: CType,
     pub(super) aggregate_layout: Option<CAggregateLayout>,
+    pub(super) volatile: bool,
 }
 
 /// A linked file-scope scalar. Globals use one stable memory block across all
@@ -809,6 +812,7 @@ pub struct CGlobal {
     pub(super) kernel_name: String,
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
+    pub(super) volatile: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -826,6 +830,7 @@ pub struct CStaticLocal {
     pub(super) kernel_name: String,
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
+    pub(super) volatile: bool,
 }
 
 /// A function's embedded C string constant. The bytes include the trailing
@@ -1272,14 +1277,17 @@ pub(super) enum CLocalBinding {
         value: CValue,
         c_type: CType,
         slot: Pointer,
+        volatile: bool,
     },
     UninitializedObject {
         c_type: CType,
         slot: Pointer,
+        volatile: bool,
     },
     GlobalObject {
         c_type: CType,
         slot: Pointer,
+        volatile: bool,
     },
     ArrayObject {
         element_type: CType,

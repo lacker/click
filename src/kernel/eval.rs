@@ -5,6 +5,31 @@ mod memory_loads;
 mod operators;
 mod statements;
 
+/// Retain each sequential volatile access as a unique, kernel-certified fact.
+/// The event id is allocated from the execution's existing fresh-variable
+/// stream, so repeated accesses remain distinct even when they have the same
+/// address and value. This is deliberately an access trace only: it does not
+/// model threads, atomicity, signals, or external device state.
+fn volatile_access_fact(
+    next_kernel_variable: &mut u64,
+    write: bool,
+    pointer: Pointer,
+    value_type: CType,
+    value: CValue,
+) -> ExecutionPureFact {
+    let event_id = *next_kernel_variable;
+    *next_kernel_variable += 1;
+    let operation = if write { "write" } else { "read" };
+    let pointer_type = value_type.pointer_to().unwrap_or(CType::UInt8Pointer);
+    ExecutionPureFact::certified(Proposition::Predicate {
+        name: format!("__click_volatile_{operation}_{event_id}"),
+        arguments: vec![
+            Term::CValue(CValue::typed_pointer(pointer, pointer_type)),
+            Term::CValue(value),
+        ],
+    })
+}
+
 pub(super) use expression::*;
 pub(crate) use memory_loads::canonical_condition_fact;
 pub(crate) use memory_loads::canonical_form_of_load;

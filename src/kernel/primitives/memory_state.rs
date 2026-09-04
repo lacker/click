@@ -734,6 +734,23 @@ impl CLocalEnvironment {
         self.set_typed_at(name, value.retag_pointer(c_type), c_type, slot);
     }
 
+    pub(in crate::kernel) fn set_typed_volatile(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        volatile: bool,
+    ) {
+        let name = name.into();
+        let slot = self
+            .bindings
+            .get(&name)
+            .map(CLocalBinding::slot)
+            .cloned()
+            .unwrap_or_else(|| CMemory::local_pointer(&name));
+        self.set_typed_volatile_at(name, value.retag_pointer(c_type), c_type, slot, volatile);
+    }
+
     pub(in crate::kernel) fn set_typed_at(
         &mut self,
         name: impl Into<String>,
@@ -741,12 +758,24 @@ impl CLocalEnvironment {
         c_type: CType,
         slot: Pointer,
     ) {
+        self.set_typed_volatile_at(name, value, c_type, slot, false);
+    }
+
+    pub(in crate::kernel) fn set_typed_volatile_at(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::Object {
                 value,
                 c_type,
                 slot,
+                volatile,
             },
         );
     }
@@ -756,13 +785,21 @@ impl CLocalEnvironment {
         name: impl Into<String>,
         c_type: CType,
         slot: Pointer,
+        volatile: bool,
     ) {
-        self.insert_binding(name.into(), CLocalBinding::GlobalObject { c_type, slot });
+        self.insert_binding(
+            name.into(),
+            CLocalBinding::GlobalObject {
+                c_type,
+                slot,
+                volatile,
+            },
+        );
     }
 
     pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
         let name = name.into();
-        self.set_uninitialized_at(name.clone(), c_type, CMemory::local_pointer(&name));
+        self.set_uninitialized_at(name.clone(), c_type, CMemory::local_pointer(&name), false);
     }
 
     pub(in crate::kernel) fn set_uninitialized_at(
@@ -770,10 +807,15 @@ impl CLocalEnvironment {
         name: impl Into<String>,
         c_type: CType,
         slot: Pointer,
+        volatile: bool,
     ) {
         self.insert_binding(
             name.into(),
-            CLocalBinding::UninitializedObject { c_type, slot },
+            CLocalBinding::UninitializedObject {
+                c_type,
+                slot,
+                volatile,
+            },
         );
     }
 

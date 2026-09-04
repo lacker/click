@@ -1477,7 +1477,7 @@ pub(in crate::surface) fn c0_statement_calls(
         names: &mut BTreeSet<String>,
     ) {
         match statement {
-            syntax::C0Statement::Declare { c_type, name }
+            syntax::C0Statement::Declare { c_type, name, .. }
                 if matches!(c_type, syntax::C0Type::FunctionPointer(_)) =>
             {
                 names.insert(name.clone());

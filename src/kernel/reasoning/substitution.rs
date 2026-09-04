@@ -1456,9 +1456,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
             step: Box::new(substitute_bitvector_variable_in_c_statement(step, from, to)),
         },
-        CStatement::Declare { name, c_type } => CStatement::Declare {
+        CStatement::Declare {
+            name,
+            c_type,
+            volatile,
+        } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,
+            volatile: *volatile,
         },
         CStatement::DeclareAggregate { name, layout } => CStatement::DeclareAggregate {
             name: name.clone(),
@@ -2095,20 +2100,30 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         value,
                         c_type,
                         slot,
+                        volatile,
                     } => CLocalBinding::Object {
                         value: substitute_bitvector_variable_in_c_value(value, from, to),
                         c_type: *c_type,
                         slot: slot.clone(),
+                        volatile: *volatile,
                     },
-                    CLocalBinding::UninitializedObject { c_type, slot } => {
-                        CLocalBinding::UninitializedObject {
-                            c_type: *c_type,
-                            slot: slot.clone(),
-                        }
-                    }
-                    CLocalBinding::GlobalObject { c_type, slot } => CLocalBinding::GlobalObject {
+                    CLocalBinding::UninitializedObject {
+                        c_type,
+                        slot,
+                        volatile,
+                    } => CLocalBinding::UninitializedObject {
                         c_type: *c_type,
                         slot: slot.clone(),
+                        volatile: *volatile,
+                    },
+                    CLocalBinding::GlobalObject {
+                        c_type,
+                        slot,
+                        volatile,
+                    } => CLocalBinding::GlobalObject {
+                        c_type: *c_type,
+                        slot: slot.clone(),
+                        volatile: *volatile,
                     },
                     CLocalBinding::ArrayObject {
                         element_type,
@@ -3838,20 +3853,30 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                         value,
                         c_type,
                         slot,
+                        volatile,
                     } => CLocalBinding::Object {
                         value: substitute_pointer_variable_in_c_value(value, from, to),
                         c_type: *c_type,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                        volatile: *volatile,
                     },
-                    CLocalBinding::UninitializedObject { c_type, slot } => {
-                        CLocalBinding::UninitializedObject {
-                            c_type: *c_type,
-                            slot: substitute_pointer_variable_in_pointer(slot, from, to),
-                        }
-                    }
-                    CLocalBinding::GlobalObject { c_type, slot } => CLocalBinding::GlobalObject {
+                    CLocalBinding::UninitializedObject {
+                        c_type,
+                        slot,
+                        volatile,
+                    } => CLocalBinding::UninitializedObject {
                         c_type: *c_type,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                        volatile: *volatile,
+                    },
+                    CLocalBinding::GlobalObject {
+                        c_type,
+                        slot,
+                        volatile,
+                    } => CLocalBinding::GlobalObject {
+                        c_type: *c_type,
+                        slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                        volatile: *volatile,
                     },
                     CLocalBinding::ArrayObject {
                         element_type,

@@ -729,7 +729,7 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
 
 fn collect_pointer_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
-        CStatement::Declare { name, c_type } if c_type.is_pointer() => {
+        CStatement::Declare { name, c_type, .. } if c_type.is_pointer() => {
             names.insert(name.clone());
         }
         CStatement::ContinueWithStep { step } => collect_pointer_variables(step, names),

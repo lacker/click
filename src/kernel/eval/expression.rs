@@ -774,13 +774,28 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
     let paths = match expression {
         CExpression::Variable(name) => vec![CLValuePath {
             outcome: match state.locals.binding(name) {
-                Some(CLocalBinding::Object { c_type, .. })
-                | Some(CLocalBinding::UninitializedObject { c_type, .. }) => {
-                    CLValueOutcome::LValue(CLValue::local(name.clone(), *c_type))
+                Some(CLocalBinding::Object {
+                    c_type, volatile, ..
+                })
+                | Some(CLocalBinding::UninitializedObject {
+                    c_type, volatile, ..
+                }) => {
+                    let lvalue = if *volatile {
+                        CLValue::local_with_volatile(name.clone(), *c_type, true)
+                    } else {
+                        CLValue::local(name.clone(), *c_type)
+                    };
+                    CLValueOutcome::LValue(lvalue)
                 }
-                Some(CLocalBinding::GlobalObject { c_type, slot }) => {
-                    CLValueOutcome::LValue(CLValue::memory(slot.clone(), *c_type))
-                }
+                Some(CLocalBinding::GlobalObject {
+                    c_type,
+                    slot,
+                    volatile,
+                }) => CLValueOutcome::LValue(CLValue::memory_with_volatile(
+                    slot.clone(),
+                    *c_type,
+                    *volatile,
+                )),
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
@@ -947,8 +962,8 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
 ) -> Vec<CExpressionPath> {
     match outcome {
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
-            CLValueStorage::Local { name } => vec![CExpressionPath {
-                outcome: match state.locals.get(name) {
+            CLValueStorage::Local { name } => {
+                let outcome = match state.locals.get(name) {
                     Some(value) if lvalue.value_type.accepts(value) => {
                         CExpressionOutcome::Value(value.clone())
                     }
@@ -963,10 +978,26 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     None => CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
                         name.clone(),
                     )),
-                },
-                facts,
-                obligations,
-            }],
+                };
+                let mut facts = facts;
+                if lvalue.is_volatile()
+                    && let CExpressionOutcome::Value(value) = &outcome
+                    && let Some(pointer) = lvalue.pointer(state)
+                {
+                    facts.push(volatile_access_fact(
+                        next_kernel_variable,
+                        false,
+                        pointer,
+                        lvalue.value_type,
+                        value.clone(),
+                    ));
+                }
+                vec![CExpressionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                }]
+            }
             CLValueStorage::Memory { pointer } => {
                 if state
                     .memory
@@ -1016,7 +1047,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                         obligations,
                     }];
                 }
-                evaluate_c_memory_load_paths(
+                let paths = evaluate_c_memory_load_paths(
                     &state.memory,
                     pointer.clone(),
                     lvalue.value_type,
@@ -1025,7 +1056,25 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     assumptions,
                     has_external_read_resource,
                     next_kernel_variable,
-                )
+                );
+                if !lvalue.is_volatile() {
+                    return paths;
+                }
+                paths
+                    .into_iter()
+                    .map(|mut path| {
+                        if let CExpressionOutcome::Value(value) = &path.outcome {
+                            path.facts.push(volatile_access_fact(
+                                next_kernel_variable,
+                                false,
+                                pointer.clone(),
+                                lvalue.value_type,
+                                value.clone(),
+                            ));
+                        }
+                        path
+                    })
+                    .collect()
             }
         },
         CLValueOutcome::UndefinedBehavior(undefined_behavior) => vec![CExpressionPath {

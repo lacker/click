@@ -1,6 +1,139 @@
 use super::*;
 
 #[test]
+fn c0_small_volatile_model_preserves_metadata_and_access_facts() {
+    let functions = syntax::parse_functions(
+        r#"
+        volatile int32 global_value = 3;
+
+        int32 read_twice(volatile int32 value) {
+            return value + value;
+        }
+
+        int32 read_global() {
+            return global_value + global_value;
+        }
+
+        int32 read_static() {
+            static volatile int32 calls = 5;
+            return calls;
+        }
+        "#,
+    )
+    .expect("scalar volatile objects should parse");
+
+    let global = &functions[0].globals()["global_value"];
+    assert!(global.is_volatile());
+    assert!(functions[0].to_kernel_function().global_variables()[0].is_volatile());
+
+    let read_twice = &functions[0];
+    assert!(read_twice.parameters()[0].is_volatile());
+    let kernel = read_twice.to_kernel_function();
+    assert!(kernel.parameters()[0].is_volatile());
+    let volatile_read_names = |execution: &crate::kernel::SymbolicCExecution| {
+        execution.paths()[0]
+            .facts()
+            .iter()
+            .filter_map(|fact| match fact.proposition() {
+                crate::kernel::Proposition::Predicate { name, .. }
+                    if name.starts_with("__click_volatile_read_") =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        kernel,
+        vec![crate::kernel::c_int32_literal(7)],
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(execution.paths().len(), 1);
+    let accesses = volatile_read_names(&execution);
+    assert_eq!(accesses.len(), 2);
+    assert_ne!(accesses[0], accesses[1]);
+
+    let global_execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[1].to_kernel_function(),
+        Vec::new(),
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(global_execution.paths().len(), 1);
+    assert_eq!(volatile_read_names(&global_execution).len(), 2);
+
+    let static_function = &functions[2];
+    assert!(
+        static_function
+            .static_locals()
+            .values()
+            .next()
+            .expect("volatile static local metadata")
+            .is_volatile()
+    );
+    assert!(static_function.to_kernel_function().static_variables()[0].is_volatile());
+    let static_execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        static_function.to_kernel_function(),
+        Vec::new(),
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(static_execution.paths().len(), 1);
+    assert_eq!(volatile_read_names(&static_execution).len(), 1);
+}
+
+#[test]
+fn c0_small_volatile_model_rejects_pointer_aliases() {
+    for (source, expected) in [
+        (
+            r#"
+            int32 alias() {
+                volatile int32 value;
+                int32 *pointer = &value;
+                return *pointer;
+            }
+            "#,
+            "taking a volatile object's address",
+        ),
+        (
+            r#"
+            int32 array() {
+                volatile int32 values[2];
+                return 0;
+            }
+            "#,
+            "does not support volatile arrays",
+        ),
+        (
+            r#"
+            int32 pointer() {
+                volatile int32 *value;
+                return 0;
+            }
+            "#,
+            "only direct scalar integer objects",
+        ),
+        (
+            r#"
+            struct record {
+                volatile int32 value;
+            };
+            int32 field() {
+                return 0;
+            }
+            "#,
+            "volatile struct or union fields",
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported volatile shapes must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_collects_scalar_file_scope_globals() {
     let functions = syntax::parse_functions(
         r#"
@@ -573,7 +706,8 @@ fn c0_syntax_lowers_scalar_declaration_initializers_in_source_order() {
                         declaration.as_ref(),
                         syntax::C0Statement::Declare {
                             c_type: syntax::C0Type::Int32,
-                            name
+                            name,
+                            ..
                         } if name == "value"
                     )
                     && matches!(
