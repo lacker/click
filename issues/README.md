@@ -34,6 +34,7 @@ C language coverage:
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
+- [Preserve static-local state through modular call summaries](static-call-state-summaries.md)
 - [Model forward and backward goto edges](goto.md)
 - [Make C-string witnesses carry dynamic loadability](cstr-loadability-witnesses.md)
 - [Model floating-point values](floating-point.md)

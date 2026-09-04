@@ -61,6 +61,50 @@ impl CGlobal {
     }
 }
 
+impl CStaticLocal {
+    pub fn new(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        c_type: CType,
+        initial_value: CValue,
+    ) -> Self {
+        assert!(
+            matches!(
+                c_type,
+                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+            ),
+            "C static locals currently support scalar integer types only"
+        );
+        assert_eq!(
+            initial_value.c_type(),
+            c_type,
+            "C static local initializer must match its declared type"
+        );
+        Self {
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
+            c_type,
+            initial_value,
+        }
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn c_type(&self) -> CType {
+        self.c_type
+    }
+
+    pub fn initial_value(&self) -> &CValue {
+        &self.initial_value
+    }
+}
+
 impl CFunction {
     pub fn new(
         return_type: CType,
@@ -87,11 +131,17 @@ impl CFunction {
             composite_resource_definitions: Vec::new(),
             predicate_unfoldings: Vec::new(),
             global_variables: Vec::new(),
+            static_variables: Vec::new(),
         }
     }
 
     pub fn with_global_variables(mut self, global_variables: Vec<CGlobal>) -> Self {
         self.global_variables = global_variables;
+        self
+    }
+
+    pub fn with_static_variables(mut self, static_variables: Vec<CStaticLocal>) -> Self {
+        self.static_variables = static_variables;
         self
     }
 
@@ -178,6 +228,10 @@ impl CFunction {
 
     pub fn global_variables(&self) -> &[CGlobal] {
         &self.global_variables
+    }
+
+    pub fn static_variables(&self) -> &[CStaticLocal] {
+        &self.static_variables
     }
 
     pub(crate) fn function_pointer_type(&self) -> CType {

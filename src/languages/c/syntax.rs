@@ -30,6 +30,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "declaration.enum",
     "declaration.union",
     "declaration.union-field-list",
+    "declaration.static-local",
     "declaration.local",
     "statement.struct-value-declaration",
     "statement.empty",
@@ -124,6 +125,7 @@ pub struct C0Function {
     enums: BTreeMap<String, C0EnumDefinition>,
     unions: BTreeMap<String, C0UnionLayout>,
     globals: BTreeMap<String, C0Global>,
+    static_locals: BTreeMap<String, C0StaticLocal>,
 }
 
 /// A file-scope scalar declaration collected from one C translation unit.
@@ -187,6 +189,72 @@ impl C0Global {
         };
         Some(crate::kernel::CGlobal::new(
             self.name.clone(),
+            self.c_type.to_kernel_type(),
+            value,
+        ))
+    }
+}
+
+/// A function-local scalar with static storage duration. The source name is
+/// what C fragments use; `kernel_name` keeps distinct block scopes distinct
+/// in the lowered C0 expression tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticLocal {
+    source_name: String,
+    kernel_name: String,
+    c_type: C0Type,
+    initializer: C0Expression,
+}
+
+impl C0StaticLocal {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        c_type: C0Type,
+        initializer: C0Expression,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            c_type,
+            initializer,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn initializer(&self) -> &C0Expression {
+        &self.initializer
+    }
+
+    pub(crate) fn to_kernel_static(&self) -> Option<crate::kernel::CStaticLocal> {
+        let bits = match &self.initializer {
+            C0Expression::Int32Literal(value) => *value,
+            C0Expression::UInt8Literal(value) => u32::from(*value),
+            C0Expression::UInt32Literal(value) => *value,
+            _ => return None,
+        };
+        let value = match self.c_type {
+            C0Type::Int16 => crate::kernel::int16(bits),
+            C0Type::Int32 => crate::kernel::int32(bits),
+            C0Type::UInt8 => crate::kernel::uint8(bits),
+            C0Type::UInt16 => crate::kernel::uint16(bits),
+            C0Type::UInt32 => crate::kernel::uint32(bits),
+            _ => return None,
+        };
+        Some(crate::kernel::CStaticLocal::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
             self.c_type.to_kernel_type(),
             value,
         ))
@@ -548,6 +616,7 @@ impl C0Function {
             enums: BTreeMap::new(),
             unions: BTreeMap::new(),
             globals: BTreeMap::new(),
+            static_locals: BTreeMap::new(),
         }
     }
 
@@ -587,6 +656,10 @@ impl C0Function {
         &self.globals
     }
 
+    pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
+        &self.static_locals
+    }
+
     pub(crate) fn with_globals(mut self, globals: BTreeMap<String, C0Global>) -> Self {
         self.globals = globals;
         self
@@ -618,12 +691,19 @@ impl C0Function {
                 .to_kernel_aggregate_layout();
             function = function.with_return_aggregate_layout(layout);
         }
-        function.with_global_variables(
-            self.globals
-                .values()
-                .filter_map(C0Global::to_kernel_global)
-                .collect(),
-        )
+        function
+            .with_global_variables(
+                self.globals
+                    .values()
+                    .filter_map(C0Global::to_kernel_global)
+                    .collect(),
+            )
+            .with_static_variables(
+                self.static_locals
+                    .values()
+                    .filter_map(C0StaticLocal::to_kernel_static)
+                    .collect(),
+            )
     }
 }
 
@@ -1269,6 +1349,37 @@ fn validate_global_initializer(
     }
 }
 
+fn validate_static_initializer(
+    parser: &Parser,
+    c_type: C0Type,
+    initializer: &C0Expression,
+) -> Result<(), C0SyntaxError> {
+    let bits = match initializer {
+        C0Expression::Int32Literal(value) => u64::from(*value),
+        C0Expression::UInt8Literal(value) => u64::from(*value),
+        C0Expression::UInt32Literal(value) => u64::from(*value),
+        _ => {
+            return Err(parser
+                .error_here("static local initializers currently support only integer literals"));
+        }
+    };
+    let valid = match c_type {
+        C0Type::Int16 => bits <= i16::MAX as u64,
+        C0Type::Int32 => bits <= i32::MAX as u64,
+        C0Type::UInt8 => bits <= u8::MAX as u64,
+        C0Type::UInt16 => bits <= u16::MAX as u64,
+        C0Type::UInt32 => true,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(parser.error_here(format!(
+            "integer literal is out of range for static local type {c_type:?}"
+        )))
+    }
+}
+
 fn align_up(offset: u32, alignment: u32) -> Option<u32> {
     debug_assert!(alignment.is_power_of_two());
     offset
@@ -1689,6 +1800,7 @@ struct Parser {
     function_declarations: BTreeMap<String, C0FunctionHeader>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
+    static_locals: BTreeMap<String, C0StaticLocal>,
     header_mode: bool,
     abi: CAbi,
 }
@@ -1753,6 +1865,7 @@ impl Parser {
             function_declarations: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
+            static_locals: BTreeMap::new(),
             header_mode: false,
             abi,
         })
@@ -1813,6 +1926,39 @@ impl Parser {
         } else {
             name.to_string()
         };
+        match self.scopes.last_mut() {
+            Some(scope) => scope.push(ScopeBinding {
+                source_name: name.to_string(),
+                kernel_name: kernel_name.clone(),
+            }),
+            None => self.scopes.push(vec![ScopeBinding {
+                source_name: name.to_string(),
+                kernel_name: kernel_name.clone(),
+            }]),
+        }
+        Ok(kernel_name)
+    }
+
+    /// Records a static local with an identity that remains unique even when
+    /// two sibling blocks reuse the same C spelling. The source spelling is
+    /// retained in the scope table so later expressions resolve normally.
+    fn declare_static_name(&mut self, name: &str) -> Result<String, C0SyntaxError> {
+        if self.enum_constants.contains_key(name) {
+            return Err(
+                self.error_at_previous(format!("`{name}` is already declared as an enum constant"))
+            );
+        }
+        if self
+            .scopes
+            .last()
+            .is_some_and(|scope| scope.iter().any(|binding| binding.source_name == name))
+        {
+            return Err(
+                self.error_at_previous(format!("`{name}` is already declared in this scope"))
+            );
+        }
+        let kernel_name = format!("{name}#static{}", self.next_scoped_name);
+        self.next_scoped_name = self.next_scoped_name.saturating_add(1);
         match self.scopes.last_mut() {
             Some(scope) => scope.push(ScopeBinding {
                 source_name: name.to_string(),
@@ -2032,6 +2178,7 @@ impl Parser {
             );
         }
 
+        let static_locals = std::mem::take(&mut self.static_locals);
         Ok(C0Function {
             return_type: header.return_type,
             return_struct_name: header.return_struct_name,
@@ -2042,6 +2189,7 @@ impl Parser {
             enums: self.enums.clone(),
             unions: self.unions.clone(),
             globals: self.globals.clone(),
+            static_locals,
         })
     }
 
@@ -2122,7 +2270,11 @@ impl Parser {
 
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
         while self.peek().is_some() {
-            if self.peek_ident() == Some("typedef") {
+            if self.peek_ident() == Some("static") {
+                return Err(self.error_here(
+                    "file-scope `static` declarations are not supported yet; use a function-local scalar static",
+                ));
+            } else if self.peek_ident() == Some("typedef") {
                 self.parse_typedef_declaration()?;
             } else if self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace)
             {
@@ -3472,6 +3624,9 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
+            Some(Token::Ident(_)) if self.peek_ident() == Some("static") => {
+                self.parse_static_local_declaration()
+            }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
                 let statement = self.parse_scalar_update_statement("statement")?;
                 self.expect(Token::Semicolon)?;
@@ -3924,6 +4079,57 @@ impl Parser {
         }
         self.expect(Token::Semicolon)?;
         Ok(balanced_statement_sequence(declarations).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_static_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        self.expect_ident_spelling("static")?;
+        let parsed_type = self.parse_type()?;
+        if parsed_type.struct_name.is_some()
+            || parsed_type.enum_name.is_some()
+            || parsed_type.union_name.is_some()
+            || !matches!(
+                parsed_type.c_type,
+                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+            )
+        {
+            return Err(self.error_here(
+                "function-local `static` declarations currently support only scalar integer types",
+            ));
+        }
+
+        loop {
+            let source_name = self.expect_ident("static local name")?;
+            let kernel_name = self.declare_static_name(&source_name)?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(self.error_here(
+                    "static local arrays are not supported yet; use a scalar static local",
+                ));
+            }
+            self.variable_types
+                .insert(kernel_name.clone(), parsed_type.c_type);
+            let initializer = if self.peek() == Some(&Token::Equal) {
+                self.position += 1;
+                let initializer = self.parse_expression()?;
+                validate_static_initializer(self, parsed_type.c_type, &initializer)?;
+                initializer
+            } else {
+                C0Expression::Int32Literal(0)
+            };
+            self.static_locals.insert(
+                kernel_name.clone(),
+                C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer),
+            );
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::Semicolon)?;
+
+        // Static storage is materialized at function entry. Keeping a no-op in
+        // the statement tree preserves the source declaration's position
+        // without reinitializing the object on every invocation.
+        Ok(C0Statement::Skip)
     }
 
     fn struct_value_copy_statement(

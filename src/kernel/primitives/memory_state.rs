@@ -1819,6 +1819,13 @@ impl CMemory {
         }
     }
 
+    pub(in crate::kernel) fn static_pointer(function: &str, name: &str) -> Pointer {
+        Pointer {
+            block: format!("static:{function}:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(in crate::kernel) fn frame_local_pointer(frame: u64, name: &str) -> Pointer {
         Pointer {
             block: format!("local:frame:{frame}:{name}").into(),

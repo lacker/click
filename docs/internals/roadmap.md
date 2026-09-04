@@ -86,10 +86,13 @@ Likely additions:
 - `char` and string literal support:
   null-terminated byte arrays, read-only static storage, and byte/string
   predicates in the standard library.
-- Remaining static-storage work: `static` locals, other linkage forms,
-  immutable global tables, and string constants. The first scalar global slice
-  now covers file-scope integer definitions, compatible `extern` declarations,
-  one linked definition, shared state across calls, and contract footprints.
+- Remaining static-storage work: file-scope `static` objects, aggregate static
+  objects, other linkage forms, immutable global tables, and string constants.
+  Scalar file-scope globals now cover integer definitions, compatible `extern`
+  declarations, one linked definition, shared state across calls, and contract
+  footprints. Function-local scalar `static` objects now use stable
+  function-qualified storage and one-time literal/zero initialization; their
+  owning function's contracts can name the object and authorize its writes.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded
@@ -111,8 +114,9 @@ Likely additions:
   enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
   and anonymous declarations remain outside the slice.
-- Globals:
-  especially immutable global tables and string constants.
+- Globals and statics:
+  especially file-scope `static` objects, immutable global tables, and string
+  constants.
 
 Design notes:
 

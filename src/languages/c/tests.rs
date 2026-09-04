@@ -40,6 +40,50 @@ fn c0_headers_accept_extern_scalar_globals_only() {
     assert!(error.message().contains("only with `extern`"));
 }
 
+#[test]
+fn c0_collects_static_scalar_locals_with_stable_kernel_names() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 increment() {
+            static int32 calls = 5;
+            calls = calls + 1;
+            return calls;
+        }
+        "#,
+    )
+    .expect("scalar static locals should parse");
+
+    let function = &functions[0];
+    assert_eq!(function.static_locals().len(), 1);
+    let local = function
+        .static_locals()
+        .values()
+        .next()
+        .expect("static local metadata");
+    assert_eq!(local.name(), "calls");
+    assert_ne!(local.kernel_name(), local.name());
+    assert_eq!(local.c_type(), syntax::C0Type::Int32);
+    assert_eq!(local.initializer(), &syntax::C0Expression::Int32Literal(5));
+    assert_eq!(
+        function.to_kernel_function().static_variables()[0].initial_value(),
+        &crate::kernel::int32(5)
+    );
+}
+
+#[test]
+fn c0_rejects_unsupported_static_local_shapes() {
+    let error = syntax::parse_functions(
+        r#"
+        int32 invalid() {
+            static int32 values[2];
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("static arrays should remain outside the scalar slice");
+    assert!(error.message().contains("static local arrays"));
+}
+
 fn memory_range(
     base: crate::kernel::Pointer,
     start: impl Into<crate::kernel::Bitvector32Term>,

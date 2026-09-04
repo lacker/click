@@ -1823,10 +1823,12 @@ pub(super) fn bind_c_function_arguments(
     Some(callee_state)
 }
 
-/// Installs the stable global bindings needed by a function's entry and
-/// contract states. Existing memory is preserved so nested calls observe
-/// writes performed by their caller; a missing block is the fresh program
-/// entry case and receives the linked definition's initial value.
+/// Installs the stable global and static-local bindings needed by a function's
+/// entry and contract states. Existing memory is preserved so nested calls
+/// observe writes performed by their caller; a missing block is the fresh
+/// program entry case and receives the object's initial value. Static locals
+/// use a function-qualified block identity and are therefore initialized once
+/// for the whole symbolic execution, not once per call frame.
 pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
     let mut state = state.clone();
     for global in function.global_variables() {
@@ -1840,6 +1842,33 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
         state
             .locals
             .set_global_at(global.name().to_string(), global.c_type(), slot);
+    }
+    for static_local in function.static_variables() {
+        let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .with_block(slot.block.clone(), static_local.c_type().byte_width())
+                .store(slot.clone(), static_local.initial_value().clone());
+        }
+        state.locals.set_global_at(
+            static_local.kernel_name().to_string(),
+            static_local.c_type(),
+            slot.clone(),
+        );
+        // Contract C fragments use the source spelling. A nested static may
+        // have a kernel-only name to distinguish it from another object in a
+        // sibling block; expose the spelling only when the callee has not
+        // already installed a parameter or another visible binding with it.
+        if static_local.kernel_name() != static_local.source_name()
+            && !state.locals.contains_name(static_local.source_name())
+        {
+            state.locals.set_global_at(
+                static_local.source_name().to_string(),
+                static_local.c_type(),
+                slot,
+            );
+        }
     }
     state
 }

@@ -2315,6 +2315,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             })
             .collect(),
         global_variables: function.global_variables.clone(),
+        static_variables: function.static_variables.clone(),
     }
 }
 
@@ -4538,6 +4539,7 @@ fn substitute_pointer_variable_in_c_function(
             })
             .collect(),
         global_variables: function.global_variables.clone(),
+        static_variables: function.static_variables.clone(),
     }
 }
 

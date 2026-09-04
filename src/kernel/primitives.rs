@@ -787,6 +787,14 @@ pub struct CGlobal {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticLocal {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) c_type: CType,
+    pub(super) initial_value: CValue,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateField {
     pub(super) name: String,
     pub(super) offset_bytes: u32,
@@ -860,6 +868,7 @@ pub struct CFunction {
     /// Both sides are instantiated at the exact function entry state.
     pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
     pub(super) global_variables: Vec<CGlobal>,
+    pub(super) static_variables: Vec<CStaticLocal>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

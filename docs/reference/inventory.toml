@@ -94,6 +94,10 @@ id = "c0.declaration.local"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.declaration.static-local"
+path = "reference/language/c0.md#function-local-scalar-statics"
+
+[[item]]
 id = "c0.statement.struct-value-declaration"
 path = "reference/language/c0.md#struct-subset"
 

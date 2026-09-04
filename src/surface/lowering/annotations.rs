@@ -248,6 +248,13 @@ pub(in crate::surface) fn annotated_function(
                 .filter_map(syntax::C0Global::to_kernel_global)
                 .collect(),
         )
+        .with_static_variables(
+            parsed_function
+                .static_locals()
+                .values()
+                .filter_map(syntax::C0StaticLocal::to_kernel_static)
+                .collect(),
+        )
         .with_resource_summary(resource_requires, resource_ensures)
         .with_resource_constructors(resource_constructors)
         .with_composite_resource_definitions(composite_resource_definitions(
