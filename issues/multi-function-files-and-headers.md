@@ -33,7 +33,9 @@ conditions in branches that cannot be selected. The macro-state slice now
 supports `#undef NAME`, including re-inclusion of a canonical guarded header
 after its guard macro is undefined. The next conditional slice now supports
 the exact `#if defined(NAME)`, `#if !defined(NAME)`, and corresponding `#elif`
-forms, including whitespace around the operator and identifier.
+forms, including whitespace around the operator and identifier. The boolean
+conditional slice now combines those bounded atoms with `!`, `&&`, `||`, and
+parentheses using normal precedence and short-circuit evaluation.
 
 ## Violated invariant
 
@@ -74,15 +76,16 @@ general conditional expression.
   other macro forms receive source-named diagnostics. `#undef NAME` removes a
   macro and permits a later literal redefinition.
 - Function-like and multi-token macros, system headers other than the modeled
-  `<stdint.h>`, compound or otherwise general conditional expressions, and
-  other preprocessor directives remain explicitly unsupported until a
-  documented allowlist or preprocessor subset is implemented.
+  `<stdint.h>`, comparisons, arithmetic, ternaries, and other general
+  conditional expressions remain explicitly unsupported until a documented
+  allowlist or preprocessor subset is implemented.
 - The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
   previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif`
   with those same conditions, `#if defined(NAME)`, `#if !defined(NAME)`,
-  `#else`, and `#endif`, including nested conditionals. Inactive branches are
-  removed before C parsing, and malformed structure or unsupported active
-  conditions receive source-named diagnostics.
+  and combinations of those atoms with `!`, `&&`, `||`, or parentheses. `#else`
+  and `#endif` are also supported, including nested conditionals. Inactive
+  branches are removed before C parsing, and malformed structure or
+  unsupported active conditions receive source-named diagnostics.
 - Shared struct declarations are reused across functions and files, replacing
   the per-file re-declaration in examples.
 - `scripts/check.sh` passes.

@@ -71,7 +71,9 @@ enum Conditional {
     Ifdef(String),
     Ifndef(String),
     Defined(String),
-    NotDefined(String),
+    Not(Box<Conditional>),
+    And(Box<Conditional>, Box<Conditional>),
+    Or(Box<Conditional>, Box<Conditional>),
     Unsupported(String),
 }
 
@@ -529,18 +531,34 @@ fn evaluate_condition(
         } else {
             ConditionalTruth::False
         }),
-        Conditional::NotDefined(name) => Ok(if defined_macros.contains(name) {
-            ConditionalTruth::False
-        } else {
-            ConditionalTruth::True
-        }),
+        Conditional::Not(condition) => {
+            evaluate_condition(condition, directive_name, macros, defined_macros).map(negate_truth)
+        }
+        Conditional::And(left, right) => {
+            let left = evaluate_condition(left, directive_name, macros, defined_macros)?;
+            if left == ConditionalTruth::False {
+                Ok(ConditionalTruth::False)
+            } else {
+                let right = evaluate_condition(right, directive_name, macros, defined_macros)?;
+                Ok(and_truth(left, right))
+            }
+        }
+        Conditional::Or(left, right) => {
+            let left = evaluate_condition(left, directive_name, macros, defined_macros)?;
+            if left == ConditionalTruth::True {
+                Ok(ConditionalTruth::True)
+            } else {
+                let right = evaluate_condition(right, directive_name, macros, defined_macros)?;
+                Ok(or_truth(left, right))
+            }
+        }
         Conditional::Unsupported(expression) => Err(unsupported_condition_message(expression)),
     }
 }
 
 fn unsupported_condition_message(expression: &str) -> String {
     format!(
-        "unsupported conditional expression `#{expression}`; expected `#if 0`, `#if 1`, `#if NAME`, `#if defined(NAME)`, `#if !defined(NAME)`, `#ifdef NAME`, or `#ifndef NAME`"
+        "unsupported conditional expression `#{expression}`; expected bounded `#if` atoms combined with `!`, `&&`, `||`, or parentheses"
     )
 }
 
@@ -589,13 +607,48 @@ fn evaluate_condition_for_discovery(
                 ConditionalTruth::False
             }
         }
-        Conditional::NotDefined(name) => {
-            if defined_macros.contains(name) {
+        Conditional::Not(condition) => negate_truth(evaluate_condition_for_discovery(
+            condition,
+            macros,
+            defined_macros,
+            may_have_external_macros,
+        )),
+        Conditional::And(left, right) => {
+            let left = evaluate_condition_for_discovery(
+                left,
+                macros,
+                defined_macros,
+                may_have_external_macros,
+            );
+            if left == ConditionalTruth::False {
                 ConditionalTruth::False
-            } else if may_have_external_macros {
-                ConditionalTruth::Unknown
             } else {
+                let right = evaluate_condition_for_discovery(
+                    right,
+                    macros,
+                    defined_macros,
+                    may_have_external_macros,
+                );
+                and_truth(left, right)
+            }
+        }
+        Conditional::Or(left, right) => {
+            let left = evaluate_condition_for_discovery(
+                left,
+                macros,
+                defined_macros,
+                may_have_external_macros,
+            );
+            if left == ConditionalTruth::True {
                 ConditionalTruth::True
+            } else {
+                let right = evaluate_condition_for_discovery(
+                    right,
+                    macros,
+                    defined_macros,
+                    may_have_external_macros,
+                );
+                or_truth(left, right)
             }
         }
         Conditional::Unsupported(_) => ConditionalTruth::Unknown,
@@ -936,52 +989,128 @@ fn parse_directive<'a>(
 
 fn parse_condition(directive_name: &str, input: &str) -> Conditional {
     let rest = input.trim_start();
-    if rest.starts_with('0') && trailing_comments_only(&rest[1..]) {
-        Conditional::Literal(false)
-    } else if rest.starts_with('1') && trailing_comments_only(&rest[1..]) {
-        Conditional::Literal(true)
-    } else if let Some(condition) = parse_defined_condition(rest) {
-        condition
-    } else if let (Some(name), trailing) = split_identifier(rest) {
-        if trailing_comments_only(trailing) {
-            Conditional::Macro(name)
-        } else {
-            Conditional::Unsupported(format!("{directive_name} {}", rest.trim()))
-        }
-    } else {
-        Conditional::Unsupported(format!("{directive_name} {}", rest.trim()))
+    let expression = rest.trim();
+    let mut parser = ConditionalParser::new(rest);
+    match parser.parse() {
+        Ok(condition) => condition,
+        Err(()) => Conditional::Unsupported(format!("{directive_name} {expression}")),
     }
 }
 
-fn parse_defined_condition(input: &str) -> Option<Conditional> {
-    let mut rest = input;
-    let negated = if let Some(after_not) = rest.strip_prefix('!') {
-        rest = after_not.trim_start();
-        true
-    } else {
-        false
-    };
-    let after_defined = rest.strip_prefix("defined")?;
-    if after_defined
-        .chars()
-        .next()
-        .is_some_and(|character| !character.is_ascii_whitespace() && character != '(')
-    {
-        return None;
+struct ConditionalParser<'a> {
+    input: &'a str,
+    position: usize,
+}
+
+impl<'a> ConditionalParser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input, position: 0 }
     }
-    let rest = after_defined.trim_start();
-    let rest = rest.strip_prefix('(')?.trim_start();
-    let (name, trailing) = split_identifier(rest);
-    let name = name?;
-    let trailing = trailing.strip_prefix(')')?;
-    if !trailing_comments_only(trailing) {
-        return None;
+
+    fn parse(&mut self) -> Result<Conditional, ()> {
+        let condition = self.parse_or()?;
+        self.skip_whitespace();
+        trailing_comments_only(&self.input[self.position..])
+            .then_some(condition)
+            .ok_or(())
     }
-    Some(if negated {
-        Conditional::NotDefined(name)
-    } else {
-        Conditional::Defined(name)
-    })
+
+    fn parse_or(&mut self) -> Result<Conditional, ()> {
+        let mut condition = self.parse_and()?;
+        loop {
+            self.skip_whitespace();
+            if !self.consume("||") {
+                return Ok(condition);
+            }
+            let right = self.parse_and()?;
+            condition = Conditional::Or(Box::new(condition), Box::new(right));
+        }
+    }
+
+    fn parse_and(&mut self) -> Result<Conditional, ()> {
+        let mut condition = self.parse_unary()?;
+        loop {
+            self.skip_whitespace();
+            if !self.consume("&&") {
+                return Ok(condition);
+            }
+            let right = self.parse_unary()?;
+            condition = Conditional::And(Box::new(condition), Box::new(right));
+        }
+    }
+
+    fn parse_unary(&mut self) -> Result<Conditional, ()> {
+        self.skip_whitespace();
+        if self.consume("!") {
+            Ok(Conditional::Not(Box::new(self.parse_unary()?)))
+        } else {
+            self.parse_primary()
+        }
+    }
+
+    fn parse_primary(&mut self) -> Result<Conditional, ()> {
+        self.skip_whitespace();
+        if self.consume("(") {
+            let condition = self.parse_or()?;
+            self.skip_whitespace();
+            if !self.consume(")") {
+                return Err(());
+            }
+            Ok(condition)
+        } else {
+            self.parse_atom()
+        }
+    }
+
+    fn parse_atom(&mut self) -> Result<Conditional, ()> {
+        self.skip_whitespace();
+        if self.consume("0") {
+            return Ok(Conditional::Literal(false));
+        }
+        if self.consume("1") {
+            return Ok(Conditional::Literal(true));
+        }
+        let name = self.parse_identifier().ok_or(())?;
+        if name != "defined" {
+            return Ok(Conditional::Macro(name));
+        }
+        self.skip_whitespace();
+        if !self.consume("(") {
+            return Err(());
+        }
+        let name = self.parse_identifier().ok_or(())?;
+        self.skip_whitespace();
+        if !self.consume(")") {
+            return Err(());
+        }
+        Ok(Conditional::Defined(name))
+    }
+
+    fn parse_identifier(&mut self) -> Option<String> {
+        let rest = &self.input[self.position..];
+        let (name, _) = split_identifier(rest);
+        let name = name?;
+        self.position += name.len();
+        Some(name)
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(character) = self.input[self.position..].chars().next() {
+            if !character.is_ascii_whitespace() {
+                break;
+            }
+            self.position += character.len_utf8();
+        }
+    }
+
+    fn consume(&mut self, token: &str) -> bool {
+        if self.input[self.position..].starts_with(token) {
+            self.position += token.len();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn parse_macro_literal(input: &str) -> Option<String> {
@@ -1590,6 +1719,49 @@ int32 wrong_not_defined_branch(void) { return 0; }
     }
 
     #[test]
+    fn boolean_conditions_respect_precedence_and_short_circuit_includes() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#define FEATURE 1
+#define DISABLED 0
+#if defined(FEATURE) && FEATURE
+#include "config.h"
+#else
+#include "missing.h"
+#endif
+#if !defined(MISSING) || DISABLED
+int32 fallback(void) { return 5; }
+#endif
+#if (defined(FEATURE) && !defined(MISSING)) || DISABLED
+int32 grouped(void) { return 6; }
+#endif
+#if 1 || 1 && 0
+int32 precedence(void) { return 7; }
+#else
+int32 wrong_precedence(void) { return 0; }
+#endif
+#if 0 && defined(UNKNOWN)
+#include "missing_again.h"
+#endif
+"##,
+            ),
+            ("config.h", "#define VALUE 4\n"),
+        ]);
+        assert_eq!(
+            local_include_paths("main.c", sources["main.c"]).unwrap(),
+            ["config.h"]
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 fallback(void)"));
+        assert!(expanded.source().contains("int32 grouped(void)"));
+        assert!(expanded.source().contains("int32 precedence(void)"));
+        assert!(!expanded.source().contains("wrong_precedence"));
+        assert!(!expanded.source().contains("missing.h"));
+        assert!(!expanded.source().contains("missing_again.h"));
+    }
+
+    #[test]
     fn defined_conditions_accept_bounded_whitespace_and_elif_forms() {
         let sources = BTreeMap::from([(
             "main.c",
@@ -1619,8 +1791,8 @@ int32 run(void) { return 3; }
             ("#if 0\n#else\n#elif 1\n#endif\n", "`#elif` after `#else`"),
             ("#if 1\n", "unterminated conditional"),
             (
-                "#if defined(FEATURE) && OTHER\n#endif\n",
-                "unsupported conditional expression `#if defined(FEATURE) && OTHER`",
+                "#if defined(FEATURE) == 1\n#endif\n",
+                "unsupported conditional expression `#if defined(FEATURE) == 1`",
             ),
         ];
         for (source, expected) in cases {
@@ -1642,12 +1814,12 @@ int32 run(void) { return 3; }
                 .contains("only whole-header guards are supported")
         );
 
-        let conditional = BTreeMap::from([("bad.h", "#if defined(BAD_H) && OTHER\n#endif\n")]);
+        let conditional = BTreeMap::from([("bad.h", "#if defined(BAD_H) == 1\n#endif\n")]);
         let error = local_include_paths("bad.h", conditional["bad.h"]).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("unsupported conditional expression `#if defined(BAD_H) && OTHER`")
+                .contains("unsupported conditional expression `#if defined(BAD_H) == 1`")
         );
     }
 
