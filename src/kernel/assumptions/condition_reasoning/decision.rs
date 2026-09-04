@@ -20,10 +20,7 @@ impl PureFactContext {
     }
 
     fn decide_unrecorded(&self, condition: &ConditionTerm) -> Option<bool> {
-        // Fuel is consumed before the memo so a fueled search keeps its
-        // step budget: memoization makes each step cheaper, not the search
-        // wider.
-        if !consume_simp_reasoning_fuel() {
+        if simp_reasoning_interrupted() {
             return None;
         }
         // Resolve the memo identity from an enclosing scope, or establish

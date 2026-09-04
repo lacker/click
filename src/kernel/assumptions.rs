@@ -276,8 +276,8 @@ fn equality_graph_term_key(term: &Bitvector32Term) -> Bitvector32Term {
 }
 
 thread_local! {
-    static SIMP_REASONING_FUEL: Cell<Option<usize>> = const { Cell::new(None) };
-    static SIMP_FACT_REASONING_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static SIMP_FACT_CONDITIONS_IN_PROGRESS: RefCell<BTreeSet<(ConditionTerm, bool)>> =
+        const { RefCell::new(BTreeSet::new()) };
     static ATOMIC_PREMISE_MINIMIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
     static CONDITION_DECISIONS_IN_PROGRESS: RefCell<BTreeSet<ConditionTerm>> =
         const { RefCell::new(BTreeSet::new()) };
@@ -639,69 +639,80 @@ pub(super) fn search_truncations() -> u64 {
     SEARCH_TRUNCATIONS.with(Cell::get)
 }
 
-const DEFAULT_SIMP_REASONING_FUEL: usize = 300;
-const MAX_SIMP_FACT_REASONING_DEPTH: usize = 8;
-
-struct SimpReasoningFuelGuard {
-    previous: Option<usize>,
-}
-
-impl SimpReasoningFuelGuard {
-    fn enter() -> Self {
-        SIMP_REASONING_FUEL.with(|fuel| {
-            let previous = fuel.get();
-            if previous.is_none() {
-                fuel.set(Some(DEFAULT_SIMP_REASONING_FUEL));
-            }
-            Self { previous }
-        })
-    }
-}
-
-impl Drop for SimpReasoningFuelGuard {
-    fn drop(&mut self) {
-        SIMP_REASONING_FUEL.with(|fuel| fuel.set(self.previous));
-    }
-}
-
-fn consume_simp_reasoning_fuel() -> bool {
+/// Whether the verification deadline has passed, noted as a truncation so
+/// the memo layers do not cache an answer the deadline cut short. A simp
+/// derivation has no step budget of its own: its decisions are memoized
+/// per condition and cycle-cut, its recursion follows the proposition, and
+/// its premise selection is bounded by the candidate facts, so its work is
+/// bounded by the goal and the facts the goal names.
+fn simp_reasoning_interrupted() -> bool {
     if crate::instrumentation::deadline_exceeded() {
         note_search_truncation();
-        return false;
+        return true;
     }
-    SIMP_REASONING_FUEL.with(|fuel| match fuel.get() {
-        None => true,
-        Some(0) => {
-            note_search_truncation();
-            false
-        }
-        Some(remaining) => {
-            fuel.set(Some(remaining - 1));
-            true
-        }
-    })
+    false
 }
 
-struct SimpFactReasoningDepthGuard;
+/// Marks a condition whose fact-based simp proof is in progress. Proving a
+/// condition from the proposition facts can decide other conditions, which
+/// consult the facts again; a condition met again while its own proof is
+/// in progress is a cycle through the facts and proves nothing on that
+/// path. Distinct conditions nest freely, bounded by the conditions the
+/// facts connect to the query.
+struct SimpFactReasoningGuard {
+    key: (ConditionTerm, bool),
+}
 
-impl SimpFactReasoningDepthGuard {
-    fn enter() -> Option<Self> {
-        SIMP_FACT_REASONING_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= MAX_SIMP_FACT_REASONING_DEPTH {
-                note_search_truncation();
-                return None;
-            }
-            depth.set(current + 1);
-            Some(Self)
-        })
+impl SimpFactReasoningGuard {
+    fn enter(condition: &ConditionTerm, value: bool) -> Option<Self> {
+        let key = (condition.clone(), value);
+        // `then`, not `then_some`: a guard built eagerly and discarded on
+        // the cycle path would run `drop` and unregister the outer proof.
+        SIMP_FACT_CONDITIONS_IN_PROGRESS
+            .with(|conditions| conditions.borrow_mut().insert(key.clone()))
+            .then(|| Self { key })
     }
 }
 
-impl Drop for SimpFactReasoningDepthGuard {
+impl Drop for SimpFactReasoningGuard {
     fn drop(&mut self) {
-        SIMP_FACT_REASONING_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        SIMP_FACT_CONDITIONS_IN_PROGRESS.with(|conditions| {
+            conditions.borrow_mut().remove(&self.key);
+        });
     }
+}
+
+/// A condition already being proved from the facts refuses re-entry
+/// without unregistering the outer proof, and distinct conditions nest.
+#[cfg(test)]
+#[test]
+fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
+    let first = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(7_400_000)),
+        Bitvector32Term::Constant(1),
+    );
+    let second = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(7_400_001)),
+        Bitvector32Term::Constant(2),
+    );
+    let outer = SimpFactReasoningGuard::enter(&first, true).expect("the first proof registers");
+    assert!(
+        SimpFactReasoningGuard::enter(&first, true).is_none(),
+        "re-entering the condition is a cycle"
+    );
+    let nested = SimpFactReasoningGuard::enter(&second, true);
+    assert!(nested.is_some(), "a distinct condition nests");
+    assert!(
+        SimpFactReasoningGuard::enter(&first, false).is_some(),
+        "the other polarity is a distinct proof"
+    );
+    drop(nested);
+    assert!(
+        SimpFactReasoningGuard::enter(&first, true).is_none(),
+        "the refused re-entry left the outer proof registered"
+    );
+    drop(outer);
+    assert!(SimpFactReasoningGuard::enter(&first, true).is_some());
 }
 
 struct ConditionDecisionGuard {

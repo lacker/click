@@ -319,7 +319,6 @@ impl PureFactContext {
         &self,
         proposition: &Proposition,
     ) -> Option<PropositionDerivation> {
-        let _fuel = SimpReasoningFuelGuard::enter();
         self.derive_proposition_using(proposition, true)
     }
 
@@ -388,7 +387,7 @@ impl PureFactContext {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
-        if !consume_simp_reasoning_fuel() {
+        if simp_reasoning_interrupted() {
             return None;
         }
         self.atomic_derivation_premises(proposition, for_simp).map(
@@ -536,7 +535,7 @@ impl PureFactContext {
         }
         if candidates.len() > 1 {
             for selected in &candidates {
-                if !consume_simp_reasoning_fuel() {
+                if simp_reasoning_interrupted() {
                     return None;
                 }
                 let mut candidate = self.clone();
@@ -551,7 +550,7 @@ impl PureFactContext {
             if matches!(proposition, Proposition::CMemoryLoadable { .. }) {
                 for first in 0..candidates.len() {
                     for second in first + 1..candidates.len() {
-                        if !consume_simp_reasoning_fuel() {
+                        if simp_reasoning_interrupted() {
                             return None;
                         }
                         let mut candidate = self.clone();
@@ -578,7 +577,7 @@ impl PureFactContext {
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
         let _id_scope = PureFactContextIdScope::enter(self);
-        if !consume_simp_reasoning_fuel() {
+        if simp_reasoning_interrupted() {
             return None;
         }
         if solve_builtin_prop(proposition) {

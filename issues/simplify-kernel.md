@@ -109,6 +109,16 @@ up has no answer; distinct cells nest freely). The guard must be built
 only when its key is new: one built eagerly and discarded on the cycle
 path unregistered the outer lookup and let a call-havoc edge's
 frozen-context proof restart without bound, which a unit test pins.
+The third chunk deletes the simp reasoning budget of 300 units and the
+simp depth of eight: a census found the budget exhausted 18 times in 890
+outermost derivations (nearly all charges at the decision site, which
+charged memo hits too) and the depth never fired; without the budget the
+same derivations use at most ten thousand units, both harnesses pass,
+and seven mdtest derivations the budget had failed succeed. The
+derivation's work is bounded by its inputs already (memoized, cycle-cut
+decisions; recursion along the proposition; premise selection over the
+candidate facts); the depth became a cycle check on the condition being
+proved from the facts. The deadline check stays at the same sites.
 
 ## Violated invariant
 

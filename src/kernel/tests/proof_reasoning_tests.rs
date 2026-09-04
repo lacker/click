@@ -4896,3 +4896,38 @@ fn constant_normalization_follows_equality_chains_of_any_length() {
         );
     }
 }
+
+/// A simp derivation has no step budget: a balanced conjunction of any
+/// width whose parts are exact facts derives, its work following the goal.
+#[test]
+fn simp_derivations_have_no_step_budget() {
+    for width in [64u64, 128, 256, 512] {
+        let variable = |index: u64| Bitvector32Term::Variable(Variable(7_500_000 + index));
+        let condition = |index: u64| {
+            ConditionTerm::equal(variable(index), Bitvector32Term::Constant(index as u32))
+        };
+        let mut assumptions = PureFactContext::new();
+        for index in 0..width {
+            assumptions = assumptions.assume_condition(condition(index), true);
+        }
+        let mut parts = (0..width)
+            .map(|index| Proposition::ConditionIs(condition(index), true))
+            .collect::<Vec<_>>();
+        while parts.len() > 1 {
+            parts = parts
+                .chunks(2)
+                .map(|pair| match pair {
+                    [left, right] => {
+                        Proposition::And(Box::new(left.clone()), Box::new(right.clone()))
+                    }
+                    [single] => single.clone(),
+                    _ => unreachable!(),
+                })
+                .collect();
+        }
+        assert!(
+            assumptions.derive_simp_proposition(&parts[0]).is_some(),
+            "a conjunction of {width} exact facts derives"
+        );
+    }
+}

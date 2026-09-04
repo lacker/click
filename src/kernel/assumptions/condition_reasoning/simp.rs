@@ -213,7 +213,7 @@ impl PureFactContext {
     }
 
     fn proves_condition_from_facts_for_simp(&self, condition: &ConditionTerm, value: bool) -> bool {
-        let Some(_depth) = SimpFactReasoningDepthGuard::enter() else {
+        let Some(_proof) = SimpFactReasoningGuard::enter(condition, value) else {
             return false;
         };
         self.condition_facts.iter().any(|(fact, fact_value)| {
