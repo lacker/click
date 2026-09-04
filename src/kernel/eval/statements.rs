@@ -130,7 +130,7 @@ fn execute_c_lvalue_update_paths(
         };
         if !matches!(
             lvalue.value_type,
-            CType::Int32 | CType::UInt8 | CType::UInt32
+            CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
         ) {
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -311,11 +311,20 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             assumptions.assume_proposition(fact)
         });
     let mut facts = facts;
-    if lvalue.value_type == CType::Int32
-        && let CValue::UInt8(value) = &value
-    {
-        if add_uint8_range_execution_pure_facts(&mut facts, &effective_assumptions, value).is_none()
-        {
+    if lvalue.value_type == CType::Int32 {
+        let range_result = match &value {
+            CValue::Int16(value) => {
+                add_int16_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
+            }
+            CValue::UInt8(value) => {
+                add_uint8_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
+            }
+            CValue::UInt16(value) => {
+                add_uint16_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
+            }
+            _ => Some(()),
+        };
+        if range_result.is_none() {
             return Vec::new();
         }
     }
@@ -2259,6 +2268,7 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
     let mut state = state.clone();
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
+        CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
         CType::UInt8 => 1,
         CType::UInt32 => 4,

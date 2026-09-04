@@ -79,8 +79,9 @@ requirements, the proof should fail.
 
 ## The current C target
 
-The current C subset is called C0. It is intentionally small: `int32`, `uint8`,
-pointers, arrays, loops, function calls, and a pilot slice of structs. C0 exists
+The current C subset is called C0. It is intentionally small: scalar `int16`,
+`int32`, `uint8`, `uint16`, and `uint32`, plus pointers, arrays, loops, function
+calls, and a pilot slice of structs. C0 exists
 so the verifier can grow against precise semantics before it accepts more of
 real C.
 

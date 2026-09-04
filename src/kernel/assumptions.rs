@@ -217,6 +217,10 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
         | (CValue::UInt8(left), CValue::UInt8(right)) => {
             terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
         }
+        (CValue::Int16(left), CValue::Int16(right))
+        | (CValue::UInt16(left), CValue::UInt16(right)) => {
+            terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
+        }
         (CValue::Pointer(left), CValue::Pointer(right)) => {
             pointers_equal_ignoring_memories(left.pointer(), right.pointer())
         }

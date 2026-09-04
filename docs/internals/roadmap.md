@@ -47,7 +47,7 @@ Current status: mostly done, but this remains a maintenance milestone.
 
 What exists today:
 
-- C0 symbolic execution for `int32`, `uint8`, scalar `uint32`, named enum fields, pointers, local
+- C0 symbolic execution for scalar `int16`, `int32`, `uint8`, `uint16`, and `uint32`, named enum fields, pointers, local
   arrays, memory, function calls, annotated loops, and exact struct or
   runtime-sized `int32` allocation lifetimes.
 - Surface Click contracts, loop invariants, memory effects, predicates, pure

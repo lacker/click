@@ -1578,8 +1578,7 @@ fn interface_resource_intrinsic_fact(
         | CResourceSpec::Token { .. } => return None,
     };
     let range = resource.memory_range()?;
-    let element_width =
-        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+    let element_width = segment.element_width();
     Some(Proposition::CMemoryLoadable {
         memory: state.memory().clone(),
         base: range

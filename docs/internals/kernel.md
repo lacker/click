@@ -235,8 +235,9 @@ In `src/kernel/`:
 - `ConditionTerm`: proof-level truth-valued conditions such as signed and
   unsigned order, equality, overflow, and pointer-offset equality.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
-  including the non-object `Void` return value, `int32`, scalar `uint8` and
-  `uint32`, pointers, and typed memory loads/stores. Kernel execution reports
+  including the non-object `Void` return value, scalar `int16`, `int32`,
+  `uint8`, `uint16`, and `uint32`, pointers, and typed memory loads/stores.
+  Kernel execution reports
   `TypeMismatch` if `Void` is used as a condition or object type; it never
   erases that execution path.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax. Calls have
@@ -263,24 +264,25 @@ In `src/kernel/`:
   exact partially-correct function returns.
 
 The current integer conversion slice is deliberately small. `eval.rs` promotes
-`uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,
-and bitwise operators, assignments, and returns, adding internal byte-range
-facts for the promoted term when an expression needs them. Scalar `uint32`
+`int16`, `uint8`, and `uint16` rvalues to `int32` terms for arithmetic, ordered
+comparisons, shifts, and bitwise operators, assignments, and returns, adding
+internal range facts for the promoted term when an expression needs them.
+Scalar `uint32`
 addition, subtraction, and multiplication use the same 32-bit term
 representation without signed overflow obligations. Unsigned division and
 remainder have distinct term nodes so high-bit operands do not inherit signed
 division, and unsigned right shift has a distinct logical-shift node. Equality
 and ordered comparisons select the unsigned conditions. Stores and function
-returns preserve the `uint32` type tag. The existing boundaries still use checked
-`int32`-to-`uint8` narrowing;
-the coercion adds proof obligations for `0 <= value <= 255` unless the current
-path already proves them.
+returns preserve the `uint32` type tag. Scalar narrowing is checked at the
+existing boundaries; the coercion adds proof obligations for the target range
+unless the current path already proves it. `int16` occupies two bytes with
+signed range `-32768..32767`; `uint16` occupies two bytes with range `0..65535`.
 
 ## C ABI and memory layout
 
-The C0 importer models one explicit ABI: LP64. In that ABI, `int32` has size
-and alignment 4, `uint8` has size and alignment 1, `uint32` has size and
-alignment 4, and every supported pointer
+The C0 importer models one explicit ABI: LP64. In that ABI, `int16` and
+`uint16` have size and alignment 2, `int32` has size and alignment 4, `uint8`
+has size and alignment 1, `uint32` has size and alignment 4, and every supported pointer
 has size and alignment 8. Struct fields are aligned individually and the
 struct size includes the tail padding required by its maximum field alignment.
 Named enum fields use the supported four-byte `int32` representation. The C0

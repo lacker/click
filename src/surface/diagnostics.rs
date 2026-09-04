@@ -663,6 +663,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
     match parameter.c_type() {
         C0Type::Void => 0,
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
+        C0Type::Int16 | C0Type::UInt16 => 2,
         C0Type::Int32
         | C0Type::UInt8
         | C0Type::UInt32
@@ -748,6 +749,12 @@ pub(super) fn describe_c_value(
 ) -> String {
     match value {
         CValue::Void => "void".to_string(),
+        CValue::Int16(value) => {
+            format!(
+                "{}i16",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
         CValue::Int32(value) => describe_bitvector_with_context(value, parameters, arguments),
         CValue::UInt8(value) => {
             format!(
@@ -758,6 +765,12 @@ pub(super) fn describe_c_value(
         CValue::UInt32(value) => {
             format!(
                 "{}u32",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        CValue::UInt16(value) => {
+            format!(
+                "{}u16",
                 describe_bitvector_with_context(value, parameters, arguments)
             )
         }
@@ -865,8 +878,10 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         } => {
             let name = match value_type {
                 CType::Void => "load_void",
+                CType::Int16 => "load_int16",
                 CType::Int32 => "load_int32",
                 CType::UInt8 => "load_uint8",
+                CType::UInt16 => "load_uint16",
                 CType::UInt32 => "load_uint32",
                 CType::Int32Pointer => "load_int32_pointer",
                 CType::UInt8Pointer => "load_uint8_pointer",
@@ -1255,6 +1270,16 @@ pub(super) fn describe_parameter_bitvector(
             }
             CExpression::Value(CValue::UInt8(value))
                 if value == term && parameter.c_type() == C0Type::UInt8 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::Int16(value))
+                if value == term && parameter.c_type() == C0Type::Int16 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::UInt16(value))
+                if value == term && parameter.c_type() == C0Type::UInt16 =>
             {
                 return Some(parameter.name().to_string());
             }

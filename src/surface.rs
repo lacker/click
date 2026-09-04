@@ -1764,6 +1764,7 @@ enum ContractSegmentSurface {
     Field {
         name: String,
         element_width: Option<u32>,
+        element_type: Option<CType>,
     },
     Object(String),
 }
@@ -1772,6 +1773,13 @@ impl ContractSegment {
     pub(crate) fn field_element_width(&self) -> Option<u32> {
         match &self.surface {
             ContractSegmentSurface::Field { element_width, .. } => *element_width,
+            ContractSegmentSurface::Range { .. } | ContractSegmentSurface::Object(_) => None,
+        }
+    }
+
+    pub(crate) fn field_element_type(&self) -> Option<CType> {
+        match &self.surface {
+            ContractSegmentSurface::Field { element_type, .. } => *element_type,
             ContractSegmentSurface::Range { .. } | ContractSegmentSurface::Object(_) => None,
         }
     }

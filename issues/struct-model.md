@@ -8,10 +8,10 @@ Struct pointers are supported: declarations, `->` field access, and
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
 slice now extends this with copies of scalar, fixed-array, recursively
 embedded-struct, and one-dimensional embedded-struct-array fields.
-Struct fields currently support `int32`, `uint8`, fixed scalar
+Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
-are only `int32`, `uint8`, named enum fields, fixed one-dimensional scalar
+are only `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed one-dimensional scalar
 arrays, or recursively embedded structs can be parameters, locals, assignments,
 and returns by value; each operation uses fresh address-backed storage and
 copies modeled leaf fields and array cells recursively.

@@ -205,8 +205,10 @@ pub struct C0StructField {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     Void,
+    Int16,
     Int32,
     UInt8,
+    UInt16,
     UInt32,
     Int32Pointer,
     UInt8Pointer,
@@ -231,8 +233,10 @@ impl CAbi {
     fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
         match (self, c_type) {
             (Self::Lp64, C0Type::Void) => (0, 1),
+            (Self::Lp64, C0Type::Int16) => (2, 2),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
+            (Self::Lp64, C0Type::UInt16) => (2, 2),
             (Self::Lp64, C0Type::UInt32) => (4, 4),
             (
                 Self::Lp64,
@@ -727,17 +731,23 @@ impl C0Type {
             Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
-            Self::Void | Self::Int32 | Self::UInt8 | Self::UInt32 | Self::FunctionPointer(_) => {
-                None
-            }
+            Self::Void
+            | Self::Int16
+            | Self::Int32
+            | Self::UInt8
+            | Self::UInt16
+            | Self::UInt32
+            | Self::FunctionPointer(_) => None,
         }
     }
 
     pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
             Self::Void => crate::kernel::CType::Void,
+            Self::Int16 => crate::kernel::CType::Int16,
             Self::Int32 => crate::kernel::CType::Int32,
             Self::UInt8 => crate::kernel::CType::UInt8,
+            Self::UInt16 => crate::kernel::CType::UInt16,
             Self::UInt32 => crate::kernel::CType::UInt32,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
@@ -1331,11 +1341,13 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "struct"
             | "union"
             | "enum"
+            | "int16"
             | "int32"
             | "int"
             | "int32_t"
             | "uint8"
             | "uint8_t"
+            | "uint16"
             | "uint32"
             | "uint32_t"
             | "unsigned"
@@ -1698,8 +1710,10 @@ impl Parser {
                 || (field.struct_name.is_some() && !field.c_type.is_pointer())
                 || !matches!(
                     field.c_type,
-                    C0Type::Int32
+                    C0Type::Int16
+                        | C0Type::Int32
                         | C0Type::UInt8
+                        | C0Type::UInt16
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Int32Pointer
@@ -1709,7 +1723,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
                 )));
             }
         }
@@ -2433,8 +2447,10 @@ impl Parser {
 
         if !matches!(
             c_type,
-            C0Type::Int32
+            C0Type::Int16
+                | C0Type::Int32
                 | C0Type::UInt8
+                | C0Type::UInt16
                 | C0Type::Int32Pointer
                 | C0Type::UInt8Pointer
                 | C0Type::Int32PointerPointer
@@ -2443,7 +2459,7 @@ impl Parser {
                 | C0Type::UInt8Array(_)
         ) {
             return Err(self.error_here(format!(
-                "struct `{struct_name}` fields currently support int32, uint8, enum, fixed scalar arrays, and pointer fields",
+                "struct `{struct_name}` fields currently support int16, int32, uint8, uint16, enum, fixed scalar arrays, and pointer fields",
             )));
         }
         let (field_size, field_alignment) = match c_type {
@@ -2658,6 +2674,11 @@ impl Parser {
         while self.peek() == Some(&Token::Star) {
             self.position += 1;
             c_type = match c_type {
+                C0Type::Int16 | C0Type::UInt16 => {
+                    return Err(self.error_at_previous(
+                        "pointers to 16-bit integer values are not supported yet",
+                    ));
+                }
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
                 C0Type::UInt32 => {
@@ -2774,8 +2795,10 @@ impl Parser {
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
         let c_type = match name.as_str() {
             "void" => C0Type::Void,
+            "int16" | "short" | "int16_t" => C0Type::Int16,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,
+            "uint16" | "uint16_t" => C0Type::UInt16,
             "uint32" | "uint32_t" => C0Type::UInt32,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
@@ -2784,9 +2807,12 @@ impl Parser {
                 } else if self.peek_ident() == Some("int") {
                     self.position += 1;
                     C0Type::UInt32
+                } else if self.peek_ident() == Some("short") {
+                    self.position += 1;
+                    C0Type::UInt16
                 } else {
                     return Err(self.error_at_previous(
-                        "unsupported integer width `unsigned`; only `unsigned char` and `unsigned int` are modeled",
+                        "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
                     ));
                 }
             }
@@ -2797,16 +2823,21 @@ impl Parser {
                         "unsupported C type `signed char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                     ));
                 }
-                return Err(self.error_at_previous(
-                    "unsupported integer width `signed`: signed integer widths are not modeled",
-                ));
+                if self.peek_ident() == Some("short") {
+                    self.position += 1;
+                    C0Type::Int16
+                } else {
+                    return Err(self.error_at_previous(
+                        "unsupported integer width `signed`; only `signed short` is modeled among signed standard aliases",
+                    ));
+                }
             }
             "char" => {
                 return Err(self.error_at_previous(
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
             }
-            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint64_t" => {
+            "long" | "size_t" | "int64_t" | "uint64_t" => {
                 return Err(self.error_at_previous(format!(
                     "unsupported integer width `{name}`: see the integer-types issue"
                 )));
@@ -3619,7 +3650,7 @@ impl Parser {
         let mut stores = Vec::new();
         for field in layout.aggregate_fields() {
             let (element_type, element_count) = match field.c_type {
-                C0Type::Int32 | C0Type::UInt8 => (field.c_type, 1),
+                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Int32Pointer
@@ -4890,10 +4921,14 @@ impl Parser {
                 parsed_type.struct_name,
                 parsed_type.union_name,
             ) {
-                (C0Type::Int32 | C0Type::UInt8 | C0Type::UInt32, None, None) => parsed_type.c_type,
+                (
+                    C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32,
+                    None,
+                    None,
+                ) => parsed_type.c_type,
                 _ => {
                     return Err(self.error_at_previous(
-                        "casts currently support only `int32`, `uint8`, and `uint32` scalar values",
+                        "casts currently support only `int16`, `int32`, `uint8`, `uint16`, and `uint32` scalar values",
                     ));
                 }
             };

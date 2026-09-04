@@ -406,8 +406,10 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
 
     if memory.is_zeroed_heap_address(&pointer, value_type.byte_width()) {
         let value = match value_type {
+            CType::Int16 => int16(Bitvector32Term::Constant(0)),
             CType::Int32 => int32(Bitvector32Term::Constant(0)),
             CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
+            CType::UInt16 => uint16(Bitvector32Term::Constant(0)),
             _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {
@@ -521,6 +523,10 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
 ) -> Option<CValue> {
     let pointee_byte_width = value_type.pointee_type()?.byte_width();
     let fresh = match value {
+        CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
+        }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             mint_load_variable(bits, next_kernel_variable, facts, assumptions)?
         }
@@ -569,6 +575,10 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     // load variable, with the defining fact beside it, so every fact,
     // offset, and range built from the value is canonical.
     match &value {
+        CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
+        }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
             return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
@@ -576,6 +586,10 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
             return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
+        }
+        CValue::UInt16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::UInt16(Bitvector32Term::Variable(fresh)));
         }
         _ => {}
     }
@@ -952,7 +966,13 @@ fn is_store_fact(condition: &ConditionTerm, value: bool) -> bool {
     };
     matches!(
         load.0.known_value(load.1),
-        Some(CValue::Int32(recorded) | CValue::UInt8(recorded)) if &recorded == stored
+        Some(
+            CValue::Int16(recorded)
+            | CValue::Int32(recorded)
+            | CValue::UInt8(recorded)
+            | CValue::UInt16(recorded)
+            | CValue::UInt32(recorded),
+        ) if &recorded == stored
     )
 }
 
@@ -1489,8 +1509,10 @@ pub(in crate::kernel) fn symbolic_load_value(
 ) -> Option<CValue> {
     match value_type {
         CType::Void => None,
+        CType::Int16 => Some(memory.symbolic_int16_load(pointer)),
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
+        CType::UInt16 => Some(memory.symbolic_uint16_load(pointer)),
         CType::UInt32 => Some(memory.symbolic_uint32_load(pointer)),
         CType::Int32Pointer
         | CType::UInt8Pointer

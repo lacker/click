@@ -20,16 +20,48 @@ pub(in crate::kernel) fn add_uint8_range_execution_pure_facts(
     assumptions: &PureFactContext,
     value: &Bitvector32Term,
 ) -> Option<()> {
+    add_c_integer_range_execution_pure_facts(facts, assumptions, value, 0, 255)
+}
+
+pub(in crate::kernel) fn add_int16_range_execution_pure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+    value: &Bitvector32Term,
+) -> Option<()> {
+    add_c_integer_range_execution_pure_facts(
+        facts,
+        assumptions,
+        value,
+        i32::from(i16::MIN),
+        i32::from(i16::MAX),
+    )
+}
+
+pub(in crate::kernel) fn add_uint16_range_execution_pure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+    value: &Bitvector32Term,
+) -> Option<()> {
+    add_c_integer_range_execution_pure_facts(facts, assumptions, value, 0, i32::from(u16::MAX))
+}
+
+fn add_c_integer_range_execution_pure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+    value: &Bitvector32Term,
+    lower: i32,
+    upper: i32,
+) -> Option<()> {
     add_internal_condition_path_fact(
         facts,
         assumptions,
-        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(lower as u32)),
         true,
     )?;
     add_internal_condition_path_fact(
         facts,
         assumptions,
-        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(255)),
+        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(upper as u32)),
         true,
     )
 }
@@ -42,8 +74,16 @@ pub(in crate::kernel) fn promote_c_int32_path_value(
     match value {
         CValue::Void => None,
         CValue::Int32(value) => Some(value),
+        CValue::Int16(value) => {
+            add_int16_range_execution_pure_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
         CValue::UInt8(value) => {
             add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
+        CValue::UInt16(value) => {
+            add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
         CValue::UInt32(_) => None,
@@ -58,8 +98,16 @@ pub(in crate::kernel) fn promote_c_uint32_path_value(
 ) -> Option<Bitvector32Term> {
     match value {
         CValue::Int32(value) | CValue::UInt32(value) => Some(value),
+        CValue::Int16(value) => {
+            add_int16_range_execution_pure_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
         CValue::UInt8(value) => {
             add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
+        CValue::UInt16(value) => {
+            add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
         CValue::Void | CValue::Pointer(_) => None,
@@ -77,33 +125,113 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     }
 
     match (target_type, value) {
-        (CType::Int32, CValue::UInt8(value)) => Some(CValue::Int32(value)),
-        (CType::UInt32, CValue::Int32(value) | CValue::UInt8(value)) => Some(CValue::UInt32(value)),
+        (CType::Int32, CValue::Int16(value) | CValue::UInt8(value) | CValue::UInt16(value)) => {
+            Some(CValue::Int32(value))
+        }
+        (
+            CType::UInt32,
+            CValue::Int16(value)
+            | CValue::Int32(value)
+            | CValue::UInt8(value)
+            | CValue::UInt16(value),
+        ) => Some(CValue::UInt32(value)),
+        (CType::Int16, CValue::Int32(value)) => {
+            add_signed_narrowing_obligations(
+                obligations,
+                assumptions,
+                &value,
+                i32::from(i16::MIN),
+                i32::from(i16::MAX),
+                "int16",
+            )?;
+            Some(CValue::Int16(value))
+        }
+        (CType::Int16, CValue::UInt8(value)) => Some(CValue::Int16(value)),
+        (CType::Int16, CValue::UInt16(value)) => {
+            add_signed_narrowing_obligations(
+                obligations,
+                assumptions,
+                &value,
+                i32::from(i16::MIN),
+                i32::from(i16::MAX),
+                "int16",
+            )?;
+            Some(CValue::Int16(value))
+        }
+        (CType::UInt16, CValue::Int32(value)) => {
+            add_signed_narrowing_obligations(
+                obligations,
+                assumptions,
+                &value,
+                0,
+                i32::from(u16::MAX),
+                "uint16",
+            )?;
+            Some(CValue::UInt16(value))
+        }
+        (CType::UInt16, CValue::Int16(value)) => {
+            add_signed_narrowing_obligations(
+                obligations,
+                assumptions,
+                &value,
+                0,
+                i32::from(u16::MAX),
+                "uint16",
+            )?;
+            Some(CValue::UInt16(value))
+        }
+        (CType::UInt16, CValue::UInt8(value)) => Some(CValue::UInt16(value)),
         (CType::UInt8, CValue::Int32(value)) => {
-            add_proof_obligation_with_context(
-                obligations,
-                assumptions,
-                Proposition::ConditionIs(
-                    ConditionTerm::signed_greater_equal(
-                        value.clone(),
-                        Bitvector32Term::Constant(0),
-                    ),
-                    true,
-                ),
-                Some("uint8 narrowing lower bound"),
-            )?;
-            add_proof_obligation_with_context(
-                obligations,
-                assumptions,
-                Proposition::ConditionIs(
-                    ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(255)),
-                    true,
-                ),
-                Some("uint8 narrowing upper bound"),
-            )?;
+            add_signed_narrowing_obligations(obligations, assumptions, &value, 0, 255, "uint8")?;
             Some(CValue::UInt8(value))
         }
         _ => None,
+    }
+}
+
+fn add_signed_narrowing_obligations(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    value: &Bitvector32Term,
+    lower: i32,
+    upper: i32,
+    type_name: &str,
+) -> Option<()> {
+    add_proof_obligation_with_context(
+        obligations,
+        assumptions,
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(
+                value.clone(),
+                Bitvector32Term::Constant(lower as u32),
+            ),
+            true,
+        ),
+        Some(narrowing_context(type_name, true)),
+    )?;
+    add_proof_obligation_with_context(
+        obligations,
+        assumptions,
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                value.clone(),
+                Bitvector32Term::Constant(upper as u32),
+            ),
+            true,
+        ),
+        Some(narrowing_context(type_name, false)),
+    )
+}
+
+fn narrowing_context(type_name: &str, lower: bool) -> &'static str {
+    match (type_name, lower) {
+        ("uint8", true) => "uint8 narrowing lower bound",
+        ("uint8", false) => "uint8 narrowing upper bound",
+        ("int16", true) => "int16 narrowing lower bound",
+        ("int16", false) => "int16 narrowing upper bound",
+        ("uint16", true) => "uint16 narrowing lower bound",
+        ("uint16", false) => "uint16 narrowing upper bound",
+        _ => "integer narrowing bound",
     }
 }
 
@@ -466,12 +594,10 @@ fn evaluate_c_cast_paths(
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let coerced = if target_type == CType::Int32 {
                     match value {
-                        CValue::UInt8(value) => promote_c_int32_path_value(
-                            CValue::UInt8(value),
-                            &mut facts,
-                            &effective_assumptions,
-                        )
-                        .map(CValue::Int32),
+                        value @ (CValue::Int16(_) | CValue::UInt8(_) | CValue::UInt16(_)) => {
+                            promote_c_int32_path_value(value, &mut facts, &effective_assumptions)
+                                .map(CValue::Int32)
+                        }
                         value => cast_c_value_to_type(
                             value,
                             target_type,
@@ -1043,7 +1169,11 @@ pub(in crate::kernel) fn c_truthiness_paths(
 ) -> Vec<CTruthinessPath> {
     match value {
         CValue::Void => unreachable!("void truthiness must be rejected by the caller"),
-        CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt32(bits) => {
+        CValue::Int16(bits)
+        | CValue::Int32(bits)
+        | CValue::UInt8(bits)
+        | CValue::UInt16(bits)
+        | CValue::UInt32(bits) => {
             let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
                 Some(true) => vec![CTruthinessPath {

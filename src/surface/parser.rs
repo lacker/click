@@ -1105,8 +1105,10 @@ impl Parser {
 
         let scalar_type = match spelling.as_str() {
             "void" => C0Type::Void,
+            "int16" | "short" | "int16_t" => C0Type::Int16,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,
+            "uint16" | "uint16_t" => C0Type::UInt16,
             "uint32" | "uint32_t" => C0Type::UInt32,
             "unsigned" => {
                 if self.peek_ident() == Some("char") {
@@ -1115,9 +1117,12 @@ impl Parser {
                 } else if self.peek_ident() == Some("int") {
                     self.position += 1;
                     C0Type::UInt32
+                } else if self.peek_ident() == Some("short") {
+                    self.position += 1;
+                    C0Type::UInt16
                 } else {
                     return Err(self.error(
-                        "unsupported integer width `unsigned`; only `unsigned char` and `unsigned int` are modeled",
+                        "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
                     ));
                 }
             }
@@ -1128,16 +1133,21 @@ impl Parser {
                         "unsupported C type `signed char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                     ));
                 }
-                return Err(self.error(
-                    "unsupported integer width `signed`: signed integer widths are not modeled",
-                ));
+                if self.peek_ident() == Some("short") {
+                    self.position += 1;
+                    C0Type::Int16
+                } else {
+                    return Err(self.error(
+                        "unsupported integer width `signed`; only `signed short` is modeled among signed standard aliases",
+                    ));
+                }
             }
             "char" => {
                 return Err(self.error(
                     "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
                 ));
             }
-            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint64_t" => {
+            "long" | "size_t" | "int64_t" | "uint64_t" => {
                 return Err(self.error(format!(
                     "unsupported integer width `{spelling}`: see the integer-types issue"
                 )));
@@ -1161,6 +1171,11 @@ impl Parser {
             self.position += 1;
             c_type = match c_type {
                 C0Type::Void => return Err(self.error("`void *` is not supported yet")),
+                C0Type::Int16 | C0Type::UInt16 => {
+                    return Err(
+                        self.error("pointers to 16-bit integer values are not supported yet")
+                    );
+                }
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
@@ -1203,8 +1218,10 @@ impl Parser {
                 || (field.struct_name().is_some() && !field.c_type().is_pointer())
                 || !matches!(
                     field.c_type(),
-                    C0Type::Int32
+                    C0Type::Int16
+                        | C0Type::Int32
                         | C0Type::UInt8
+                        | C0Type::UInt16
                         | C0Type::Int32Array(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Int32Pointer
@@ -1214,7 +1231,7 @@ impl Parser {
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
                 )));
             }
         }
@@ -2859,6 +2876,7 @@ impl Parser {
                 surface: ContractSegmentSurface::Field {
                     name: field_name.to_string(),
                     element_width: None,
+                    element_type: None,
                 },
             });
         };
@@ -2872,9 +2890,9 @@ impl Parser {
         field: &ResolvedField,
     ) -> ContractSegment {
         if let C0Type::Int32Array(_) | C0Type::UInt8Array(_) = field.c_type {
-            let element_width = match field.c_type {
-                C0Type::Int32Array(_) => 4,
-                C0Type::UInt8Array(_) => 1,
+            let (element_width, element_type) = match field.c_type {
+                C0Type::Int32Array(_) => (4, CType::Int32),
+                C0Type::UInt8Array(_) => (1, CType::UInt8),
                 _ => unreachable!("validated inline array field"),
             };
             let field_base = crate::kernel::c_pointer_offset_bytes(base, field.offset_bytes);
@@ -2891,22 +2909,28 @@ impl Parser {
                 surface: ContractSegmentSurface::Field {
                     name: field_name.to_string(),
                     element_width: Some(element_width),
+                    element_type: Some(element_type),
                 },
             };
         }
+        let element_width = match field.c_type {
+            C0Type::Int16 | C0Type::UInt16 => 2,
+            _ => 4,
+        };
+        let start = field.offset_bytes / element_width;
+        let end = field.slot_end_bytes / element_width;
         ContractSegment {
             state: ContractSegmentState::Current,
             base,
-            start: CExpression::Value(int32(field.offset_bytes / 4)),
-            end: CExpression::Value(int32(field.slot_end_bytes / 4)),
+            start: CExpression::Value(int32(start)),
+            end: CExpression::Value(int32(end)),
             surface: ContractSegmentSurface::Field {
                 name: field_name.to_string(),
-                // Non-array field segments are expressed in the existing
-                // int32-aligned slot units, including padding up to the next
-                // field. Keep that unit width independent of the field's C
-                // value width (a pointer field occupies 8 bytes but its
-                // segment bounds are still int32-indexed).
-                element_width: Some(4),
+                // Non-array fields use int32-aligned slot units except for
+                // 16-bit fields, whose two-byte ABI alignment uses two-byte
+                // slot units.
+                element_width: Some(element_width),
+                element_type: Some(field.c_type.to_kernel_type()),
             },
         }
     }
@@ -3076,6 +3100,16 @@ impl Parser {
                     && (field.slot_end_bytes - field.offset_bytes) % 4 != 0)
             {
                 return Err(self.error("inline array field has an invalid resource extent"));
+            }
+            return Ok(());
+        }
+        if matches!(field.c_type, C0Type::Int16 | C0Type::UInt16) {
+            if field.offset_bytes % 2 != 0
+                || field.byte_width != 2
+                || field.slot_end_bytes < field.offset_bytes
+                || (field.slot_end_bytes - field.offset_bytes) % 2 != 0
+            {
+                return Err(self.error("16-bit field places require two-byte alignment and width"));
             }
             return Ok(());
         }

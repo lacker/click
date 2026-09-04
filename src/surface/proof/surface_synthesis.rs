@@ -297,7 +297,12 @@ fn synthesize_surface_proposition_with_bound_variables(
                     )?));
                     index += 1;
                 }
-                Term::CValue(CValue::Int32(value) | CValue::UInt8(value)) => {
+                Term::CValue(
+                    CValue::Int16(value)
+                    | CValue::Int32(value)
+                    | CValue::UInt8(value)
+                    | CValue::UInt16(value),
+                ) => {
                     call_arguments.push(synthesize_surface_bitvector(
                         value,
                         parameters,
@@ -830,7 +835,7 @@ fn synthesize_surface_bitvector(
         )));
     }
     if let Some((name, _)) = state.locals().object_values().find(
-        |(_, value)| matches!(value, CValue::Int32(local) | CValue::UInt8(local) if local == term),
+        |(_, value)| matches!(value, CValue::Int16(local) | CValue::Int32(local) | CValue::UInt8(local) | CValue::UInt16(local) if local == term),
     ) {
         return Some(if name == "result" {
             ContractExpression::CBinding(name.to_string())
@@ -992,7 +997,7 @@ fn synthesize_surface_bitvector(
             // A memory-resident scalar local holding exactly this variable
             // reads as its own name here.
             if let Some((name, _)) = state.local_cell_values().find(|(_, value)| {
-                matches!(value, CValue::Int32(held) | CValue::UInt8(held) if held == term)
+                matches!(value, CValue::Int16(held) | CValue::Int32(held) | CValue::UInt8(held) | CValue::UInt16(held) if held == term)
             }) {
                 return Some(ContractExpression::CFragment(CExpression::Variable(
                     name.to_string(),
@@ -1113,9 +1118,11 @@ fn synthesize_local_aggregate_field(
                         return None;
                     };
                     let value_term = match value {
-                        CValue::Int32(value) | CValue::UInt8(value) | CValue::UInt32(value) => {
-                            value
-                        }
+                        CValue::Int16(value)
+                        | CValue::Int32(value)
+                        | CValue::UInt8(value)
+                        | CValue::UInt16(value)
+                        | CValue::UInt32(value) => value,
                         CValue::Pointer(_) | CValue::Void => return None,
                     };
                     if value_term != *term {

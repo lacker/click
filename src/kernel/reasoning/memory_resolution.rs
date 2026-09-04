@@ -1229,6 +1229,7 @@ fn cell_disjoint_from_load_by_constant_offset(
     }
     let cell_width = match value {
         CValue::Void => return false,
+        CValue::Int16(_) | CValue::UInt16(_) => 2,
         CValue::Int32(_) => 4,
         CValue::UInt8(_) => 1,
         CValue::UInt32(_) => 4,
@@ -1244,13 +1245,17 @@ fn cell_disjoint_from_load_by_constant_offset(
 /// load means.
 fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<SharedCMemory> {
     match value {
-        CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
+        CValue::Int16(Bitvector32Term::MemoryLoad(source, source_pointer))
+        | CValue::UInt16(Bitvector32Term::MemoryLoad(source, source_pointer))
+        | CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer))
             if source_pointer.as_ref() == cell_pointer =>
         {
             Some(source.clone())
         }
-        CValue::Int32(Bitvector32Term::Variable(variable))
+        CValue::Int16(Bitvector32Term::Variable(variable))
+        | CValue::UInt16(Bitvector32Term::Variable(variable))
+        | CValue::Int32(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
             if crate::kernel::eval::is_load_variable(variable) =>
         {
@@ -1259,8 +1264,10 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
             (&source_pointer == cell_pointer).then_some(source)
         }
         CValue::Void
+        | CValue::Int16(_)
         | CValue::Int32(_)
         | CValue::UInt8(_)
+        | CValue::UInt16(_)
         | CValue::UInt32(_)
         | CValue::Pointer(_) => None,
     }

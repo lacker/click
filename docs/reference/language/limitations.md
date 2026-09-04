@@ -12,8 +12,8 @@ contract expressions, calls, and the other parenthesized surface forms.
 ## C0 is small
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
-features include broader structs, unsigned integers beyond the narrow `uint8` byte
-type, casts, globals, general allocator compatibility, and many operators. The
+features include broader structs, 64-bit and `size_t` integers, `char`, globals,
+general allocator compatibility, and some operators. The
 supported `switch` slice is intentionally narrow: labels must be direct integer
 or character literals in one compound body, with no `goto` or arbitrary
 constant-expression labels yet.
@@ -28,7 +28,7 @@ support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
 conversions, allocator declarations, custom allocators, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int32`, `uint8`, named enum fields, fixed one-dimensional
+declarations with `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed one-dimensional
 arrays of the supported scalars, and pointer-valued fields, plus chained `p->child->field`
 loads/stores through struct pointers. Inline scalar arrays retain their element
 width and are accessed through C's array-to-pointer conversion, so
@@ -42,8 +42,8 @@ the ABI-sized struct stride.
 One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. Copyable struct values are also supported when
-every field is `int32`, `uint8`, a named enum field, a modeled data pointer, a
-fixed one-dimensional
+every field is `int16`, `int32`, `uint8`, `uint16`, a named enum field, a
+modeled data pointer, or a fixed one-dimensional
 array of those scalar elements, or an embedded struct whose fields satisfy the
 same rule: parameters, locals, assignments, and returns use fresh
 address-backed copies, recursively copying nested fields and array elements.
@@ -101,18 +101,21 @@ diagnostic.
 
 ## Type support is still narrow
 
-The verifier supports `void` function returns, `int32`, byte-like `uint8`, and
-scalar `uint32`, including their standard spellings (`int`/`int32_t`,
-`unsigned char`/`uint8_t`, and `unsigned int`/`uint32_t`), plus the existing
+The verifier supports `void` function returns and scalar `int16`, `int32`,
+`uint8`, `uint16`, and `uint32`, including their standard spellings
+(`short`/`int16_t`, `int`/`int32_t`, `unsigned char`/`uint8_t`,
+`unsigned short`/`uint16_t`, and `unsigned int`/`uint32_t`), plus the existing
 `int32*`, `uint8*`, `int32**`, `uint8**`, and `uint8[]` forms. C typedefs may
-alias these modeled types and named struct-pointer types. `uint32` is not yet
-available through pointers, arrays, or struct fields. It supports modular `+`,
+alias these modeled types and named struct-pointer types. The 16-bit and
+`uint32` types are not yet available through pointers or arrays; `uint32` is
+also not available through struct fields. `uint32` supports modular `+`,
 `-`, and `*`, unsigned `/` and `%`, equality, unsigned ordered comparisons,
 bitwise operators, and typed shifts; division by zero and invalid shift counts
 remain undefined behavior. It does not support `void` objects or
-parameters. This is not a full C integer model: there are no casts beyond
-checked `int32`-to-`uint8` narrowing and no broad usual-arithmetic-conversion
-lattice.
+parameters. Scalar casts are supported, with checked narrowing into `int16`,
+`uint8`, or `uint16`; pointer and aggregate casts remain unsupported. This is
+not a full C integer model: `size_t`, 64-bit arithmetic, and the complete usual
+arithmetic-conversion lattice remain outside the slice.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
 are modeled with C undefined behavior for their C undefined cases: overflow,
 zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,
@@ -122,17 +125,19 @@ with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
 `0..32`, negative signed left shifts, and unrepresentable signed left-shift
 results are undefined behavior.
 
-`uint8` rvalues promote to `int32` for arithmetic, ordered comparisons, shifts,
-and bitwise operators, assignments, and returns. `uint32` addition and
+`int16`, `uint8`, and `uint16` rvalues promote to `int32` for arithmetic, ordered
+comparisons, shifts, bitwise operators, assignments, and returns. `uint32` addition and
 subtraction are 32-bit modular operations; equality compares the bit patterns,
 and ordered comparisons use unsigned order. Assigning or returning an `int32`
 into `uint8` is a checked narrowing conversion: the current pure facts must
-prove `0 <= value <= 255`.
+prove `0 <= value <= 255`. Narrowing to `int16` requires
+`-32768 <= value <= 32767`, and narrowing to `uint16` requires
+`0 <= value <= 65535`.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Broader casts, additional integer widths, and the full usual arithmetic
-conversion story remain future work.
+`size_t`, 64-bit integers, and the full usual arithmetic conversion story remain
+future work.
 
 The first `for` support is sugar over `while`, and its initializer may be a
 scalar assignment or scalar declaration initializer. Its step can use scalar

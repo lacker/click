@@ -115,8 +115,10 @@ pub(in crate::surface) fn contract_array_ref_element_type(
 
 pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {
     match (value, c_type) {
-        (CValue::Int32(_), C0Type::Int32)
+        (CValue::Int16(_), C0Type::Int16)
+        | (CValue::Int32(_), C0Type::Int32)
         | (CValue::UInt8(_), C0Type::UInt8)
+        | (CValue::UInt16(_), C0Type::UInt16)
         | (CValue::UInt32(_), C0Type::UInt32) => true,
         (CValue::Pointer(pointer), c_type) if c_type.is_pointer() => {
             pointer.c_type() == c_type.to_kernel_type()

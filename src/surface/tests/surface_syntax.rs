@@ -1599,6 +1599,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
                 surface: ContractSegmentSurface::Field {
                     name: "ref_count".to_string(),
                     element_width: None,
+                    element_type: None,
                 },
             },
         }]
@@ -1791,6 +1792,7 @@ fn parses_pilot_struct_field_mutable_effect() {
             surface: ContractSegmentSurface::Field {
                 name: "ref_count".to_string(),
                 element_width: None,
+                element_type: None,
             },
         }])
     );

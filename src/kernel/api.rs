@@ -40,8 +40,16 @@ pub fn int32(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int32(bits.into())
 }
 
+pub fn int16(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::Int16(bits.into())
+}
+
 pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
+}
+
+pub fn uint16(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::UInt16(bits.into())
 }
 
 pub fn uint32(bits: impl Into<Bitvector32Term>) -> CValue {
@@ -537,9 +545,11 @@ fn abstract_c_state_for_join_across_with_policy(
         } else {
             match c_type {
                 CType::Void => continue,
+                CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
+                CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
                 CType::Int32Pointer
                 | CType::UInt8Pointer
                 | CType::Int32PointerPointer
@@ -5163,9 +5173,11 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             pointer_depth_exceeds(pointer, remaining - 1)
                 || match value {
                     CValue::Void => false,
-                    CValue::Int32(term) | CValue::UInt8(term) | CValue::UInt32(term) => {
-                        term_depth_exceeds(term, remaining - 1)
-                    }
+                    CValue::Int16(term)
+                    | CValue::Int32(term)
+                    | CValue::UInt8(term)
+                    | CValue::UInt16(term)
+                    | CValue::UInt32(term) => term_depth_exceeds(term, remaining - 1),
                     CValue::Pointer(pointer) => pointer_depth_exceeds(pointer, remaining - 1),
                 }
         })

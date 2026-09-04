@@ -693,9 +693,11 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
 
 fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
     match value {
-        CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt32(bits) => {
-            collect_bitvector_bound_variables(bits, variables)
-        }
+        CValue::Int16(bits)
+        | CValue::Int32(bits)
+        | CValue::UInt8(bits)
+        | CValue::UInt16(bits)
+        | CValue::UInt32(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bound_variables(pointer, variables),
         CValue::Void => {}
     }
@@ -2799,8 +2801,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
 ) -> CValue {
     match value {
         CValue::Void => CValue::Void,
+        CValue::Int16(bits) => int16(substitute_bitvector_variable(bits, from, to)),
         CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
+        CValue::UInt16(bits) => uint16(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt32(bits) => uint32(substitute_bitvector_variable(bits, from, to)),
         CValue::Pointer(pointer) => CValue::typed_pointer(
             substitute_bitvector_variable_in_pointer(pointer.pointer(), from, to),
@@ -3180,7 +3184,12 @@ fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &P
             substitute_pointer_variable_in_pointer(pointer.pointer(), from, to),
             pointer.c_type(),
         ),
-        CValue::Void | CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt32(_) => value.clone(),
+        CValue::Void
+        | CValue::Int16(_)
+        | CValue::Int32(_)
+        | CValue::UInt8(_)
+        | CValue::UInt16(_)
+        | CValue::UInt32(_) => value.clone(),
     }
 }
 

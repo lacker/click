@@ -83,6 +83,11 @@ pub(in crate::surface) fn initial_call_state(
                     kernel_c_type,
                 ));
             }
+            C0Type::Int16 => {
+                arguments.push(CExpression::Value(CValue::Int16(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
             C0Type::Int32 => {
                 arguments.push(CExpression::Value(CValue::Int32(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
@@ -90,6 +95,11 @@ pub(in crate::surface) fn initial_call_state(
             }
             C0Type::UInt8 => {
                 arguments.push(CExpression::Value(CValue::UInt8(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
+            C0Type::UInt16 => {
+                arguments.push(CExpression::Value(CValue::UInt16(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
@@ -288,7 +298,7 @@ fn materialize_access_segment_cells(
     }
 
     let element_type = contract_segment_element_type(parameters, &segment.source);
-    let element_width = element_type.byte_width();
+    let element_width = contract_segment_element_width(parameters, &segment.source);
     let base_memory = memory.clone();
     for index in *start..*end {
         let pointer = offset_pointer_by_elements(
@@ -1060,7 +1070,10 @@ fn contract_segment_element_type(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> CType {
-    contract_expression_element_type(parameters, &segment.base).unwrap_or(CType::Int32)
+    segment
+        .field_element_type()
+        .or_else(|| contract_expression_element_type(parameters, &segment.base))
+        .unwrap_or(CType::Int32)
 }
 
 fn contract_expression_is_struct_array(
@@ -1175,8 +1188,10 @@ fn symbolic_value_from_load(
     load: Bitvector32Term,
 ) -> CValue {
     match element_type {
+        CType::Int16 => CValue::Int16(load),
         CType::Int32 => CValue::Int32(load),
         CType::UInt8 => CValue::UInt8(load),
+        CType::UInt16 => CValue::UInt16(load),
         c_type if c_type.is_pointer() => CValue::typed_pointer(
             Pointer {
                 block: pointer.block.clone(),

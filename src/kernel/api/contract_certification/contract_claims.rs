@@ -314,8 +314,11 @@ fn memories_equal_by_matching_derivations(
         pointer: &Pointer,
         value: &CValue,
     ) -> bool {
-        let (CValue::Int32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
-        | CValue::UInt8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))) = value
+        let (CValue::Int16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::Int32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::UInt8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::UInt16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::UInt32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))) = value
         else {
             return false;
         };
@@ -476,15 +479,21 @@ fn materialized_load_is_unchanged(
     assumptions: &PureFactContext,
 ) -> bool {
     let load = match value {
-        CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
-        | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
+        CValue::Int16(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::UInt16(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::UInt32(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
             (memory.clone(), load_pointer.as_ref().clone())
         }
         // With terms canonical at creation a materialized cell holds the
         // load variable for its load; the registry records the load it
         // stands for.
-        CValue::Int32(Bitvector32Term::Variable(variable))
+        CValue::Int16(Bitvector32Term::Variable(variable))
+        | CValue::Int32(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
+        | CValue::UInt16(Bitvector32Term::Variable(variable))
+        | CValue::UInt32(Bitvector32Term::Variable(variable))
             if crate::kernel::eval::is_load_variable(variable) =>
         {
             let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) else {
@@ -1180,11 +1189,7 @@ fn function_claim_holds_on_prepared_path(
         CFunctionContractClaimTarget::Effect => {
             let mut mutable_ranges = Vec::new();
             for segment in function.contract_mutable() {
-                let element_width = crate::kernel::eval::c_expression_pointer_step_width(
-                    entry_state,
-                    &segment.base,
-                )
-                .unwrap_or(4);
+                let element_width = segment.element_width();
                 if let Some(guard) = segment.guard() {
                     match evaluate_guarded_contract_condition(
                         guard,

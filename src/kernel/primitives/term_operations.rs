@@ -737,6 +737,8 @@ impl CType {
                 CType::UInt8Pointer => 5,
                 CType::Int32PointerPointer => 6,
                 CType::UInt8PointerPointer => 7,
+                CType::Int16 => 8,
+                CType::UInt16 => 9,
                 CType::FunctionPointer(_) | CType::Int32Array(_) | CType::UInt8Array(_) => {
                     return None;
                 }
@@ -774,6 +776,8 @@ impl CType {
             | Self::Int32PointerPointer
             | Self::UInt8PointerPointer
             | Self::FunctionPointer(_)
+            | Self::Int16
+            | Self::UInt16
             | Self::Int32Array(_)
             | Self::UInt8Array(_) => None,
         }
@@ -782,8 +786,10 @@ impl CType {
     pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
             (Self::Void, CValue::Void)
+            | (Self::Int16, CValue::Int16(_))
             | (Self::Int32, CValue::Int32(_))
             | (Self::UInt8, CValue::UInt8(_))
+            | (Self::UInt16, CValue::UInt16(_))
             | (Self::UInt32, CValue::UInt32(_)) => true,
             (target, CValue::Pointer(pointer)) if target.is_pointer() => {
                 pointer.is_null()
@@ -801,8 +807,10 @@ impl CType {
     pub fn byte_width(self) -> u32 {
         match self {
             Self::Void => 0,
+            Self::Int16 => 2,
             Self::Int32 => 4,
             Self::UInt8 => 1,
+            Self::UInt16 => 2,
             Self::UInt32 => 4,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
@@ -848,8 +856,10 @@ impl CValue {
     pub(crate) fn c_type(&self) -> CType {
         match self {
             Self::Void => CType::Void,
+            Self::Int16(_) => CType::Int16,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
+            Self::UInt16(_) => CType::UInt16,
             Self::UInt32(_) => CType::UInt32,
             Self::Pointer(pointer) => pointer.c_type(),
         }
@@ -858,8 +868,10 @@ impl CValue {
     pub(in crate::kernel) fn byte_width(&self) -> u32 {
         match self {
             Self::Void => 0,
+            Self::Int16(_) => 2,
             Self::Int32(_) => 4,
             Self::UInt8(_) => 1,
+            Self::UInt16(_) => 2,
             Self::UInt32(_) => 4,
             Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
         }

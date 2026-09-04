@@ -1,4 +1,6 @@
-use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8, uint32};
+use super::api::{
+    int16, int32, normalize_exact_memory_loads_in_pointer_offset, uint8, uint16, uint32,
+};
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution,
@@ -268,8 +270,10 @@ impl std::fmt::Display for PointerBlock {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
     Void,
+    Int16(Bitvector32Term),
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
+    UInt16(Bitvector32Term),
     UInt32(Bitvector32Term),
     Pointer(CPointerValue),
 }
@@ -277,8 +281,10 @@ pub enum CValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CType {
     Void,
+    Int16,
     Int32,
     UInt8,
+    UInt16,
     UInt32,
     Int32Pointer,
     UInt8Pointer,

@@ -3850,7 +3850,7 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
     .expect_err("union-bearing struct values should remain outside this slice");
 
     assert!(error.message().contains(
-        "int32, uint8, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields"
+        "int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields"
     ));
     assert!(error.message().contains(
         "contains a function pointer, an unsupported embedded-struct array, or a union field"

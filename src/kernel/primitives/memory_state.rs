@@ -1484,8 +1484,22 @@ impl CMemory {
         ))
     }
 
+    pub(in crate::kernel) fn symbolic_int16_load(&self, pointer: &Pointer) -> CValue {
+        int16(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
     pub(in crate::kernel) fn symbolic_uint8_load(&self, pointer: &Pointer) -> CValue {
         uint8(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_uint16_load(&self, pointer: &Pointer) -> CValue {
+        uint16(Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
         ))

@@ -843,8 +843,7 @@ fn execute_verified_function_rule(
             "verified call mutable footprint lowering",
         );
         for segment in function.contract_mutable() {
-            let element_width =
-                c_expression_pointer_step_width(&footprint_state, &segment.base).unwrap_or(4);
+            let element_width = segment.element_width();
             if segment.guard().is_some_and(|guard| {
                 evaluate_guarded_contract_condition(
                     guard,
@@ -1566,8 +1565,10 @@ fn materialize_aggregate_return(
 fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
+        CType::Int16 => CValue::Int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
+        CType::UInt16 => CValue::UInt16(Bitvector32Term::Variable(variable)),
         CType::UInt32 => CValue::UInt32(Bitvector32Term::Variable(variable)),
         CType::Int32Pointer
         | CType::UInt8Pointer
@@ -1750,7 +1751,7 @@ pub(super) fn bind_c_function_arguments(
             address_taken.contains(parameter.name())
                 && matches!(
                     parameter.c_type(),
-                    CType::Int32 | CType::UInt8 | CType::UInt32
+                    CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
                 )
         })
         .map(|parameter| parameter.name())
@@ -1834,7 +1835,7 @@ pub(super) fn copy_aggregate_fields(
 ) -> CMemory {
     for field in layout.fields() {
         let (element_type, element_count) = match field.c_type() {
-            CType::Int32 | CType::UInt8 => (field.c_type(), 1),
+            CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Int32Pointer
@@ -1857,6 +1858,7 @@ pub(super) fn copy_aggregate_fields(
             let value = memory.known_value(&source_field).or_else(|| {
                 if memory.is_zeroed_heap_address(&source_field, element_type.byte_width()) {
                     return match element_type {
+                        CType::Int16 => Some(int16(0)),
                         CType::Int32 => Some(int32(0)),
                         CType::UInt8 => Some(uint8(0)),
                         CType::Int32Pointer
@@ -1865,6 +1867,7 @@ pub(super) fn copy_aggregate_fields(
                         | CType::UInt8PointerPointer => {
                             Some(CValue::typed_pointer(Pointer::null(), element_type))
                         }
+                        CType::UInt16 => Some(uint16(0)),
                         _ => None,
                     };
                 }
@@ -1875,6 +1878,10 @@ pub(super) fn copy_aggregate_fields(
                     return None;
                 }
                 match element_type {
+                    CType::Int16 => Some(CValue::Int16(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
                     CType::Int32 => Some(CValue::Int32(crate::kernel::canonical_form_of_load(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
@@ -1903,6 +1910,10 @@ pub(super) fn copy_aggregate_fields(
                             element_type,
                         ))
                     }
+                    CType::UInt16 => Some(CValue::UInt16(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
                     _ => None,
                 }
             });
@@ -3849,7 +3860,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
             Err(_) => return None,
         };
         let range = evaluated.memory_range()?;
-        let element_width = c_expression_pointer_step_width(&state, &segment.base).unwrap_or(4);
+        let element_width = segment.element_width();
         propositions.push(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: range

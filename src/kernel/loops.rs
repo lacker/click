@@ -1704,11 +1704,7 @@ fn evaluate_whole_loop_effect_ranges(
                 let mut ranges = Vec::new();
                 let mut failed = false;
                 for segment in segments {
-                    let element_width = crate::kernel::eval::c_expression_pointer_step_width(
-                        before_state,
-                        &segment.base,
-                    )
-                    .unwrap_or(4);
+                    let element_width = segment.element_width;
                     match evaluate_loop_effect_segment(before_state, segment, assumptions, budget)?
                     {
                         Ok(segment) => ranges.push(CMemoryRange::new_with_element_width(
@@ -1999,8 +1995,7 @@ pub(super) fn evaluate_loop_effect_segment(
         }
         Err(message) => return Ok(Err(message)),
     };
-    let element_width =
-        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+    let element_width = segment.element_width;
 
     Ok(Ok(EvaluatedMemorySegment {
         base,
@@ -2064,8 +2059,7 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         }
         Err(message) => return Ok(Err(message)),
     };
-    let element_width =
-        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+    let element_width = segment.element_width;
     Ok(Ok((
         EvaluatedMemorySegment {
             base,
@@ -2322,8 +2316,10 @@ pub(super) fn havoc_loop_modified_locals(
         let c_type = *c_type;
         let value = match c_type {
             CType::Void => continue,
+            CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),
             CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
             CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
+            CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
             CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
             // A pointer local reassigned in the body (`p = p + 1`) must not
             // keep its entry value across the abstract iteration, exactly as

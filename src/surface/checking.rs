@@ -155,7 +155,11 @@ pub(super) fn apply_choose_tactic(
         CValue::Pointer(pointer) => {
             crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
         }
-        CValue::Void | CValue::UInt8(_) | CValue::UInt32(_) => {
+        CValue::Void
+        | CValue::Int16(_)
+        | CValue::UInt8(_)
+        | CValue::UInt16(_)
+        | CValue::UInt32(_) => {
             unreachable!("unsupported choice sort above")
         }
     };

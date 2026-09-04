@@ -42,6 +42,15 @@ intentionally outside this slice. The regressions are
 `mdtests/uint32_arithmetic.md`, `mdtests/uint32_operators.md`,
 `mdtests/uint32_division_by_zero.md`, and `mdtests/uint32_invalid_shift.md`.
 
+The third slice now supports scalar signed and unsigned 16-bit values:
+`short`/`signed short`/`int16_t` map to `int16`, while `unsigned short` and
+`uint16_t` map to `uint16`. Both use two-byte LP64 storage and promote to
+`int32` for arithmetic, comparisons, shifts, and bitwise operators. Checked
+casts and assignment/return conversions enforce `int16`'s
+`-32768..32767` range and `uint16`'s `0..65535` range. The regression is
+`mdtests/int16_uint16_conversion.md`. Pointer, array, `size_t`, and 64-bit
+forms remain separate work.
+
 ## Intended regression
 
 A staged set of mdtests, each verifying a function that a C compiler accepts:
@@ -54,6 +63,8 @@ A staged set of mdtests, each verifying a function that a C compiler accepts:
 3. `size_t`/`int64_t` length arithmetic: `size_t total(size_t n, size_t m)`
    with an overflow obligation, and indexing `p[i]` with `size_t i`.
 4. A `short` field load and store with correct promotion.
+5. `size_t`/64-bit length arithmetic and indexing after the allocation-shape
+   and integer-model work is complete.
 
 Each stage lands with negative tests for the new UB and range obligations.
 

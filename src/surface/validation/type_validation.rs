@@ -320,8 +320,10 @@ pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) ->
 pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
     match c_type {
         C0Type::Void => "void".to_string(),
+        C0Type::Int16 => "int16".to_string(),
         C0Type::Int32 => "int32".to_string(),
         C0Type::UInt8 => "uint8".to_string(),
+        C0Type::UInt16 => "uint16".to_string(),
         C0Type::UInt32 => "uint32".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
@@ -337,7 +339,7 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
         (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
         | (C0Type::UInt8Pointer, C0Type::UInt8Array(_)) => true,
-        (C0Type::Int32 | C0Type::UInt8, C0Type::UInt32) => true,
+        (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
         _ => actual == expected,
     }
 }
@@ -504,8 +506,10 @@ fn infer_c_expression_type(
 ) -> Option<C0Type> {
     match expression {
         CExpression::Value(CValue::Void) => Some(C0Type::Void),
+        CExpression::Value(CValue::Int16(_)) => Some(C0Type::Int16),
         CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
+        CExpression::Value(CValue::UInt16(_)) => Some(C0Type::UInt16),
         CExpression::Value(CValue::UInt32(_)) => Some(C0Type::UInt32),
         CExpression::Value(CValue::Pointer(_)) => None,
         CExpression::Variable(name) => variables.get(name).copied(),
@@ -513,8 +517,10 @@ fn infer_c_expression_type(
             expression: _,
             target_type,
         } => match target_type {
+            CType::Int16 => Some(C0Type::Int16),
             CType::Int32 => Some(C0Type::Int32),
             CType::UInt8 => Some(C0Type::UInt8),
+            CType::UInt16 => Some(C0Type::UInt16),
             CType::UInt32 => Some(C0Type::UInt32),
             CType::Int32Pointer => Some(C0Type::Int32Pointer),
             CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
@@ -580,8 +586,10 @@ fn infer_c_expression_type(
         }
         CExpression::TypedLoad { value_type, .. } => Some(match value_type {
             CType::Void => return None,
+            CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,
+            CType::UInt16 => C0Type::UInt16,
             CType::UInt32 => C0Type::UInt32,
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
@@ -711,7 +719,10 @@ fn infer_contract_shift_type(
 }
 
 fn type_is_scalar(c_type: C0Type) -> bool {
-    matches!(c_type, C0Type::Int32 | C0Type::UInt8 | C0Type::UInt32)
+    matches!(
+        c_type,
+        C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+    )
 }
 
 fn scalar_arithmetic_result_type(left: C0Type, right: C0Type) -> C0Type {

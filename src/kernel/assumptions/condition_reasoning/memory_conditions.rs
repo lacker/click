@@ -188,8 +188,13 @@ impl PureFactContext {
         let Bitvector32Term::MemoryLoad(memory, pointer) = &viewed else {
             return None;
         };
-        let CValue::Int32(value) = self.resolve_memory_load_value(memory, pointer)? else {
-            return None;
+        let value = match self.resolve_memory_load_value(memory, pointer)? {
+            CValue::Int16(value)
+            | CValue::Int32(value)
+            | CValue::UInt8(value)
+            | CValue::UInt16(value)
+            | CValue::UInt32(value) => value,
+            CValue::Void | CValue::Pointer(_) => return None,
         };
         let value = if viewed == *term {
             value
