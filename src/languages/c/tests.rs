@@ -32,11 +32,46 @@ fn c0_collects_scalar_file_scope_globals() {
 }
 
 #[test]
+fn c0_file_static_globals_are_qualified_by_translation_unit() {
+    let alpha = syntax::parse_functions_for_source(
+        "static int32 counter = 1; int32 read_alpha() { return counter; }",
+        "alpha.c",
+    )
+    .expect("file-scope static globals should parse");
+    let beta = syntax::parse_functions_for_source(
+        "static int32 counter = 10; int32 read_beta() { return counter; }",
+        "beta.c",
+    )
+    .expect("file-scope static globals should parse");
+
+    let alpha_global = &alpha[0].globals()["counter"];
+    let beta_global = &beta[0].globals()["counter"];
+    assert!(alpha_global.is_file_static());
+    assert!(beta_global.is_file_static());
+    assert_eq!(alpha_global.name(), "counter");
+    assert_eq!(beta_global.name(), "counter");
+    assert_ne!(alpha_global.kernel_name(), alpha_global.name());
+    assert_ne!(beta_global.kernel_name(), beta_global.name());
+    assert_ne!(alpha_global.kernel_name(), beta_global.kernel_name());
+    assert_eq!(
+        alpha[0].to_kernel_function().global_variables()[0].name(),
+        "counter"
+    );
+    assert_ne!(
+        alpha[0].to_kernel_function().global_variables()[0].kernel_name(),
+        beta[0].to_kernel_function().global_variables()[0].kernel_name()
+    );
+}
+
+#[test]
 fn c0_headers_accept_extern_scalar_globals_only() {
     syntax::validate_header("extern int32 counter;")
         .expect("headers should accept extern scalar globals");
     let error = syntax::validate_header("int32 counter;")
         .expect_err("headers must keep definitions in source files");
+    assert!(error.message().contains("only with `extern`"));
+    let error = syntax::validate_header("static int32 counter;")
+        .expect_err("headers must not define file-scope static storage");
     assert!(error.message().contains("only with `extern`"));
 }
 

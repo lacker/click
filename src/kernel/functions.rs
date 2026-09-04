@@ -1896,16 +1896,23 @@ pub(super) fn bind_c_function_arguments(
 pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
     let mut state = state.clone();
     for global in function.global_variables() {
-        let slot = CMemory::global_pointer(global.name());
+        let slot = CMemory::global_pointer(global.kernel_name());
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory
                 .with_block(slot.block.clone(), global.c_type().byte_width())
                 .store(slot.clone(), global.initial_value().clone());
         }
-        state
-            .locals
-            .set_global_at(global.name().to_string(), global.c_type(), slot);
+        state.locals.set_global_at(
+            global.kernel_name().to_string(),
+            global.c_type(),
+            slot.clone(),
+        );
+        if global.kernel_name() != global.name() && !state.locals.contains_name(global.name()) {
+            state
+                .locals
+                .set_global_at(global.name().to_string(), global.c_type(), slot);
+        }
     }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());

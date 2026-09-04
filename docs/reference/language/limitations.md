@@ -13,8 +13,8 @@ contract expressions, calls, and the other parenthesized surface forms.
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
 features include broader structs, pointer and array forms of 64-bit and
-`size_t` integers, `char`, static
-locals and string literals, unmodeled allocator compatibility, and some
+`size_t` integers, `char` and string literals, unmodeled allocator
+compatibility, and some
 operators. Supported scalar file-scope globals are described in [Supported
 C0](c0.md). The
 supported `switch` slice is intentionally narrow: labels must be direct integer

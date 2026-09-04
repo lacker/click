@@ -134,29 +134,54 @@ pub struct C0Function {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Global {
     name: String,
+    kernel_name: String,
     c_type: C0Type,
     initializer: Option<C0Expression>,
+    file_static: bool,
 }
 
 impl C0Global {
     fn declaration(name: String, c_type: C0Type) -> Self {
         Self {
+            kernel_name: name.clone(),
             name,
             c_type,
             initializer: None,
+            file_static: false,
         }
     }
 
     fn definition(name: String, c_type: C0Type, initializer: C0Expression) -> Self {
         Self {
+            kernel_name: name.clone(),
             name,
             c_type,
             initializer: Some(initializer),
+            file_static: false,
+        }
+    }
+
+    fn file_static_definition(
+        name: String,
+        kernel_name: String,
+        c_type: C0Type,
+        initializer: C0Expression,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            c_type,
+            initializer: Some(initializer),
+            file_static: true,
         }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
     }
 
     pub fn c_type(&self) -> C0Type {
@@ -165,6 +190,10 @@ impl C0Global {
 
     pub fn is_defined(&self) -> bool {
         self.initializer.is_some()
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
     }
 
     pub fn initializer(&self) -> Option<&C0Expression> {
@@ -187,8 +216,9 @@ impl C0Global {
             C0Type::UInt32 => crate::kernel::uint32(bits),
             _ => return None,
         };
-        Some(crate::kernel::CGlobal::new(
+        Some(crate::kernel::CGlobal::new_with_kernel_name(
             self.name.clone(),
+            self.kernel_name.clone(),
             self.c_type.to_kernel_type(),
             value,
         ))
@@ -1260,6 +1290,14 @@ pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
     parse_functions_for_abi(source, CAbi::SUPPORTED)
 }
 
+pub(crate) fn parse_functions_for_source(
+    source: &str,
+    source_identity: &str,
+) -> Result<Vec<C0Function>, C0SyntaxError> {
+    Parser::new_with_source_identity(source, CAbi::SUPPORTED, Some(source_identity))?
+        .parse_functions()
+}
+
 pub fn parse_functions_for_abi(source: &str, abi: CAbi) -> Result<Vec<C0Function>, C0SyntaxError> {
     Parser::new(source, abi)?.parse_functions()
 }
@@ -1804,6 +1842,7 @@ struct Parser {
     globals: BTreeMap<String, C0Global>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     header_mode: bool,
+    source_identity: Option<String>,
     abi: CAbi,
 }
 
@@ -1846,6 +1885,14 @@ enum CLoopContext {
 
 impl Parser {
     fn new(source: &str, abi: CAbi) -> Result<Self, C0SyntaxError> {
+        Self::new_with_source_identity(source, abi, None)
+    }
+
+    fn new_with_source_identity(
+        source: &str,
+        abi: CAbi,
+        source_identity: Option<&str>,
+    ) -> Result<Self, C0SyntaxError> {
         let (tokens, positions) = tokenize(source)?;
         Ok(Self {
             tokens,
@@ -1869,6 +1916,7 @@ impl Parser {
             globals: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             header_mode: false,
+            source_identity: source_identity.map(str::to_string),
             abi,
         })
     }
@@ -1895,7 +1943,19 @@ impl Parser {
             .flat_map(|scope| scope.iter().rev())
             .find(|binding| binding.source_name == source_name)
             .map(|binding| binding.kernel_name.clone())
+            .or_else(|| {
+                self.globals
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
             .unwrap_or_else(|| source_name.to_string())
+    }
+
+    fn file_static_kernel_name(&self, source_name: &str) -> String {
+        format!(
+            "{source_name}#file-static:{}",
+            self.source_identity.as_deref().unwrap_or("source")
+        )
     }
 
     /// Records a parameter or local declaration in the innermost scope. A
@@ -2276,9 +2336,7 @@ impl Parser {
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
         while self.peek().is_some() {
             if self.peek_ident() == Some("static") {
-                return Err(self.error_here(
-                    "file-scope `static` declarations are not supported yet; use a function-local scalar static",
-                ));
+                self.parse_global_declaration()?;
             } else if self.peek_ident() == Some("typedef") {
                 self.parse_typedef_declaration()?;
             } else if self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace)
@@ -2314,12 +2372,23 @@ impl Parser {
     }
 
     fn parse_global_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        let is_file_static = if self.peek_ident() == Some("static") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
         let is_extern = if self.peek_ident() == Some("extern") {
             self.position += 1;
             true
         } else {
             false
         };
+        if is_file_static && is_extern {
+            return Err(self.error_here(
+                "file-scope declarations may use either `static` or `extern`, not both",
+            ));
+        }
         let parsed_type = self.parse_type()?;
         if parsed_type.struct_name.is_some()
             || parsed_type.enum_name.is_some()
@@ -2341,6 +2410,11 @@ impl Parser {
 
         loop {
             let name = self.expect_ident("global name")?;
+            let kernel_name = if is_file_static {
+                self.file_static_kernel_name(&name)
+            } else {
+                name.clone()
+            };
             if self.peek() == Some(&Token::LBracket) {
                 return Err(
                     self.error_here("file-scope arrays are not supported yet; use a scalar global")
@@ -2366,11 +2440,20 @@ impl Parser {
                 parsed_type.c_type,
                 initializer
                     .map(|initializer| {
-                        C0Global::definition(name.clone(), parsed_type.c_type, initializer)
+                        if is_file_static {
+                            C0Global::file_static_definition(
+                                name.clone(),
+                                kernel_name.clone(),
+                                parsed_type.c_type,
+                                initializer,
+                            )
+                        } else {
+                            C0Global::definition(name.clone(), parsed_type.c_type, initializer)
+                        }
                     })
                     .unwrap_or_else(|| C0Global::declaration(name.clone(), parsed_type.c_type)),
             )?;
-            self.variable_types.insert(name, parsed_type.c_type);
+            self.variable_types.insert(kernel_name, parsed_type.c_type);
             if self.peek() != Some(&Token::Comma) {
                 break;
             }
@@ -2400,6 +2483,11 @@ impl Parser {
                 return Err(
                     self.error_here(format!("conflicting declarations for global `{name}`"))
                 );
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for global `{name}`"
+                )));
             }
             if previous.is_defined() && declaration.is_defined() {
                 return Err(self.error_here(format!("duplicate definition of global `{name}`")));

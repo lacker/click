@@ -1947,7 +1947,7 @@ fn parse_c_source_functions(
             ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
         })?;
     }
-    syntax::parse_functions(expanded.source()).map_err(|error| {
+    syntax::parse_functions_for_source(expanded.source(), source_path).map_err(|error| {
         ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
     })
 }
@@ -2023,8 +2023,10 @@ pub(in crate::surface) fn parse_verified_sources(
 
     // Each translation unit sees only the declarations available through its
     // own includes. Link the collected declarations here so every kernel
-    // function receives the same stable global layout, while counting a
-    // definition once per source file rather than once per function.
+    // function receives the same externally linked global layout, while
+    // counting a definition once per source file rather than once per
+    // function. File-scope `static` declarations stay in their own
+    // translation unit and are linked below only into that unit's functions.
     let mut globals_by_source = BTreeMap::<String, BTreeMap<String, syntax::C0Global>>::new();
     for (source_path, function) in parsed.values() {
         let source_globals = globals_by_source.entry(source_path.clone()).or_default();
@@ -2057,6 +2059,9 @@ pub(in crate::surface) fn parse_verified_sources(
     let mut globals = BTreeMap::<String, syntax::C0Global>::new();
     for source_globals in globals_by_source.values() {
         for (name, global) in source_globals {
+            if global.is_file_static() {
+                continue;
+            }
             match globals.get(name) {
                 Some(previous) if previous.c_type() != global.c_type() => {
                     return Err(ClickError::new(format!(
@@ -2088,7 +2093,15 @@ pub(in crate::surface) fn parse_verified_sources(
     parsed = parsed
         .into_iter()
         .map(|(name, (source_path, function))| {
-            (name, (source_path, function.with_globals(globals.clone())))
+            let mut visible_globals = globals.clone();
+            if let Some(source_globals) = globals_by_source.get(&source_path) {
+                for (global_name, global) in source_globals {
+                    if global.is_file_static() {
+                        visible_globals.insert(global_name.clone(), global.clone());
+                    }
+                }
+            }
+            (name, (source_path, function.with_globals(visible_globals)))
         })
         .collect();
 

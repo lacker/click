@@ -781,7 +781,8 @@ pub struct CParameter {
 /// entry state is created.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CGlobal {
-    pub(super) name: String,
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
 }

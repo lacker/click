@@ -29,6 +29,16 @@ impl CParameter {
 
 impl CGlobal {
     pub fn new(name: impl Into<String>, c_type: CType, initial_value: CValue) -> Self {
+        let name = name.into();
+        Self::new_with_kernel_name(name.clone(), name, c_type, initial_value)
+    }
+
+    pub fn new_with_kernel_name(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        c_type: CType,
+        initial_value: CValue,
+    ) -> Self {
         assert!(
             matches!(
                 c_type,
@@ -42,14 +52,19 @@ impl CGlobal {
             "C global initializer must match its declared type"
         );
         Self {
-            name: name.into(),
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
             c_type,
             initial_value,
         }
     }
 
     pub fn name(&self) -> &str {
-        &self.name
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
     }
 
     pub fn c_type(&self) -> CType {
