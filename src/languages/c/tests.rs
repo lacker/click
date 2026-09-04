@@ -2007,7 +2007,7 @@ fn c0_syntax_rejects_mismatched_pointer_array_calloc_element_size() {
     let error = syntax::parse_function(
         r#"
         int32* bad(int32 count) {
-            int32** slots = calloc(count, sizeof(uint8*));
+            int32** slots = calloc(count, sizeof(uint8));
             return slots[0];
         }
         "#,
