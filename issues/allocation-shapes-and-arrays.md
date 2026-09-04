@@ -37,16 +37,18 @@ with one-byte access and `calloc(n, sizeof(uint8))` zeroing before `free(p)`.
 
 The bounded `realloc` implementation now applies to `uint8*` and pointer
 arrays as well as `int32*`, including symbolic byte extents and preserved
-zeroed prefixes. The remaining arbitrary-layout `realloc` cases stay outside
-this issue's supported typed allocation model. Heap `malloc` and `free` now also support
+zeroed prefixes. Heap `malloc` and `free` now also support
 `int32**`/`uint8**` pointer arrays with their eight-byte pointer stride;
 pointer-array `calloc` initializes each pointer cell to null, and bounded
 pointer-array `realloc` preserves fitting initialized cells and zeroed
 prefixes. Heap struct pointers now use byte-backed allocation extents, accept
 `malloc(count * sizeof(struct S))`, and lower `items[i].field` with the ABI
 struct stride; their bounded `calloc` and `realloc` paths preserve the same
-initialization and prefix rules. Arbitrary-layout realloc remains follow-up
-work.
+initialization and prefix rules. Arbitrary-layout `malloc` and `realloc` now
+accept positive byte extents independently of the receiving pointer's logical
+element width; ownership falls back to byte ranges when a typed extent is not
+exactly divisible, and only complete initialized cells are copied. Compatible
+external allocator declarations remain follow-up work.
 
 ## Acceptance criteria
 
@@ -56,8 +58,8 @@ work.
 - `calloc` and the supported bounded `realloc` form are modeled builtins with
   their lifetime transitions recorded in the memory DAG like `malloc` and
   `free`; bounded zeroed prefixes preserve their initialization status while
-  grown tails remain uninitialized. Arbitrary-layout realloc cases stay an
-  explicit follow-up.
+  grown tails remain uninitialized. Arbitrary-byte `realloc` uses the same
+  lifetime transition and preserves only complete initialized cells.
 - `malloc` and `calloc` assigned to `uint8*` are modeled as positive byte
   extents, with one-byte access ranges and zeroed `calloc` reads; their
   complete ranges can be reclaimed by `free`.
@@ -69,6 +71,10 @@ work.
   are modeled as positive byte extents, with `items[i].field` using the ABI
   struct stride, initialized-field prefix preservation, and complete `free`
   reclamation.
+- Arbitrary positive byte extents assigned to supported pointer types are
+  modeled as byte-backed allocation authority. `realloc` preserves complete
+  initialized cells that fit, rejects out-of-bounds typed accesses, and allows
+  complete `free` after a non-divisible resize.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

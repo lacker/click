@@ -28,9 +28,10 @@ ABI width of each pointer-valued cell.
 
 The supported `malloc`, `calloc`, and `realloc` forms have a null outcome and a
 successful outcome. Success creates a fresh block identity at offset zero, with either
-the exact LP64 size of `struct T` or a verified runtime extent such as
-`count * 4`, `count * sizeof(uint8)`, or `count * sizeof(struct T)`. Heap
-identities are not reused within a proof. Fresh `malloc` bytes are
+the exact LP64 size of `struct T`, a verified typed extent such as
+`count * 4`, `count * sizeof(uint8)`, or `count * sizeof(struct T)`, or an
+arbitrary positive byte extent. Heap identities are not reused within a proof.
+Fresh `malloc` bytes are
 uninitialized, so ownership permits stores but does not make an unstored cell
 readable; successful `calloc` cells read as zero or null until overwritten.
 Pointer-array `malloc` uses `count * sizeof(int32*)` or
@@ -46,10 +47,13 @@ including structs whose size is not a multiple of four.
 A pending `realloc` keeps its old live block and resources in place until the
 result is refined. Failure removes only the pending result. Success records a
 free edge for the old block, allocates a fresh block, copies the initialized
-prefix cells that fit, and transfers the complete allocation and memory
-resources to the fresh block. This applies to the supported `int32*`,
-`uint8*`, `int32**`, `uint8**`, and matching struct-pointer layouts. For a
-bounded zeroed `calloc`
+cells whose complete byte ranges fit in the new extent, and transfers the
+complete allocation and memory resources to the fresh block. The old and new
+resources use typed logical units when the extents are exactly divisible by
+the pointer's element width and byte units otherwise. This applies to the
+supported `int32*`, `uint8*`, `int32**`, `uint8**`, and matching struct-pointer
+layouts, including raw byte extents. A partial cell is conservatively not
+reintroduced as initialized. For a bounded zeroed `calloc`
 source, the successful result also records the preserved zeroed prefix; any
 grown tail is uninitialized and is not treated as zero.
 

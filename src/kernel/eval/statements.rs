@@ -521,12 +521,13 @@ pub(super) fn execute_c_heap_allocate_paths(
                 positive && fits,
             )
         } else {
-            let valid = crate::kernel::reasoning::element_count_from_bytes(&size, element_width)
-                .is_some()
-                && effective_assumptions.decide(&ConditionTerm::signed_greater_than(
-                    size.clone(),
-                    Bitvector32Term::Constant(0),
-                )) == Some(true);
+            // Heap blocks are byte-addressed even when the receiving pointer
+            // has a wider logical element type. Typed accesses still carry
+            // their own width and must fit in the resulting byte extent.
+            let valid = effective_assumptions.decide(&ConditionTerm::signed_greater_than(
+                size.clone(),
+                Bitvector32Term::Constant(0),
+            )) == Some(true);
             (size, valid)
         };
         if !valid_size {
@@ -603,6 +604,26 @@ fn heap_allocation_element_width(state: &CState, base: &Pointer) -> u32 {
                 .flatten()
         })
         .unwrap_or(CType::Int32.byte_width())
+}
+
+/// Heap ownership is expressed in the narrowest logical unit that exactly
+/// describes the block. Preserve typed ranges for established allocation
+/// forms, but use bytes for a raw extent that is not divisible by the pointer's
+/// logical element width.
+fn heap_range_element_width(bytes: &Bitvector32Term, requested_width: u32) -> u32 {
+    crate::kernel::reasoning::element_count_from_bytes(bytes, requested_width)
+        .map(|_| requested_width)
+        .unwrap_or(CType::UInt8.byte_width())
+}
+
+fn heap_range_element_count(
+    bytes: &Bitvector32Term,
+    requested_width: u32,
+) -> (Bitvector32Term, u32) {
+    let element_width = heap_range_element_width(bytes, requested_width);
+    let element_count = crate::kernel::reasoning::element_count_from_bytes(bytes, element_width)
+        .expect("byte width must describe every positive heap extent");
+    (element_count, element_width)
 }
 
 pub(crate) fn execute_c_realloc_assign_paths(
@@ -725,16 +746,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             });
             continue;
         };
-        let Some(old_count) =
-            crate::kernel::reasoning::element_count_from_bytes(&old_bytes, element_width)
-        else {
-            paths.push(CStatementExecutionPath {
-                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts,
-                obligations,
-            });
-            continue;
-        };
+        let (old_count, old_range_width) = heap_range_element_count(&old_bytes, element_width);
         for new_size_path in
             evaluate_c_expression_paths(state, size_expression, &effective_assumptions, budget)?
         {
@@ -773,27 +785,6 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             };
-            let Some(new_count) =
-                crate::kernel::reasoning::element_count_from_bytes(&new_bytes, element_width)
-            else {
-                let Some((merged_facts, merged_obligations)) =
-                    merge_execution_pure_facts_and_obligations(
-                        &facts,
-                        &obligations,
-                        &size_facts,
-                        &size_obligations,
-                        assumptions,
-                    )
-                else {
-                    continue;
-                };
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts: merged_facts,
-                    obligations: merged_obligations,
-                });
-                continue;
-            };
             let all_facts = merge_facts(&facts, &size_facts, assumptions);
             let Some(all_facts) = all_facts else {
                 continue;
@@ -806,7 +797,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &all_facts, &all_obligations);
             if effective_assumptions.decide(&ConditionTerm::signed_greater_than(
-                new_count,
+                new_bytes.clone(),
                 Bitvector32Term::Constant(0),
             )) != Some(true)
             {
@@ -863,7 +854,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 old_pointer.clone(),
                 Bitvector32Term::Constant(0),
                 old_count.clone(),
-                element_width,
+                old_range_width,
             ));
             let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
             else {
@@ -885,9 +876,10 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
             if let Some(stale) = resources.facts().iter().find(|resource| {
                 resource.may_refer_to_memory_block(&old_pointer.block)
-                    && !resource.is_proven_separate_from_allocation(
+                    && !resource.is_proven_separate_from_allocation_with_element_width(
                         &old_pointer,
                         &old_bytes,
+                        old_range_width,
                         &resource_assumptions,
                     )
             }) {
@@ -1150,21 +1142,12 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
-        let Some(element_count) =
-            crate::kernel::reasoning::element_count_from_bytes(&bytes, element_width)
-        else {
-            paths.push(CStatementExecutionPath {
-                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts,
-                obligations,
-            });
-            continue;
-        };
+        let (element_count, range_width) = heap_range_element_count(&bytes, element_width);
         let complete_access = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
             pointer.pointer().clone(),
             Bitvector32Term::Constant(0),
             element_count,
-            element_width,
+            range_width,
         ));
         let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
         else {
@@ -1189,7 +1172,7 @@ fn execute_c_heap_free_paths(
                 && !resource.is_proven_separate_from_allocation_with_element_width(
                     &pointer,
                     &bytes,
-                    element_width,
+                    range_width,
                     &resource_assumptions,
                 )
         }) {
@@ -1244,10 +1227,14 @@ pub(crate) fn resolve_pending_heap_allocations(
         let Some(is_null) = assumptions.decide(&pointer_is_null_condition(base.clone())) else {
             continue;
         };
+        // Resolution rewrites the local pointer binding from the pending
+        // base to the fresh live base. Capture its logical pointee width
+        // before that rewrite so pointer-array and struct-array resources
+        // retain their established coordinate system.
+        let element_width = heap_allocation_element_width(&state, &base);
         if let Some(pending_reallocation) =
             state.memory.heap.pending_reallocations.get(&base).cloned()
         {
-            let element_width = heap_allocation_element_width(&state, &base);
             let (memory, bytes, resolved_base, _) = state
                 .memory
                 .clone()
@@ -1269,11 +1256,8 @@ pub(crate) fn resolve_pending_heap_allocations(
                     pending_reallocation.old_pointer,
                     pending_reallocation.old_bytes.clone(),
                 );
-                let old_count = crate::kernel::reasoning::element_count_from_bytes(
-                    &pending_reallocation.old_bytes,
-                    element_width,
-                )
-                .expect("supported reallocations have an exact typed element count");
+                let (old_count, old_range_width) =
+                    heap_range_element_count(&pending_reallocation.old_bytes, element_width);
                 let old_memory = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
                     match old_allocation.allocation() {
                         Some((pointer, _)) => pointer.clone(),
@@ -1281,7 +1265,7 @@ pub(crate) fn resolve_pending_heap_allocations(
                     },
                     Bitvector32Term::Constant(0),
                     old_count,
-                    element_width,
+                    old_range_width,
                 ));
                 state.resources = state
                     .resources
@@ -1294,22 +1278,19 @@ pub(crate) fn resolve_pending_heap_allocations(
                         resolved_base.clone(),
                         bytes.clone(),
                     ))
-                    .unchecked_with_fact(CResourceFact::own_memory(
+                    .unchecked_with_fact(CResourceFact::own_memory({
+                        let (new_count, new_range_width) =
+                            heap_range_element_count(&bytes, element_width);
                         CMemoryRange::new_with_element_width(
                             resolved_base,
                             Bitvector32Term::Constant(0),
-                            crate::kernel::reasoning::element_count_from_bytes(
-                                &bytes,
-                                element_width,
-                            )
-                            .expect("supported allocations have an exact typed element count"),
-                            element_width,
-                        ),
-                    ));
+                            new_count,
+                            new_range_width,
+                        )
+                    }));
             }
             continue;
         }
-        let element_width = heap_allocation_element_width(&state, &base);
         let (memory, bytes, resolved_base) = state
             .memory
             .clone()
@@ -1327,6 +1308,7 @@ pub(crate) fn resolve_pending_heap_allocations(
             }
         }
         if !is_null {
+            let (element_count, range_width) = heap_range_element_count(&bytes, element_width);
             state.resources = state
                 .resources
                 .unchecked_with_fact(CResourceFact::own_allocation(
@@ -1337,9 +1319,8 @@ pub(crate) fn resolve_pending_heap_allocations(
                     CMemoryRange::new_with_element_width(
                         resolved_base,
                         Bitvector32Term::Constant(0),
-                        crate::kernel::reasoning::element_count_from_bytes(&bytes, element_width)
-                            .expect("supported allocation has an exact typed element count"),
-                        element_width,
+                        element_count,
+                        range_width,
                     ),
                 ));
         }

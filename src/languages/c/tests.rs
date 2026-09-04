@@ -1670,8 +1670,8 @@ fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
 }
 
 #[test]
-fn c0_syntax_rejects_malloc_size_that_does_not_match_its_target() {
-    let error = syntax::parse_function(
+fn c0_syntax_accepts_malloc_size_that_does_not_match_its_target() {
+    let function = syntax::parse_function(
         r#"
         struct left { int32 value; };
         struct right { int32 value; };
@@ -1681,9 +1681,8 @@ fn c0_syntax_rejects_malloc_size_that_does_not_match_its_target() {
         }
         "#,
     )
-    .expect_err("malloc must use the target pointee's exact layout");
-
-    assert!(error.message().contains("does not match target type"));
+    .expect("malloc should accept a raw byte extent independent of target type");
+    assert!(matches!(function.body(), syntax::C0Statement::Seq(_, _)));
 }
 
 #[test]
@@ -1928,23 +1927,7 @@ fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
 }
 
 #[test]
-fn c0_syntax_rejects_dynamic_struct_malloc_and_wrong_free_arity() {
-    let malloc_error = syntax::parse_function(
-        r#"
-        struct item { int32 value; };
-        struct item* dynamic(int32 bytes) {
-            struct item* item = malloc(bytes);
-            return item;
-        }
-        "#,
-    )
-    .expect_err("struct allocation still needs its exact layout");
-    assert!(
-        malloc_error
-            .message()
-            .contains("requires `sizeof(struct item)`")
-    );
-
+fn c0_syntax_rejects_wrong_free_arity() {
     let free_error = syntax::parse_function(
         r#"
         int32 bad_free(int32* value) {

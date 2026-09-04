@@ -1150,21 +1150,6 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
     }
 }
 
-fn struct_size_operand_name(expression: &C0Expression) -> Option<&str> {
-    match expression {
-        C0Expression::SizeOfStruct { name, .. } => Some(name),
-        C0Expression::SizeOfType {
-            c_type: C0Type::Int32,
-            struct_name: Some(name),
-            ..
-        } => Some(name),
-        C0Expression::Multiply(left, right) => {
-            struct_size_operand_name(left).or_else(|| struct_size_operand_name(right))
-        }
-        _ => None,
-    }
-}
-
 fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
 }
@@ -4102,18 +4087,6 @@ impl Parser {
                     arguments.len()
                 )));
             };
-            if let Some(target_struct) = self.variable_structs.get(&target) {
-                let Some(name) = struct_size_operand_name(bytes) else {
-                    return Err(self.error_here(format!(
-                        "allocation of `struct {target_struct}` requires `sizeof(struct {target_struct})` or a count multiplied by it"
-                    )));
-                };
-                if name != target_struct {
-                    return Err(self.error_here(format!(
-                        "`malloc` size `sizeof(struct {name})` does not match target type `struct {target_struct} *`"
-                    )));
-                }
-            }
             bytes.clone()
         };
         Ok(C0Statement::HeapAllocate {
