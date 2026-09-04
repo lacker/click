@@ -90,9 +90,10 @@ replacement is one integer or character literal; those macros are expanded in
 translation-unit order across a source file and its local headers, and `#undef NAME`
 removes one from the active macro state. The bounded
 conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a previously defined
-0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif` with those same
-conditions, `#else`, and `#endif`, including nesting; unsupported active
-conditions receive a diagnostic.
+0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#if defined(NAME)`,
+`#if !defined(NAME)`, `#elif` with those same conditions, `#else`, and
+`#endif`, including nesting; unsupported active conditions receive a
+diagnostic.
 
 ## Type support is still narrow
 

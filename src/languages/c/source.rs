@@ -70,6 +70,8 @@ enum Conditional {
     Macro(String),
     Ifdef(String),
     Ifndef(String),
+    Defined(String),
+    NotDefined(String),
     Unsupported(String),
 }
 
@@ -522,13 +524,23 @@ fn evaluate_condition(
         } else {
             ConditionalTruth::True
         }),
+        Conditional::Defined(name) => Ok(if defined_macros.contains(name) {
+            ConditionalTruth::True
+        } else {
+            ConditionalTruth::False
+        }),
+        Conditional::NotDefined(name) => Ok(if defined_macros.contains(name) {
+            ConditionalTruth::False
+        } else {
+            ConditionalTruth::True
+        }),
         Conditional::Unsupported(expression) => Err(unsupported_condition_message(expression)),
     }
 }
 
 fn unsupported_condition_message(expression: &str) -> String {
     format!(
-        "unsupported conditional expression `#{expression}`; expected `#if 0`, `#if 1`, `#if NAME`, `#ifdef NAME`, or `#ifndef NAME`"
+        "unsupported conditional expression `#{expression}`; expected `#if 0`, `#if 1`, `#if NAME`, `#if defined(NAME)`, `#if !defined(NAME)`, `#ifdef NAME`, or `#ifndef NAME`"
     )
 }
 
@@ -560,6 +572,24 @@ fn evaluate_condition_for_discovery(
             }
         }
         Conditional::Ifndef(name) => {
+            if defined_macros.contains(name) {
+                ConditionalTruth::False
+            } else if may_have_external_macros {
+                ConditionalTruth::Unknown
+            } else {
+                ConditionalTruth::True
+            }
+        }
+        Conditional::Defined(name) => {
+            if defined_macros.contains(name) {
+                ConditionalTruth::True
+            } else if may_have_external_macros {
+                ConditionalTruth::Unknown
+            } else {
+                ConditionalTruth::False
+            }
+        }
+        Conditional::NotDefined(name) => {
             if defined_macros.contains(name) {
                 ConditionalTruth::False
             } else if may_have_external_macros {
@@ -910,6 +940,8 @@ fn parse_condition(directive_name: &str, input: &str) -> Conditional {
         Conditional::Literal(false)
     } else if rest.starts_with('1') && trailing_comments_only(&rest[1..]) {
         Conditional::Literal(true)
+    } else if let Some(condition) = parse_defined_condition(rest) {
+        condition
     } else if let (Some(name), trailing) = split_identifier(rest) {
         if trailing_comments_only(trailing) {
             Conditional::Macro(name)
@@ -919,6 +951,37 @@ fn parse_condition(directive_name: &str, input: &str) -> Conditional {
     } else {
         Conditional::Unsupported(format!("{directive_name} {}", rest.trim()))
     }
+}
+
+fn parse_defined_condition(input: &str) -> Option<Conditional> {
+    let mut rest = input;
+    let negated = if let Some(after_not) = rest.strip_prefix('!') {
+        rest = after_not.trim_start();
+        true
+    } else {
+        false
+    };
+    let after_defined = rest.strip_prefix("defined")?;
+    if after_defined
+        .chars()
+        .next()
+        .is_some_and(|character| !character.is_ascii_whitespace() && character != '(')
+    {
+        return None;
+    }
+    let rest = after_defined.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let (name, trailing) = split_identifier(rest);
+    let name = name?;
+    let trailing = trailing.strip_prefix(')')?;
+    if !trailing_comments_only(trailing) {
+        return None;
+    }
+    Some(if negated {
+        Conditional::NotDefined(name)
+    } else {
+        Conditional::Defined(name)
+    })
 }
 
 fn parse_macro_literal(input: &str) -> Option<String> {
@@ -1502,6 +1565,52 @@ int32 wrong_else(void) { return 0; }
     }
 
     #[test]
+    fn defined_conditions_follow_macro_state() {
+        let sources = BTreeMap::from([(
+            "main.c",
+            r##"#define FEATURE 0
+#if defined(FEATURE)
+int32 defined_branch(void) { return 1; }
+#else
+int32 wrong_defined_branch(void) { return 0; }
+#endif
+#undef FEATURE
+#if !defined(FEATURE)
+int32 not_defined_branch(void) { return 2; }
+#else
+int32 wrong_not_defined_branch(void) { return 0; }
+#endif
+"##,
+        )]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 defined_branch(void)"));
+        assert!(expanded.source().contains("int32 not_defined_branch(void)"));
+        assert!(!expanded.source().contains("wrong_defined_branch"));
+        assert!(!expanded.source().contains("wrong_not_defined_branch"));
+    }
+
+    #[test]
+    fn defined_conditions_accept_bounded_whitespace_and_elif_forms() {
+        let sources = BTreeMap::from([(
+            "main.c",
+            r##"#if 0
+int32 wrong(void) { return 0; }
+#elif ! defined (MISSING) /* explanatory comment */
+int32 run(void) { return 3; }
+#endif
+"##,
+        )]);
+        assert!(
+            local_include_paths("main.c", sources["main.c"])
+                .unwrap()
+                .is_empty()
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 run(void) { return 3; }"));
+        assert!(!expanded.source().contains("wrong(void)"));
+    }
+
+    #[test]
     fn conditionals_require_balanced_structure_and_supported_active_conditions() {
         let cases = [
             ("#else\n", "unmatched `#else`"),
@@ -1510,12 +1619,8 @@ int32 wrong_else(void) { return 0; }
             ("#if 0\n#else\n#elif 1\n#endif\n", "`#elif` after `#else`"),
             ("#if 1\n", "unterminated conditional"),
             (
-                "#if defined(FEATURE)\n#endif\n",
-                "unsupported conditional expression",
-            ),
-            (
-                "#if 0\n#elif defined(FEATURE)\n#endif\n",
-                "unsupported conditional expression `#elif defined(FEATURE)`",
+                "#if defined(FEATURE) && OTHER\n#endif\n",
+                "unsupported conditional expression `#if defined(FEATURE) && OTHER`",
             ),
         ];
         for (source, expected) in cases {
@@ -1537,12 +1642,12 @@ int32 wrong_else(void) { return 0; }
                 .contains("only whole-header guards are supported")
         );
 
-        let conditional = BTreeMap::from([("bad.h", "#if defined(BAD_H)\n#endif\n")]);
+        let conditional = BTreeMap::from([("bad.h", "#if defined(BAD_H) && OTHER\n#endif\n")]);
         let error = local_include_paths("bad.h", conditional["bad.h"]).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("unsupported conditional expression `#if defined(BAD_H)`")
+                .contains("unsupported conditional expression `#if defined(BAD_H) && OTHER`")
         );
     }
 
