@@ -42,7 +42,11 @@ this issue's supported typed allocation model. Heap `malloc` and `free` now also
 `int32**`/`uint8**` pointer arrays with their eight-byte pointer stride;
 pointer-array `calloc` initializes each pointer cell to null, and bounded
 pointer-array `realloc` preserves fitting initialized cells and zeroed
-prefixes. Arbitrary-layout realloc remains follow-up work.
+prefixes. Heap struct pointers now use byte-backed allocation extents, accept
+`malloc(count * sizeof(struct S))`, and lower `items[i].field` with the ABI
+struct stride; their bounded `calloc` and `realloc` paths preserve the same
+initialization and prefix rules. Arbitrary-layout realloc remains follow-up
+work.
 
 ## Acceptance criteria
 
@@ -61,6 +65,10 @@ prefixes. Arbitrary-layout realloc remains follow-up work.
   are modeled as positive pointer-sized ranges, with pointer-cell
   loads/stores, null initialization for `calloc`, prefix preservation, and
   complete `free` reclamation.
+- `malloc`, `calloc`, and bounded `realloc` assigned to matching `struct S*`
+  are modeled as positive byte extents, with `items[i].field` using the ABI
+  struct stride, initialized-field prefix preservation, and complete `free`
+  reclamation.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

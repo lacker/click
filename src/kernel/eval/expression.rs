@@ -901,6 +901,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
             Some(CLocalBinding::AggregateObject { .. }) => Some(CType::UInt8),
             None => None,
         },
+        CExpression::Cast { target_type, .. } => target_type.pointee_type(),
         CExpression::AddressOf(target) => c_expression_lvalue_type(state, target),
         CExpression::PointerOffsetBytes { pointer, .. } => {
             c_expression_pointee_type(state, pointer)

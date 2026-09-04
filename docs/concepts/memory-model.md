@@ -38,13 +38,18 @@ Pointer-array `malloc` uses `count * sizeof(int32*)` or
 are uninitialized until stored, and the complete pointer-array range is
 reclaimed by `free`. Matching pointer-array `calloc` uses the same range and
 initializes each cell to the canonical null pointer until a store overwrites it.
+Heap arrays of structs are byte-backed allocations whose indexed member
+addresses add `i * sizeof(struct T)` before applying the field offset. This
+keeps the allocation extent and field access aligned with the declared ABI,
+including structs whose size is not a multiple of four.
 
 A pending `realloc` keeps its old live block and resources in place until the
 result is refined. Failure removes only the pending result. Success records a
 free edge for the old block, allocates a fresh block, copies the initialized
 prefix cells that fit, and transfers the complete allocation and memory
 resources to the fresh block. This applies to the supported `int32*`,
-`uint8*`, `int32**`, and `uint8**` layouts. For a bounded zeroed `calloc`
+`uint8*`, `int32**`, `uint8**`, and matching struct-pointer layouts. For a
+bounded zeroed `calloc`
 source, the successful result also records the preserved zeroed prefix; any
 grown tail is uninitialized and is not treated as zero.
 

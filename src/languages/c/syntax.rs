@@ -1150,6 +1150,21 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
     }
 }
 
+fn struct_size_operand_name(expression: &C0Expression) -> Option<&str> {
+    match expression {
+        C0Expression::SizeOfStruct { name, .. } => Some(name),
+        C0Expression::SizeOfType {
+            c_type: C0Type::Int32,
+            struct_name: Some(name),
+            ..
+        } => Some(name),
+        C0Expression::Multiply(left, right) => {
+            struct_size_operand_name(left).or_else(|| struct_size_operand_name(right))
+        }
+        _ => None,
+    }
+}
+
 fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
 }
@@ -3441,7 +3456,29 @@ impl Parser {
                 self.position += 1;
                 continue;
             }
-            let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+            let (mut c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+            if parsed_type.struct_name.is_some()
+                && parsed_type.c_type == C0Type::Int32Pointer
+                && array_shape.is_none()
+                && self
+                    .structs
+                    .get(
+                        parsed_type
+                            .struct_name
+                            .as_ref()
+                            .expect("struct pointer has a struct name"),
+                    )
+                    .expect("struct pointer has a declaration")
+                    .size_bytes
+                    % 4
+                    != 0
+            {
+                // Unaligned struct sizes cannot use the kernel's int32
+                // pointer allocation width. Use a byte-addressed local for
+                // those allocations; aligned structs retain the historical
+                // pointer representation.
+                c_type = C0Type::UInt8Pointer;
+            }
             self.variable_types.insert(name.clone(), c_type);
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
@@ -3450,7 +3487,9 @@ impl Parser {
                 if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
                     return Err(self.error_here("only pointer-to-struct types are supported"));
                 }
-                if c_type != parsed_type.c_type && !matches!(c_type, C0Type::UInt8Array(_)) {
+                if c_type != parsed_type.c_type
+                    && !matches!(c_type, C0Type::UInt8Array(_) | C0Type::UInt8Pointer)
+                {
                     return Err(self.error_here("local arrays of struct type are not supported"));
                 }
                 self.variable_structs.insert(
@@ -4016,22 +4055,14 @@ impl Parser {
                 )));
             };
             if let Some(target_struct) = self.variable_structs.get(&target) {
-                let Some(name) = (match bytes {
-                    C0Expression::SizeOfStruct { name, .. } => Some(name.as_str()),
-                    C0Expression::SizeOfType {
-                        c_type: C0Type::Int32,
-                        struct_name: Some(name),
-                        ..
-                    } => Some(name.as_str()),
-                    _ => None,
-                }) else {
+                let Some(name) = struct_size_operand_name(bytes) else {
                     return Err(self.error_here(format!(
-                        "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                        "allocation of `struct {target_struct}` requires `sizeof(struct {target_struct})` or a count multiplied by it"
                     )));
                 };
                 if name != target_struct {
                     return Err(self.error_here(format!(
-                        "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+                        "`malloc` size `sizeof(struct {name})` does not match target type `struct {target_struct} *`"
                     )));
                 }
             }
@@ -4772,16 +4803,41 @@ impl Parser {
                 Some(Token::Plus) => {
                     self.position += 1;
                     let right = self.parse_multiply()?;
-                    C0Expression::Add(Box::new(expression), Box::new(right))
+                    self.scale_struct_pointer_arithmetic(expression, right, C0Expression::Add)?
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
                     let right = self.parse_multiply()?;
-                    C0Expression::Subtract(Box::new(expression), Box::new(right))
+                    self.scale_struct_pointer_arithmetic(expression, right, C0Expression::Subtract)?
                 }
                 _ => return Ok(expression),
             };
         }
+    }
+
+    fn scale_struct_pointer_arithmetic(
+        &self,
+        pointer: C0Expression,
+        offset: C0Expression,
+        constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
+    ) -> Result<C0Expression, C0SyntaxError> {
+        let Some(struct_name) = self.struct_pointer_name(&pointer) else {
+            return Ok(constructor(Box::new(pointer), Box::new(offset)));
+        };
+        let element_width = self
+            .structs
+            .get(&struct_name)
+            .expect("struct pointer arithmetic has a declaration")
+            .size_bytes;
+        let byte_pointer = C0Expression::Cast {
+            expression: Box::new(pointer),
+            c_type: C0Type::UInt8Pointer,
+        };
+        let byte_offset = C0Expression::Multiply(
+            Box::new(offset),
+            Box::new(C0Expression::Int32Literal(element_width)),
+        );
+        Ok(constructor(Box::new(byte_pointer), Box::new(byte_offset)))
     }
 
     fn parse_multiply(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -4986,8 +5042,32 @@ impl Parser {
                             ));
                         }
                     } else {
-                        expression =
-                            C0Expression::Index(Box::new(expression), Box::new(first_index));
+                        let heap_struct = self.struct_pointer_name(&expression);
+                        if let Some(struct_name) = heap_struct {
+                            let element_width = self
+                                .structs
+                                .get(&struct_name)
+                                .expect("heap struct pointer has a declaration")
+                                .size_bytes;
+                            let byte_pointer = C0Expression::Cast {
+                                expression: Box::new(expression),
+                                c_type: C0Type::UInt8Pointer,
+                            };
+                            let offset = C0Expression::Multiply(
+                                Box::new(first_index),
+                                Box::new(C0Expression::Int32Literal(element_width)),
+                            );
+                            expression =
+                                C0Expression::Index(Box::new(byte_pointer), Box::new(offset));
+                            if self.peek() != Some(&Token::Dot) {
+                                return Err(self.error_here(
+                                    "array of struct values are only supported through field access",
+                                ));
+                            }
+                        } else {
+                            expression =
+                                C0Expression::Index(Box::new(expression), Box::new(first_index));
+                        }
                     }
                 }
                 Some(Token::Dot) | Some(Token::Arrow) => {
@@ -5054,6 +5134,25 @@ impl Parser {
             self.structs.get(struct_name)?.size_bytes,
             shape.clone(),
         ))
+    }
+
+    fn struct_pointer_name(&self, expression: &C0Expression) -> Option<String> {
+        match expression {
+            C0Expression::Variable(name)
+                if matches!(
+                    self.variable_types.get(name),
+                    Some(C0Type::Int32Pointer | C0Type::UInt8Pointer)
+                ) =>
+            {
+                self.variable_structs.get(name).cloned()
+            }
+            C0Expression::Field {
+                field_type: C0Type::Int32Pointer,
+                field_struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
+            _ => None,
+        }
     }
 
     fn resolve_field_access(
@@ -5139,32 +5238,39 @@ impl Parser {
     > {
         let (element_pointer, struct_name) = match base {
             C0Expression::Index(array, index) => {
-                let C0Expression::Variable(name) = array.as_ref() else {
-                    return Err(self.error_here(
-                        "`.` currently supports only indexed local arrays of structs",
-                    ));
+                let struct_name = match array.as_ref() {
+                    C0Expression::Variable(name)
+                        if self.variable_array_shapes.contains_key(name) =>
+                    {
+                        self.variable_structs.get(name).cloned()
+                    }
+                    C0Expression::Cast { expression, c_type }
+                        if *c_type == C0Type::UInt8Pointer
+                            && self.struct_pointer_name(expression).is_some() =>
+                    {
+                        self.struct_pointer_name(expression)
+                    }
+                    _ => {
+                        return Err(self
+                            .error_here("`.` currently supports only indexed arrays of structs"));
+                    }
                 };
-                if !self.variable_array_shapes.contains_key(name) {
-                    return Err(self.error_here(
-                        "`.` currently supports only indexed local arrays of structs",
-                    ));
-                }
-                let struct_name = self.variable_structs.get(name).ok_or_else(|| {
-                    self.error_here("`.` currently supports only indexed local arrays of structs")
+                let struct_name = struct_name.ok_or_else(|| {
+                    self.error_here("`.` currently supports only indexed arrays of structs")
                 })?;
                 (C0Expression::Add(array.clone(), index.clone()), struct_name)
             }
             C0Expression::AggregateAddress {
                 pointer,
                 struct_name,
-            } => (pointer.as_ref().clone(), struct_name),
+            } => (pointer.as_ref().clone(), struct_name.clone()),
             _ => {
                 return Err(
-                    self.error_here("`.` currently supports only indexed local arrays of structs")
+                    self.error_here("`.` currently supports only indexed arrays of structs")
                 );
             }
         };
-        let layout = self.structs.get(struct_name).ok_or_else(|| {
+        let layout = self.structs.get(&struct_name).ok_or_else(|| {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         let field = layout.fields.get(field_name).ok_or_else(|| {

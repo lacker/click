@@ -116,6 +116,10 @@ retain, nonfinal release, final release, and free across opaque calls.
   preservation and writable growth tails.
 - `mdtests/realloc_calloc_pointer_array_tail_is_uninitialized.md`: grown
   zeroed pointer-array tails remain uninitialized.
+- `mdtests/heap_struct_arrays.md`: heap arrays of structs with ABI-strided
+  malloc, calloc, and realloc member access.
+- `mdtests/heap_struct_array_bounds.md`: out-of-bounds access through a heap
+  struct array is rejected.
 
 ## Aliasing and separation
 

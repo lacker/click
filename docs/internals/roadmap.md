@@ -142,16 +142,16 @@ Likely additions:
   resources, other declared resources, and resource facts. Fractions, persistent
   token resources, implicit unfold/fold search, custom resource-family algebra,
   abstract ownership predicates are still future work. The heap slice now adds
-  exclusive allocation authority for exact structs and runtime-sized `int32`
+  exclusive allocation authority for structs, scalar buffers, and pointer
   arrays, complete-access checks for `free`, retired lifetimes, and leak checks
   at verified exits.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.
-- Broader allocation beyond exact structs and runtime-sized `int32` arrays:
-  arbitrary byte layouts, compatible external allocator declarations, and
-  the remaining `realloc` cases; the current heap slice includes bounded
-  `int32` `realloc`, including preserved zeroed prefixes, plus the supported
+- Broader allocation beyond the modeled struct, scalar-buffer, and pointer-array
+  forms: arbitrary byte layouts, compatible external allocator declarations,
+  and the remaining `realloc` cases; the current heap slice includes bounded
+  typed `realloc`, including preserved zeroed prefixes, plus the supported
   `calloc` forms.
 - Richer initialization predicates when examples need to package partially
   initialized heap storage instead of storing every field before folding an
