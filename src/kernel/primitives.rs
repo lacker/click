@@ -812,6 +812,15 @@ pub struct CGlobal {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobalArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) element_type: CType,
+    pub(super) length: u32,
+    pub(super) initial_values: Vec<CValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CStaticLocal {
     pub(super) source_name: String,
     pub(super) kernel_name: String,
@@ -901,6 +910,7 @@ pub struct CFunction {
     /// Both sides are instantiated at the exact function entry state.
     pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
     pub(super) global_variables: Vec<CGlobal>,
+    pub(super) global_arrays: Vec<CGlobalArray>,
     pub(super) static_variables: Vec<CStaticLocal>,
     pub(super) string_literals: Vec<CStringLiteral>,
 }

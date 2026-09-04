@@ -2090,10 +2090,90 @@ pub(in crate::surface) fn parse_verified_sources(
             "global `{name}` is declared `extern` but has no definition"
         )));
     }
+    let mut global_arrays_by_source =
+        BTreeMap::<String, BTreeMap<String, syntax::C0GlobalArray>>::new();
+    for (source_path, function) in parsed.values() {
+        let source_arrays = global_arrays_by_source
+            .entry(source_path.clone())
+            .or_default();
+        for (name, array) in function.global_arrays() {
+            if globals_by_source
+                .get(source_path)
+                .is_some_and(|source_globals| source_globals.contains_key(name))
+            {
+                return Err(ClickError::new(format!(
+                    "global `{name}` conflicts with a scalar global declaration"
+                )));
+            }
+            match source_arrays.get(name) {
+                Some(previous) if previous.c_type() != array.c_type() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global array `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && array.is_defined() => {
+                    if previous != array {
+                        return Err(ClickError::new(format!(
+                            "conflicting definitions for global array `{name}` in `{source_path}`"
+                        )));
+                    }
+                }
+                _ => {
+                    let merged = match source_arrays.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if array.is_defined() => array.clone(),
+                        Some(previous) => previous.clone(),
+                        None => array.clone(),
+                    };
+                    source_arrays.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    let mut global_arrays = BTreeMap::<String, syntax::C0GlobalArray>::new();
+    for source_arrays in global_arrays_by_source.values() {
+        for (name, array) in source_arrays {
+            if array.is_file_static() {
+                continue;
+            }
+            if globals.contains_key(name) {
+                return Err(ClickError::new(format!(
+                    "global `{name}` conflicts with a scalar global declaration"
+                )));
+            }
+            match global_arrays.get(name) {
+                Some(previous) if previous.c_type() != array.c_type() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global array `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && array.is_defined() => {
+                    return Err(ClickError::new(format!(
+                        "multiple definitions of global array `{name}`"
+                    )));
+                }
+                _ => {
+                    let merged = match global_arrays.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if array.is_defined() => array.clone(),
+                        Some(previous) => previous.clone(),
+                        None => array.clone(),
+                    };
+                    global_arrays.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    if let Some((name, _)) = global_arrays.iter().find(|(_, array)| !array.is_defined()) {
+        return Err(ClickError::new(format!(
+            "global array `{name}` is declared `extern` but has no definition"
+        )));
+    }
     parsed = parsed
         .into_iter()
         .map(|(name, (source_path, function))| {
             let mut visible_globals = globals.clone();
+            let mut visible_global_arrays = global_arrays.clone();
             if let Some(source_globals) = globals_by_source.get(&source_path) {
                 for (global_name, global) in source_globals {
                     if global.is_file_static() {
@@ -2101,7 +2181,22 @@ pub(in crate::surface) fn parse_verified_sources(
                     }
                 }
             }
-            (name, (source_path, function.with_globals(visible_globals)))
+            if let Some(source_arrays) = global_arrays_by_source.get(&source_path) {
+                for (array_name, array) in source_arrays {
+                    if array.is_file_static() {
+                        visible_global_arrays.insert(array_name.clone(), array.clone());
+                    }
+                }
+            }
+            (
+                name,
+                (
+                    source_path,
+                    function
+                        .with_globals(visible_globals)
+                        .with_global_arrays(visible_global_arrays),
+                ),
+            )
         })
         .collect();
 

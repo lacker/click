@@ -2104,6 +2104,13 @@ impl CState {
             .flatten()
     }
 
+    pub(crate) fn global_array_element_type(&self, name: &str) -> Option<CType> {
+        self.locals
+            .is_array_object(name)
+            .then(|| self.locals.object_type(name))
+            .flatten()
+    }
+
     pub fn memory(&self) -> &CMemory {
         &self.memory
     }

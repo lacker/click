@@ -2002,6 +2002,42 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 .set_global_at(global.name().to_string(), global.c_type(), slot);
         }
     }
+    for global_array in function.global_arrays() {
+        let slot = CMemory::global_pointer(global_array.kernel_name());
+        let bytes = global_array
+            .length()
+            .checked_mul(global_array.element_type().byte_width())
+            .expect("validated C global array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            for (index, value) in global_array.initial_values().iter().enumerate() {
+                state.memory = state.memory.store(
+                    slot.offset_by_bytes(
+                        u32::try_from(index)
+                            .expect("validated C global array length")
+                            .saturating_mul(global_array.element_type().byte_width()),
+                    ),
+                    value.clone(),
+                );
+            }
+        }
+        state.locals.set_array_object_at(
+            global_array.kernel_name().to_string(),
+            global_array.element_type(),
+            global_array.length(),
+            slot.clone(),
+        );
+        if global_array.kernel_name() != global_array.name()
+            && !state.locals.contains_name(global_array.name())
+        {
+            state.locals.set_array_object_at(
+                global_array.name().to_string(),
+                global_array.element_type(),
+                global_array.length(),
+                slot,
+            );
+        }
+    }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         if !state.memory.has_block(&slot.block) {

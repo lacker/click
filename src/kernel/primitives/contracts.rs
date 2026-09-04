@@ -76,6 +76,63 @@ impl CGlobal {
     }
 }
 
+impl CGlobalArray {
+    pub fn new_with_kernel_name(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        element_type: CType,
+        length: u32,
+        initial_values: Vec<CValue>,
+    ) -> Self {
+        assert!(
+            matches!(
+                element_type,
+                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+            ),
+            "C global arrays currently support scalar integer element types only"
+        );
+        assert!(length > 0, "C global arrays must have positive length");
+        assert_eq!(
+            initial_values.len(),
+            length as usize,
+            "C global array initializer must cover its declared length"
+        );
+        assert!(
+            initial_values
+                .iter()
+                .all(|value| value.c_type() == element_type),
+            "C global array initializers must match their declared element type"
+        );
+        Self {
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
+            element_type,
+            length,
+            initial_values,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn element_type(&self) -> CType {
+        self.element_type
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn initial_values(&self) -> &[CValue] {
+        &self.initial_values
+    }
+}
+
 impl CStaticLocal {
     pub fn new(
         source_name: impl Into<String>,
@@ -168,6 +225,7 @@ impl CFunction {
             composite_resource_definitions: Vec::new(),
             predicate_unfoldings: Vec::new(),
             global_variables: Vec::new(),
+            global_arrays: Vec::new(),
             static_variables: Vec::new(),
             string_literals: Vec::new(),
         }
@@ -175,6 +233,11 @@ impl CFunction {
 
     pub fn with_global_variables(mut self, global_variables: Vec<CGlobal>) -> Self {
         self.global_variables = global_variables;
+        self
+    }
+
+    pub fn with_global_arrays(mut self, global_arrays: Vec<CGlobalArray>) -> Self {
+        self.global_arrays = global_arrays;
         self
     }
 
@@ -271,6 +334,10 @@ impl CFunction {
 
     pub fn global_variables(&self) -> &[CGlobal] {
         &self.global_variables
+    }
+
+    pub fn global_arrays(&self) -> &[CGlobalArray] {
+        &self.global_arrays
     }
 
     pub fn static_variables(&self) -> &[CStaticLocal] {

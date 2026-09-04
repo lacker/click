@@ -32,6 +32,86 @@ fn c0_collects_scalar_file_scope_globals() {
 }
 
 #[test]
+fn c0_collects_file_scope_scalar_arrays() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 table[3] = {1, 2};
+        uint8 bytes[2];
+        int32 read_table() {
+            return table[1];
+        }
+        "#,
+    )
+    .expect("file-scope scalar arrays should parse");
+
+    assert_eq!(functions[0].global_arrays().len(), 2);
+    let table = &functions[0].global_arrays()["table"];
+    assert_eq!(table.element_type(), syntax::C0Type::Int32);
+    assert_eq!(table.length(), 3);
+    assert_eq!(
+        table.initializer(),
+        Some(
+            [
+                syntax::C0Expression::Int32Literal(1),
+                syntax::C0Expression::Int32Literal(2),
+                syntax::C0Expression::Int32Literal(0),
+            ]
+            .as_slice()
+        )
+    );
+    let kernel_function = functions[0].to_kernel_function();
+    let kernel_table = kernel_function
+        .global_arrays()
+        .iter()
+        .find(|array| array.name() == "table")
+        .expect("kernel table metadata");
+    assert_eq!(kernel_table.name(), "table");
+    assert_eq!(kernel_table.element_type(), crate::kernel::CType::Int32);
+    assert_eq!(kernel_table.length(), 3);
+    assert_eq!(
+        kernel_table.initial_values(),
+        &[
+            crate::kernel::int32(1),
+            crate::kernel::int32(2),
+            crate::kernel::int32(0)
+        ]
+    );
+}
+
+#[test]
+fn c0_file_static_arrays_are_qualified_by_translation_unit() {
+    let alpha = syntax::parse_functions_for_source(
+        "static int32 values[2] = {1, 2}; int32 read_alpha() { return values[0]; }",
+        "alpha.c",
+    )
+    .expect("file-scope static arrays should parse");
+    let beta = syntax::parse_functions_for_source(
+        "static int32 values[2] = {3, 4}; int32 read_beta() { return values[0]; }",
+        "beta.c",
+    )
+    .expect("file-scope static arrays should parse");
+
+    let alpha_array = &alpha[0].global_arrays()["values"];
+    let beta_array = &beta[0].global_arrays()["values"];
+    assert!(alpha_array.is_file_static());
+    assert!(beta_array.is_file_static());
+    assert_ne!(alpha_array.kernel_name(), beta_array.kernel_name());
+    assert_ne!(
+        alpha[0].to_kernel_function().global_arrays()[0].kernel_name(),
+        beta[0].to_kernel_function().global_arrays()[0].kernel_name()
+    );
+}
+
+#[test]
+fn c0_headers_accept_extern_scalar_arrays() {
+    syntax::validate_header("extern int32 table[3];")
+        .expect("headers should accept extern scalar arrays");
+    let error = syntax::validate_header("int32 table[3];")
+        .expect_err("headers must keep array definitions in source files");
+    assert!(error.message().contains("only with `extern`"));
+}
+
+#[test]
 fn c0_file_static_globals_are_qualified_by_translation_unit() {
     let alpha = syntax::parse_functions_for_source(
         "static int32 counter = 1; int32 read_alpha() { return counter; }",

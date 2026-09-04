@@ -255,6 +255,13 @@ pub(in crate::surface) fn annotated_function(
                 .filter_map(syntax::C0Global::to_kernel_global)
                 .collect(),
         )
+        .with_global_arrays(
+            parsed_function
+                .global_arrays()
+                .values()
+                .filter_map(syntax::C0GlobalArray::to_kernel_global_array)
+                .collect(),
+        )
         .with_static_variables(
             parsed_function
                 .static_locals()
@@ -2242,6 +2249,7 @@ impl AnnotationLowerer<'_> {
                     .then(|| self.result_type.pointee_type())
                     .flatten()
             })
+            .or_else(|| self.entry_state.global_array_element_type(name))
             .or_else(|| {
                 environment.values.get(name).and_then(|value| match value {
                     SpecExpression::Value(CValue::Pointer(pointer)) => {
@@ -2344,6 +2352,7 @@ impl AnnotationLowerer<'_> {
                         .then(|| self.result_type.pointee_type())
                         .flatten()
                 })
+                .or_else(|| self.entry_state.global_array_element_type(name))
                 .or_else(|| {
                     environment.values.get(name).and_then(|value| match value {
                         SpecExpression::Value(CValue::Pointer(pointer)) => {

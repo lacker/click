@@ -31,6 +31,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "declaration.union",
     "declaration.union-field-list",
     "declaration.static-local",
+    "declaration.global-array",
     "declaration.local",
     "statement.struct-value-declaration",
     "statement.empty",
@@ -126,6 +127,7 @@ pub struct C0Function {
     enums: BTreeMap<String, C0EnumDefinition>,
     unions: BTreeMap<String, C0UnionLayout>,
     globals: BTreeMap<String, C0Global>,
+    global_arrays: BTreeMap<String, C0GlobalArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     string_literals: Vec<C0StringLiteral>,
 }
@@ -228,20 +230,7 @@ impl C0Global {
 
     pub(crate) fn to_kernel_global(&self) -> Option<crate::kernel::CGlobal> {
         let initializer = self.initializer.as_ref()?;
-        let bits = match initializer {
-            C0Expression::Int32Literal(value) => *value,
-            C0Expression::UInt8Literal(value) => u32::from(*value),
-            C0Expression::UInt32Literal(value) => *value,
-            _ => return None,
-        };
-        let value = match self.c_type {
-            C0Type::Int16 => crate::kernel::int16(bits),
-            C0Type::Int32 => crate::kernel::int32(bits),
-            C0Type::UInt8 => crate::kernel::uint8(bits),
-            C0Type::UInt16 => crate::kernel::uint16(bits),
-            C0Type::UInt32 => crate::kernel::uint32(bits),
-            _ => return None,
-        };
+        let value = kernel_integer_literal_value(self.c_type, initializer)?;
         Some(crate::kernel::CGlobal::new_with_kernel_name(
             self.name.clone(),
             self.kernel_name.clone(),
@@ -249,6 +238,138 @@ impl C0Global {
             value,
         ))
     }
+}
+
+/// A fixed-size file-scope scalar array collected from one C translation unit.
+/// `initializer` is absent for an `extern` declaration and present for the
+/// definition that supplies storage. Missing elements in a definition are
+/// represented explicitly as zero values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0GlobalArray {
+    name: String,
+    kernel_name: String,
+    element_type: C0Type,
+    length: u32,
+    initializer: Option<Vec<C0Expression>>,
+    file_static: bool,
+}
+
+impl C0GlobalArray {
+    fn declaration(
+        name: String,
+        kernel_name: String,
+        element_type: C0Type,
+        length: u32,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            element_type,
+            length,
+            initializer: None,
+            file_static,
+        }
+    }
+
+    fn definition(
+        name: String,
+        kernel_name: String,
+        element_type: C0Type,
+        length: u32,
+        initializer: Vec<C0Expression>,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            element_type,
+            length,
+            initializer: Some(initializer),
+            file_static,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn element_type(&self) -> C0Type {
+        self.element_type
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        array_type_for_element(self.element_type, self.length)
+            .expect("validated global array element type")
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.initializer.is_some()
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
+    }
+
+    pub fn initializer(&self) -> Option<&[C0Expression]> {
+        self.initializer.as_deref()
+    }
+
+    pub(crate) fn to_kernel_global_array(&self) -> Option<crate::kernel::CGlobalArray> {
+        let initializer = self.initializer.as_ref()?;
+        let values = initializer
+            .iter()
+            .map(|value| kernel_integer_literal_value(self.element_type, value))
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::kernel::CGlobalArray::new_with_kernel_name(
+            self.name.clone(),
+            self.kernel_name.clone(),
+            self.element_type.to_kernel_type(),
+            self.length,
+            values,
+        ))
+    }
+}
+
+fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
+    Some(match element_type {
+        C0Type::Int16 => C0Type::Int16Array(length),
+        C0Type::Int32 => C0Type::Int32Array(length),
+        C0Type::UInt8 => C0Type::UInt8Array(length),
+        C0Type::UInt16 => C0Type::UInt16Array(length),
+        C0Type::UInt32 => C0Type::UInt32Array(length),
+        C0Type::Int64 => C0Type::Int64Array(length),
+        C0Type::UInt64 => C0Type::UInt64Array(length),
+        _ => return None,
+    })
+}
+
+fn kernel_integer_literal_value(
+    c_type: C0Type,
+    initializer: &C0Expression,
+) -> Option<crate::kernel::CValue> {
+    let bits = match initializer {
+        C0Expression::Int32Literal(value) => *value,
+        C0Expression::UInt8Literal(value) => u32::from(*value),
+        C0Expression::UInt32Literal(value) => *value,
+        _ => return None,
+    };
+    Some(match c_type {
+        C0Type::Int16 => crate::kernel::int16(bits),
+        C0Type::Int32 => crate::kernel::int32(bits),
+        C0Type::UInt8 => crate::kernel::uint8(bits),
+        C0Type::UInt16 => crate::kernel::uint16(bits),
+        C0Type::UInt32 => crate::kernel::uint32(bits),
+        _ => return None,
+    })
 }
 
 /// A function-local scalar with static storage duration. The source name is
@@ -704,6 +825,7 @@ impl C0Function {
             enums: BTreeMap::new(),
             unions: BTreeMap::new(),
             globals: BTreeMap::new(),
+            global_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             string_literals: Vec::new(),
         }
@@ -745,6 +867,10 @@ impl C0Function {
         &self.globals
     }
 
+    pub fn global_arrays(&self) -> &BTreeMap<String, C0GlobalArray> {
+        &self.global_arrays
+    }
+
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
     }
@@ -755,6 +881,14 @@ impl C0Function {
 
     pub(crate) fn with_globals(mut self, globals: BTreeMap<String, C0Global>) -> Self {
         self.globals = globals;
+        self
+    }
+
+    pub(crate) fn with_global_arrays(
+        mut self,
+        global_arrays: BTreeMap<String, C0GlobalArray>,
+    ) -> Self {
+        self.global_arrays = global_arrays;
         self
     }
 
@@ -789,6 +923,12 @@ impl C0Function {
                 self.globals
                     .values()
                     .filter_map(C0Global::to_kernel_global)
+                    .collect(),
+            )
+            .with_global_arrays(
+                self.global_arrays
+                    .values()
+                    .filter_map(C0GlobalArray::to_kernel_global_array)
                     .collect(),
             )
             .with_static_variables(
@@ -1954,6 +2094,7 @@ struct Parser {
     function_declarations: BTreeMap<String, C0FunctionHeader>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
+    global_arrays: BTreeMap<String, C0GlobalArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
@@ -2030,6 +2171,7 @@ impl Parser {
             function_declarations: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
+            global_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             string_literals: Vec::new(),
             header_mode: false,
@@ -2062,6 +2204,11 @@ impl Parser {
             .map(|binding| binding.kernel_name.clone())
             .or_else(|| {
                 self.globals
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
+            .or_else(|| {
+                self.global_arrays
                     .get(source_name)
                     .map(|global| global.kernel_name().to_string())
             })
@@ -2372,6 +2519,7 @@ impl Parser {
             enums: self.enums.clone(),
             unions: self.unions.clone(),
             globals: self.globals.clone(),
+            global_arrays: self.global_arrays.clone(),
             static_locals,
             string_literals,
         })
@@ -2429,7 +2577,8 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
-        if self.globals.contains_key(&header.name) {
+        if self.globals.contains_key(&header.name) || self.global_arrays.contains_key(&header.name)
+        {
             return Err(self.error_here(format!(
                 "function `{}` conflicts with a global declaration",
                 header.name
@@ -2534,45 +2683,87 @@ impl Parser {
             } else {
                 name.clone()
             };
-            if self.peek() == Some(&Token::LBracket) {
-                return Err(
-                    self.error_here("file-scope arrays are not supported yet; use a scalar global")
-                );
-            }
-            let initializer = if self.peek() == Some(&Token::Equal) {
-                if is_extern {
-                    return Err(
-                        self.error_here("`extern` global declarations may not have an initializer")
-                    );
-                }
-                self.position += 1;
-                let initializer = self.parse_expression()?;
-                validate_global_initializer(self, parsed_type.c_type, &initializer)?;
-                Some(initializer)
-            } else if is_extern {
-                None
-            } else {
-                Some(C0Expression::Int32Literal(0))
-            };
-            self.register_global_declaration(
-                name.clone(),
-                parsed_type.c_type,
-                initializer
-                    .map(|initializer| {
-                        if is_file_static {
-                            C0Global::file_static_definition(
+            let array_length = self.parse_global_array_length(&name)?;
+            if let Some(length) = array_length {
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    if is_extern {
+                        return Err(self.error_here(
+                            "`extern` global array declarations may not have an initializer",
+                        ));
+                    }
+                    self.position += 1;
+                    Some(self.parse_global_array_initializer(&name, parsed_type.c_type, length)?)
+                } else if is_extern {
+                    None
+                } else {
+                    Some(vec![C0Expression::Int32Literal(0); length as usize])
+                };
+                self.register_global_array_declaration(
+                    name.clone(),
+                    parsed_type.c_type,
+                    length,
+                    initializer
+                        .map(|initializer| {
+                            C0GlobalArray::definition(
                                 name.clone(),
                                 kernel_name.clone(),
                                 parsed_type.c_type,
+                                length,
                                 initializer,
+                                is_file_static,
                             )
-                        } else {
-                            C0Global::definition(name.clone(), parsed_type.c_type, initializer)
-                        }
-                    })
-                    .unwrap_or_else(|| C0Global::declaration(name.clone(), parsed_type.c_type)),
-            )?;
-            self.variable_types.insert(kernel_name, parsed_type.c_type);
+                        })
+                        .unwrap_or_else(|| {
+                            C0GlobalArray::declaration(
+                                name.clone(),
+                                kernel_name.clone(),
+                                parsed_type.c_type,
+                                length,
+                                is_file_static,
+                            )
+                        }),
+                )?;
+                self.variable_types.insert(
+                    kernel_name,
+                    array_type_for_element(parsed_type.c_type, length)
+                        .expect("validated global array element type"),
+                );
+            } else {
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    if is_extern {
+                        return Err(self.error_here(
+                            "`extern` global declarations may not have an initializer",
+                        ));
+                    }
+                    self.position += 1;
+                    let initializer = self.parse_expression()?;
+                    validate_global_initializer(self, parsed_type.c_type, &initializer)?;
+                    Some(initializer)
+                } else if is_extern {
+                    None
+                } else {
+                    Some(C0Expression::Int32Literal(0))
+                };
+                self.register_global_declaration(
+                    name.clone(),
+                    parsed_type.c_type,
+                    initializer
+                        .map(|initializer| {
+                            if is_file_static {
+                                C0Global::file_static_definition(
+                                    name.clone(),
+                                    kernel_name.clone(),
+                                    parsed_type.c_type,
+                                    initializer,
+                                )
+                            } else {
+                                C0Global::definition(name.clone(), parsed_type.c_type, initializer)
+                            }
+                        })
+                        .unwrap_or_else(|| C0Global::declaration(name.clone(), parsed_type.c_type)),
+                )?;
+                self.variable_types.insert(kernel_name, parsed_type.c_type);
+            }
             if self.peek() != Some(&Token::Comma) {
                 break;
             }
@@ -2586,15 +2777,103 @@ impl Parser {
         self.expect(Token::Semicolon)
     }
 
+    fn parse_global_array_length(&mut self, name: &str) -> Result<Option<u32>, C0SyntaxError> {
+        if self.peek() != Some(&Token::LBracket) {
+            return Ok(None);
+        }
+        self.position += 1;
+        let length = match self.next() {
+            Some(Token::Number(number)) => {
+                let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid file-scope array length `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(length).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "file-scope array length `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "expected positive file-scope array length, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(
+                    self.error_here("expected positive file-scope array length, got end of input")
+                );
+            }
+        };
+        if length == 0 {
+            return Err(self.error_at_previous(format!(
+                "file-scope array `{name}` must have positive length"
+            )));
+        }
+        self.expect(Token::RBracket)?;
+        if self.peek() == Some(&Token::LBracket) {
+            return Err(self.error_here("multidimensional file-scope arrays are not supported yet"));
+        }
+        Ok(Some(length))
+    }
+
+    fn parse_global_array_initializer(
+        &mut self,
+        name: &str,
+        element_type: C0Type,
+        length: u32,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let mut values = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if values.len() == length as usize {
+                    return Err(self.error_here(format!(
+                        "too many initializers for file-scope array `{name}[{length}]`"
+                    )));
+                }
+                let value = self.parse_expression()?;
+                validate_global_initializer(self, element_type, &value)?;
+                values.push(value);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in file-scope array `{name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in file-scope array `{name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        values.resize(length as usize, C0Expression::Int32Literal(0));
+        Ok(values)
+    }
+
     fn register_global_declaration(
         &mut self,
         name: String,
         c_type: C0Type,
         declaration: C0Global,
     ) -> Result<(), C0SyntaxError> {
-        if self.function_declarations.contains_key(&name) {
+        if self.function_declarations.contains_key(&name) || self.global_arrays.contains_key(&name)
+        {
             return Err(self.error_here(format!(
-                "global `{name}` conflicts with a function declaration"
+                "global `{name}` conflicts with a function or array declaration"
             )));
         }
         if let Some(previous) = self.globals.get(&name) {
@@ -2618,6 +2897,44 @@ impl Parser {
             _ => declaration,
         };
         self.globals.insert(name, merged);
+        Ok(())
+    }
+
+    fn register_global_array_declaration(
+        &mut self,
+        name: String,
+        element_type: C0Type,
+        length: u32,
+        declaration: C0GlobalArray,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name) || self.globals.contains_key(&name) {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function or scalar global declaration"
+            )));
+        }
+        if let Some(previous) = self.global_arrays.get(&name) {
+            if previous.element_type != element_type || previous.length != length {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for global array `{name}`"
+                )));
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for global array `{name}`"
+                )));
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(
+                    self.error_here(format!("duplicate definition of global array `{name}`"))
+                );
+            }
+        }
+        let merged = match (self.global_arrays.get(&name), declaration.is_defined()) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.global_arrays.insert(name, merged);
         Ok(())
     }
 

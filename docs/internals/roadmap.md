@@ -87,7 +87,10 @@ Likely additions:
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
 - Remaining static-storage work: aggregate static objects, other linkage forms,
-  immutable global tables, and initialization ordering.
+  immutable global tables, and initialization ordering. Fixed-size
+  one-dimensional scalar global arrays now use stable cross-translation-unit
+  or translation-unit-private storage with literal/zero element
+  initialization; aggregate and multidimensional tables remain open.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use
