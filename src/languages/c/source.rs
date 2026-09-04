@@ -67,6 +67,7 @@ enum SourceDirective {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Conditional {
     Literal(bool),
+    ValueLiteral(String),
     Macro(String),
     Ifdef(String),
     Ifndef(String),
@@ -74,7 +75,18 @@ enum Conditional {
     Not(Box<Conditional>),
     And(Box<Conditional>, Box<Conditional>),
     Or(Box<Conditional>, Box<Conditional>),
+    Comparison {
+        left: Box<Conditional>,
+        operator: ComparisonOperator,
+        right: Box<Conditional>,
+    },
     Unsupported(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComparisonOperator {
+    Equal,
+    NotEqual,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -504,6 +516,9 @@ fn evaluate_condition(
         } else {
             ConditionalTruth::False
         }),
+        Conditional::ValueLiteral(value) => Err(format!(
+            "unsupported conditional expression `#{directive_name} {value}`; expected `0` or `1`, or a supported comparison"
+        )),
         Conditional::Macro(name) => {
             let Some(value) = macros.get(name) else {
                 return Err(format!(
@@ -552,6 +567,15 @@ fn evaluate_condition(
                 Ok(or_truth(left, right))
             }
         }
+        Conditional::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = evaluate_comparison_operand(left, directive_name, macros, defined_macros)?;
+            let right = evaluate_comparison_operand(right, directive_name, macros, defined_macros)?;
+            Ok(compare_values(left, *operator, right))
+        }
         Conditional::Unsupported(expression) => Err(unsupported_condition_message(expression)),
     }
 }
@@ -576,6 +600,7 @@ fn evaluate_condition_for_discovery(
                 ConditionalTruth::False
             }
         }
+        Conditional::ValueLiteral(_) => ConditionalTruth::Unknown,
         Conditional::Macro(name) => macros
             .get(name)
             .and_then(|value| macro_condition_truth(value))
@@ -651,7 +676,97 @@ fn evaluate_condition_for_discovery(
                 or_truth(left, right)
             }
         }
+        Conditional::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let Some(left) = comparison_operand_for_discovery(
+                left,
+                macros,
+                defined_macros,
+                may_have_external_macros,
+            ) else {
+                return ConditionalTruth::Unknown;
+            };
+            let Some(right) = comparison_operand_for_discovery(
+                right,
+                macros,
+                defined_macros,
+                may_have_external_macros,
+            ) else {
+                return ConditionalTruth::Unknown;
+            };
+            compare_values(left, *operator, right)
+        }
         Conditional::Unsupported(_) => ConditionalTruth::Unknown,
+    }
+}
+
+fn evaluate_comparison_operand(
+    condition: &Conditional,
+    directive_name: &str,
+    macros: &BTreeMap<String, String>,
+    defined_macros: &BTreeSet<String>,
+) -> Result<u64, String> {
+    match condition {
+        Conditional::Literal(value) => Ok(u64::from(*value)),
+        Conditional::ValueLiteral(value) => preprocessor_literal_value(value).ok_or_else(|| {
+            format!(
+                "unsupported conditional expression `#{directive_name}`; expected integer or character literal operands"
+            )
+        }),
+        Conditional::Macro(name) => {
+            let Some(value) = macros.get(name) else {
+                return Err(format!(
+                    "unsupported conditional expression `#{directive_name}`; expected `{name}` to be a previously defined literal macro"
+                ));
+            };
+            preprocessor_literal_value(value).ok_or_else(|| {
+                format!(
+                    "unsupported conditional expression `#{directive_name}`; expected `{name}` to be defined as one integer or character literal"
+                )
+            })
+        }
+        Conditional::Defined(name) => Ok(u64::from(defined_macros.contains(name))),
+        _ => Err(format!(
+            "unsupported conditional expression `#{directive_name}`; comparison operands must be literal values or macro names"
+        )),
+    }
+}
+
+fn comparison_operand_for_discovery(
+    condition: &Conditional,
+    macros: &BTreeMap<String, String>,
+    defined_macros: &BTreeSet<String>,
+    may_have_external_macros: bool,
+) -> Option<u64> {
+    match condition {
+        Conditional::Literal(value) => Some(u64::from(*value)),
+        Conditional::ValueLiteral(value) => preprocessor_literal_value(value),
+        Conditional::Macro(name) => macros
+            .get(name)
+            .and_then(|value| preprocessor_literal_value(value)),
+        Conditional::Defined(name) => {
+            if defined_macros.contains(name) {
+                Some(1)
+            } else if may_have_external_macros {
+                None
+            } else {
+                Some(0)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn compare_values(left: u64, operator: ComparisonOperator, right: u64) -> ConditionalTruth {
+    let equal = left == right;
+    match operator {
+        ComparisonOperator::Equal if equal => ConditionalTruth::True,
+        ComparisonOperator::Equal => ConditionalTruth::False,
+        ComparisonOperator::NotEqual if equal => ConditionalTruth::False,
+        ComparisonOperator::NotEqual => ConditionalTruth::True,
     }
 }
 
@@ -992,9 +1107,40 @@ fn parse_condition(directive_name: &str, input: &str) -> Conditional {
     let expression = rest.trim();
     let mut parser = ConditionalParser::new(rest);
     match parser.parse() {
-        Ok(condition) => condition,
+        Ok(condition) if condition_is_supported(&condition) => condition,
         Err(()) => Conditional::Unsupported(format!("{directive_name} {expression}")),
+        Ok(_) => Conditional::Unsupported(format!("{directive_name} {expression}")),
     }
+}
+
+fn condition_is_supported(condition: &Conditional) -> bool {
+    match condition {
+        Conditional::Literal(_)
+        | Conditional::Macro(_)
+        | Conditional::Ifdef(_)
+        | Conditional::Ifndef(_)
+        | Conditional::Defined(_) => true,
+        Conditional::ValueLiteral(_) | Conditional::Unsupported(_) => false,
+        Conditional::Not(condition) => condition_is_supported(condition),
+        Conditional::And(left, right) | Conditional::Or(left, right) => {
+            condition_is_supported(left) && condition_is_supported(right)
+        }
+        Conditional::Comparison {
+            left,
+            operator: _,
+            right,
+        } => comparison_operand_is_supported(left) && comparison_operand_is_supported(right),
+    }
+}
+
+fn comparison_operand_is_supported(condition: &Conditional) -> bool {
+    matches!(
+        condition,
+        Conditional::Literal(_)
+            | Conditional::ValueLiteral(_)
+            | Conditional::Macro(_)
+            | Conditional::Defined(_)
+    )
 }
 
 struct ConditionalParser<'a> {
@@ -1028,15 +1174,36 @@ impl<'a> ConditionalParser<'a> {
     }
 
     fn parse_and(&mut self) -> Result<Conditional, ()> {
-        let mut condition = self.parse_unary()?;
+        let mut condition = self.parse_comparison()?;
         loop {
             self.skip_whitespace();
             if !self.consume("&&") {
                 return Ok(condition);
             }
-            let right = self.parse_unary()?;
+            let right = self.parse_comparison()?;
             condition = Conditional::And(Box::new(condition), Box::new(right));
         }
+    }
+
+    fn parse_comparison(&mut self) -> Result<Conditional, ()> {
+        let left = self.parse_unary()?;
+        self.skip_whitespace();
+        let operator = if self.consume("==") {
+            ComparisonOperator::Equal
+        } else if self.consume("!=") {
+            ComparisonOperator::NotEqual
+        } else {
+            return Ok(left);
+        };
+        let right = self.parse_unary()?;
+        if !comparison_operand_is_supported(&left) || !comparison_operand_is_supported(&right) {
+            return Err(());
+        }
+        Ok(Conditional::Comparison {
+            left: Box::new(left),
+            operator,
+            right: Box::new(right),
+        })
     }
 
     fn parse_unary(&mut self) -> Result<Conditional, ()> {
@@ -1064,11 +1231,12 @@ impl<'a> ConditionalParser<'a> {
 
     fn parse_atom(&mut self) -> Result<Conditional, ()> {
         self.skip_whitespace();
-        if self.consume("0") {
-            return Ok(Conditional::Literal(false));
-        }
-        if self.consume("1") {
-            return Ok(Conditional::Literal(true));
+        if let Some(literal) = self.parse_literal() {
+            return Ok(match literal.as_str() {
+                "0" => Conditional::Literal(false),
+                "1" => Conditional::Literal(true),
+                _ => Conditional::ValueLiteral(literal),
+            });
         }
         let name = self.parse_identifier().ok_or(())?;
         if name != "defined" {
@@ -1084,6 +1252,17 @@ impl<'a> ConditionalParser<'a> {
             return Err(());
         }
         Ok(Conditional::Defined(name))
+    }
+
+    fn parse_literal(&mut self) -> Option<String> {
+        let rest = &self.input[self.position..];
+        let end = if rest.starts_with('\'') {
+            macro_character_literal_end(rest)?
+        } else {
+            macro_integer_literal_end(rest)?
+        };
+        self.position += end;
+        Some(rest[..end].to_string())
     }
 
     fn parse_identifier(&mut self) -> Option<String> {
@@ -1122,6 +1301,64 @@ fn parse_macro_literal(input: &str) -> Option<String> {
     };
     let (literal, trailing) = input.split_at(end);
     trailing_comments_only(trailing).then(|| literal.to_string())
+}
+
+fn preprocessor_literal_value(literal: &str) -> Option<u64> {
+    if literal.starts_with('\'') {
+        return preprocessor_character_literal_value(literal);
+    }
+    let end = macro_integer_literal_end(literal)?;
+    (end == literal.len()).then(|| preprocessor_integer_literal_value(literal, end))?
+}
+
+fn preprocessor_integer_literal_value(literal: &str, end: usize) -> Option<u64> {
+    let bytes = literal.as_bytes();
+    let (digit_start, radix, digit_end) = if bytes.starts_with(b"0x") || bytes.starts_with(b"0X") {
+        let mut digit_end = 2;
+        while bytes.get(digit_end).is_some_and(u8::is_ascii_hexdigit) {
+            digit_end += 1;
+        }
+        (2, 16, digit_end)
+    } else {
+        let mut digit_end = 0;
+        while bytes.get(digit_end).is_some_and(u8::is_ascii_digit) {
+            digit_end += 1;
+        }
+        let radix = if digit_end > 1 && bytes.first() == Some(&b'0') {
+            8
+        } else {
+            10
+        };
+        (0, radix, digit_end)
+    };
+    (digit_end <= end).then(|| u64::from_str_radix(&literal[digit_start..digit_end], radix).ok())?
+}
+
+fn preprocessor_character_literal_value(literal: &str) -> Option<u64> {
+    let end = macro_character_literal_end(literal)?;
+    if end != literal.len() {
+        return None;
+    }
+    let chars = literal.chars().collect::<Vec<_>>();
+    let value = if chars.get(1) == Some(&'\\') {
+        match chars.get(2).copied()? {
+            'n' => b'\n',
+            'r' => b'\r',
+            't' => b'\t',
+            '0' => b'\0',
+            '\\' => b'\\',
+            '\'' => b'\'',
+            '"' => b'"',
+            _ => return None,
+        }
+    } else {
+        chars
+            .get(1)
+            .copied()?
+            .is_ascii()
+            .then_some(chars[1] as u8)?
+    };
+    Some(u64::from(value))
 }
 
 fn macro_integer_literal_end(input: &str) -> Option<usize> {
@@ -1762,6 +1999,68 @@ int32 wrong_precedence(void) { return 0; }
     }
 
     #[test]
+    fn equality_conditions_compare_literal_macros_and_short_circuit_includes() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#define FEATURE 1
+#define DISABLED 0
+#define HEX_FEATURE 0x01
+#define NUL '\0'
+#if FEATURE == 1
+#include "config.h"
+#else
+#include "missing.h"
+#endif
+#if DISABLED != 1
+int32 run(void) { return VALUE; }
+#else
+int32 wrong(void) { return 0; }
+#endif
+#if DISABLED == 1
+int32 wrong_elif(void) { return 0; }
+#elif FEATURE != 0
+int32 elif_comparison(void) { return 8; }
+#else
+int32 wrong_elif_else(void) { return 0; }
+#endif
+#if HEX_FEATURE == 1 && NUL == 0
+int32 literal_forms(void) { return VALUE; }
+#endif
+#if 0 == 1 || FEATURE != 0
+int32 boolean_comparison(void) { return 7; }
+#endif
+"##,
+            ),
+            ("config.h", "#define VALUE 4\n"),
+        ]);
+        assert_eq!(
+            local_include_paths("main.c", sources["main.c"]).unwrap(),
+            ["config.h"]
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 run(void) { return 4; }"));
+        assert!(
+            expanded
+                .source()
+                .contains("int32 elif_comparison(void) { return 8; }")
+        );
+        assert!(
+            expanded
+                .source()
+                .contains("int32 literal_forms(void) { return 4; }")
+        );
+        assert!(
+            expanded
+                .source()
+                .contains("int32 boolean_comparison(void) { return 7; }")
+        );
+        assert!(!expanded.source().contains("wrong(void)"));
+        assert!(!expanded.source().contains("wrong_elif"));
+        assert!(!expanded.source().contains("missing.h"));
+    }
+
+    #[test]
     fn defined_conditions_accept_bounded_whitespace_and_elif_forms() {
         let sources = BTreeMap::from([(
             "main.c",
@@ -1791,8 +2090,8 @@ int32 run(void) { return 3; }
             ("#if 0\n#else\n#elif 1\n#endif\n", "`#elif` after `#else`"),
             ("#if 1\n", "unterminated conditional"),
             (
-                "#if defined(FEATURE) == 1\n#endif\n",
-                "unsupported conditional expression `#if defined(FEATURE) == 1`",
+                "#if FEATURE + 1 == 2\n#endif\n",
+                "unsupported conditional expression `#if FEATURE + 1 == 2`",
             ),
         ];
         for (source, expected) in cases {
@@ -1814,12 +2113,12 @@ int32 run(void) { return 3; }
                 .contains("only whole-header guards are supported")
         );
 
-        let conditional = BTreeMap::from([("bad.h", "#if defined(BAD_H) == 1\n#endif\n")]);
+        let conditional = BTreeMap::from([("bad.h", "#if BAD_H + 1 == 2\n#endif\n")]);
         let error = local_include_paths("bad.h", conditional["bad.h"]).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("unsupported conditional expression `#if defined(BAD_H) == 1`")
+                .contains("unsupported conditional expression `#if BAD_H + 1 == 2`")
         );
     }
 

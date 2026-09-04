@@ -5,7 +5,7 @@ An active comparison must receive a source-positioned diagnostic instead of
 being guessed or silently treated as false.
 
 ```c filename=main.c
-#if defined(FEATURE) == 1
+#if FEATURE + 1 == 2
 int32 run() {
     return 1;
 }

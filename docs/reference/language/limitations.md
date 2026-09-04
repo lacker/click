@@ -83,8 +83,10 @@ the named header is supplied in the source bundle. Headers are declaration-only
 and may contain supported structs, typedefs, enums, and prototypes. System
 header includes other than the modeled no-op `<stdint.h>`, function-like or
 multi-token macros, macro redefinitions without an intervening `#undef`,
-comparisons, arithmetic, ternaries, and other general conditional expressions
-remain unsupported
+relational comparisons, arithmetic, ternaries, and other general conditional
+expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
+when both operands are integer or character literals, literal-valued macros, or
+`defined(NAME)`.
 except for canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
 `#pragma once`, and
 the bounded conditional subset. C0 does support object-like macros whose

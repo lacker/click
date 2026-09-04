@@ -35,7 +35,10 @@ after its guard macro is undefined. The next conditional slice now supports
 the exact `#if defined(NAME)`, `#if !defined(NAME)`, and corresponding `#elif`
 forms, including whitespace around the operator and identifier. The boolean
 conditional slice now combines those bounded atoms with `!`, `&&`, `||`, and
-parentheses using normal precedence and short-circuit evaluation.
+parentheses using normal precedence and short-circuit evaluation. The comparison
+slice now supports bounded `==` and `!=` comparisons between integer or character
+literals, literal-valued macros, and `defined(NAME)`, including their use inside
+the existing boolean expressions.
 
 ## Violated invariant
 
@@ -76,14 +79,17 @@ general conditional expression.
   other macro forms receive source-named diagnostics. `#undef NAME` removes a
   macro and permits a later literal redefinition.
 - Function-like and multi-token macros, system headers other than the modeled
-  `<stdint.h>`, comparisons, arithmetic, ternaries, and other general
-  conditional expressions remain explicitly unsupported until a documented
-  allowlist or preprocessor subset is implemented.
+  `<stdint.h>`, relational comparisons, arithmetic, ternaries, and other
+  general conditional expressions remain explicitly unsupported until a
+  documented allowlist or preprocessor subset is implemented. Bounded `==` and
+  `!=` comparisons are supported between integer or character literals,
+  literal-valued macros, and `defined(NAME)`.
 - The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
   previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif`
   with those same conditions, `#if defined(NAME)`, `#if !defined(NAME)`,
   and combinations of those atoms with `!`, `&&`, `||`, or parentheses. `#else`
-  and `#endif` are also supported, including nested conditionals. Inactive
+  and `#endif` are also supported, including nested conditionals. Equality and
+  inequality comparisons may be used as bounded boolean atoms. Inactive
   branches are removed before C parsing, and malformed structure or
   unsupported active conditions receive source-named diagnostics.
 - Shared struct declarations are reused across functions and files, replacing
