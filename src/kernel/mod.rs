@@ -54,7 +54,6 @@ pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
 pub(crate) use reasoning::with_bounded_snapshot_comparison;
-pub(crate) use reasoning::with_isolated_memory_resolution_fuel;
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

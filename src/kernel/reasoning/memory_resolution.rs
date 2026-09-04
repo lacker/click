@@ -1,26 +1,94 @@
 use super::*;
 
-pub(in crate::kernel) const MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT: usize = 64;
-
-/// Budget for the expensive memory-resolution edges: recursive base matching
-/// inside distinctness checks and stored-cell equality scans. The store
-/// provenance these support only needs shallow reasoning, and an unbounded
-/// budget makes the fact-scan leaves combinatorial.
-pub(in crate::kernel) const MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT: usize = 8;
-
-/// Total node budget for one top-level memory-resolution query. The
-/// resolution helpers are mutually recursive across reasoning.rs and
-/// assumptions.rs, and several fact-scan edges re-enter through depth-0
-/// wrappers, so a per-call depth limit alone cannot bound total work. The
-/// fuel is armed at each public entry point and shared by every recursive
-/// step underneath it, which keeps deep linear chains (repeated loads
-/// through stores) affordable while cutting off exponential branching.
-/// Results stay deterministic because the budget is per query, not global.
-pub(in crate::kernel) const MEMORY_RESOLUTION_NODE_BUDGET: usize = 8_000;
+/// A memory-resolution query in progress on this thread. The resolvers are
+/// mutually recursive over pointers, offsets, index terms, loads, stored
+/// cells, and range facts. A query met again while it is in progress is a
+/// cycle through the facts and proves nothing on that path; distinct
+/// queries nest freely, bounded by the terms and facts the query connects,
+/// and each is answered once per fact set by the memo below.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::kernel) enum ResolutionQuery {
+    PointerDistinct(Pointer, Pointer),
+    CommonBaseDistinct(Pointer, Pointer),
+    PointerEqual(Pointer, Pointer),
+    OffsetEqual(PointerOffsetTerm, PointerOffsetTerm),
+    BitvectorEqual(Bitvector32Term, Bitvector32Term),
+    SnapshotsMatch(SharedCMemory, SharedCMemory, Pointer),
+    CanonicalMemory(SharedCMemory, Pointer),
+    RangeDisjoint(Pointer, Pointer),
+    RangesSeparate(CMemoryRange, CMemoryRange),
+    RangeContained(CMemoryRange, CMemoryRange),
+    PointerInRange(Pointer, Pointer, Bitvector32Term, Bitvector32Term, u32),
+}
 
 thread_local! {
-    static MEMORY_RESOLUTION_FUEL: std::cell::Cell<Option<usize>> =
-        const { std::cell::Cell::new(None) };
+    static RESOLUTION_QUERIES_IN_PROGRESS: std::cell::RefCell<BTreeSet<ResolutionQuery>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+/// Registers a resolution query for as long as it runs. `enter` refuses a
+/// query already in progress, noting the cycle as a truncation so the memo
+/// does not cache an answer the cycle weakened.
+pub(in crate::kernel) struct ResolutionQueryGuard {
+    query: ResolutionQuery,
+}
+
+impl ResolutionQueryGuard {
+    pub(in crate::kernel) fn enter(query: ResolutionQuery) -> Option<Self> {
+        let entered = RESOLUTION_QUERIES_IN_PROGRESS
+            .with(|queries| queries.borrow_mut().insert(query.clone()));
+        if !entered {
+            crate::kernel::assumptions::note_search_truncation();
+        }
+        // `then`, not `then_some`: a guard built eagerly and discarded on
+        // the cycle path would run `drop` and unregister the outer query.
+        entered.then(|| Self { query })
+    }
+}
+
+impl Drop for ResolutionQueryGuard {
+    fn drop(&mut self) {
+        RESOLUTION_QUERIES_IN_PROGRESS.with(|queries| {
+            queries.borrow_mut().remove(&self.query);
+        });
+    }
+}
+
+/// A query already in progress refuses re-entry without unregistering the
+/// outer query, and distinct queries nest.
+#[cfg(test)]
+#[test]
+fn resolution_query_guard_refuses_reentry_and_keeps_the_outer_query() {
+    let pointer = |index: u64| Pointer {
+        block: "cell".into(),
+        offset: PointerOffsetTerm::Constant(index as i64),
+    };
+    let first = ResolutionQuery::PointerEqual(pointer(0), pointer(1));
+    let second = ResolutionQuery::PointerDistinct(pointer(0), pointer(1));
+    let outer = ResolutionQueryGuard::enter(first.clone()).expect("the first query registers");
+    assert!(
+        ResolutionQueryGuard::enter(first.clone()).is_none(),
+        "re-entering the query is a cycle"
+    );
+    let nested = ResolutionQueryGuard::enter(second);
+    assert!(nested.is_some(), "a distinct query nests");
+    drop(nested);
+    assert!(
+        ResolutionQueryGuard::enter(first.clone()).is_none(),
+        "the refused re-entry left the outer query registered"
+    );
+    drop(outer);
+    assert!(ResolutionQueryGuard::enter(first).is_some());
+}
+
+/// Whether the verification deadline has passed, noted as a truncation so
+/// the memo does not cache the answer the deadline cut short.
+pub(in crate::kernel) fn resolution_interrupted() -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        crate::kernel::assumptions::note_search_truncation();
+        return true;
+    }
+    false
 }
 
 /// One top-level memory-resolution equality query, keyed by fact-set content
@@ -74,9 +142,6 @@ pub(crate) fn clear_canonical_memory_cache() {
 /// caching, and a positive answer is found evidence that remains valid
 /// outside the weakened context.
 fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)> {
-    if MEMORY_RESOLUTION_FUEL.with(|fuel| fuel.get().is_some()) {
-        return None;
-    }
     if !crate::kernel::api::memory_dag_cell_lookup_depth_is_zero() {
         return None;
     }
@@ -150,7 +215,7 @@ pub(crate) fn pointers_disjoint_by_range_memoized(
         ResolutionQueryKey::PointerRangeDisjoint(id, bridging, first.clone(), second.clone())
     });
     memoized_resolution_query(key, || {
-        with_memory_resolution_fuel(|| assumptions.pointers_directly_disjoint_by_range(left, right))
+        assumptions.pointers_directly_disjoint_by_range(left, right)
     })
 }
 
@@ -177,61 +242,6 @@ pub(crate) fn with_bounded_snapshot_comparison<T>(body: impl FnOnce() -> T) -> T
 
 pub(crate) fn bounded_snapshot_comparison_active() -> bool {
     BOUNDED_SNAPSHOT_COMPARISON.with(std::cell::Cell::get)
-}
-
-/// Runs `body` with the memory-resolution node budget armed. Nested calls
-/// (a wrapper reached from inside another query) keep the outer budget.
-pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
-    MEMORY_RESOLUTION_FUEL.with(|fuel| {
-        if fuel.get().is_some() {
-            return body();
-        }
-        fuel.set(Some(MEMORY_RESOLUTION_NODE_BUDGET));
-        let result = body();
-        fuel.set(None);
-        result
-    })
-}
-
-/// Runs `body` under its own capped budget, shielding whatever budget the
-/// caller had armed: the outer query sees its fuel untouched no matter what
-/// `body` spends. For advisory arms (memory-DAG hop checks) that run inside
-/// arbitrary resolution queries — without the shield their spending would
-/// perturb fuel-coupled answers elsewhere, and certified forms must
-/// check byte-for-byte. Deterministic: the cap is a constant, so the answer
-/// depends only on the inputs.
-pub(crate) fn with_isolated_memory_resolution_fuel<T>(
-    budget: usize,
-    body: impl FnOnce() -> T,
-) -> T {
-    MEMORY_RESOLUTION_FUEL.with(|fuel| {
-        let saved = fuel.get();
-        fuel.set(Some(budget));
-        let result = body();
-        fuel.set(saved);
-        result
-    })
-}
-
-/// Consumes one unit of the armed budget. Returns false when the budget is
-/// exhausted; callers must fail their check (never claim a proof) then.
-/// Outside any armed query this is a no-op that returns true.
-pub(in crate::kernel) fn consume_memory_resolution_fuel() -> bool {
-    if crate::instrumentation::deadline_exceeded() {
-        crate::kernel::assumptions::note_search_truncation();
-        return false;
-    }
-    MEMORY_RESOLUTION_FUEL.with(|fuel| match fuel.get() {
-        None => true,
-        Some(0) => {
-            crate::kernel::assumptions::note_search_truncation();
-            false
-        }
-        Some(remaining) => {
-            fuel.set(Some(remaining - 1));
-            true
-        }
-    })
 }
 
 /// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.
@@ -354,24 +364,24 @@ pub(in crate::kernel) fn pointers_proven_distinct_for_memory_resolution(
         ResolutionQueryKey::PointerDistinct(id, bridging, left, right)
     });
     memoized_resolution_query(key, || {
-        with_memory_resolution_fuel(|| {
-            pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
-        })
+        pointers_proven_distinct_for_memory_resolution_unmemoized(left, right, assumptions)
     })
 }
 
-fn pointers_proven_distinct_for_memory_resolution_with_depth(
+fn pointers_proven_distinct_for_memory_resolution_unmemoized(
     left: &Pointer,
     right: &Pointer,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
-    if left == right
-        || depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
-        || !consume_memory_resolution_fuel()
-    {
+    if left == right || resolution_interrupted() {
         return false;
     }
+    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::PointerDistinct(
+        left.clone(),
+        right.clone(),
+    )) else {
+        return false;
+    };
     left.blocks_proven_distinct(right)
         || crate::instrumentation::measure_operation(
             "kernel",
@@ -382,7 +392,6 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
                     left,
                     right,
                     assumptions,
-                    depth + 1,
                 )
             },
         )
@@ -396,7 +405,6 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
                         &left.offset,
                         &right.offset,
                         assumptions,
-                        depth + 1,
                     ) == Some(false)
             },
         )
@@ -409,11 +417,7 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
             "general distinctness: explicit range",
             || {
                 assumptions
-                    .pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
-                        left,
-                        right,
-                        depth + 1,
-                    )
+                    .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
             },
         )
 }
@@ -422,17 +426,20 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || left.block != right.block {
+    if left.block != right.block {
         return false;
     }
+    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::CommonBaseDistinct(
+        left.clone(),
+        right.clone(),
+    )) else {
+        return false;
+    };
     let zero = PointerOffsetTerm::Constant(0);
     let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
         left == right
-            || depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
-                && pointer_offsets_equal_for_memory_resolution(left, right, assumptions, depth + 1)
-                    == Some(true)
+            || pointer_offsets_proven_equal_for_memory_resolution(left, right, assumptions)
     };
     let index_pair = match (&left.offset, &right.offset) {
         (
@@ -501,9 +508,7 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution(
         ResolutionQueryKey::PointerEqual(id, bridging, left.clone(), right.clone())
     });
     memoized_resolution_query(key, || {
-        with_memory_resolution_fuel(|| {
-            pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
-        })
+        pointers_proven_equal_for_memory_resolution_unmemoized(left, right, assumptions)
     })
 }
 
@@ -516,31 +521,32 @@ pub(in crate::kernel) fn pointer_offsets_proven_equal_for_memory_resolution(
         ResolutionQueryKey::PointerOffsetEqual(id, bridging, left.clone(), right.clone())
     });
     memoized_resolution_query(key, || {
-        with_memory_resolution_fuel(|| {
-            pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
-        })
+        pointer_offsets_equal_for_memory_resolution(left, right, assumptions) == Some(true)
     })
 }
 
-pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution_with_depth(
+fn pointers_proven_equal_for_memory_resolution_unmemoized(
     left: &Pointer,
     right: &Pointer,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
-        return false;
-    }
     if left == right {
         return true;
     }
+    if resolution_interrupted() {
+        return false;
+    }
+    let Some(_query) =
+        ResolutionQueryGuard::enter(ResolutionQuery::PointerEqual(left.clone(), right.clone()))
+    else {
+        return false;
+    };
     let candidate = left.block == right.block
-        && pointer_offsets_equal_for_memory_resolution(
+        && pointer_offsets_proven_equal_for_memory_resolution(
             &left.offset,
             &right.offset,
             assumptions,
-            depth + 1,
-        ) == Some(true)
+        )
         || assumptions
             .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
             == Some(true)
@@ -552,25 +558,26 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution_with_depth(
         // simplification.
         || assumptions.has_pointer_equality_path(left, right);
     candidate
-        && !assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
-            left,
-            right,
-            depth + 1,
-        )
+        && !assumptions
+            .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
 }
 
 pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> Option<bool> {
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
-        return None;
-    }
     if left == right {
         return Some(true);
     }
+    if resolution_interrupted() {
+        return None;
+    }
+    let Some(_query) =
+        ResolutionQueryGuard::enter(ResolutionQuery::OffsetEqual(left.clone(), right.clone()))
+    else {
+        return None;
+    };
     if let Some(value) = assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
         left.clone(),
         right.clone(),
@@ -583,7 +590,7 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
             element_index_from_offset(right, element_width),
         )
     {
-        if bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1) {
+        if bitvector_terms_proven_equal_for_memory_resolution(&left, &right, assumptions) {
             return Some(true);
         }
         return assumptions.decide_bitvector_equality_shallow(&left, &right);
@@ -594,18 +601,63 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     }
 }
 
-fn bitvector_terms_equal_for_memory_resolution(
+/// The value stored at `pointer` or at a pointer proven equal to it: the
+/// exact cell, then one lookup per member of the element index's recorded
+/// equality class, then the block's cells through the memoized pointer
+/// equality query, so a pair is resolved once per fact set.
+fn stored_value_at_equal_pointer(
+    memory: &CMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    if let Some(value) = memory.known_value(pointer) {
+        return Some(value);
+    }
+    if let PointerOffsetTerm::Int32Scaled {
+        value: index,
+        byte_width,
+    } = &pointer.offset
+        && let Some(value) = assumptions
+            .recorded_equality_class(index)
+            .into_iter()
+            .find_map(|member| {
+                memory.known_value(&Pointer {
+                    block: pointer.block.clone(),
+                    offset: PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(member),
+                        byte_width: *byte_width,
+                    },
+                })
+            })
+    {
+        return Some(value);
+    }
+    memory
+        .cells
+        .iter()
+        .find(|(stored, _)| {
+            stored.block == pointer.block
+                && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
+        })
+        .map(|(_, value)| value.clone())
+}
+
+fn bitvector_terms_equal_for_memory_resolution_unmemoized(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
     if left == right {
         return true;
     }
-    if !consume_memory_resolution_fuel() {
+    if resolution_interrupted() {
         return false;
     }
+    let Some(_query) =
+        ResolutionQueryGuard::enter(ResolutionQuery::BitvectorEqual(left.clone(), right.clone()))
+    else {
+        return false;
+    };
     // A load variable is its load for equality reasoning: view it
     // through the registry so snapshot provenance fires exactly as it would
     // for the load term, then fall through to the variable-form
@@ -623,11 +675,10 @@ fn bitvector_terms_equal_for_memory_resolution(
     let left_view = canonical_view(left);
     let right_view = canonical_view(right);
     if (left_view.is_some() || right_view.is_some())
-        && bitvector_terms_equal_for_memory_resolution(
+        && bitvector_terms_proven_equal_for_memory_resolution(
             left_view.as_ref().unwrap_or(left),
             right_view.as_ref().unwrap_or(right),
             assumptions,
-            depth + 1,
         )
     {
         return true;
@@ -652,82 +703,39 @@ fn bitvector_terms_equal_for_memory_resolution(
     }) {
         return true;
     }
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
-        return false;
-    }
     if let Bitvector32Term::MemoryLoad(memory, pointer) = left
-        && let Some(CValue::Int32(value)) = memory.known_value(pointer)
+        && let Some(CValue::Int32(value)) =
+            stored_value_at_equal_pointer(memory, pointer, assumptions)
         && &value != left
-        && bitvector_terms_equal_for_memory_resolution(&value, right, assumptions, depth + 1)
-    {
-        return true;
-    }
-    if depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
-        && let Bitvector32Term::MemoryLoad(memory, pointer) = left
-        && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
-            stored_pointer.block == pointer.block
-                && pointers_proven_equal_for_memory_resolution_with_depth(
-                    pointer,
-                    stored_pointer,
-                    assumptions,
-                    depth + 1,
-                )
-        })
-        && value != left
-        && bitvector_terms_equal_for_memory_resolution(value, right, assumptions, depth + 1)
+        && bitvector_terms_proven_equal_for_memory_resolution(&value, right, assumptions)
     {
         return true;
     }
     if let Bitvector32Term::MemoryLoad(memory, pointer) = right
-        && let Some(CValue::Int32(value)) = memory.known_value(pointer)
+        && let Some(CValue::Int32(value)) =
+            stored_value_at_equal_pointer(memory, pointer, assumptions)
         && &value != right
-        && bitvector_terms_equal_for_memory_resolution(left, &value, assumptions, depth + 1)
-    {
-        return true;
-    }
-    if depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
-        && let Bitvector32Term::MemoryLoad(memory, pointer) = right
-        && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
-            stored_pointer.block == pointer.block
-                && pointers_proven_equal_for_memory_resolution_with_depth(
-                    pointer,
-                    stored_pointer,
-                    assumptions,
-                    depth + 1,
-                )
-        })
-        && value != right
-        && bitvector_terms_equal_for_memory_resolution(left, value, assumptions, depth + 1)
+        && bitvector_terms_proven_equal_for_memory_resolution(left, &value, assumptions)
     {
         return true;
     }
     if let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right) {
-        return bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1);
+        return bitvector_terms_proven_equal_for_memory_resolution(&left, &right, assumptions);
     }
     let zero = Bitvector32Term::Constant(0);
     if let Bitvector32Term::Add(base, addend) = left
-        && ((bitvector_terms_equal_for_memory_resolution(base, right, assumptions, depth + 1)
-            && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
-            || (bitvector_terms_equal_for_memory_resolution(addend, right, assumptions, depth + 1)
-                && bitvector_terms_equal_for_memory_resolution(
-                    base,
-                    &zero,
-                    assumptions,
-                    depth + 1,
-                )))
+        && ((bitvector_terms_proven_equal_for_memory_resolution(base, right, assumptions)
+            && bitvector_terms_proven_equal_for_memory_resolution(addend, &zero, assumptions))
+            || (bitvector_terms_proven_equal_for_memory_resolution(addend, right, assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(base, &zero, assumptions)))
     {
         return true;
     }
     if let Bitvector32Term::Add(base, addend) = right
-        && ((bitvector_terms_equal_for_memory_resolution(left, base, assumptions, depth + 1)
-            && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
-            || (bitvector_terms_equal_for_memory_resolution(left, addend, assumptions, depth + 1)
-                && bitvector_terms_equal_for_memory_resolution(
-                    base,
-                    &zero,
-                    assumptions,
-                    depth + 1,
-                )))
+        && ((bitvector_terms_proven_equal_for_memory_resolution(left, base, assumptions)
+            && bitvector_terms_proven_equal_for_memory_resolution(addend, &zero, assumptions))
+            || (bitvector_terms_proven_equal_for_memory_resolution(left, addend, assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(base, &zero, assumptions)))
     {
         return true;
     }
@@ -742,30 +750,20 @@ fn bitvector_terms_equal_for_memory_resolution(
             Bitvector32Term::Multiply(left_a, left_b),
             Bitvector32Term::Multiply(right_a, right_b),
         ) => {
-            bitvector_terms_equal_for_memory_resolution(left_a, right_a, assumptions, depth + 1)
-                && bitvector_terms_equal_for_memory_resolution(
-                    left_b,
-                    right_b,
-                    assumptions,
-                    depth + 1,
-                )
+            bitvector_terms_proven_equal_for_memory_resolution(left_a, right_a, assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(left_b, right_b, assumptions)
         }
         (
             Bitvector32Term::MemoryLoad(left_memory, left_pointer),
             Bitvector32Term::MemoryLoad(right_memory, right_pointer),
         ) => {
-            pointers_proven_equal_for_memory_resolution_with_depth(
-                left_pointer,
-                right_pointer,
-                assumptions,
-                depth + 1,
-            ) && memory_snapshots_match_for_resolution(
-                left_memory,
-                right_memory,
-                left_pointer,
-                assumptions,
-                depth + 1,
-            )
+            pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+                && memory_snapshots_match_for_resolution(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    assumptions,
+                )
         }
         _ => false,
     }
@@ -780,9 +778,7 @@ pub(in crate::kernel) fn bitvector_terms_proven_equal_for_memory_resolution(
         ResolutionQueryKey::BitvectorEqual(id, bridging, left.clone(), right.clone())
     });
     memoized_resolution_query(key, || {
-        with_memory_resolution_fuel(|| {
-            bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
-        })
+        bitvector_terms_equal_for_memory_resolution_unmemoized(left, right, assumptions)
     })
 }
 
@@ -842,8 +838,8 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
                 }
                 (None, None) => true,
                 _ => {
-                    memory_has_materialized_load_from(left, right, pointer, assumptions, 0)
-                        || memory_has_materialized_load_from(right, left, pointer, assumptions, 0)
+                    memory_has_materialized_load_from(left, right, pointer, assumptions)
+                        || memory_has_materialized_load_from(right, left, pointer, assumptions)
                 }
             }
         })
@@ -876,7 +872,6 @@ pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
             right_memory,
             left_pointer,
             assumptions,
-            0,
         )
 }
 
@@ -885,7 +880,6 @@ fn memory_snapshots_match_for_resolution(
     right: &CMemory,
     pointer: &Pointer,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;
@@ -900,11 +894,18 @@ fn memory_snapshots_match_for_resolution(
     {
         return true;
     }
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || pointer.block.starts_with("local:") {
+    if pointer.block.starts_with("local:") {
         return false;
     }
-    if memory_has_materialized_load_from(left, right, pointer, assumptions, depth + 1)
-        || memory_has_materialized_load_from(right, left, pointer, assumptions, depth + 1)
+    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::SnapshotsMatch(
+        super::intern_c_memory_ref(left),
+        super::intern_c_memory_ref(right),
+        pointer.clone(),
+    )) else {
+        return false;
+    };
+    if memory_has_materialized_load_from(left, right, pointer, assumptions)
+        || memory_has_materialized_load_from(right, left, pointer, assumptions)
     {
         return true;
     }
@@ -930,12 +931,7 @@ fn memory_snapshots_match_for_resolution(
         .into_iter()
         .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
         .all(|cell_pointer| {
-            pointers_proven_distinct_for_memory_resolution_with_depth(
-                &cell_pointer,
-                pointer,
-                assumptions,
-                depth + 1,
-            )
+            pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
         })
 }
 
@@ -945,7 +941,7 @@ pub(in crate::kernel) fn memory_snapshots_proven_equal_at_pointer(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    memory_snapshots_match_for_resolution(left, right, pointer, assumptions, 0)
+    memory_snapshots_match_for_resolution(left, right, pointer, assumptions)
 }
 
 fn memory_has_materialized_load_from(
@@ -953,19 +949,14 @@ fn memory_has_materialized_load_from(
     materialized: &CMemory,
     pointer: &Pointer,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
     let Some(CValue::Int32(Bitvector32Term::MemoryLoad(snapshot, load_pointer))) =
         materialized.known_value(pointer)
     else {
         return false;
     };
-    pointers_proven_equal_for_memory_resolution_with_depth(
-        &load_pointer,
-        pointer,
-        assumptions,
-        depth + 1,
-    ) && memory_snapshots_match_for_resolution(source, &snapshot, pointer, assumptions, depth + 1)
+    pointers_proven_equal_for_memory_resolution(&load_pointer, pointer, assumptions)
+        && memory_snapshots_match_for_resolution(source, &snapshot, pointer, assumptions)
 }
 
 pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
@@ -1114,20 +1105,21 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
         "kernel",
         "canonical form",
         "canonical memory for load: miss",
-        || canonical_memory_for_pointer_load_with_depth(memory, pointer, 0),
+        || canonical_memory_for_pointer_load_uncached(memory, pointer),
     );
     CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
     result
 }
 
-fn canonical_memory_for_pointer_load_with_depth(
-    memory: &CMemory,
-    pointer: &Pointer,
-    depth: usize,
-) -> CMemory {
-    if depth >= MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointer) -> CMemory {
+    // A snapshot met again while its own canonical form is being computed
+    // is a cycle through the materialized cells and stands for itself.
+    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::CanonicalMemory(
+        super::intern_c_memory_ref(memory),
+        pointer.clone(),
+    )) else {
         return memory.clone();
-    }
+    };
     let relevant_cells = memory
         .cells
         .iter()
@@ -1137,11 +1129,7 @@ fn canonical_memory_for_pointer_load_with_depth(
         .iter()
         .map(|(cell_pointer, value)| {
             let source = materialized_cell_source(cell_pointer, value)?;
-            Some(canonical_memory_for_pointer_load_with_depth(
-                &source,
-                cell_pointer,
-                depth + 1,
-            ))
+            Some(canonical_memory_for_pointer_load(&source, cell_pointer))
         })
         .collect::<Option<Vec<_>>>();
     let common_materialization_source = materialization_sources.as_ref().and_then(|sources| {

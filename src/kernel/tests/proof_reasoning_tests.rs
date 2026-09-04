@@ -1269,9 +1269,7 @@ fn proposition_derivation_honors_active_deadline() {
                 .derive_atomic_proposition(&proposition)
                 .is_none()
         );
-        assert!(!crate::kernel::reasoning::with_memory_resolution_fuel(
-            || { crate::kernel::reasoning::consume_memory_resolution_fuel() }
-        ));
+        assert!(crate::kernel::reasoning::resolution_interrupted());
     });
 }
 

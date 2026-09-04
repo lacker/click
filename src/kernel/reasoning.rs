@@ -12,7 +12,6 @@ pub(in crate::kernel) use substitution::substitute_bitvector_variable_in_spec_pr
 pub(in crate::kernel) mod memory_resolution;
 pub(crate) use memory_resolution::pointers_disjoint_by_range_memoized;
 pub(crate) use memory_resolution::with_bounded_snapshot_comparison;
-pub(crate) use memory_resolution::with_isolated_memory_resolution_fuel;
 pub(in crate::kernel) mod variable_collection;
 pub(super) use memory_resolution::*;
 pub(super) use order_reasoning::*;

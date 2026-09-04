@@ -1300,6 +1300,28 @@ impl PureFactContext {
         })
     }
 
+    /// The members of `term`'s recorded-equality class other than `term`:
+    /// one walk over the indexed equality graph, bounded by the class.
+    pub(in crate::kernel) fn recorded_equality_class(
+        &self,
+        term: &Bitvector32Term,
+    ) -> BTreeSet<Bitvector32Term> {
+        let index = self.bitvector_equality_index();
+        let start = equality_graph_term_key(term);
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![start];
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current.clone()) {
+                continue;
+            }
+            if let Some(neighbors) = index.get(&current) {
+                stack.extend(neighbors.keys().cloned());
+            }
+        }
+        seen.remove(term);
+        seen
+    }
+
     /// The canonical representative of `term`'s recorded-equality class:
     /// constants first, then the member mentioning the fewest memory loads,
     /// ties broken by term order. One bounded walk over the indexed equality
@@ -2454,31 +2476,22 @@ pub(super) fn memory_range_contained_for_memory_resolution(
     parent: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    super::reasoning::with_memory_resolution_fuel(|| {
-        memory_range_contained_for_memory_resolution_with_depth(range, parent, assumptions, 0)
-    })
-}
-
-fn memory_range_contained_for_memory_resolution_with_depth(
-    range: &CMemoryRange,
-    parent: &CMemoryRange,
-    assumptions: &PureFactContext,
-    depth: usize,
-) -> bool {
     if memory_range_shallowly_contained(range, parent) {
         return true;
     }
-    if depth > super::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
-        || !super::reasoning::consume_memory_resolution_fuel()
-    {
+    if super::reasoning::resolution_interrupted() {
         return false;
     }
+    let Some(_query) = super::reasoning::ResolutionQueryGuard::enter(
+        super::reasoning::ResolutionQuery::RangeContained(range.clone(), parent.clone()),
+    ) else {
+        return false;
+    };
 
-    if super::reasoning::pointers_proven_equal_for_memory_resolution_with_depth(
+    if super::reasoning::pointers_proven_equal_for_memory_resolution(
         range.base(),
         parent.base(),
         assumptions,
-        depth + 1,
     ) {
         return exact_less_equal_for_memory_resolution(parent.start(), range.start(), assumptions)
             && exact_less_equal_for_memory_resolution(range.end(), parent.end(), assumptions);
@@ -2486,12 +2499,7 @@ fn memory_range_contained_for_memory_resolution_with_depth(
 
     if affine_bitvector_difference_constant(range.end(), range.start()) == Some(1) {
         let pointer = range.base().offset_by_int32_elements(range.start().clone());
-        if pointer_in_memory_range_for_memory_resolution_with_depth(
-            &pointer,
-            parent,
-            assumptions,
-            depth + 1,
-        ) {
+        if pointer_in_memory_range_for_memory_resolution(&pointer, parent, assumptions) {
             return true;
         }
     }
@@ -2614,20 +2622,18 @@ fn pointer_offsets_match_by_shallow_fact_graph(
     }
 }
 
-fn pointer_in_memory_range_for_memory_resolution_with_depth(
+fn pointer_in_memory_range_for_memory_resolution(
     pointer: &Pointer,
     range: &CMemoryRange,
     assumptions: &PureFactContext,
-    depth: usize,
 ) -> bool {
-    pointer_in_range_for_memory_resolution_with_depth(
+    pointer_in_range_for_memory_resolution(
         pointer,
         range.base(),
         range.start(),
         range.end(),
         range.element_width(),
         assumptions,
-        depth,
     )
 }
 
@@ -2639,34 +2645,20 @@ fn pointer_in_range_for_memory_resolution(
     element_width: u32,
     assumptions: &PureFactContext,
 ) -> bool {
-    super::reasoning::with_memory_resolution_fuel(|| {
-        pointer_in_range_for_memory_resolution_with_depth(
-            pointer,
-            base,
-            start,
-            end,
-            element_width,
-            assumptions,
-            0,
-        )
-    })
-}
-
-fn pointer_in_range_for_memory_resolution_with_depth(
-    pointer: &Pointer,
-    base: &Pointer,
-    start: &Bitvector32Term,
-    end: &Bitvector32Term,
-    element_width: u32,
-    assumptions: &PureFactContext,
-    depth: usize,
-) -> bool {
-    if pointer.block != base.block
-        || depth > super::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
-        || !super::reasoning::consume_memory_resolution_fuel()
-    {
+    if pointer.block != base.block || super::reasoning::resolution_interrupted() {
         return false;
     }
+    let Some(_query) = super::reasoning::ResolutionQueryGuard::enter(
+        super::reasoning::ResolutionQuery::PointerInRange(
+            pointer.clone(),
+            base.clone(),
+            start.clone(),
+            end.clone(),
+            element_width,
+        ),
+    ) else {
+        return false;
+    };
     let mut indexes = pointer
         .element_index_from_base_with_width(base, element_width)
         .into_iter()
@@ -2677,24 +2669,20 @@ fn pointer_in_range_for_memory_resolution_with_depth(
             "explicit range arms",
             "range membership: offset equality",
             || {
-                if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                if super::reasoning::pointer_offsets_proven_equal_for_memory_resolution(
                     left,
                     &base.offset,
                     assumptions,
-                    depth + 1,
-                ) == Some(true)
-                    && let Some(index) = element_index_from_offset(right, element_width)
+                ) && let Some(index) = element_index_from_offset(right, element_width)
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);
                 }
-                if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                if super::reasoning::pointer_offsets_proven_equal_for_memory_resolution(
                     right,
                     &base.offset,
                     assumptions,
-                    depth + 1,
-                ) == Some(true)
-                    && let Some(index) = element_index_from_offset(left, element_width)
+                ) && let Some(index) = element_index_from_offset(left, element_width)
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);

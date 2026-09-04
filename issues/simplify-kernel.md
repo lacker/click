@@ -119,6 +119,18 @@ derivation's work is bounded by its inputs already (memoized, cycle-cut
 decisions; recursion along the proposition; premise selection over the
 candidate facts); the depth became a cycle check on the condition being
 proved from the facts. The deadline check stays at the same sites.
+The fourth chunk deletes the memory-resolution budget of 8,000, the alias
+depth of 64, and the expensive-edge depth of 8: a census found the alias
+depth never met, the budget met by 8 queries, and the expensive gate met
+428,000 times, all at load equality's stored-cell scan, and without the
+gate owned-vector did not finish because nested queries were never
+memoized under fuel. Every resolver now registers its query in an
+in-progress set (a query met again is a cycle and proves nothing on that
+path, noted as a truncation), nested queries go through the memo, and
+the cell scan asks the exact cell, the element index's recorded equality
+class, and then the block's cells through the memoized pointer-equality
+query. The isolated budgets went with the fuel. A load resolves through
+a chain of 32 to 128 stored cells with work that follows the chain.
 
 ## Violated invariant
 

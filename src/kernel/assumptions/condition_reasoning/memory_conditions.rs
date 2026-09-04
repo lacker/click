@@ -90,31 +90,21 @@ impl PureFactContext {
         ) {
             return true;
         }
-        // The two remaining legs — whole-snapshot alias comparison and the
-        // framed-load prover — are the expensive general searches. Every
-        // cheap route has already answered above (fact transport,
-        // resolution, structural match, the DAG walk), so the residue runs
-        // under one isolated node budget: load-equality questions the cheap
-        // evidence cannot settle within it fail promptly here rather than
-        // fanning out into the giant-term recursion that load-variable construction
-        // exists to avoid.
-        crate::kernel::reasoning::with_isolated_memory_resolution_fuel(8_000, || {
-            // Two forms whose marker sets differ are never syntactically
-            // equal and defeat the snapshot comparison's block-set filter,
-            // but the load can still be provably unchanged across the marker
-            // delta: the framed-load prover consumes the recorded effect
-            // summaries and mutates-only facts to frame the loaded pointer
-            // across each intervening effect. Deciding the pair by that
-            // proof, instead of by form coincidence, is what keeps fact
-            // transport working once canonicalization preserves havoc
-            // markers.
-            crate::kernel::api::c_memory_load_is_unchanged(
-                left_memory,
-                right_memory,
-                left_pointer,
-                self,
-            )
-        })
+        // The remaining leg is the framed-load prover. Two forms whose
+        // marker sets differ are never syntactically equal and defeat the
+        // snapshot comparison's block-set filter, but the load can still be
+        // provably unchanged across the marker delta: the framed-load prover
+        // consumes the recorded effect summaries and mutates-only facts to
+        // frame the loaded pointer across each intervening effect. Deciding
+        // the pair by that proof, instead of by form coincidence, is what
+        // keeps fact transport working once canonicalization preserves
+        // havoc markers.
+        crate::kernel::api::c_memory_load_is_unchanged(
+            left_memory,
+            right_memory,
+            left_pointer,
+            self,
+        )
     }
 
     pub(in crate::kernel) fn memory_snapshots_directly_proven_equal_for_memory_resolution(

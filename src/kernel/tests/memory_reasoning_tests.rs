@@ -3734,3 +3734,49 @@ fn freed_external_allocation_is_not_still_available() {
         bytes: Bitvector32Term::Constant(4),
     }));
 }
+
+/// Load equality resolves through a chain of stored cells of any length:
+/// each memory's cell holds the load of the next memory's cell, and the
+/// chain ends at a constant. Each hop is one memoized query, so the work
+/// follows the chain; the alias depth of 64 that used to cut the recursion
+/// refused every chain past it.
+#[test]
+fn load_equality_resolves_through_stored_cell_chains_of_any_length() {
+    let base = Pointer {
+        block: "chain".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let cell = |index: usize| base.offset_by_elements(Bitvector32Term::Constant(index as u32), 4);
+    let mut samples = Vec::new();
+    for length in [32usize, 64, 96, 128] {
+        let mut memory =
+            CMemory::new().store(cell(length), CValue::Int32(Bitvector32Term::Constant(42)));
+        for index in (0..length).rev() {
+            let next = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory),
+                Box::new(cell(index + 1)),
+            );
+            memory = CMemory::new().store(cell(index), CValue::Int32(next));
+        }
+        let load =
+            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory), Box::new(cell(0)));
+        let (proven, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+                &load,
+                &Bitvector32Term::Constant(42),
+                &PureFactContext::new(),
+            )
+        });
+        assert!(
+            proven,
+            "a chain of {length} stored cells resolves to its constant"
+        );
+        samples.push((length, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "load resolution through a cell chain is superlinear: {samples:?}"
+        );
+    }
+}

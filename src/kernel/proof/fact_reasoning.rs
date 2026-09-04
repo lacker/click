@@ -1955,25 +1955,23 @@ impl<'a> OriginsUnchanged<'a> {
         ) else {
             return false;
         };
-        // Bounded: the unchanged proof must come from the cheap routes —
-        // recorded derivations crossed with exact-fact distinctness — never
-        // from whole-snapshot alias search, which is the giant-term
-        // recursion load-variable construction exists to avoid.
+        // The unchanged proof comes from the cheap routes — recorded
+        // derivations crossed with exact-fact distinctness — never from
+        // whole-snapshot alias search, which is the giant-term recursion
+        // load-variable construction exists to avoid.
         left_pointer == right_pointer
-            && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
-                crate::kernel::with_bounded_snapshot_comparison(|| {
-                    crate::kernel::c_memory_load_is_unchanged(
-                        &left_memory,
-                        &right_memory,
-                        &left_pointer,
-                        self.assumptions,
-                    ) || crate::kernel::c_memory_load_is_unchanged(
-                        &right_memory,
-                        &left_memory,
-                        &left_pointer,
-                        self.assumptions,
-                    )
-                })
+            && crate::kernel::with_bounded_snapshot_comparison(|| {
+                crate::kernel::c_memory_load_is_unchanged(
+                    &left_memory,
+                    &right_memory,
+                    &left_pointer,
+                    self.assumptions,
+                ) || crate::kernel::c_memory_load_is_unchanged(
+                    &right_memory,
+                    &left_memory,
+                    &left_pointer,
+                    self.assumptions,
+                )
             })
     }
 }

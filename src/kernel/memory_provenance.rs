@@ -638,20 +638,11 @@ fn memory_derivations_reach(
                                 // The same range-membership route the fact-based
                                 // MutatesOnly arm uses: the write inside one
                                 // separated range and the load inside the other.
-                                // Isolated fuel keeps per-edge work bounded: range
-                                // extents may retain raw load terms, and deciding
-                                // orderings against them must come from exact facts,
-                                // never from re-entering alias resolution.
                                 || {
-                                    crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
-                                        8_000,
-                                        || {
-                                            crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
+                                    crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
                                         write,
                                         pointer,
                                         assumptions,
-                                    )
-                                        },
                                     )
                                 },
                             ))
@@ -1327,24 +1318,6 @@ impl Drop for CellLookupGuard {
     }
 }
 
-/// Walks a snapshot's derivation edges backwards resolving one cell.
-///
-/// Every hop is decided by the *cheap* predicates only — block distinctness
-/// and additive-base cancellation for stores, recorded range disjointness for
-/// call havoc — because this is the arm that runs before canonicalization and
-/// has to stay cheaper than what it short-circuits. A hop it cannot decide is
-/// not a failure: the walk stops and reports the node it stopped at, which is
-/// still a true statement about the load.
-///
-/// A `LoopHavoc` with no checked footprint is never crossed (conventions.md's
-/// soundness trap). A verified footprint is crossed only when the current
-/// facts prove the queried pointer outside every recorded range. The hop cap
-/// plus the strictly decreasing arena ids along `base` bound the walk.
-/// Budget for one `Store`-hop distinctness check inside the cell-source
-/// walk, isolated from the enclosing query's fuel. Small on purpose: the
-/// certificates these hops need name their ranges close to the surface.
-const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 128;
-
 // The extended DAG bridging (crossing block-declaration and cell-forgetting
 // edges, range-certificate store hops, stored-value pinning, and the
 // order-path load matching in assumptions.rs) runs ONLY inside the loadable
@@ -1662,16 +1635,7 @@ fn memory_dag_cell_source_walk(
                         MemoryDagAssumptionKind::StoreExplicitRange,
                     )
                 } else if extended_dag_bridging_active()
-                    && super::reasoning::with_isolated_memory_resolution_fuel(
-                        MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
-                        || {
-                            pointers_proven_distinct_for_memory_resolution(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                        },
-                    )
+                    && pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
                 {
                     MemoryDagHopJustification::AssumptionDependent(
                         MemoryDagAssumptionKind::StoreGeneralDistinctness,

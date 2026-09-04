@@ -672,18 +672,6 @@ impl PureFactContext {
         )
     }
 
-    pub(in crate::kernel) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
-        crate::kernel::reasoning::with_memory_resolution_fuel(|| {
-            self.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
-                left, right, 0,
-            )
-        })
-    }
-
     pub(in crate::kernel) fn pointers_proven_disjoint_by_shallow_explicit_range(
         &self,
         left: &Pointer,
@@ -819,12 +807,16 @@ impl PureFactContext {
                 == Some(true)
     }
 
-    pub(in crate::kernel) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+    pub(in crate::kernel) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
         &self,
         left: &Pointer,
         right: &Pointer,
-        depth: usize,
     ) -> bool {
+        let Some(_query) = crate::kernel::reasoning::ResolutionQueryGuard::enter(
+            crate::kernel::reasoning::ResolutionQuery::RangeDisjoint(left.clone(), right.clone()),
+        ) else {
+            return false;
+        };
         // Most execution-time separation certificates name the exact ranges
         // being accessed. Resolve those structurally before asking the
         // snapshot-aware containment prover, which may itself inspect memory
@@ -898,12 +890,6 @@ impl PureFactContext {
         }
 
         // The recursive second phase re-enters offset-equality reasoning.
-        // Keep it shallow: nested queries past the expensive-edge budget use
-        // the shallow answer above, which bounds the mutual recursion without
-        // losing the direct certificates.
-        if depth > crate::kernel::reasoning::MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT {
-            return false;
-        }
         crate::instrumentation::measure_operation(
             "kernel",
             "explicit range arms",
@@ -917,21 +903,14 @@ impl PureFactContext {
                         MEMORY_SEPARATION_RECURSIVE_CANDIDATE_CHECKS
                             .with(|checks| checks.set(checks.get() + 1));
                     }
-                    pointer_in_memory_range_for_memory_resolution_with_depth(
-                        left, left_range, self, depth,
-                    ) && pointer_in_memory_range_for_memory_resolution_with_depth(
-                        right,
-                        right_range,
-                        self,
-                        depth,
-                    ) || pointer_in_memory_range_for_memory_resolution_with_depth(
-                        right, left_range, self, depth,
-                    ) && pointer_in_memory_range_for_memory_resolution_with_depth(
-                        left,
-                        right_range,
-                        self,
-                        depth,
-                    )
+                    pointer_in_memory_range_for_memory_resolution(left, left_range, self)
+                        && pointer_in_memory_range_for_memory_resolution(right, right_range, self)
+                        || pointer_in_memory_range_for_memory_resolution(right, left_range, self)
+                            && pointer_in_memory_range_for_memory_resolution(
+                                left,
+                                right_range,
+                                self,
+                            )
                 })
             },
         )
@@ -942,22 +921,14 @@ impl PureFactContext {
         left: &CMemoryRange,
         right: &CMemoryRange,
     ) -> bool {
-        crate::kernel::reasoning::with_memory_resolution_fuel(|| {
-            self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution_with_depth(
-                left, right, 0,
-            )
-        })
-    }
-
-    fn memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution_with_depth(
-        &self,
-        left: &CMemoryRange,
-        right: &CMemoryRange,
-        depth: usize,
-    ) -> bool {
         if left.base().blocks_proven_distinct(right.base()) {
             return true;
         }
+        let Some(_query) = crate::kernel::reasoning::ResolutionQueryGuard::enter(
+            crate::kernel::reasoning::ResolutionQuery::RangesSeparate(left.clone(), right.clone()),
+        ) else {
+            return false;
+        };
         if left.element_width() != right.element_width() {
             return false;
         }
@@ -981,28 +952,16 @@ impl PureFactContext {
                 return false;
             };
             memory_range_shallowly_contained(left, fact_left)
-                && memory_range_contained_for_memory_resolution_with_depth(
-                    right, fact_right, self, depth,
-                )
+                && memory_range_contained_for_memory_resolution(right, fact_right, self)
                 || memory_range_shallowly_contained(right, fact_right)
-                    && memory_range_contained_for_memory_resolution_with_depth(
-                        left, fact_left, self, depth,
-                    )
+                    && memory_range_contained_for_memory_resolution(left, fact_left, self)
                 || memory_range_shallowly_contained(right, fact_left)
-                    && memory_range_contained_for_memory_resolution_with_depth(
-                        left, fact_right, self, depth,
-                    )
+                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
                 || memory_range_shallowly_contained(left, fact_right)
-                    && memory_range_contained_for_memory_resolution_with_depth(
-                        right, fact_left, self, depth,
-                    )
+                    && memory_range_contained_for_memory_resolution(right, fact_left, self)
         }) {
             return true;
         }
-        if depth > crate::kernel::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
-            return false;
-        }
-
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CResourceSeparate {
                 left: CResource::Memory(fact_left),
@@ -1011,21 +970,16 @@ impl PureFactContext {
             else {
                 return false;
             };
-            memory_range_contained_for_memory_resolution_with_depth(left, fact_left, self, depth)
-                && memory_range_contained_for_memory_resolution_with_depth(
-                    right, fact_right, self, depth,
-                )
-                || memory_range_contained_for_memory_resolution_with_depth(
-                    right, fact_left, self, depth,
-                ) && memory_range_contained_for_memory_resolution_with_depth(
-                    left, fact_right, self, depth,
-                )
+            memory_range_contained_for_memory_resolution(left, fact_left, self)
+                && memory_range_contained_for_memory_resolution(right, fact_right, self)
+                || memory_range_contained_for_memory_resolution(right, fact_left, self)
+                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
         }) || self.resource_compositions.iter().any(|resources| {
             // The proof-aware form of the shallow composition fallback above:
             // the same containment relation the materialized-pair loops use,
             // served by the compact composition's indexed candidates.
             resources.proves_owned_memory_ranges_separate_by(left, right, |child, parent| {
-                memory_range_contained_for_memory_resolution_with_depth(child, parent, self, depth)
+                memory_range_contained_for_memory_resolution(child, parent, self)
             })
         })
     }
@@ -1110,11 +1064,9 @@ impl PureFactContext {
         }
         let offsets_match_for_resolution = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             left == right
-                || crate::kernel::reasoning::with_memory_resolution_fuel(|| {
-                    crate::kernel::reasoning::pointer_offsets_equal_for_memory_resolution(
-                        left, right, self, 0,
-                    ) == Some(true)
-                })
+                || crate::kernel::reasoning::pointer_offsets_proven_equal_for_memory_resolution(
+                    left, right, self,
+                )
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_match_for_resolution(left, &base.offset) {
