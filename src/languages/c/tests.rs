@@ -253,6 +253,114 @@ fn c0_collects_file_scope_scalar_arrays() {
 }
 
 #[test]
+fn c0_collects_file_scope_struct_aggregates() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared;
+
+        int32 read_shared() {
+            return shared.value;
+        }
+        "#,
+    )
+    .expect("file-scope struct aggregates should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read_shared")
+        .expect("reader function");
+    let aggregate = &function.global_aggregates()["shared"];
+    assert!(aggregate.is_defined());
+    assert!(!aggregate.is_file_static());
+    assert_eq!(aggregate.name(), "shared");
+    assert_eq!(aggregate.struct_name(), "state");
+    assert_eq!(aggregate.layout().field("value").unwrap().offset_bytes(), 0);
+    assert_eq!(aggregate.layout().field("ready").unwrap().offset_bytes(), 4);
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_aggregate = kernel_function
+        .global_aggregates()
+        .iter()
+        .find(|aggregate| aggregate.source_name() == "shared")
+        .expect("kernel aggregate metadata");
+    assert_eq!(kernel_aggregate.kernel_name(), "shared");
+    assert_eq!(
+        kernel_aggregate.layout().size_bytes(),
+        aggregate.layout().size_bytes()
+    );
+    assert_eq!(kernel_aggregate.layout().fields().len(), 2);
+}
+
+#[test]
+fn c0_collects_static_struct_aggregates_with_stable_kernel_names() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+        };
+
+        int32 increment() {
+            static struct state state;
+            state.value = state.value + 1;
+            return state.value;
+        }
+        "#,
+    )
+    .expect("function-local struct statics should parse");
+
+    let function = &functions[0];
+    let aggregate = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("static aggregate metadata");
+    assert_eq!(aggregate.name(), "state");
+    assert_eq!(aggregate.struct_name(), "state");
+    assert_ne!(aggregate.kernel_name(), aggregate.name());
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_aggregate = kernel_function
+        .static_aggregates()
+        .iter()
+        .next()
+        .expect("kernel static aggregate metadata");
+    assert_eq!(kernel_aggregate.source_name(), "state");
+    assert_eq!(kernel_aggregate.kernel_name(), aggregate.kernel_name());
+    assert_eq!(kernel_aggregate.layout().fields().len(), 1);
+}
+
+#[test]
+fn c0_rejects_aggregate_static_initializers_and_arrays() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; struct state shared = {1};",
+            "aggregate global initializers",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2];",
+            "arrays of file-scope aggregates",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { static struct state state = {1}; return 0; }",
+            "aggregate static initializers",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { static struct state state[2]; return 0; }",
+            "arrays of function-local aggregate statics",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported aggregate static shapes must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_file_static_arrays_are_qualified_by_translation_unit() {
     let alpha = syntax::parse_functions_for_source(
         "static int32 values[2] = {1, 2}; int32 read_alpha() { return values[0]; }",
@@ -314,6 +422,30 @@ fn c0_file_static_globals_are_qualified_by_translation_unit() {
     assert_ne!(
         alpha[0].to_kernel_function().global_variables()[0].kernel_name(),
         beta[0].to_kernel_function().global_variables()[0].kernel_name()
+    );
+}
+
+#[test]
+fn c0_file_static_struct_aggregates_are_qualified_by_translation_unit() {
+    let alpha = syntax::parse_functions_for_source(
+        "struct state { int32 value; }; static struct state state; int32 read_alpha() { return state.value; }",
+        "alpha.c",
+    )
+    .expect("file-scope static struct aggregates should parse");
+    let beta = syntax::parse_functions_for_source(
+        "struct state { int32 value; }; static struct state state; int32 read_beta() { return state.value; }",
+        "beta.c",
+    )
+    .expect("file-scope static struct aggregates should parse");
+
+    let alpha_aggregate = &alpha[0].global_aggregates()["state"];
+    let beta_aggregate = &beta[0].global_aggregates()["state"];
+    assert!(alpha_aggregate.is_file_static());
+    assert!(beta_aggregate.is_file_static());
+    assert_ne!(alpha_aggregate.kernel_name(), beta_aggregate.kernel_name());
+    assert_ne!(
+        alpha[0].to_kernel_function().global_aggregates()[0].kernel_name(),
+        beta[0].to_kernel_function().global_aggregates()[0].kernel_name()
     );
 }
 

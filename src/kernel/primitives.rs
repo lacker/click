@@ -859,6 +859,16 @@ pub struct CGlobalArray {
     pub(super) initial_values: Vec<CValue>,
 }
 
+/// A linked file-scope aggregate. The layout describes the typed leaf cells
+/// that occupy the stable global block; aggregate values themselves have no
+/// scalar `CValue` representation.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobalAggregate {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CStaticLocal {
     pub(super) source_name: String,
@@ -875,6 +885,25 @@ pub struct CStaticArray {
     pub(super) element_type: CType,
     pub(super) length: u32,
     pub(super) initial_values: Vec<CValue>,
+}
+
+/// A function-local aggregate with one stable function-qualified block.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticAggregate {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+}
+
+/// Static-storage metadata shared by all copies of a function descriptor.
+/// Keeping the collections behind the existing static-storage pointer avoids
+/// increasing the size of the recursive `Proposition` enum's
+/// function-execution variants.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CFunctionStaticStorage {
+    pub(super) static_arrays: Vec<CStaticArray>,
+    pub(super) global_aggregates: Vec<CGlobalAggregate>,
+    pub(super) static_aggregates: Vec<CStaticAggregate>,
 }
 
 /// A function's embedded C string constant. The bytes include the trailing
@@ -961,7 +990,7 @@ pub struct CFunction {
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) global_arrays: Vec<CGlobalArray>,
     pub(super) static_variables: Vec<CStaticLocal>,
-    pub(super) static_arrays: std::sync::Arc<Vec<CStaticArray>>,
+    pub(super) static_storage: std::sync::Arc<CFunctionStaticStorage>,
     pub(super) string_literals: Vec<CStringLiteral>,
 }
 

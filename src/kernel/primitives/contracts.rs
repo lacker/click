@@ -169,6 +169,40 @@ impl CGlobalArray {
     }
 }
 
+impl CGlobalAggregate {
+    pub fn new(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        layout: CAggregateLayout,
+    ) -> Self {
+        assert!(
+            layout.size_bytes() > 0,
+            "C global aggregates must have positive size"
+        );
+        assert!(
+            !layout.fields().is_empty(),
+            "C global aggregates must have at least one modeled field"
+        );
+        Self {
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
+            layout,
+        }
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn layout(&self) -> &CAggregateLayout {
+        &self.layout
+    }
+}
+
 impl CStaticLocal {
     pub fn new(
         source_name: impl Into<String>,
@@ -289,6 +323,40 @@ impl CStaticArray {
     }
 }
 
+impl CStaticAggregate {
+    pub fn new(
+        source_name: impl Into<String>,
+        kernel_name: impl Into<String>,
+        layout: CAggregateLayout,
+    ) -> Self {
+        assert!(
+            layout.size_bytes() > 0,
+            "C static aggregates must have positive size"
+        );
+        assert!(
+            !layout.fields().is_empty(),
+            "C static aggregates must have at least one modeled field"
+        );
+        Self {
+            source_name: source_name.into(),
+            kernel_name: kernel_name.into(),
+            layout,
+        }
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn layout(&self) -> &CAggregateLayout {
+        &self.layout
+    }
+}
+
 impl CStringLiteral {
     pub fn new(name: impl Into<String>, bytes: Vec<u8>) -> Self {
         assert_eq!(
@@ -339,7 +407,11 @@ impl CFunction {
             global_variables: Vec::new(),
             global_arrays: Vec::new(),
             static_variables: Vec::new(),
-            static_arrays: std::sync::Arc::new(Vec::new()),
+            static_storage: std::sync::Arc::new(CFunctionStaticStorage {
+                static_arrays: Vec::new(),
+                global_aggregates: Vec::new(),
+                static_aggregates: Vec::new(),
+            }),
             string_literals: Vec::new(),
         }
     }
@@ -354,13 +426,29 @@ impl CFunction {
         self
     }
 
+    pub fn with_global_aggregates(mut self, global_aggregates: Vec<CGlobalAggregate>) -> Self {
+        let mut static_storage = (*self.static_storage).clone();
+        static_storage.global_aggregates = global_aggregates;
+        self.static_storage = std::sync::Arc::new(static_storage);
+        self
+    }
+
     pub fn with_static_variables(mut self, static_variables: Vec<CStaticLocal>) -> Self {
         self.static_variables = static_variables;
         self
     }
 
     pub fn with_static_arrays(mut self, static_arrays: Vec<CStaticArray>) -> Self {
-        self.static_arrays = std::sync::Arc::new(static_arrays);
+        let mut static_storage = (*self.static_storage).clone();
+        static_storage.static_arrays = static_arrays;
+        self.static_storage = std::sync::Arc::new(static_storage);
+        self
+    }
+
+    pub fn with_static_aggregates(mut self, static_aggregates: Vec<CStaticAggregate>) -> Self {
+        let mut static_storage = (*self.static_storage).clone();
+        static_storage.static_aggregates = static_aggregates;
+        self.static_storage = std::sync::Arc::new(static_storage);
         self
     }
 
@@ -458,12 +546,20 @@ impl CFunction {
         &self.global_arrays
     }
 
+    pub fn global_aggregates(&self) -> &[CGlobalAggregate] {
+        self.static_storage.global_aggregates.as_slice()
+    }
+
     pub fn static_variables(&self) -> &[CStaticLocal] {
         &self.static_variables
     }
 
     pub fn static_arrays(&self) -> &[CStaticArray] {
-        self.static_arrays.as_slice()
+        self.static_storage.static_arrays.as_slice()
+    }
+
+    pub fn static_aggregates(&self) -> &[CStaticAggregate] {
+        self.static_storage.static_aggregates.as_slice()
     }
 
     pub fn string_literals(&self) -> &[CStringLiteral] {

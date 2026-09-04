@@ -2343,7 +2343,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),
-        static_arrays: function.static_arrays.clone(),
+        static_storage: function.static_storage.clone(),
         string_literals: function.string_literals.clone(),
     }
 }
@@ -4599,7 +4599,7 @@ fn substitute_pointer_variable_in_c_function(
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),
-        static_arrays: function.static_arrays.clone(),
+        static_storage: function.static_storage.clone(),
         string_literals: function.string_literals.clone(),
     }
 }

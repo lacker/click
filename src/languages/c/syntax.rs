@@ -128,8 +128,10 @@ pub struct C0Function {
     unions: BTreeMap<String, C0UnionLayout>,
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
+    global_aggregates: BTreeMap<String, C0GlobalAggregate>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
+    static_aggregates: BTreeMap<String, C0StaticAggregate>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -370,6 +372,89 @@ impl C0GlobalArray {
     }
 }
 
+/// A file-scope object with a supported struct layout. Aggregate values are
+/// represented by their stable address-backed layout rather than a scalar
+/// initializer value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0GlobalAggregate {
+    name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    defined: bool,
+    file_static: bool,
+}
+
+impl C0GlobalAggregate {
+    fn declaration(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            defined: false,
+            file_static,
+        }
+    }
+
+    fn definition(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            defined: true,
+            file_static,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.defined
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
+    }
+
+    pub(crate) fn to_kernel_global_aggregate(&self) -> Option<crate::kernel::CGlobalAggregate> {
+        self.defined.then(|| {
+            crate::kernel::CGlobalAggregate::new(
+                self.name.clone(),
+                self.kernel_name.clone(),
+                self.layout.to_kernel_aggregate_layout(),
+            )
+        })
+    }
+}
+
 fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
     Some(match element_type {
         C0Type::Int16 => C0Type::Int16Array(length),
@@ -581,6 +666,56 @@ fn zero_initializer(c_type: C0Type) -> C0Expression {
         C0Type::Float32 => C0Expression::Float32Literal(0),
         C0Type::Float64 => C0Expression::Float64Literal(0),
         _ => C0Expression::Int32Literal(0),
+    }
+}
+
+/// A function-local aggregate with stable storage shared by every invocation
+/// of its owning function.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticAggregate {
+    source_name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+}
+
+impl C0StaticAggregate {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            struct_name,
+            layout,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub(crate) fn to_kernel_static_aggregate(&self) -> crate::kernel::CStaticAggregate {
+        crate::kernel::CStaticAggregate::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+        )
     }
 }
 
@@ -999,8 +1134,10 @@ impl C0Function {
             unions: BTreeMap::new(),
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
+            global_aggregates: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
+            static_aggregates: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -1045,12 +1182,20 @@ impl C0Function {
         &self.global_arrays
     }
 
+    pub fn global_aggregates(&self) -> &BTreeMap<String, C0GlobalAggregate> {
+        &self.global_aggregates
+    }
+
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
     }
 
     pub fn static_arrays(&self) -> &BTreeMap<String, C0StaticArray> {
         &self.static_arrays
+    }
+
+    pub fn static_aggregates(&self) -> &BTreeMap<String, C0StaticAggregate> {
+        &self.static_aggregates
     }
 
     pub fn string_literals(&self) -> &[C0StringLiteral] {
@@ -1067,6 +1212,14 @@ impl C0Function {
         global_arrays: BTreeMap<String, C0GlobalArray>,
     ) -> Self {
         self.global_arrays = global_arrays;
+        self
+    }
+
+    pub(crate) fn with_global_aggregates(
+        mut self,
+        global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    ) -> Self {
+        self.global_aggregates = global_aggregates;
         self
     }
 
@@ -1109,6 +1262,12 @@ impl C0Function {
                     .filter_map(C0GlobalArray::to_kernel_global_array)
                     .collect(),
             )
+            .with_global_aggregates(
+                self.global_aggregates
+                    .values()
+                    .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
+                    .collect(),
+            )
             .with_static_variables(
                 self.static_locals
                     .values()
@@ -1119,6 +1278,12 @@ impl C0Function {
                 self.static_arrays
                     .values()
                     .filter_map(C0StaticArray::to_kernel_static_array)
+                    .collect(),
+            )
+            .with_static_aggregates(
+                self.static_aggregates
+                    .values()
+                    .map(C0StaticAggregate::to_kernel_static_aggregate)
                     .collect(),
             )
             .with_string_literals(
@@ -2404,8 +2569,10 @@ struct Parser {
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
+    global_aggregates: BTreeMap<String, C0GlobalAggregate>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
+    static_aggregates: BTreeMap<String, C0StaticAggregate>,
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
@@ -2483,8 +2650,10 @@ impl Parser {
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
+            global_aggregates: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
+            static_aggregates: BTreeMap::new(),
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
@@ -2522,6 +2691,11 @@ impl Parser {
             })
             .or_else(|| {
                 self.global_arrays
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
+            .or_else(|| {
+                self.global_aggregates
                     .get(source_name)
                     .map(|global| global.kernel_name().to_string())
             })
@@ -2848,8 +3022,10 @@ impl Parser {
             unions: self.unions.clone(),
             globals: self.globals.clone(),
             global_arrays: self.global_arrays.clone(),
+            global_aggregates: self.global_aggregates.clone(),
             static_locals,
             static_arrays: std::mem::take(&mut self.static_arrays),
+            static_aggregates: std::mem::take(&mut self.static_aggregates),
             string_literals,
         })
     }
@@ -2909,7 +3085,9 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
-        if self.globals.contains_key(&header.name) || self.global_arrays.contains_key(&header.name)
+        if self.globals.contains_key(&header.name)
+            || self.global_arrays.contains_key(&header.name)
+            || self.global_aggregates.contains_key(&header.name)
         {
             return Err(self.error_here(format!(
                 "function `{}` conflicts with a global declaration",
@@ -2990,24 +3168,39 @@ impl Parser {
             ));
         }
         let parsed_type = self.parse_type()?;
-        if parsed_type.struct_name.is_some()
-            || parsed_type.enum_name.is_some()
-            || parsed_type.union_name.is_some()
-            || !matches!(
-                parsed_type.c_type,
-                C0Type::Int16
-                    | C0Type::Int32
-                    | C0Type::UInt8
-                    | C0Type::UInt16
-                    | C0Type::UInt32
-                    | C0Type::Float32
-                    | C0Type::Float64
-            )
-        {
-            return Err(self.error_here(
-                "file-scope declarations currently support only scalar integer and floating-point globals",
-            ));
-        }
+        let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_volatile {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile aggregate globals",
+                ));
+            }
+            let struct_name = parsed_type
+                .struct_name
+                .clone()
+                .expect("plain struct global carries a struct name");
+            let layout = self.scalar_struct_value_layout(&struct_name)?;
+            Some((struct_name, layout))
+        } else {
+            if parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || !matches!(
+                    parsed_type.c_type,
+                    C0Type::Int16
+                        | C0Type::Int32
+                        | C0Type::UInt8
+                        | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Float32
+                        | C0Type::Float64
+                )
+            {
+                return Err(self.error_here(
+                    "file-scope declarations currently support only scalar integer, floating-point, or supported struct globals",
+                ));
+            }
+            None
+        };
         if self.header_mode && !is_extern {
             return Err(self.error_here(
                 "C headers may declare globals only with `extern`; put the definition in a source file",
@@ -3021,6 +3214,51 @@ impl Parser {
             } else {
                 name.clone()
             };
+            if let Some((struct_name, layout)) = &aggregate_struct {
+                if self.peek() == Some(&Token::LBracket) {
+                    return Err(
+                        self.error_here("arrays of file-scope aggregates are not supported yet")
+                    );
+                }
+                if self.peek() == Some(&Token::Equal) {
+                    return Err(
+                        self.error_here("aggregate global initializers are not supported yet")
+                    );
+                }
+                let declaration = if is_extern {
+                    C0GlobalAggregate::declaration(
+                        name.clone(),
+                        kernel_name.clone(),
+                        struct_name.clone(),
+                        layout.clone(),
+                        is_file_static,
+                    )
+                } else {
+                    C0GlobalAggregate::definition(
+                        name.clone(),
+                        kernel_name.clone(),
+                        struct_name.clone(),
+                        layout.clone(),
+                        is_file_static,
+                    )
+                };
+                self.register_global_aggregate_declaration(name.clone(), declaration)?;
+                self.variable_types
+                    .insert(name.clone(), struct_value_type(layout));
+                self.variable_structs
+                    .insert(name.clone(), struct_name.clone());
+                if kernel_name != name {
+                    self.variable_types
+                        .insert(kernel_name.clone(), struct_value_type(layout));
+                    self.variable_structs
+                        .insert(kernel_name, struct_name.clone());
+                }
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    continue;
+                }
+                break;
+            }
             let array_length = self.parse_global_array_length(&name)?;
             if parsed_type.is_volatile && array_length.is_some() {
                 return Err(self.error_here(
@@ -3218,7 +3456,9 @@ impl Parser {
         c_type: C0Type,
         declaration: C0Global,
     ) -> Result<(), C0SyntaxError> {
-        if self.function_declarations.contains_key(&name) || self.global_arrays.contains_key(&name)
+        if self.function_declarations.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
         {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or array declaration"
@@ -3260,7 +3500,10 @@ impl Parser {
         length: u32,
         declaration: C0GlobalArray,
     ) -> Result<(), C0SyntaxError> {
-        if self.function_declarations.contains_key(&name) || self.globals.contains_key(&name) {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
+        {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or scalar global declaration"
             )));
@@ -3288,6 +3531,47 @@ impl Parser {
             _ => declaration,
         };
         self.global_arrays.insert(name, merged);
+        Ok(())
+    }
+
+    fn register_global_aggregate_declaration(
+        &mut self,
+        name: String,
+        declaration: C0GlobalAggregate,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+        {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function or scalar declaration"
+            )));
+        }
+        if let Some(previous) = self.global_aggregates.get(&name) {
+            if previous.struct_name() != declaration.struct_name()
+                || previous.layout() != declaration.layout()
+            {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for aggregate global `{name}`"
+                )));
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for aggregate global `{name}`"
+                )));
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(
+                    self.error_here(format!("duplicate definition of aggregate global `{name}`"))
+                );
+            }
+        }
+        let merged = match (self.global_aggregates.get(&name), declaration.is_defined()) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.global_aggregates.insert(name, merged);
         Ok(())
     }
 
@@ -5526,28 +5810,73 @@ impl Parser {
                 "the sequential volatile model supports scalar objects and pointers to scalar objects",
             ));
         }
-        if parsed_type.struct_name.is_some()
-            || parsed_type.enum_name.is_some()
-            || parsed_type.union_name.is_some()
-            || !matches!(
-                parsed_type.c_type,
-                C0Type::Int16
-                    | C0Type::Int32
-                    | C0Type::UInt8
-                    | C0Type::UInt16
-                    | C0Type::UInt32
-                    | C0Type::Float32
-                    | C0Type::Float64
-            )
-        {
-            return Err(self.error_here(
-                "function-local `static` declarations currently support only scalar integer and floating-point types",
-            ));
-        }
+        let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_volatile {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile aggregate statics",
+                ));
+            }
+            let struct_name = parsed_type
+                .struct_name
+                .clone()
+                .expect("plain static aggregate carries a struct name");
+            let layout = self.scalar_struct_value_layout(&struct_name)?;
+            Some((struct_name, layout))
+        } else {
+            if parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || !matches!(
+                    parsed_type.c_type,
+                    C0Type::Int16
+                        | C0Type::Int32
+                        | C0Type::UInt8
+                        | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Float32
+                        | C0Type::Float64
+                )
+            {
+                return Err(self.error_here(
+                    "function-local `static` declarations currently support scalar integer, floating-point, or supported structs",
+                ));
+            }
+            None
+        };
 
         loop {
             let source_name = self.expect_ident("static local name")?;
             let kernel_name = self.declare_static_name(&source_name)?;
+            if let Some((struct_name, layout)) = &aggregate_struct {
+                if self.peek() == Some(&Token::LBracket) {
+                    return Err(self.error_here(
+                        "arrays of function-local aggregate statics are not supported yet",
+                    ));
+                }
+                if self.peek() == Some(&Token::Equal) {
+                    return Err(
+                        self.error_here("aggregate static initializers are not supported yet")
+                    );
+                }
+                self.variable_types
+                    .insert(kernel_name.clone(), struct_value_type(layout));
+                self.variable_structs
+                    .insert(kernel_name.clone(), struct_name.clone());
+                self.static_aggregates.insert(
+                    kernel_name.clone(),
+                    C0StaticAggregate::new(
+                        source_name,
+                        kernel_name,
+                        struct_name.clone(),
+                        layout.clone(),
+                    ),
+                );
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+                continue;
+            }
             if self.peek() == Some(&Token::LBracket) {
                 if parsed_type.is_volatile {
                     return Err(
@@ -7412,6 +7741,11 @@ impl Parser {
                                 &expression,
                                 C0Expression::Variable(name)
                                     if self.variable_struct_values.contains_key(name)
+                                        || (self.variable_structs.contains_key(name)
+                                            && matches!(
+                                                self.variable_types.get(name),
+                                                Some(C0Type::UInt8Array(_))
+                                            ))
                             );
                             if struct_value
                                 || matches!(&expression, C0Expression::UnionAddress { .. })

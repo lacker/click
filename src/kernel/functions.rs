@@ -2089,6 +2089,30 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for global_aggregate in function.global_aggregates() {
+        let slot = CMemory::global_pointer(global_aggregate.kernel_name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .with_block(slot.block.clone(), global_aggregate.layout().size_bytes());
+            state.memory =
+                zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
+        }
+        state.locals.set_aggregate_object_at(
+            global_aggregate.kernel_name().to_string(),
+            global_aggregate.layout().clone(),
+            slot.clone(),
+        );
+        if global_aggregate.kernel_name() != global_aggregate.source_name()
+            && !state.locals.contains_name(global_aggregate.source_name())
+        {
+            state.locals.set_aggregate_object_at(
+                global_aggregate.source_name().to_string(),
+                global_aggregate.layout().clone(),
+                slot,
+            );
+        }
+    }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         if !state.memory.has_block(&slot.block) {
@@ -2154,7 +2178,119 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for static_aggregate in function.static_aggregates() {
+        let slot = CMemory::static_pointer(function.name(), static_aggregate.kernel_name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .clone()
+                .with_block(slot.block.clone(), static_aggregate.layout().size_bytes());
+            state.memory =
+                zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
+        }
+        state.locals.set_aggregate_object_at(
+            static_aggregate.kernel_name().to_string(),
+            static_aggregate.layout().clone(),
+            slot.clone(),
+        );
+        if static_aggregate.kernel_name() != static_aggregate.source_name()
+            && !state.locals.contains_name(static_aggregate.source_name())
+        {
+            state.locals.set_aggregate_object_at(
+                static_aggregate.source_name().to_string(),
+                static_aggregate.layout().clone(),
+                slot,
+            );
+        }
+    }
     state
+}
+
+fn zero_aggregate_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+) -> CMemory {
+    for field in layout.fields() {
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64
+            | CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Float32Pointer
+            | CType::Float64Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer
+            | CType::Float32PointerPointer
+            | CType::Float64PointerPointer => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Float32Array(length) => (CType::Float32, length),
+            CType::Float64Array(length) => (CType::Float64, length),
+            _ => continue,
+        };
+        let zero = match element_type {
+            CType::Int16 => int16(0),
+            CType::Int32 => int32(0),
+            CType::UInt8 => uint8(0),
+            CType::UInt16 => uint16(0),
+            CType::UInt32 => uint32(0),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Constant(0)),
+            CType::UInt64 => CValue::UInt64(Bitvector32Term::Constant(0)),
+            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
+            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Float32Pointer
+            | CType::Float64Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer
+            | CType::Float32PointerPointer
+            | CType::Float64PointerPointer => CValue::typed_pointer(Pointer::null(), element_type),
+            CType::Int16Array(_)
+            | CType::Int32Array(_)
+            | CType::UInt8Array(_)
+            | CType::UInt16Array(_)
+            | CType::UInt32Array(_)
+            | CType::Int64Array(_)
+            | CType::UInt64Array(_)
+            | CType::Float32Array(_)
+            | CType::Float64Array(_)
+            | CType::Void
+            | CType::FunctionPointer(_) => {
+                continue;
+            }
+            CType::Int16Pointer
+            | CType::UInt16Pointer
+            | CType::UInt32Pointer
+            | CType::Int64Pointer
+            | CType::UInt64Pointer
+            | CType::Int16PointerPointer
+            | CType::UInt16PointerPointer
+            | CType::UInt32PointerPointer
+            | CType::Int64PointerPointer
+            | CType::UInt64PointerPointer => continue,
+        };
+        for index in 0..element_count {
+            let offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate zero field offset"),
+                )
+                .expect("validated aggregate zero field offset");
+            memory = memory.store(base.offset_by_bytes(offset), zero.clone());
+        }
+    }
+    memory
 }
 
 /// Copy the modeled cells of an address-backed aggregate into a distinct

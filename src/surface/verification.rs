@@ -166,8 +166,14 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
-    let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
+    let (struct_layouts, union_layouts, aggregate_objects) =
+        parse_c_layouts(click_source, &sources)?;
+    let file = parser::parse_with_layouts_and_aggregate_objects(
+        click_source,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+    )?;
     verify_click_file_theorems(&file)
 }
 
@@ -176,8 +182,14 @@ pub(in crate::surface) fn parse_c0_click_file(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
-    parser::parse_with_layouts(click_source, struct_layouts, union_layouts)
+    let (struct_layouts, union_layouts, aggregate_objects) =
+        parse_c_layouts(click_source, &sources)?;
+    parser::parse_with_layouts_and_aggregate_objects(
+        click_source,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+    )
 }
 
 pub(in crate::surface) fn proof_unit_erased_click_file(
@@ -561,8 +573,14 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
-        let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &c_sources)?;
-        let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
+        let (struct_layouts, union_layouts, aggregate_objects) =
+            parse_c_layouts(click_source, &c_sources)?;
+        let file = parser::parse_with_layouts_and_aggregate_objects(
+            click_source,
+            struct_layouts,
+            union_layouts,
+            aggregate_objects,
+        )?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
         let expansion_functions = expansion_capture
             .as_deref()
@@ -1438,8 +1456,14 @@ pub fn c0_external_dependencies(
     c_sources: &[(&str, &str)],
 ) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts) = parse_c_layouts(click_source, &sources)?;
-    let file = parser::parse_with_layouts(click_source, struct_layouts, union_layouts)?;
+    let (struct_layouts, union_layouts, aggregate_objects) =
+        parse_c_layouts(click_source, &sources)?;
+    let file = parser::parse_with_layouts_and_aggregate_objects(
+        click_source,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+    )?;
     let parsed_sources = parse_verified_sources(&file, &sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
     let external_names = function_blocks
@@ -1961,11 +1985,13 @@ pub(in crate::surface) fn parse_c_layouts(
     (
         BTreeMap<String, syntax::C0StructLayout>,
         BTreeMap<String, syntax::C0UnionLayout>,
+        BTreeMap<String, BTreeMap<String, String>>,
     ),
     ClickError,
 > {
     let mut layouts = BTreeMap::new();
     let mut union_layouts = BTreeMap::new();
+    let mut aggregate_objects = BTreeMap::new();
     for source_path in super::verifying_source_paths(click_source)? {
         let functions = parse_c_source_functions(&source_path, c_sources)?;
         for function in functions {
@@ -1987,9 +2013,23 @@ pub(in crate::surface) fn parse_c_layouts(
                     )));
                 }
             }
+            let mut function_aggregate_objects = BTreeMap::new();
+            for aggregate in function.global_aggregates().values() {
+                function_aggregate_objects.insert(
+                    aggregate.name().to_string(),
+                    aggregate.struct_name().to_string(),
+                );
+            }
+            for aggregate in function.static_aggregates().values() {
+                function_aggregate_objects.insert(
+                    aggregate.name().to_string(),
+                    aggregate.struct_name().to_string(),
+                );
+            }
+            aggregate_objects.insert(function.name().to_string(), function_aggregate_objects);
         }
     }
-    Ok((layouts, union_layouts))
+    Ok((layouts, union_layouts, aggregate_objects))
 }
 
 pub(in crate::surface) fn parse_verified_sources(
@@ -2171,11 +2211,108 @@ pub(in crate::surface) fn parse_verified_sources(
             "global array `{name}` is declared `extern` but has no definition"
         )));
     }
+    let mut global_aggregates_by_source =
+        BTreeMap::<String, BTreeMap<String, syntax::C0GlobalAggregate>>::new();
+    for (source_path, function) in parsed.values() {
+        let source_aggregates = global_aggregates_by_source
+            .entry(source_path.clone())
+            .or_default();
+        for (name, aggregate) in function.global_aggregates() {
+            if globals_by_source
+                .get(source_path)
+                .is_some_and(|source_globals| source_globals.contains_key(name))
+                || global_arrays_by_source
+                    .get(source_path)
+                    .is_some_and(|source_arrays| source_arrays.contains_key(name))
+            {
+                return Err(ClickError::new(format!(
+                    "global `{name}` conflicts with a scalar or array declaration"
+                )));
+            }
+            match source_aggregates.get(name) {
+                Some(previous)
+                    if previous.struct_name() != aggregate.struct_name()
+                        || previous.layout() != aggregate.layout() =>
+                {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for aggregate global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_file_static() != aggregate.is_file_static() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting linkage declarations for aggregate global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                    if previous != aggregate {
+                        return Err(ClickError::new(format!(
+                            "conflicting definitions for aggregate global `{name}` in `{source_path}`"
+                        )));
+                    }
+                }
+                _ => {
+                    let merged = match source_aggregates.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if aggregate.is_defined() => aggregate.clone(),
+                        Some(previous) => previous.clone(),
+                        None => aggregate.clone(),
+                    };
+                    source_aggregates.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    let mut global_aggregates = BTreeMap::<String, syntax::C0GlobalAggregate>::new();
+    for source_aggregates in global_aggregates_by_source.values() {
+        for (name, aggregate) in source_aggregates {
+            if aggregate.is_file_static() {
+                continue;
+            }
+            if globals.contains_key(name) || global_arrays.contains_key(name) {
+                return Err(ClickError::new(format!(
+                    "global `{name}` conflicts with a scalar or array declaration"
+                )));
+            }
+            match global_aggregates.get(name) {
+                Some(previous)
+                    if previous.struct_name() != aggregate.struct_name()
+                        || previous.layout() != aggregate.layout() =>
+                {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for aggregate global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                    return Err(ClickError::new(format!(
+                        "multiple definitions of aggregate global `{name}`"
+                    )));
+                }
+                _ => {
+                    let merged = match global_aggregates.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if aggregate.is_defined() => aggregate.clone(),
+                        Some(previous) => previous.clone(),
+                        None => aggregate.clone(),
+                    };
+                    global_aggregates.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    if let Some((name, _)) = global_aggregates
+        .iter()
+        .find(|(_, aggregate)| !aggregate.is_defined())
+    {
+        return Err(ClickError::new(format!(
+            "aggregate global `{name}` is declared `extern` but has no definition"
+        )));
+    }
     parsed = parsed
         .into_iter()
         .map(|(name, (source_path, function))| {
             let mut visible_globals = globals.clone();
             let mut visible_global_arrays = global_arrays.clone();
+            let mut visible_global_aggregates = global_aggregates.clone();
             if let Some(source_globals) = globals_by_source.get(&source_path) {
                 for (global_name, global) in source_globals {
                     if global.is_file_static() {
@@ -2190,13 +2327,21 @@ pub(in crate::surface) fn parse_verified_sources(
                     }
                 }
             }
+            if let Some(source_aggregates) = global_aggregates_by_source.get(&source_path) {
+                for (aggregate_name, aggregate) in source_aggregates {
+                    if aggregate.is_file_static() {
+                        visible_global_aggregates.insert(aggregate_name.clone(), aggregate.clone());
+                    }
+                }
+            }
             (
                 name,
                 (
                     source_path,
                     function
                         .with_globals(visible_globals)
-                        .with_global_arrays(visible_global_arrays),
+                        .with_global_arrays(visible_global_arrays)
+                        .with_global_aggregates(visible_global_aggregates),
                 ),
             )
         })
