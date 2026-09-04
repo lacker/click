@@ -1,269 +1,410 @@
 use super::*;
 use std::fmt::Write;
 
-fn memory_havoc_write_set_identity(mutable_ranges: &[CMemoryRange]) -> Vec<String> {
-    let mut identity = mutable_ranges
+fn memory_havoc_write_set_identity(mutable_ranges: &[CMemoryRange]) -> String {
+    let mut ranges = mutable_ranges
         .iter()
-        .map(|range| {
-            let mut identity = String::new();
-            identity.push_str("range(");
-            havoc_pointer_identity(&mut identity, range.base(), 0);
-            identity.push_str(", ");
-            havoc_bitvector_identity(&mut identity, range.start(), 0);
-            identity.push_str(", ");
-            havoc_bitvector_identity(&mut identity, range.end(), 0);
-            let _ = write!(identity, ", {})", range.element_width());
-            identity
-        })
+        .map(havoc_range_identity)
         .collect::<Vec<_>>();
-    identity.sort();
+    ranges.sort();
+    let mut identity = format!("write-set:{};", ranges.len());
+    for range in ranges {
+        let _ = write!(identity, "{}:", range.len());
+        identity.push_str(&range);
+    }
     identity
 }
 
-fn havoc_pointer_identity(identity: &mut String, pointer: &Pointer, depth: usize) {
-    if depth >= 64 {
-        identity.push_str("depth-limit");
-        return;
-    }
-    let _ = write!(identity, "pointer({:?}, ", pointer.block);
-    havoc_pointer_offset_identity(identity, &pointer.offset, depth + 1);
-    identity.push(')');
+enum HavocIdentityTask {
+    Text(&'static str),
+    Pointer(Pointer),
+    PointerOffset(PointerOffsetTerm),
+    Bitvector(Bitvector32Term),
+    Condition(ConditionTerm),
+    LeaveRegisteredLoad(Variable),
 }
 
-fn havoc_pointer_offset_identity(identity: &mut String, offset: &PointerOffsetTerm, depth: usize) {
-    if depth >= 64 {
-        identity.push_str("depth-limit");
-        return;
-    }
-    match offset {
-        PointerOffsetTerm::Constant(value) => {
-            let _ = write!(identity, "constant({value})");
+fn write_havoc_string(identity: &mut String, tag: &str, value: &str) {
+    let _ = write!(identity, "{tag}{}:", value.len());
+    identity.push_str(value);
+}
+
+fn write_havoc_block(identity: &mut String, block: PointerBlock) {
+    match block {
+        PointerBlock::Concrete(name) => write_havoc_string(identity, "bc", &name),
+        PointerBlock::Function(name) => write_havoc_string(identity, "bf", &name),
+        PointerBlock::FunctionSymbolic(variable) => {
+            let _ = write!(identity, "bfs{};", variable.0);
         }
-        PointerOffsetTerm::Variable(variable) => {
-            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
-            {
-                identity.push_str("load(");
-                havoc_pointer_identity(identity, &pointer, depth + 1);
-                identity.push(')');
-            } else {
-                let _ = write!(identity, "variable({})", variable.0);
-            }
+        PointerBlock::ExternalArgument => identity.push_str("be;"),
+        PointerBlock::Symbolic(variable) => {
+            let _ = write!(identity, "bs{};", variable.0);
         }
-        PointerOffsetTerm::Add(left, right) => {
-            identity.push_str("add(");
-            havoc_pointer_offset_identity(identity, left, depth + 1);
-            identity.push_str(", ");
-            havoc_pointer_offset_identity(identity, right, depth + 1);
-            identity.push(')');
-        }
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-            let _ = write!(identity, "scaled(");
-            havoc_bitvector_identity(identity, value, depth + 1);
-            let _ = write!(identity, ", {byte_width})");
+        PointerBlock::Heap(value) => {
+            let _ = write!(identity, "bh{value};");
         }
     }
 }
 
-fn havoc_bitvector_identity(identity: &mut String, term: &Bitvector32Term, depth: usize) {
-    if depth >= 64 {
-        identity.push_str("depth-limit");
-        return;
+fn push_registered_load(
+    identity: &mut String,
+    tasks: &mut Vec<HavocIdentityTask>,
+    active_loads: &mut BTreeSet<Variable>,
+    variable: Variable,
+) -> bool {
+    let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(&variable) else {
+        return false;
+    };
+    if !active_loads.insert(variable) {
+        let _ = write!(identity, "recursive-load:{};", variable.0);
+        return true;
     }
-    match term {
-        Bitvector32Term::Constant(value) => {
-            let _ = write!(identity, "constant({value})");
-        }
-        Bitvector32Term::Variable(variable) => {
-            if let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(variable)
-            {
-                identity.push_str("load(");
-                havoc_pointer_identity(identity, &pointer, depth + 1);
-                identity.push(')');
-            } else {
-                let _ = write!(identity, "variable({})", variable.0);
+    identity.push_str("load(");
+    tasks.push(HavocIdentityTask::LeaveRegisteredLoad(variable));
+    tasks.push(HavocIdentityTask::Text(")"));
+    tasks.push(HavocIdentityTask::Pointer(pointer));
+    true
+}
+
+fn push_havoc_binary(
+    identity: &mut String,
+    tasks: &mut Vec<HavocIdentityTask>,
+    tag: &'static str,
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) {
+    identity.push_str(tag);
+    identity.push('(');
+    tasks.push(HavocIdentityTask::Text(")"));
+    tasks.push(HavocIdentityTask::Bitvector(right));
+    tasks.push(HavocIdentityTask::Text(","));
+    tasks.push(HavocIdentityTask::Bitvector(left));
+}
+
+fn push_havoc_condition_binary(
+    identity: &mut String,
+    tasks: &mut Vec<HavocIdentityTask>,
+    tag: &'static str,
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) {
+    push_havoc_binary(identity, tasks, tag, left, right);
+}
+
+fn havoc_range_identity(range: &CMemoryRange) -> String {
+    // Keep traversal on an explicit stack so a valid deeply nested footprint
+    // cannot overflow Rust's call stack. Strings are length-delimited where
+    // their contents are unconstrained; fixed tags delimit every other node.
+    // Registered load variables normally form an acyclic generation history,
+    // but encode an exact variable back-edge if a malformed cycle appears.
+    let mut identity = String::from("range(");
+    let mut tasks = vec![
+        HavocIdentityTask::Text(")"),
+        HavocIdentityTask::Bitvector(Bitvector32Term::Constant(range.element_width())),
+        HavocIdentityTask::Text(","),
+        HavocIdentityTask::Bitvector(range.end().clone()),
+        HavocIdentityTask::Text(","),
+        HavocIdentityTask::Bitvector(range.start().clone()),
+        HavocIdentityTask::Text(","),
+        HavocIdentityTask::Pointer(range.base().clone()),
+    ];
+    let mut active_loads = BTreeSet::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            HavocIdentityTask::Text(text) => identity.push_str(text),
+            HavocIdentityTask::LeaveRegisteredLoad(variable) => {
+                active_loads.remove(&variable);
             }
-        }
-        Bitvector32Term::Add(left, right) => {
-            havoc_bitvector_binary_identity(identity, "add", left, right, depth)
-        }
-        Bitvector32Term::Subtract(left, right) => {
-            havoc_bitvector_binary_identity(identity, "subtract", left, right, depth)
-        }
-        Bitvector32Term::Multiply(left, right) => {
-            havoc_bitvector_binary_identity(identity, "multiply", left, right, depth)
-        }
-        Bitvector32Term::Divide(left, right) => {
-            havoc_bitvector_binary_identity(identity, "divide", left, right, depth)
-        }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            havoc_bitvector_binary_identity(identity, "unsigned-divide", left, right, depth)
-        }
-        Bitvector32Term::Remainder(left, right) => {
-            havoc_bitvector_binary_identity(identity, "remainder", left, right, depth)
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            havoc_bitvector_binary_identity(identity, "unsigned-remainder", left, right, depth)
-        }
-        Bitvector32Term::ShiftLeft(left, right) => {
-            havoc_bitvector_binary_identity(identity, "shift-left", left, right, depth)
-        }
-        Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            havoc_bitvector_binary_identity(identity, "arithmetic-shift-right", left, right, depth)
-        }
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            havoc_bitvector_binary_identity(identity, "logical-shift-right", left, right, depth)
-        }
-        Bitvector32Term::BitwiseAnd(left, right) => {
-            havoc_bitvector_binary_identity(identity, "bitwise-and", left, right, depth)
-        }
-        Bitvector32Term::BitwiseOr(left, right) => {
-            havoc_bitvector_binary_identity(identity, "bitwise-or", left, right, depth)
-        }
-        Bitvector32Term::BitwiseXor(left, right) => {
-            havoc_bitvector_binary_identity(identity, "bitwise-xor", left, right, depth)
-        }
-        Bitvector32Term::BitwiseNot(value) => {
-            identity.push_str("bitwise-not(");
-            havoc_bitvector_identity(identity, value, depth + 1);
-            identity.push(')');
-        }
-        Bitvector32Term::If {
-            condition,
-            then_term,
-            else_term,
-        } => {
-            identity.push_str("if(");
-            havoc_condition_identity(identity, condition, depth + 1);
-            identity.push_str(", ");
-            havoc_bitvector_identity(identity, then_term, depth + 1);
-            identity.push_str(", ");
-            havoc_bitvector_identity(identity, else_term, depth + 1);
-            identity.push(')');
-        }
-        Bitvector32Term::RangeFold {
-            start,
-            end,
-            initial,
-            accumulator,
-            item,
-            body,
-        } => {
-            identity.push_str("range-fold(");
-            havoc_bitvector_identity(identity, start, depth + 1);
-            identity.push_str(", ");
-            havoc_bitvector_identity(identity, end, depth + 1);
-            identity.push_str(", ");
-            havoc_bitvector_identity(identity, initial, depth + 1);
-            let _ = write!(identity, ", {}, ", accumulator.0);
-            let _ = write!(identity, "{}, ", item.0);
-            havoc_bitvector_identity(identity, body, depth + 1);
-            identity.push(')');
-        }
-        Bitvector32Term::PureFunctionApplication { name, arguments } => {
-            let _ = write!(identity, "pure({name:?}, [");
-            for (index, argument) in arguments.iter().enumerate() {
-                if index > 0 {
-                    identity.push_str(", ");
+            HavocIdentityTask::Pointer(pointer) => {
+                crate::instrumentation::record_deterministic_work(1);
+                identity.push_str("pointer(");
+                write_havoc_block(&mut identity, pointer.block);
+                identity.push(',');
+                tasks.push(HavocIdentityTask::Text(")"));
+                tasks.push(HavocIdentityTask::PointerOffset(pointer.offset));
+            }
+            HavocIdentityTask::PointerOffset(offset) => {
+                crate::instrumentation::record_deterministic_work(1);
+                match offset {
+                    PointerOffsetTerm::Constant(value) => {
+                        let _ = write!(identity, "oc{value};");
+                    }
+                    PointerOffsetTerm::Variable(variable) => {
+                        if !push_registered_load(
+                            &mut identity,
+                            &mut tasks,
+                            &mut active_loads,
+                            variable,
+                        ) {
+                            let _ = write!(identity, "ov{};", variable.0);
+                        }
+                    }
+                    PointerOffsetTerm::Add(left, right) => {
+                        identity.push_str("oa(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::PointerOffset(*right));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::PointerOffset(*left));
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                        identity.push_str("os(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::PointerOffset(
+                            PointerOffsetTerm::Constant(byte_width),
+                        ));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
                 }
-                havoc_bitvector_identity(identity, argument, depth + 1);
             }
-            identity.push_str("])");
-        }
-        Bitvector32Term::MemoryLoad(_, pointer) => {
-            identity.push_str("load(");
-            havoc_pointer_identity(identity, pointer, depth + 1);
-            identity.push(')');
+            HavocIdentityTask::Bitvector(term) => {
+                crate::instrumentation::record_deterministic_work(1);
+                match term {
+                    Bitvector32Term::Constant(value) => {
+                        let _ = write!(identity, "tc{value};");
+                    }
+                    Bitvector32Term::Variable(variable) => {
+                        if !push_registered_load(
+                            &mut identity,
+                            &mut tasks,
+                            &mut active_loads,
+                            variable,
+                        ) {
+                            let _ = write!(identity, "tv{};", variable.0);
+                        }
+                    }
+                    Bitvector32Term::Add(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ta", *left, *right)
+                    }
+                    Bitvector32Term::Subtract(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "ts", *left, *right)
+                    }
+                    Bitvector32Term::Multiply(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tm", *left, *right)
+                    }
+                    Bitvector32Term::Divide(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "td", *left, *right)
+                    }
+                    Bitvector32Term::UnsignedDivide(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tud", *left, *right)
+                    }
+                    Bitvector32Term::Remainder(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tr", *left, *right)
+                    }
+                    Bitvector32Term::UnsignedRemainder(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tur", *left, *right)
+                    }
+                    Bitvector32Term::ShiftLeft(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tl", *left, *right)
+                    }
+                    Bitvector32Term::ArithmeticShiftRight(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tar", *left, *right)
+                    }
+                    Bitvector32Term::LogicalShiftRight(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tlr", *left, *right)
+                    }
+                    Bitvector32Term::BitwiseAnd(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tba", *left, *right)
+                    }
+                    Bitvector32Term::BitwiseOr(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tbo", *left, *right)
+                    }
+                    Bitvector32Term::BitwiseXor(left, right) => {
+                        push_havoc_binary(&mut identity, &mut tasks, "tbx", *left, *right)
+                    }
+                    Bitvector32Term::BitwiseNot(value) => {
+                        identity.push_str("tbn(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::If {
+                        condition,
+                        then_term,
+                        else_term,
+                    } => {
+                        identity.push_str("ti(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*else_term));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*then_term));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Condition(*condition));
+                    }
+                    Bitvector32Term::RangeFold {
+                        start,
+                        end,
+                        initial,
+                        accumulator,
+                        item,
+                        body,
+                    } => {
+                        let _ = write!(identity, "tf({};{};", accumulator.0, item.0);
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*body));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*initial));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*end));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*start));
+                    }
+                    Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                        identity.push_str("tp(");
+                        write_havoc_string(&mut identity, "n", &name);
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        for (index, argument) in arguments.into_iter().enumerate().rev() {
+                            tasks.push(HavocIdentityTask::Bitvector(argument));
+                            if index > 0 {
+                                tasks.push(HavocIdentityTask::Text(","));
+                            }
+                        }
+                    }
+                    Bitvector32Term::MemoryLoad(_, pointer) => {
+                        identity.push_str("load(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Pointer(*pointer));
+                    }
+                }
+            }
+            HavocIdentityTask::Condition(condition) => {
+                crate::instrumentation::record_deterministic_work(1);
+                match condition {
+                    ConditionTerm::Constant(value) => {
+                        let _ = write!(identity, "cc{value};");
+                    }
+                    ConditionTerm::Variable(variable) => {
+                        let _ = write!(identity, "cv{};", variable.0);
+                    }
+                    ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "clt", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cle", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cgt", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cge", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32Equal(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "ceq", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cao", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cso", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cmo", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "cdo", *left, *right)
+                    }
+                    ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+                        push_havoc_condition_binary(&mut identity, &mut tasks, "clo", *left, *right)
+                    }
+                    ConditionTerm::PointerOffsetEqual(left, right) => {
+                        identity.push_str("coe(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::PointerOffset(*right));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::PointerOffset(*left));
+                    }
+                    ConditionTerm::PointerEqual(left, right) => {
+                        identity.push_str("cpe(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Pointer(*right));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Pointer(*left));
+                    }
+                }
+            }
         }
     }
+    identity
 }
 
-fn havoc_bitvector_binary_identity(
-    identity: &mut String,
-    name: &str,
-    left: &Bitvector32Term,
-    right: &Bitvector32Term,
-    depth: usize,
-) {
-    identity.push_str(name);
-    identity.push('(');
-    havoc_bitvector_identity(identity, left, depth + 1);
-    identity.push_str(", ");
-    havoc_bitvector_identity(identity, right, depth + 1);
-    identity.push(')');
-}
+#[cfg(test)]
+mod havoc_identity_tests {
+    use super::*;
 
-fn havoc_condition_identity(identity: &mut String, condition: &ConditionTerm, depth: usize) {
-    if depth >= 64 {
-        identity.push_str("depth-limit");
-        return;
+    fn nested_term(depth: usize, tail: u32) -> Bitvector32Term {
+        (0..depth).fold(Bitvector32Term::Constant(tail), |term, _| {
+            Bitvector32Term::Add(Box::new(Bitvector32Term::Constant(0)), Box::new(term))
+        })
     }
-    match condition {
-        ConditionTerm::Constant(value) => {
-            let _ = write!(identity, "constant({value})");
-        }
-        ConditionTerm::Variable(variable) => {
-            let _ = write!(identity, "variable({})", variable.0);
-        }
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
-            havoc_condition_binary_identity(identity, "less-than", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
-            havoc_condition_binary_identity(identity, "less-equal", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            havoc_condition_binary_identity(identity, "greater-than", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            havoc_condition_binary_identity(identity, "greater-equal", left, right, depth)
-        }
-        ConditionTerm::Bitvector32Equal(left, right) => {
-            havoc_condition_binary_identity(identity, "equal", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
-            havoc_condition_binary_identity(identity, "add-overflows", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
-            havoc_condition_binary_identity(identity, "subtract-overflows", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
-            havoc_condition_binary_identity(identity, "multiply-overflows", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
-            havoc_condition_binary_identity(identity, "divide-overflows", left, right, depth)
-        }
-        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            havoc_condition_binary_identity(identity, "shift-left-overflows", left, right, depth)
-        }
-        ConditionTerm::PointerOffsetEqual(left, right) => {
-            identity.push_str("offset-equal(");
-            havoc_pointer_offset_identity(identity, left, depth + 1);
-            identity.push_str(", ");
-            havoc_pointer_offset_identity(identity, right, depth + 1);
-            identity.push(')');
-        }
-        ConditionTerm::PointerEqual(left, right) => {
-            identity.push_str("pointer-equal(");
-            havoc_pointer_identity(identity, left, depth + 1);
-            identity.push_str(", ");
-            havoc_pointer_identity(identity, right, depth + 1);
-            identity.push(')');
-        }
-    }
-}
 
-fn havoc_condition_binary_identity(
-    identity: &mut String,
-    name: &str,
-    left: &Bitvector32Term,
-    right: &Bitvector32Term,
-    depth: usize,
-) {
-    identity.push_str(name);
-    identity.push('(');
-    havoc_bitvector_identity(identity, left, depth + 1);
-    identity.push_str(", ");
-    havoc_bitvector_identity(identity, right, depth + 1);
-    identity.push(')');
+    fn range(depth: usize, tail: u32) -> CMemoryRange {
+        CMemoryRange::new(
+            Pointer {
+                block: "deep-havoc-range".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            nested_term(depth, tail),
+            Bitvector32Term::Constant(1_024),
+        )
+    }
+
+    #[test]
+    fn havoc_write_set_identity_distinguishes_terms_below_the_old_depth_limit() {
+        let first_range = range(80, 1);
+        let second_range = range(80, 2);
+        let first_identity = memory_havoc_write_set_identity(std::slice::from_ref(&first_range));
+        let second_identity = memory_havoc_write_set_identity(std::slice::from_ref(&second_range));
+        assert_ne!(first_identity, second_identity);
+        assert!(!first_identity.contains("depth-limit"));
+        assert!(!second_identity.contains("depth-limit"));
+
+        let before = CMemory::new().with_block("deep-havoc-range", 4_096);
+        let first = before.clone().with_call_memory_havoc(
+            Variable(95_000),
+            std::slice::from_ref(&first_range),
+            &PureFactContext::new(),
+        );
+        let second = before.clone().with_call_memory_havoc(
+            Variable(95_000),
+            std::slice::from_ref(&second_range),
+            &PureFactContext::new(),
+        );
+        assert_ne!(
+            first, second,
+            "distinct deep write sets need distinct endpoints"
+        );
+        assert!(first.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&first_range),
+            &PureFactContext::new(),
+        ));
+        assert!(!first.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&second_range),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn havoc_write_set_identity_scales_near_linearly_with_term_size() {
+        let samples = [32, 64, 128, 256]
+            .into_iter()
+            .map(|depth| {
+                let range = range(depth, 1);
+                let (identity, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    memory_havoc_write_set_identity(std::slice::from_ref(&range))
+                });
+                assert!(!identity.is_empty());
+                assert!(work > 0);
+                (depth, work)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
+            "havoc identity work grew faster than near-linearly: {samples:?}"
+        );
+    }
 }
 
 fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
@@ -1237,7 +1378,7 @@ impl CMemory {
         // to treat the call-havoc edge as the only global memory barrier.
         let identity = memory_havoc_write_set_identity(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
-            format!("call-write-set:{}:{}", variable.0, identity.join("|")).into(),
+            format!("call-write-set:{}:{identity}", variable.0).into(),
             CBlock::new(0),
         );
         if let Some(base) = base {
@@ -1294,7 +1435,7 @@ impl CMemory {
         };
         let write_set_marker: PointerBlock = format!(
             "call-write-set:{variable}:{}",
-            memory_havoc_write_set_identity(mutable_ranges).join("|")
+            memory_havoc_write_set_identity(mutable_ranges)
         )
         .into();
         if added_blocks.len() != 2
