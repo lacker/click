@@ -914,9 +914,12 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)
         | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::UnsignedDivide(left, right)
         | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::UnsignedRemainder(left, right)
         | Bitvector32Term::ShiftLeft(left, right)
         | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::LogicalShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {

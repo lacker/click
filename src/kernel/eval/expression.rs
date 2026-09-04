@@ -303,111 +303,133 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::Subtract(left, right) => {
             evaluate_c_subtract_paths(state, left, right, assumptions, budget)?
         }
-        CExpression::Multiply(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::Multiply(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_multiply(left, right, facts, obligations, assumptions)
+                apply_c_multiply(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpression::Divide(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::Divide(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_divide(left, right, facts, obligations, assumptions)
+                apply_c_divide(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpression::Remainder(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::Remainder(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_remainder(left, right, facts, obligations, assumptions)
+                apply_c_remainder(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpression::ShiftLeft(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::ShiftLeft(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_shift_left(left, right, facts, obligations, assumptions)
+                apply_c_shift_left(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpression::ShiftRight(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::ShiftRight(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_shift_right(left, right, facts, obligations, assumptions)
+                apply_c_shift_right(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpression::BitwiseAnd(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::BitwiseAnd(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_and,
                 )
             },
         )?,
-        CExpression::BitwiseOr(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::BitwiseOr(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_or,
                 )
             },
         )?,
-        CExpression::BitwiseXor(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::BitwiseXor(left, right) => evaluate_c_value_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_xor,
                 )
             },
         )?,
-        CExpression::BitwiseNot(expression) => evaluate_c_int32_total_unary_paths(
-            state,
-            expression,
-            assumptions,
-            budget,
-            Bitvector32Term::bitwise_not,
-        )?,
+        CExpression::BitwiseNot(expression) => {
+            let mut paths = Vec::new();
+            for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+                match path.outcome {
+                    CExpressionOutcome::Value(value) => paths.extend(apply_c_bitwise_not(
+                        value,
+                        path.facts,
+                        path.obligations,
+                        assumptions,
+                    )),
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        paths.push(CExpressionPath {
+                            outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        })
+                    }
+                    CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(error),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }),
+                }
+            }
+            paths
+        }
         // An inline array field is an lvalue whose value is not represented by
         // CValue. In an expression context it undergoes C's array-to-pointer
         // conversion, so evaluate the field's address rather than attempting

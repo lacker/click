@@ -256,10 +256,13 @@ The current integer conversion slice is deliberately small. `eval.rs` promotes
 `uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,
 and bitwise operators, assignments, and returns, adding internal byte-range
 facts for the promoted term when an expression needs them. Scalar `uint32`
-addition and subtraction use the same 32-bit term representation without signed
-overflow obligations, while its equality and ordered comparisons select the
-unsigned conditions. Stores and function returns preserve the `uint32` type
-tag. The existing boundaries still use checked `int32`-to-`uint8` narrowing;
+addition, subtraction, and multiplication use the same 32-bit term
+representation without signed overflow obligations. Unsigned division and
+remainder have distinct term nodes so high-bit operands do not inherit signed
+division, and unsigned right shift has a distinct logical-shift node. Equality
+and ordered comparisons select the unsigned conditions. Stores and function
+returns preserve the `uint32` type tag. The existing boundaries still use checked
+`int32`-to-`uint8` narrowing;
 the coercion adds proof obligations for `0 <= value <= 255` unless the current
 path already proves them.
 

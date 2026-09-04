@@ -1037,9 +1037,12 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)
         | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::UnsignedDivide(left, right)
         | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::UnsignedRemainder(left, right)
         | Bitvector32Term::ShiftLeft(left, right)
         | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::LogicalShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
@@ -2491,7 +2494,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
         ),
+        Bitvector32Term::UnsignedDivide(left, right) => Bitvector32Term::unsigned_divide(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
         Bitvector32Term::Remainder(left, right) => Bitvector32Term::remainder(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::UnsignedRemainder(left, right) => Bitvector32Term::unsigned_remainder(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
         ),
@@ -2505,6 +2516,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        Bitvector32Term::LogicalShiftRight(left, right) => Bitvector32Term::logical_shift_right(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
         Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),

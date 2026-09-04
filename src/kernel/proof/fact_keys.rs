@@ -337,9 +337,12 @@ enum AlphaBitvectorBinaryOp {
     Subtract,
     Multiply,
     Divide,
+    UnsignedDivide,
     Remainder,
+    UnsignedRemainder,
     ShiftLeft,
     ArithmeticShiftRight,
+    LogicalShiftRight,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
@@ -514,14 +517,23 @@ fn alpha_bitvector_key(
         Bitvector32Term::Divide(left, right) => {
             binary(AlphaBitvectorBinaryOp::Divide, left, right)?
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UnsignedDivide, left, right)?
+        }
         Bitvector32Term::Remainder(left, right) => {
             binary(AlphaBitvectorBinaryOp::Remainder, left, right)?
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UnsignedRemainder, left, right)?
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             binary(AlphaBitvectorBinaryOp::ShiftLeft, left, right)?
         }
         Bitvector32Term::ArithmeticShiftRight(left, right) => {
             binary(AlphaBitvectorBinaryOp::ArithmeticShiftRight, left, right)?
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            binary(AlphaBitvectorBinaryOp::LogicalShiftRight, left, right)?
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
             binary(AlphaBitvectorBinaryOp::BitwiseAnd, left, right)?

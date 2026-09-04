@@ -501,7 +501,16 @@ fn condition_fact_mentions_load_of(
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
-            | Bitvector32Term::Divide(left, right) => {
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
                 collect_loads(left, loads);
                 collect_loads(right, loads);
             }
@@ -585,9 +594,12 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
             | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
             | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
             | Bitvector32Term::ShiftLeft(left, right)
             | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
             | Bitvector32Term::BitwiseAnd(left, right)
             | Bitvector32Term::BitwiseOr(left, right)
             | Bitvector32Term::BitwiseXor(left, right) => {
@@ -810,9 +822,12 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
             | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
             | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
             | Bitvector32Term::ShiftLeft(left, right)
             | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
             | Bitvector32Term::BitwiseAnd(left, right)
             | Bitvector32Term::BitwiseOr(left, right)
             | Bitvector32Term::BitwiseXor(left, right) => {
@@ -2667,10 +2682,19 @@ fn match_quantified_int32_term(
         | (Bitvector32Term::Multiply(pl, pr), Bitvector32Term::Multiply(tl, tr))
         | (Bitvector32Term::Divide(pl, pr), Bitvector32Term::Divide(tl, tr))
         | (Bitvector32Term::Remainder(pl, pr), Bitvector32Term::Remainder(tl, tr))
+        | (Bitvector32Term::UnsignedDivide(pl, pr), Bitvector32Term::UnsignedDivide(tl, tr))
+        | (
+            Bitvector32Term::UnsignedRemainder(pl, pr),
+            Bitvector32Term::UnsignedRemainder(tl, tr),
+        )
         | (Bitvector32Term::ShiftLeft(pl, pr), Bitvector32Term::ShiftLeft(tl, tr))
         | (
             Bitvector32Term::ArithmeticShiftRight(pl, pr),
             Bitvector32Term::ArithmeticShiftRight(tl, tr),
+        )
+        | (
+            Bitvector32Term::LogicalShiftRight(pl, pr),
+            Bitvector32Term::LogicalShiftRight(tl, tr),
         )
         | (Bitvector32Term::BitwiseAnd(pl, pr), Bitvector32Term::BitwiseAnd(tl, tr))
         | (Bitvector32Term::BitwiseOr(pl, pr), Bitvector32Term::BitwiseOr(tl, tr))

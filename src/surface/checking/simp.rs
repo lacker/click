@@ -346,9 +346,17 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     let (left, right) = binary(left_term, right_term);
                     Bitvector32Term::Divide(left, right)
                 }
+                Bitvector32Term::UnsignedDivide(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::UnsignedDivide(left, right)
+                }
                 Bitvector32Term::Remainder(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
                     Bitvector32Term::Remainder(left, right)
+                }
+                Bitvector32Term::UnsignedRemainder(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::UnsignedRemainder(left, right)
                 }
                 Bitvector32Term::ShiftLeft(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
@@ -357,6 +365,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 Bitvector32Term::ArithmeticShiftRight(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
                     Bitvector32Term::ArithmeticShiftRight(left, right)
+                }
+                Bitvector32Term::LogicalShiftRight(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::LogicalShiftRight(left, right)
                 }
                 Bitvector32Term::BitwiseAnd(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
@@ -707,9 +719,17 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 let (left, right) = binary(left, right);
                 Bitvector32Term::Divide(left, right)
             }
+            Bitvector32Term::UnsignedDivide(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::UnsignedDivide(left, right)
+            }
             Bitvector32Term::Remainder(left, right) => {
                 let (left, right) = binary(left, right);
                 Bitvector32Term::Remainder(left, right)
+            }
+            Bitvector32Term::UnsignedRemainder(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::UnsignedRemainder(left, right)
             }
             Bitvector32Term::ShiftLeft(left, right) => {
                 let (left, right) = binary(left, right);
@@ -718,6 +738,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
             Bitvector32Term::ArithmeticShiftRight(left, right) => {
                 let (left, right) = binary(left, right);
                 Bitvector32Term::ArithmeticShiftRight(left, right)
+            }
+            Bitvector32Term::LogicalShiftRight(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::LogicalShiftRight(left, right)
             }
             Bitvector32Term::BitwiseAnd(left, right) => {
                 let (left, right) = binary(left, right);
@@ -1478,6 +1502,11 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
                 Some((left / right) as u32)
             }
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            let left = simp_bitvector_const(left)?;
+            let right = simp_bitvector_const(right)?;
+            (right != 0).then_some(left / right)
+        }
         Bitvector32Term::Remainder(left, right) => {
             let left = simp_bitvector_const(left)? as i32;
             let right = simp_bitvector_const(right)? as i32;
@@ -1486,6 +1515,11 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
             } else {
                 Some((left % right) as u32)
             }
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            let left = simp_bitvector_const(left)?;
+            let right = simp_bitvector_const(right)?;
+            (right != 0).then_some(left % right)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             let left = simp_bitvector_const(left)? as i32;
@@ -1501,6 +1535,11 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
             let left = simp_bitvector_const(left)? as i32;
             let right = bitvector32_shift_count(simp_bitvector_const(right)?)?;
             Some((left >> right) as u32)
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            let left = simp_bitvector_const(left)?;
+            let right = bitvector32_shift_count(simp_bitvector_const(right)?)?;
+            Some(left >> right)
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
             Some(simp_bitvector_const(left)? & simp_bitvector_const(right)?)
@@ -1541,11 +1580,21 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
             bitvector32_divide(left.clone(), right.clone())
                 .unwrap_or_else(|_| Bitvector32Term::Divide(Box::new(left), Box::new(right)))
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            Bitvector32Term::unsigned_divide(left.clone(), right.clone())
+        }
         Bitvector32Term::Remainder(left, right) => {
             let left = simp_bitvector(left);
             let right = simp_bitvector(right);
             bitvector32_remainder(left.clone(), right.clone())
                 .unwrap_or_else(|_| Bitvector32Term::Remainder(Box::new(left), Box::new(right)))
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            Bitvector32Term::unsigned_remainder(left, right)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             let left = simp_bitvector(left);
@@ -1559,6 +1608,11 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
             bitvector32_shift_right(left.clone(), right.clone()).unwrap_or_else(|_| {
                 Bitvector32Term::ArithmeticShiftRight(Box::new(left), Box::new(right))
             })
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            Bitvector32Term::logical_shift_right(left, right)
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
             bitvector32_and(simp_bitvector(left), simp_bitvector(right))

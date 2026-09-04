@@ -96,9 +96,10 @@ scalar `uint32`, including their standard spellings (`int`/`int32_t`,
 `unsigned char`/`uint8_t`, and `unsigned int`/`uint32_t`), plus the existing
 `int32*`, `uint8*`, `int32**`, `uint8**`, and `uint8[]` forms. C typedefs may
 alias these modeled types and named struct-pointer types. `uint32` is not yet
-available through pointers, arrays, or struct fields. It supports modular `+`
-and `-`, equality, and unsigned ordered comparisons; its other arithmetic and
-bitwise operators remain future work. It does not support `void` objects or
+available through pointers, arrays, or struct fields. It supports modular `+`,
+`-`, and `*`, unsigned `/` and `%`, equality, unsigned ordered comparisons,
+bitwise operators, and typed shifts; division by zero and invalid shift counts
+remain undefined behavior. It does not support `void` objects or
 parameters. This is not a full C integer model: there are no casts beyond
 checked `int32`-to-`uint8` narrowing and no broad usual-arithmetic-conversion
 lattice.
@@ -120,8 +121,8 @@ prove `0 <= value <= 255`.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Broader casts, additional integer widths, the remaining `uint32` operators, and
-the full usual arithmetic conversion story remain future work.
+Broader casts, additional integer widths, and the full usual arithmetic
+conversion story remain future work.
 
 The first `for` support is sugar over `while`, and its initializer may be a
 scalar assignment or scalar declaration initializer. Its step can use scalar

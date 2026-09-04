@@ -383,8 +383,6 @@ fn infer_contract_expression_type(
         ContractExpression::Multiply(left, right)
         | ContractExpression::Divide(left, right)
         | ContractExpression::Remainder(left, right)
-        | ContractExpression::ShiftLeft(left, right)
-        | ContractExpression::ShiftRight(left, right)
         | ContractExpression::BitwiseAnd(left, right)
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right) => {
@@ -397,12 +395,16 @@ fn infer_contract_expression_type(
                 _ => None,
             })
         }
+        ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right) => {
+            infer_contract_shift_type(left, right, variables, click_functions, context)
+        }
         ContractExpression::BitwiseNot(expression) => {
             let expression =
                 infer_contract_expression_type(expression, variables, click_functions, context)?;
             Ok(expression
                 .filter(|c_type| type_is_scalar(*c_type))
-                .map(|_| C0Type::Int32))
+                .map(|c_type| scalar_arithmetic_result_type(c_type, c_type)))
         }
         ContractExpression::Index(base, index) => {
             let _ = infer_contract_expression_type(index, variables, click_functions, context)?;
@@ -555,8 +557,6 @@ fn infer_c_expression_type(
         CExpression::Multiply(left, right)
         | CExpression::Divide(left, right)
         | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
         | CExpression::BitwiseAnd(left, right)
         | CExpression::BitwiseOr(left, right)
         | CExpression::BitwiseXor(left, right) => {
@@ -568,6 +568,9 @@ fn infer_c_expression_type(
                 }
                 _ => None,
             }
+        }
+        CExpression::ShiftLeft(left, right) | CExpression::ShiftRight(left, right) => {
+            infer_c_shift_type(left, right, variables)
         }
         CExpression::BitwiseNot(expression) => infer_c_expression_type(expression, variables)
             .filter(|c_type| type_is_scalar(*c_type))
@@ -667,6 +670,44 @@ fn scalar_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option
         }
         _ => None,
     }
+}
+
+fn infer_c_shift_type(
+    left: &CExpression,
+    right: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+) -> Option<C0Type> {
+    let left_type = infer_c_expression_type(left, variables)?;
+    let right_type = infer_c_expression_type(right, variables)?;
+    if !type_is_scalar(left_type) || !type_is_scalar(right_type) {
+        return None;
+    }
+    Some(if left_type == C0Type::UInt32 {
+        C0Type::UInt32
+    } else {
+        C0Type::Int32
+    })
+}
+
+fn infer_contract_shift_type(
+    left: &ContractExpression,
+    right: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<Option<C0Type>, ClickError> {
+    let left_type = infer_contract_expression_type(left, variables, click_functions, context)?;
+    let right_type = infer_contract_expression_type(right, variables, click_functions, context)?;
+    Ok(match (left_type, right_type) {
+        (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
+            Some(if left == C0Type::UInt32 {
+                C0Type::UInt32
+            } else {
+                C0Type::Int32
+            })
+        }
+        _ => None,
+    })
 }
 
 fn type_is_scalar(c_type: C0Type) -> bool {

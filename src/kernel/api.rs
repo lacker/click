@@ -4256,9 +4256,17 @@ fn rewrite_int32_term_by_exact_equality(
             let (left, right) = binary(left, right);
             Bitvector32Term::Divide(Box::new(left), Box::new(right))
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UnsignedDivide(Box::new(left), Box::new(right))
+        }
         Bitvector32Term::Remainder(left, right) => {
             let (left, right) = binary(left, right);
             Bitvector32Term::Remainder(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::UnsignedRemainder(Box::new(left), Box::new(right))
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             let (left, right) = binary(left, right);
@@ -4267,6 +4275,10 @@ fn rewrite_int32_term_by_exact_equality(
         Bitvector32Term::ArithmeticShiftRight(left, right) => {
             let (left, right) = binary(left, right);
             Bitvector32Term::ArithmeticShiftRight(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::LogicalShiftRight(Box::new(left), Box::new(right))
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
             let (left, right) = binary(left, right);
@@ -5056,9 +5068,12 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
             | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::UnsignedDivide(left, right)
             | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
             | Bitvector32Term::ShiftLeft(left, right)
             | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
             | Bitvector32Term::BitwiseAnd(left, right)
             | Bitvector32Term::BitwiseOr(left, right)
             | Bitvector32Term::BitwiseXor(left, right) => {

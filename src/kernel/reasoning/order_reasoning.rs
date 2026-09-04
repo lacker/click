@@ -622,6 +622,10 @@ fn bitvector_terms_alpha_equivalent(
             Bitvector32Term::ArithmeticShiftRight(right_a, right_b),
         )
         | (
+            Bitvector32Term::LogicalShiftRight(left_a, left_b),
+            Bitvector32Term::LogicalShiftRight(right_a, right_b),
+        )
+        | (
             Bitvector32Term::BitwiseAnd(left_a, left_b),
             Bitvector32Term::BitwiseAnd(right_a, right_b),
         )

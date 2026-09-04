@@ -543,7 +543,15 @@ impl PureFactContext {
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
             ),
+            Bitvector32Term::UnsignedDivide(left, right) => Bitvector32Term::unsigned_divide(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
             Bitvector32Term::Remainder(left, right) => Bitvector32Term::remainder(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::UnsignedRemainder(left, right) => Bitvector32Term::unsigned_remainder(
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
             ),
@@ -553,6 +561,12 @@ impl PureFactContext {
             ),
             Bitvector32Term::ArithmeticShiftRight(left, right) => {
                 Bitvector32Term::arithmetic_shift_right(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            Bitvector32Term::LogicalShiftRight(left, right) => {
+                Bitvector32Term::logical_shift_right(
                     self.simplify_bitvector_under_assumptions(left),
                     self.simplify_bitvector_under_assumptions(right),
                 )
@@ -825,6 +839,14 @@ impl PureFactContext {
                 resolved,
                 Bitvector32Term::divide,
             ),
+            Bitvector32Term::UnsignedDivide(left, right) => self
+                .signed_binary_constant_known_equal(
+                    left,
+                    right,
+                    resolving,
+                    resolved,
+                    Bitvector32Term::unsigned_divide,
+                ),
             Bitvector32Term::Remainder(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
@@ -832,6 +854,14 @@ impl PureFactContext {
                 resolved,
                 Bitvector32Term::remainder,
             ),
+            Bitvector32Term::UnsignedRemainder(left, right) => self
+                .signed_binary_constant_known_equal(
+                    left,
+                    right,
+                    resolving,
+                    resolved,
+                    Bitvector32Term::unsigned_remainder,
+                ),
             Bitvector32Term::ShiftLeft(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
@@ -846,6 +876,14 @@ impl PureFactContext {
                     resolving,
                     resolved,
                     Bitvector32Term::arithmetic_shift_right,
+                ),
+            Bitvector32Term::LogicalShiftRight(left, right) => self
+                .signed_binary_constant_known_equal(
+                    left,
+                    right,
+                    resolving,
+                    resolved,
+                    Bitvector32Term::logical_shift_right,
                 ),
             Bitvector32Term::BitwiseAnd(left, right) => self.signed_binary_constant_known_equal(
                 left,

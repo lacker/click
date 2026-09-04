@@ -132,6 +132,7 @@ fn signed_term_interval(
                 i64::from((left_upper as i32) >> shift),
             ))
         }
+        Bitvector32Term::LogicalShiftRight(_, _) => None,
         Bitvector32Term::BitwiseAnd(left, right) => {
             let mask = right.as_const().or_else(|| left.as_const())?;
             if mask > i32::MAX as u32 {
@@ -146,6 +147,8 @@ fn signed_term_interval(
             Some((0, i64::from(mask as i32)))
         }
         Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::UnsignedDivide(_, _)
+        | Bitvector32Term::UnsignedRemainder(_, _)
         | Bitvector32Term::BitwiseOr(_, _)
         | Bitvector32Term::BitwiseXor(_, _)
         | Bitvector32Term::BitwiseNot(_)
@@ -287,9 +290,12 @@ fn collect_signed_affine_terms(
             }
         }
         Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::UnsignedDivide(_, _)
         | Bitvector32Term::Remainder(_, _)
+        | Bitvector32Term::UnsignedRemainder(_, _)
         | Bitvector32Term::ShiftLeft(_, _)
         | Bitvector32Term::ArithmeticShiftRight(_, _)
+        | Bitvector32Term::LogicalShiftRight(_, _)
         | Bitvector32Term::BitwiseAnd(_, _)
         | Bitvector32Term::BitwiseOr(_, _)
         | Bitvector32Term::BitwiseXor(_, _)
@@ -443,9 +449,12 @@ fn signed_affine_term_is_defined(
             i128::from(i32::MIN) <= minimum && maximum <= i128::from(i32::MAX)
         }
         Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::UnsignedDivide(_, _)
         | Bitvector32Term::Remainder(_, _)
+        | Bitvector32Term::UnsignedRemainder(_, _)
         | Bitvector32Term::ShiftLeft(_, _)
         | Bitvector32Term::ArithmeticShiftRight(_, _)
+        | Bitvector32Term::LogicalShiftRight(_, _)
         | Bitvector32Term::BitwiseAnd(_, _)
         | Bitvector32Term::BitwiseOr(_, _)
         | Bitvector32Term::BitwiseXor(_, _)

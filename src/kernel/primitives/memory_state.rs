@@ -95,14 +95,23 @@ fn havoc_bitvector_identity(identity: &mut String, term: &Bitvector32Term, depth
         Bitvector32Term::Divide(left, right) => {
             havoc_bitvector_binary_identity(identity, "divide", left, right, depth)
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            havoc_bitvector_binary_identity(identity, "unsigned-divide", left, right, depth)
+        }
         Bitvector32Term::Remainder(left, right) => {
             havoc_bitvector_binary_identity(identity, "remainder", left, right, depth)
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
+            havoc_bitvector_binary_identity(identity, "unsigned-remainder", left, right, depth)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             havoc_bitvector_binary_identity(identity, "shift-left", left, right, depth)
         }
         Bitvector32Term::ArithmeticShiftRight(left, right) => {
             havoc_bitvector_binary_identity(identity, "arithmetic-shift-right", left, right, depth)
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
+            havoc_bitvector_binary_identity(identity, "logical-shift-right", left, right, depth)
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
             havoc_bitvector_binary_identity(identity, "bitwise-and", left, right, depth)

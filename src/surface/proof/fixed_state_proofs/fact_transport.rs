@@ -682,7 +682,15 @@ pub(in crate::surface::proof) fn proposition_outer_load_memory(
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
             | Bitvector32Term::Divide(left, right)
-            | Bitvector32Term::Remainder(left, right) => {
+            | Bitvector32Term::UnsignedDivide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::UnsignedRemainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
                 term_outer(left).or_else(|| term_outer(right))
             }
             _ => None,

@@ -1177,13 +1177,22 @@ pub(super) fn describe_bitvector_with_context(
         Bitvector32Term::Divide(left, right) => {
             describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
         }
+        Bitvector32Term::UnsignedDivide(left, right) => {
+            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+        }
         Bitvector32Term::Remainder(left, right) => {
+            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+        }
+        Bitvector32Term::UnsignedRemainder(left, right) => {
             describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             describe_binary_bitvector_with_context(left, "<<", right, parameters, arguments)
         }
         Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+        }
+        Bitvector32Term::LogicalShiftRight(left, right) => {
             describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
         }
         Bitvector32Term::BitwiseAnd(left, right) => {

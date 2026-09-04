@@ -3208,9 +3208,12 @@ impl PureFactContext {
                     | Bitvector32Term::Subtract(left, right)
                     | Bitvector32Term::Multiply(left, right)
                     | Bitvector32Term::Divide(left, right)
+                    | Bitvector32Term::UnsignedDivide(left, right)
                     | Bitvector32Term::Remainder(left, right)
+                    | Bitvector32Term::UnsignedRemainder(left, right)
                     | Bitvector32Term::ShiftLeft(left, right)
                     | Bitvector32Term::ArithmeticShiftRight(left, right)
+                    | Bitvector32Term::LogicalShiftRight(left, right)
                     | Bitvector32Term::BitwiseAnd(left, right)
                     | Bitvector32Term::BitwiseOr(left, right)
                     | Bitvector32Term::BitwiseXor(left, right) => {
@@ -3526,6 +3529,10 @@ impl PureFactContext {
             | (
                 Bitvector32Term::ArithmeticShiftRight(left_a, left_b),
                 Bitvector32Term::ArithmeticShiftRight(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::LogicalShiftRight(left_a, left_b),
+                Bitvector32Term::LogicalShiftRight(right_a, right_b),
             )
             | (
                 Bitvector32Term::BitwiseAnd(left_a, left_b),

@@ -47,8 +47,11 @@ Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
 promote to `int32` for arithmetic, ordered comparisons, shifts, and bitwise
-operators, assignments, and returns. `uint32` addition and subtraction wrap at
-2^32, and its equality and ordered comparisons use unsigned order. Assigning
+operators, assignments, and returns. `uint32` addition, subtraction, and
+multiplication wrap at 2^32; division and remainder use unsigned arithmetic,
+bitwise operators use the raw 32-bit pattern, and right shifts are logical.
+Equality compares the bit pattern and ordered comparisons use unsigned order.
+Assigning
 or returning an `int32` into `uint8` is checked narrowing: the current pure
 facts must prove `0 <= value <= 255`.
 

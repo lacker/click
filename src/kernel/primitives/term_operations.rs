@@ -20,6 +20,14 @@ fn checked_signed_remainder_const(left: u32, right: u32) -> Option<u32> {
     }
 }
 
+fn checked_unsigned_divide_const(left: u32, right: u32) -> Option<u32> {
+    (right != 0).then_some(left / right)
+}
+
+fn checked_unsigned_remainder_const(left: u32, right: u32) -> Option<u32> {
+    (right != 0).then_some(left % right)
+}
+
 fn checked_shift_count_const(count: u32) -> Option<u32> {
     let count = count as i32;
     (0..32).contains(&count).then_some(count as u32)
@@ -38,6 +46,11 @@ fn checked_signed_shift_left_const(left: u32, right: u32) -> Option<u32> {
 fn checked_arithmetic_shift_right_const(left: u32, right: u32) -> Option<u32> {
     let count = checked_shift_count_const(right)?;
     Some(((left as i32) >> count) as u32)
+}
+
+fn checked_logical_shift_right_const(left: u32, right: u32) -> Option<u32> {
+    let count = checked_shift_count_const(right)?;
+    Some(left >> count)
 }
 
 fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
@@ -70,14 +83,23 @@ impl Bitvector32Term {
             Self::Divide(left, right) => {
                 checked_signed_divide_const(left.as_const()?, right.as_const()?)
             }
+            Self::UnsignedDivide(left, right) => {
+                checked_unsigned_divide_const(left.as_const()?, right.as_const()?)
+            }
             Self::Remainder(left, right) => {
                 checked_signed_remainder_const(left.as_const()?, right.as_const()?)
+            }
+            Self::UnsignedRemainder(left, right) => {
+                checked_unsigned_remainder_const(left.as_const()?, right.as_const()?)
             }
             Self::ShiftLeft(left, right) => {
                 checked_signed_shift_left_const(left.as_const()?, right.as_const()?)
             }
             Self::ArithmeticShiftRight(left, right) => {
                 checked_arithmetic_shift_right_const(left.as_const()?, right.as_const()?)
+            }
+            Self::LogicalShiftRight(left, right) => {
+                checked_logical_shift_right_const(left.as_const()?, right.as_const()?)
             }
             Self::BitwiseAnd(left, right) => Some(left.as_const()? & right.as_const()?),
             Self::BitwiseOr(left, right) => Some(left.as_const()? | right.as_const()?),
@@ -250,6 +272,22 @@ impl Bitvector32Term {
         }
     }
 
+    pub(crate) fn unsigned_divide(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_unsigned_divide_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::UnsignedDivide(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            (_, Self::Constant(1)) => left,
+            _ => Self::UnsignedDivide(Box::new(left), Box::new(right)),
+        }
+    }
+
     pub(in crate::kernel) fn remainder(left: Self, right: Self) -> Self {
         match (&left, &right) {
             (Self::Constant(left), Self::Constant(right)) => {
@@ -262,6 +300,21 @@ impl Bitvector32Term {
                 }
             }
             _ => Self::Remainder(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn unsigned_remainder(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_unsigned_remainder_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::UnsignedRemainder(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            _ => Self::UnsignedRemainder(Box::new(left), Box::new(right)),
         }
     }
 
@@ -280,6 +333,22 @@ impl Bitvector32Term {
         }
     }
 
+    pub(in crate::kernel) fn unsigned_shift_left(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_shift_count_const(*right) {
+                    Some(count) => Self::Constant(left.wrapping_shl(count)),
+                    None => Self::ShiftLeft(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            (_, Self::Constant(0)) => left,
+            _ => Self::ShiftLeft(Box::new(left), Box::new(right)),
+        }
+    }
+
     pub(in crate::kernel) fn arithmetic_shift_right(left: Self, right: Self) -> Self {
         match (&left, &right) {
             (Self::Constant(left), Self::Constant(right)) => {
@@ -293,6 +362,22 @@ impl Bitvector32Term {
             }
             (_, Self::Constant(0)) => left,
             _ => Self::ArithmeticShiftRight(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(crate) fn logical_shift_right(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_logical_shift_right_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::LogicalShiftRight(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            (_, Self::Constant(0)) => left,
+            _ => Self::LogicalShiftRight(Box::new(left), Box::new(right)),
         }
     }
 

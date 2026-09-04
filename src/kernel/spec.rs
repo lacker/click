@@ -991,7 +991,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
         SpecExpression::Add(left, right) => {
             evaluate_spec_add_paths(state, left, right, loop_entry_state, assumptions, budget)?
         }
-        SpecExpression::Subtract(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::Subtract(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -999,10 +999,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+                apply_c_scalar_subtract(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::Multiply(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::Multiply(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1010,10 +1010,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_multiply(left, right, facts, obligations, assumptions)
+                apply_c_multiply(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::Divide(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::Divide(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1021,10 +1021,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_divide(left, right, facts, obligations, assumptions)
+                apply_c_divide(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::Remainder(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::Remainder(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1032,10 +1032,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_remainder(left, right, facts, obligations, assumptions)
+                apply_c_remainder(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::ShiftLeft(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::ShiftLeft(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1043,10 +1043,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_shift_left(left, right, facts, obligations, assumptions)
+                apply_c_shift_left(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::ShiftRight(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::ShiftRight(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1054,10 +1054,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_shift_right(left, right, facts, obligations, assumptions)
+                apply_c_shift_right(left, right, facts, obligations, assumptions)
             },
         )?,
-        SpecExpression::BitwiseAnd(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::BitwiseAnd(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1065,16 +1065,17 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_and,
                 )
             },
         )?,
-        SpecExpression::BitwiseOr(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::BitwiseOr(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1082,16 +1083,17 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_or,
                 )
             },
         )?,
-        SpecExpression::BitwiseXor(left, right) => evaluate_spec_int32_binary_paths(
+        SpecExpression::BitwiseXor(left, right) => evaluate_spec_scalar_binary_paths(
             state,
             left,
             right,
@@ -1099,22 +1101,23 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_total_binary(
+                apply_c_bitwise_binary(
                     left,
                     right,
                     facts,
                     obligations,
+                    assumptions,
                     Bitvector32Term::bitwise_xor,
                 )
             },
         )?,
-        SpecExpression::BitwiseNot(expression) => evaluate_spec_int32_unary_paths(
+        SpecExpression::BitwiseNot(expression) => evaluate_spec_scalar_unary_paths(
             state,
             expression,
             loop_entry_state,
             assumptions,
             budget,
-            Bitvector32Term::bitwise_not,
+            |value, facts, obligations| apply_c_bitwise_not(value, facts, obligations, assumptions),
         )?,
         SpecExpression::If {
             condition,
@@ -1538,6 +1541,81 @@ fn spec_expression_pointer_step_width(state: &CState, expression: &SpecExpressio
         SpecExpression::Subtract(left, _) => spec_expression_pointer_step_width(state, left),
         _ => None,
     }
+}
+
+pub(super) fn evaluate_spec_scalar_binary_paths(
+    state: &CState,
+    left: &SpecExpression,
+    right: &SpecExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    apply: impl Fn(CValue, CValue, Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            paths.extend(
+                apply(
+                    left_path.value.clone(),
+                    right_path.value,
+                    facts,
+                    obligations,
+                )
+                .into_iter()
+                .filter_map(c_expression_path_value),
+            );
+        }
+    }
+    Ok(paths)
+}
+
+pub(super) fn evaluate_spec_scalar_unary_paths(
+    state: &CState,
+    expression: &SpecExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    apply: impl Fn(CValue, Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        expression,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
+        paths.extend(
+            apply(path.value, path.facts, path.obligations)
+                .into_iter()
+                .filter_map(c_expression_path_value),
+        );
+    }
+    Ok(paths)
 }
 
 pub(super) fn evaluate_spec_int32_binary_paths(

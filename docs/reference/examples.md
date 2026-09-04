@@ -169,6 +169,10 @@ retain, nonfinal release, final release, and free across opaque calls.
   calls inside loop invariants and `old(...)`.
 - `mdtests/uint32_arithmetic.md`: scalar `uint32` aliases, modular addition and
   subtraction, and unsigned ordered comparisons.
+- `mdtests/uint32_operators.md`: scalar `uint32` multiplication, division,
+  remainder, bitwise operators, shifts, unary negation, and update assignments.
+- `mdtests/uint32_division_by_zero.md` and `mdtests/uint32_invalid_shift.md`:
+  unsigned operator undefined-behavior diagnostics.
 
 ## Loops and invariants
 
