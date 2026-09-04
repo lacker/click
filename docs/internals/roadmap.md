@@ -94,10 +94,13 @@ Likely additions:
   with scalar, named-enum, fixed scalar-array, and recursively embedded
   struct fields now have explicit fresh-copy semantics for parameters, locals,
   assignments, and returns; nested fields and array elements are copied
-  recursively; data-pointer fields are shallow-copied with their pointee
-  provenance shared. Remaining work includes function-pointer- and
-  union-bearing struct values, embedded-struct arrays in by-value containers,
-  bitfields, and broader address-taking. Named
+  recursively; one-dimensional arrays of embedded structs are flattened to
+  typed leaf fields with their complete ABI stride; data-pointer fields are
+  shallow-copied with their pointee provenance shared. Remaining work includes
+  function-pointer- and union-bearing struct values, multidimensional
+  embedded-struct arrays in by-value containers, and broader address-taking.
+  Bitfields and other compiler-dependent layout rules are tracked in the
+  multiple-compiler issue. Named
   enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
   and anonymous declarations remain outside the slice.

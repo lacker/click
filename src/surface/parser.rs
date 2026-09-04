@@ -1181,6 +1181,13 @@ impl Parser {
             .get(struct_name)
             .ok_or_else(|| self.error(format!("unknown struct declaration `{struct_name}`")))?;
         for field in layout.fields().values() {
+            if let Some(nested_name) = field.struct_name()
+                && field.array_element_width().is_some()
+                && field.array_shape().is_some_and(|shape| shape.len() == 1)
+            {
+                self.scalar_struct_value_type(nested_name)?;
+                continue;
+            }
             if field.c_type() == C0Type::Int32
                 && field.struct_name().is_some()
                 && field.array_element_width().is_none()
@@ -1207,7 +1214,7 @@ impl Parser {
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, embedded struct, or union field"
+                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
                 )));
             }
         }

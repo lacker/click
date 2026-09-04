@@ -1820,8 +1820,9 @@ pub(super) fn bind_c_function_arguments(
 }
 
 /// Copy the modeled cells of an address-backed aggregate into a distinct
-/// destination block. Fixed scalar-array fields are copied one cell at a
-/// time. Pointer fields are shallow-copied: the pointer value is duplicated,
+/// destination block. Fixed scalar-array fields and flattened embedded-struct
+/// array leaves are copied one cell at a time. Pointer fields are
+/// shallow-copied: the pointer value is duplicated,
 /// but the pointed-to allocation is not. Missing cells in automatic storage
 /// remain missing so an uninitialized source field stays uninitialized in the
 /// copy; opaque/external source cells are represented by typed symbolic loads.

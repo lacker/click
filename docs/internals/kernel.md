@@ -309,12 +309,14 @@ flattened `CAggregateLayout`; embedded fields use qualified names such as
 `inner.value`. The kernel binds a value to an `AggregateObject` with its own
 local block. Parameter binding, local assignment, and aggregate return
 materialization allocate fresh blocks and recursively copy the modeled scalar,
-array, and data-pointer fields. Pointer fields are shallow copies of typed
+array, embedded-struct-array leaf, and data-pointer fields. Pointer fields are
+shallow copies of typed
 eight-byte pointer values: the destination aggregate gets the same pointer
 provenance, not a duplicate pointee allocation or ownership transfer. The
 aggregate still has no runtime `CValue`: expressions decay to its address for
-field loads and stores, while function-pointer fields, unions, and arrays of
-embedded structs remain outside this by-value slice.
+field loads and stores, while function-pointer fields, unions, and
+multidimensional arrays of embedded structs remain outside this by-value
+slice.
 
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an
@@ -328,10 +330,11 @@ union value or active-member tag; C0 therefore rejects union writes and
 whole-union operations, while the tag/member relationship remains an explicit
 source-level precondition or branch.
 
-This is not a target-independent C model. Packed structs, bitfields,
+This is not a target-independent C model. Packed structs,
 non-LP64 targets, and field types outside the documented C0 subset are not
 silently approximated; they must remain unsupported until their ABI rules are
-represented explicitly.
+represented explicitly. Bitfields and other compiler-dependent layout rules
+are tracked in `issues/multiple-compilers.md`.
 
 Untyped pointer operations likewise do not infer an `int32` pointee. An
 untyped load, index, or pointer addition whose pointee type cannot be recovered

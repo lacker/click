@@ -51,10 +51,12 @@ Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Function-pointer fields, unions,
 or arrays of embedded structs remain
 unsupported, as do direct aggregate loads, aggregate resource segments,
-multidimensional inline arrays of scalar fields, bitfields, packed layout, or
-general field-address expressions. Fixed multidimensional arrays of embedded
-structs are supported through indexed leaf-field access with row-major ABI
-stride. Named enums use
+multidimensional inline arrays of scalar fields, multidimensional arrays of
+embedded structs in by-value containers, packed layout, or general
+field-address expressions. Fixed multidimensional arrays of embedded structs
+are supported through indexed leaf-field access with row-major ABI stride.
+Bitfields and other compiler-dependent layout rules are tracked in
+`issues/multiple-compilers.md`. Named enums use
 the four-byte scalar ABI representation; their enumerators are resolved to
 int32 values in C expressions, while enum parameters, returns, locals, arrays,
 and anonymous declarations remain unsupported. Aggregate fields are not

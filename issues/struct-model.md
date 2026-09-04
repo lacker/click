@@ -6,8 +6,8 @@ Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
-slice now extends this with copies of scalar, fixed-array, and recursively
-embedded-struct fields.
+slice now extends this with copies of scalar, fixed-array, recursively
+embedded-struct, and one-dimensional embedded-struct-array fields.
 Struct fields currently support `int32`, `uint8`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
@@ -25,21 +25,24 @@ are preserved as inline field shapes and indexed through their element-width
 pointer arithmetic. Embedded fields and one-dimensional embedded-struct arrays
 are represented as aggregate places during C0 parsing and are lowered to scalar
 leaf accesses; direct aggregate loads, copies, and aggregate resource segments
-remain unsupported. Union members use
-overlapping layout and read-only typed loads; union writes, whole-union values,
-and by-value containers with function pointers, unions, or embedded-struct
-arrays remain rejected. Data-pointer fields in by-value containers are
+remain unsupported. One-dimensional embedded-struct arrays in by-value
+containers are flattened to typed leaf fields with each element's complete
+ABI stride; multidimensional embedded-struct arrays remain rejected. Union
+members use overlapping layout and read-only typed loads; union writes,
+whole-union values, and by-value containers with function pointers or unions
+remain rejected. Data-pointer fields in by-value containers are
 shallow-copied: the pointer cell is copied, while the pointee remains shared.
-Bitfields and broader struct-value
-shapes remain. Enum fields use an explicit four-byte
+Broader struct-value shapes remain. Compiler- or ABI-dependent layout rules
+are tracked in [multiple-compilers.md](multiple-compilers.md).
+Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values, bitfields, and broader address-taking as
-remaining. The first tagged-union slice is covered by
+lists broader struct values and broader address-taking as remaining. The first
+tagged-union slice is covered by
 `mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
 explicit source-level precondition rather than an inferred rule. The pilot
 target json-c's `json_object` uses unions,
@@ -69,8 +72,7 @@ Staged mdtests, each with an unchanged C file:
    aliasing).~~ Covered by `mdtests/struct_by_value_scalar_copy.md` and the
    C0/kernel aggregate-layout metadata test. Named enum fields in that shape
    are covered by `mdtests/struct_by_value_enum_copy.md` and
-   `mdtests/struct_by_value_array_copy.md`; embedded-struct-array value shapes
-   remain open.
+   `mdtests/struct_by_value_array_copy.md`.
 5. ~~A union of `int32` and `int32*` with a tag field, read only through the
    active member.~~ Covered by `mdtests/struct_tagged_union.md` and the C0
    union-layout/read-only-boundary tests. Arbitrary tag-to-member mappings are
@@ -83,11 +85,16 @@ Staged mdtests, each with an unchanged C file:
 7. ~~A struct containing an embedded struct passed and returned by value,
    with nested updates isolated from the caller.~~ Covered by
    `mdtests/struct_by_value_embedded_copy.md` and the flattened aggregate
-   layout test; embedded-struct-array value shapes remain open.
+   layout test.
 8. ~~A struct containing an `int32*` field passed and returned by value, with
    pointer bits copied shallowly and pointee writes remaining shared.~~ Covered
    by `mdtests/struct_by_value_pointer_copy.md` and the C0/kernel aggregate
    metadata and copy tests.
+9. ~~A struct containing a one-dimensional array of embedded structs passed
+   and returned by value, with nested element updates isolated from the
+   caller.~~ Covered by `mdtests/struct_by_value_embedded_array_copy.md` and
+   the flattened array-element metadata test; multidimensional array values
+   remain open.
 
 ## Acceptance criteria
 
@@ -99,8 +106,9 @@ Staged mdtests, each with an unchanged C file:
   offsets, and scalar/pointer types remain in flattened aggregate metadata.
 - Data-pointer fields in those copies preserve the exact pointer value and
   provenance without copying the pointee or transferring ownership.
-- Unions and bitfields are either modeled with explicit rules or rejected with
-  a diagnostic that names the unsupported construct; no silent approximation.
+- Unions are either modeled with explicit rules or rejected with a diagnostic
+  that names the unsupported construct; no silent approximation. Other
+  compiler-dependent layout constructs are owned by `multiple-compilers.md`.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.
 - `scripts/check.sh` passes.
 

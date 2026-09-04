@@ -1173,6 +1173,23 @@ fn flatten_aggregate_fields(
     fields: &BTreeMap<String, C0StructField>,
     structs: &BTreeMap<String, C0StructLayout>,
 ) -> Vec<C0AggregateField> {
+    fn append_nested_fields(
+        aggregate_fields: &mut Vec<C0AggregateField>,
+        prefix: &str,
+        base_offset: u32,
+        nested_layout: &C0StructLayout,
+    ) {
+        for nested_field in nested_layout.aggregate_fields() {
+            aggregate_fields.push(C0AggregateField {
+                name: format!("{prefix}.{}", nested_field.name),
+                offset_bytes: base_offset
+                    .checked_add(nested_field.offset_bytes)
+                    .expect("validated embedded struct field offset"),
+                c_type: nested_field.c_type,
+            });
+        }
+    }
+
     let mut aggregate_fields = Vec::new();
     for (field_name, field) in fields {
         if field.c_type == C0Type::Int32
@@ -1186,15 +1203,36 @@ fn flatten_aggregate_fields(
             let nested_layout = structs
                 .get(nested_name)
                 .expect("embedded struct field has a parsed layout");
-            for nested_field in nested_layout.aggregate_fields() {
-                aggregate_fields.push(C0AggregateField {
-                    name: format!("{field_name}.{}", nested_field.name),
-                    offset_bytes: field
-                        .offset_bytes
-                        .checked_add(nested_field.offset_bytes)
-                        .expect("validated embedded struct field offset"),
-                    c_type: nested_field.c_type,
-                });
+            append_nested_fields(
+                &mut aggregate_fields,
+                field_name,
+                field.offset_bytes,
+                nested_layout,
+            );
+        } else if let (Some(nested_name), Some(element_width), Some(shape)) = (
+            field.struct_name.as_ref(),
+            field.array_element_width,
+            field.array_shape.as_deref(),
+        ) && let [length] = shape
+        {
+            let nested_layout = structs
+                .get(nested_name)
+                .expect("embedded struct array field has a parsed layout");
+            for index in 0..*length {
+                let element_offset = field
+                    .offset_bytes
+                    .checked_add(
+                        index
+                            .checked_mul(element_width)
+                            .expect("validated embedded struct array field offset"),
+                    )
+                    .expect("validated embedded struct array field offset");
+                append_nested_fields(
+                    &mut aggregate_fields,
+                    &format!("{field_name}[{index}]"),
+                    element_offset,
+                    nested_layout,
+                );
             }
         } else {
             aggregate_fields.push(C0AggregateField {
@@ -1649,6 +1687,16 @@ impl Parser {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         for field in layout.fields.values() {
+            if let Some(nested_name) = field.struct_name.as_deref()
+                && field.array_element_width.is_some()
+                && field
+                    .array_shape
+                    .as_deref()
+                    .is_some_and(|shape| shape.len() == 1)
+            {
+                self.scalar_struct_value_layout(nested_name)?;
+                continue;
+            }
             if field.c_type == C0Type::Int32
                 && field.struct_name.is_some()
                 && field.array_element_width.is_none()
@@ -1676,7 +1724,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, embedded struct, or union field"
+                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
                 )));
             }
         }
