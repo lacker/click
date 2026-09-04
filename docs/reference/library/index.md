@@ -754,11 +754,16 @@ predicate cstr_prefix(bytes: uint8[], len: int32) {
 
 ```click
 predicate cstr_len(bytes: uint8[], len: int32) {
-    0 <= len and cstr_prefix(bytes, len) and bytes_contains(bytes, len, len + 1, '\0')
+    0 <= len and
+        loadable(bytes[0..len + 1]) and
+        cstr_prefix(bytes, len) and
+        bytes_contains(bytes, len, len + 1, '\0')
 }
 ```
 
-**Meaning:** States that `len` is nonnegative, the preceding bytes contain no null terminator, and byte `len` is a null terminator.
+**Meaning:** States that `len` is nonnegative, the complete prefix through its
+terminator is readable, the preceding bytes contain no null terminator, and
+byte `len` is a null terminator.
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
@@ -793,6 +798,26 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_bounded)` when a proof needs the predicate body.
+
+### `cstr_len_is_loadable`
+
+```click
+theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures loadable(bytes[0..len + 1]) by {
+        unfold(cstr_len);
+        simp();
+    }
+}
+```
+
+**Meaning:** Given an exact C-string length, exposes the loadability of the
+prefix and its terminator as a separate fact for a subsequent proof step.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/cstr_loadable_witness.md`](https://github.com/lacker/click/blob/master/mdtests/cstr_loadable_witness.md) checks this witness projection.
 
 ### `cstr_len_nonnegative`
 

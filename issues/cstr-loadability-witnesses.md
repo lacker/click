@@ -16,6 +16,12 @@ The current catalog consequently supports only a fixed-footprint empty-string
 case for `strlen`. This is a verifier and specification gap, not a reason to
 assume that every pointer satisfying a content predicate is readable.
 
+The first bounded slice is now landed: `cstr_len(bytes, len)` carries
+`loadable(bytes[0..len + 1])`, and `cstr_len_is_loadable` exposes that fact as a
+separate checked theorem. `mdtests/cstr_loadable_witness.md` exercises the
+projection. The general existential `cstr(bytes)`/`strlen` call still needs
+checked witness selection and dependent range lowering.
+
 ## Violated invariant
 
 Every memory-reading external contract must require enough loadability for all

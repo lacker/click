@@ -1990,6 +1990,10 @@ id = "stdlib.predicate.cstr_bounded"
 path = "reference/library/index.md#cstr_bounded"
 
 [[item]]
+id = "stdlib.theorem.cstr_len_is_loadable"
+path = "reference/library/index.md#cstr_len_is_loadable"
+
+[[item]]
 id = "stdlib.theorem.cstr_len_nonnegative"
 path = "reference/library/index.md#cstr_len_nonnegative"
 

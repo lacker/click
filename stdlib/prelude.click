@@ -285,7 +285,10 @@ predicate cstr_prefix(bytes: uint8[], len: int32) {
 }
 
 predicate cstr_len(bytes: uint8[], len: int32) {
-    0 <= len and cstr_prefix(bytes, len) and bytes_contains(bytes, len, len + 1, '\0')
+    0 <= len and
+        loadable(bytes[0..len + 1]) and
+        cstr_prefix(bytes, len) and
+        bytes_contains(bytes, len, len + 1, '\0')
 }
 
 predicate cstr(bytes: uint8[]) {
@@ -296,6 +299,15 @@ predicate cstr(bytes: uint8[]) {
 
 predicate cstr_bounded(bytes: uint8[], max: int32) {
     bytes_contains(bytes, 0, max, '\0')
+}
+
+theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures loadable(bytes[0..len + 1]) by {
+        unfold(cstr_len);
+        simp();
+    }
 }
 
 theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
