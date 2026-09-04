@@ -62,6 +62,16 @@ uint64_t calloc_uint64_array() {
     return result;
 }
 
+uint16_t calloc_uint16_array_with_size_t(size_t count) {
+    uint16_t* data = calloc(count, sizeof(uint16_t));
+    if (data == 0) {
+        return 0;
+    }
+    uint16_t result = data[1];
+    free(data);
+    return result;
+}
+
 uint64_t malloc_uint64_array_with_size_t(size_t count) {
     uint64_t* data = malloc(count * sizeof(uint64_t));
     if (data == 0) {
@@ -111,6 +121,11 @@ int64_t malloc_int64_array() {
 }
 
 uint64_t calloc_uint64_array() {
+    ensures result == 0;
+}
+
+uint16_t calloc_uint16_array_with_size_t(size_t count) {
+    requires count == 2;
     ensures result == 0;
 }
 

@@ -63,9 +63,18 @@ literal suffixes now select their width and signedness instead of being
 discarded. The positive and negative regressions are
 `mdtests/int64_uint64_arithmetic.md`, `mdtests/int64_division_by_zero.md`,
 `mdtests/int64_invalid_shift.md`, `mdtests/int64_signed_overflow.md`, and
-`mdtests/uint64_division_by_zero.md`. Arrays and pointers of these types remain
-outside this scalar slice; scalar struct fields are covered by
+`mdtests/uint64_division_by_zero.md`. Scalar struct fields are covered by
 `issues/struct-model.md`.
+
+The fifth slice extends the same width and signedness model through data
+pointers, pointer arrays, fixed-size local arrays, array parameters, and the
+`malloc`/`calloc`/`realloc` paths. Pointer offsets preserve the declared
+pointee width, and `size_t` indices remain 64-bit through dynamic indexing.
+Heap sizes may be written as exact 64-bit expressions when contract facts
+reduce them to Click's checked memory-block extent. The regressions are
+`mdtests/integer_pointer_array_widths.md`,
+`mdtests/integer_heap_widths.md`, `mdtests/pure_theorem_integer_width_arrays.md`,
+and the corrected `mdtests/uint32_pointer_rejected.md`.
 
 ## Intended regression
 
@@ -79,8 +88,8 @@ A staged set of mdtests, each verifying a function that a C compiler accepts:
 3. `size_t`/`int64_t` length arithmetic: `size_t total(size_t n, size_t m)`
    with an overflow obligation, and indexing `p[i]` with `size_t i`.
 4. A `short` field load and store with correct promotion.
-5. `size_t`/64-bit length arithmetic and indexing after the allocation-shape
-   and integer-model work is complete.
+5. `size_t`/64-bit length arithmetic and indexing through local arrays,
+   pointer parameters, and width-preserving heap allocations.
 
 Each stage lands with negative tests for the new UB and range obligations.
 
