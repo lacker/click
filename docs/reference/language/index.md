@@ -150,8 +150,14 @@ propagation treats a separately ranked inner loop as an opaque terminating
 phase. If it writes a variable mentioned by the enclosing tuple, the kernel
 forgets that variable's scalar alias and relies on the enclosing invariants for
 the post-phase nonnegativity proof. Recursive calls inside loops remain
-rejected until the verifier can summarize their effect on the enclosing
-ranking tuple.
+supported only when both obligations are proved independently: the loop needs
+its own ranking, and every recursive edge still needs the function-level
+measure. The loop guard is available when proving the recursive argument is
+nonnegative. The numeric function-level measure must remain unchanged by
+assignments, updates, allocation results, and call results. Structural
+recursive calls in loops likewise need an active resource guard and a direct
+contained child. Recursive calls whose descent depends on a changing
+lexicographic caller measure remain unsupported.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked

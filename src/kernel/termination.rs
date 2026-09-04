@@ -476,14 +476,24 @@ fn structural_recursion_paths(
             )?);
             Ok(paths)
         }
-        CStatement::While { body, .. } => {
-            let mut calls = BTreeSet::new();
-            statement_calls(body, &mut calls);
-            if calls.contains(function.name()) {
-                return Err(error(
-                    "recursive calls inside a loop require a lexicographic measure and are not yet supported",
-                ));
+        CStatement::While {
+            condition, body, ..
+        } => {
+            let mut body_paths = Vec::new();
+            for path in &paths {
+                let condition = resolve_c_expression_aliases(condition, &path.aliases);
+                let mut body_path = path.clone();
+                body_path.conditions.push((condition, true));
+                body_paths.push(body_path);
             }
+            structural_recursion_paths(
+                body,
+                function,
+                measure_arguments,
+                child_arguments,
+                guard,
+                body_paths,
+            )?;
             Ok(paths)
         }
         CStatement::Switch { cases, .. } => {
@@ -903,8 +913,7 @@ fn recursion_paths(
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::Update { .. } => Ok(lower_bounds),
+        | CStatement::TypedStore { .. } => Ok(lower_bounds),
         CStatement::ContinueWithStep { step } => {
             recursion_paths(step, measure, component, parameter_indices, lower_bounds)
         }
@@ -914,6 +923,12 @@ fn recursion_paths(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
         ))),
         CStatement::Assign { .. } => Ok(lower_bounds),
+        CStatement::Update { target, .. } if matches!(target, CExpression::Variable(name) if name == measure) => {
+            Err(error(format!(
+                "termination measure `{measure}` is updated; this first implementation requires an unchanged function parameter"
+            )))
+        }
+        CStatement::Update { .. } => Ok(lower_bounds),
         CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
             "recursive termination measure `{measure}` is overwritten by an allocation result"
         ))),
@@ -1003,13 +1018,18 @@ fn recursion_paths(
             }
             Ok(paths)
         }
-        CStatement::While { body, .. } => {
-            let mut calls = BTreeSet::new();
-            statement_calls(body, &mut calls);
-            if calls.iter().any(|call| component.contains(call)) {
-                return Err(error(
-                    "recursive calls inside a loop require a lexicographic measure and are not yet supported",
-                ));
+        CStatement::While {
+            condition, body, ..
+        } => {
+            for lower_bound in &lower_bounds {
+                let body_lower_bound = refined_lower_bound(condition, measure, true, *lower_bound);
+                recursion_paths(
+                    body,
+                    measure,
+                    component,
+                    parameter_indices,
+                    vec![body_lower_bound],
+                )?;
             }
             Ok(lower_bounds)
         }

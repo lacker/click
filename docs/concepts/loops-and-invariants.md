@@ -47,8 +47,12 @@ remain valid partial-correctness proofs. A separately ranked nested loop is
 treated as a terminating phase when checking its enclosing loop; aliases for
 outer ranking variables written by that phase are forgotten, and the outer
 invariants must establish the resulting ranking components are nonnegative.
-Recursive calls inside loops remain unsupported until the verifier can
-summarize their effect on the enclosing ranking tuple.
+When a loop contains a recursive call, the loop and the recursive edge need
+separate evidence: the loop must have its own ranking, and the function-level
+`decreases` measure must strictly decrease at every recursive edge. The loop
+guard is used when proving the recursive argument is nonnegative. The numeric
+function-level measure must remain unchanged by the loop body; calls whose
+descent depends on a changing lexicographic caller measure remain unsupported.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a
