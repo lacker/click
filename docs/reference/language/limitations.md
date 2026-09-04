@@ -79,7 +79,10 @@ int32 values in C expressions, while enum parameters, returns, locals, arrays,
 and anonymous declarations remain unsupported. Click contracts can use field
 places with `views` and the owned-resource verbs, including direct embedded
 aggregate places. Such a clause expands into typed leaf ranges, preserving
-mixed field widths and ABI metadata. Explicit ranges such as `owns owner[0..3]`
+mixed field widths and ABI metadata. A read-only helper view can be justified
+by an enclosing owned object through its physical byte footprint; owned
+`consumes`/`produces` transitions remain typed and do not reinterpret a range
+implicitly. Explicit ranges such as `owns owner[0..3]`
 remain useful for broader footprints. The supported ABI is LP64; other target
 ABIs are rejected rather than approximated.
 

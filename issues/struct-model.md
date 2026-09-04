@@ -138,6 +138,13 @@ Staged mdtests, each with an unchanged C file:
     direct aggregate arguments and returns preserve address-backed copy
     semantics.~~ Covered by `mdtests/struct_aggregate_load_copy.md` and the
     C0 direct-aggregate lvalue regression.
+16. ~~A helper that reads a mixed-width embedded aggregate through a pointer
+    can borrow its field views from the caller's enclosing owned object, and
+    the borrow ends at return so the caller can still free the allocation.~~
+    Covered by `mdtests/struct_aggregate_helper_view.md`. Relational
+    postconditions for pointer-backed aggregate returns remain a separate
+    proof-transition gap; they must not be accepted by weakening the helper's
+    body or by treating a returned aggregate pointer as an alias.
 
 ## Acceptance criteria
 

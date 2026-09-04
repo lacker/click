@@ -44,7 +44,7 @@ fn memory_range_can_be_framed_as_a_byte_footprint() {
 }
 
 #[test]
-fn memory_resource_coverage_requires_a_shared_element_width() {
+fn memory_resource_coverage_keeps_ownership_typed_but_allows_read_views() {
     let base = Pointer {
         block: "typed-buffer".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -71,6 +71,46 @@ fn memory_resource_coverage_requires_a_shared_element_width() {
         1,
     ));
     assert!(available.satisfies_fact(&byte_requirement, &PureFactContext::new()));
+
+    let int32_view_requirement = CResourceFact::view_memory(CMemoryRange::new(
+        Pointer {
+            block: "typed-buffer".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    assert!(available.satisfies_fact(&int32_view_requirement, &PureFactContext::new()));
+
+    let typed_available =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+            Pointer {
+                block: "typed-object".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        )));
+    let byte_view_requirement = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+        Pointer {
+            block: "typed-object".into(),
+            offset: PointerOffsetTerm::Constant(4),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        1,
+    ));
+    assert!(typed_available.satisfies_fact(&byte_view_requirement, &PureFactContext::new()));
+    let outside_byte_view = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+        Pointer {
+            block: "typed-object".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        1,
+    ));
+    assert!(!typed_available.satisfies_fact(&outside_byte_view, &PureFactContext::new()));
 }
 
 #[test]

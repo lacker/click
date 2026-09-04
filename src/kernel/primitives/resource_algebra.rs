@@ -1976,7 +1976,7 @@ fn memory_resource_fact_entails(
             let Some(available) = resource_fact_read_core_range(available) else {
                 return false;
             };
-            memory_range_covers(&available, required, assumptions)
+            memory_range_covers_for_read(&available, required, assumptions)
         }
         (_, _) if required.memory_own_range().is_some() => {
             let Some(available) = available.memory_own_range() else {
@@ -1996,7 +1996,9 @@ fn consume_memory_resource_fact(
 ) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
         return resource_fact_read_core_range(available)
-            .is_some_and(|available| memory_range_covers(&available, required, assumptions))
+            .is_some_and(|available| {
+                memory_range_covers_for_read(&available, required, assumptions)
+            })
             .then_some(ResourceFactConsumption::Preserve);
     }
     if let Some(required) = required.memory_own_range() {
@@ -2655,6 +2657,38 @@ pub(in crate::kernel) fn memory_range_covers(
             )
         },
     )
+}
+
+/// Read access is typed at the leaf being inspected, but an enclosing owned
+/// object may use a different logical range width. For example, `object(p)`
+/// is int32-indexed while an embedded `uint8` field is byte-indexed. Views
+/// may use the enclosing object's physical byte footprint; ownership
+/// consumption deliberately stays on [`memory_range_covers`] so residual
+/// ownership never changes coordinate systems implicitly.
+fn memory_range_covers_for_read(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    if available.element_width() == required.element_width() {
+        return memory_range_covers(available, required, assumptions);
+    }
+
+    let (available_base, available_bytes) = available.byte_footprint();
+    let (required_base, required_bytes) = required.byte_footprint();
+    let available = CMemoryRange::new_with_element_width(
+        available_base,
+        Bitvector32Term::Constant(0),
+        available_bytes,
+        1,
+    );
+    let required = CMemoryRange::new_with_element_width(
+        required_base,
+        Bitvector32Term::Constant(0),
+        required_bytes,
+        1,
+    );
+    memory_range_covers(&available, &required, assumptions)
 }
 
 fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {

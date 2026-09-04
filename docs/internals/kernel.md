@@ -312,7 +312,11 @@ Direct whole-struct lvalue loads and copies are lowered into typed leaf loads
 and stores using the same address-backed layout; the kernel still never
 represents a struct as a runtime `CValue`. Resource clauses may name embedded
 aggregates directly and expand into typed leaf ranges while preserving their
-field metadata. Fixed multidimensional arrays of embedded structs and supported scalar fields retain
+field metadata. A read-only view may be discharged from an enclosing owned
+object by comparing physical byte footprints even when the object's logical
+range width differs from the viewed leaf; ownership consumption remains
+width-sensitive so it cannot silently change coordinate systems. Fixed
+multidimensional arrays of embedded structs and supported scalar fields retain
 their declared shapes in C0 metadata. Indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride or the
 scalar field's element-width stride.
