@@ -2142,6 +2142,45 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for global_aggregate_array in function.global_aggregate_arrays() {
+        let slot = CMemory::global_pointer(global_aggregate_array.kernel_name());
+        let bytes = global_aggregate_array
+            .length()
+            .checked_mul(global_aggregate_array.layout().size_bytes())
+            .expect("validated C global aggregate array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = zero_aggregate_array_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate_array.layout(),
+                global_aggregate_array.length(),
+            );
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate_array.initializers(),
+            );
+        }
+        state.locals.set_array_object_at(
+            global_aggregate_array.kernel_name().to_string(),
+            CType::UInt8,
+            bytes,
+            slot.clone(),
+        );
+        if global_aggregate_array.kernel_name() != global_aggregate_array.source_name()
+            && !state
+                .locals
+                .contains_name(global_aggregate_array.source_name())
+        {
+            state.locals.set_array_object_at(
+                global_aggregate_array.source_name().to_string(),
+                CType::UInt8,
+                bytes,
+                slot,
+            );
+        }
+    }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         if !state.memory.has_block(&slot.block) {
@@ -2233,6 +2272,45 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             state.locals.set_aggregate_object_at(
                 static_aggregate.source_name().to_string(),
                 static_aggregate.layout().clone(),
+                slot,
+            );
+        }
+    }
+    for static_aggregate_array in function.static_aggregate_arrays() {
+        let slot = CMemory::static_pointer(function.name(), static_aggregate_array.kernel_name());
+        let bytes = static_aggregate_array
+            .length()
+            .checked_mul(static_aggregate_array.layout().size_bytes())
+            .expect("validated C static aggregate array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = zero_aggregate_array_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate_array.layout(),
+                static_aggregate_array.length(),
+            );
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate_array.initializers(),
+            );
+        }
+        state.locals.set_array_object_at(
+            static_aggregate_array.kernel_name().to_string(),
+            CType::UInt8,
+            bytes,
+            slot.clone(),
+        );
+        if static_aggregate_array.kernel_name() != static_aggregate_array.source_name()
+            && !state
+                .locals
+                .contains_name(static_aggregate_array.source_name())
+        {
+            state.locals.set_array_object_at(
+                static_aggregate_array.source_name().to_string(),
+                CType::UInt8,
+                bytes,
                 slot,
             );
         }
@@ -2337,6 +2415,23 @@ fn initialize_aggregate_fields(
             base.offset_by_bytes(initializer.offset_bytes()),
             initializer.value().clone(),
         );
+    }
+    memory
+}
+
+fn zero_aggregate_array_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+    length: u32,
+) -> CMemory {
+    for index in 0..length {
+        let element_base = base.offset_by_bytes(
+            index
+                .checked_mul(layout.size_bytes())
+                .expect("validated aggregate array zero offset"),
+        );
+        memory = zero_aggregate_fields(memory, &element_base, layout);
     }
     memory
 }

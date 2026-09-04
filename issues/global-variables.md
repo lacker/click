@@ -18,9 +18,13 @@ supported scalar leaf fields now use stable typed aggregate storage, including
 cross-file `extern` sharing and field-level contract effects. Positional
 compile-time scalar and null-pointer initializers now populate those same
 objects, with omitted leaves retaining zero initialization. Designated
-initializers and arrays of aggregates, multidimensional or incomplete arrays,
-initialization ordering, and wider string-literal forms remain unsupported;
-dynamic or non-literal initialization remains unsupported as well.
+initializers, multidimensional or incomplete arrays, initialization ordering,
+and wider string-literal forms remain unsupported; dynamic or non-literal
+initialization remains unsupported as well. Fixed-size one-dimensional arrays
+of those aggregates now use one stable ABI-sized block, support nested
+positional element initializers, cross-file `extern` sharing, file-scope
+`static`, function-local `static`, indexed field access, and field-level
+contract effects.
 The `cstr` predicate layer still exists only on the spec side over uint8
 buffers.
 
@@ -46,7 +50,11 @@ for rejecting an unauthorized static-array write, `mdtests/aggregate_static_obje
 for zero-initialized cross-file and function-private aggregate state,
 `mdtests/aggregate_static_effect.md` for rejecting an unauthorized
 aggregate-field write, and `mdtests/initialized_aggregate_static_objects.md`
-for initialized cross-file and function-private aggregate state. The three
+for initialized cross-file and function-private aggregate state,
+`mdtests/initialized_aggregate_static_arrays.md` for initialized aggregate
+arrays with cross-file, file-scope-static, and function-local-static storage,
+and `mdtests/aggregate_array_static_effect.md` for rejecting an unauthorized
+indexed aggregate-array write. The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
@@ -67,12 +75,19 @@ propagation, and indirect-write rejection.
 - The parser accepts zero-initialized or positionally initialized struct
   globals and function-local struct statics whose layouts contain supported
   scalar leaf fields, links compatible external declarations to one
-  definition, zero-fills omitted leaves, and rejects designated initializers
-  and arrays of aggregates.
+  definition, zero-fills omitted leaves, and rejects designated initializers.
 - The kernel materializes each supported aggregate as one stable typed-field
   block, using global linkage or function-qualified static storage, applies
   explicit positional initializer cells once after zero-filling, and keeps
   that state across calls.
+- The parser accepts fixed-size one-dimensional arrays of supported struct
+  aggregates at file scope and as function-local statics, requires nested
+  positional element groups, links compatible external declarations to one
+  definition, and zero-fills omitted fields and elements. Multidimensional,
+  incomplete, designated, and dynamic-initialization forms remain rejected.
+- The kernel materializes each aggregate array as one stable byte-addressed
+  block with complete ABI element stride, zero-fills every leaf, applies
+  explicit initializer cells once, and preserves the block across calls.
 - Surface Click can name scalar globals and owning-translation-unit statics in
   `requires`, `ensures`, `mutable`, and resource clauses using their address,
   and `old()` applies to them.
@@ -90,9 +105,9 @@ propagation, and indirect-write rejection.
 - Effect certification treats scalar global and file-scope static writes like
   any other footprint write, and function-local static writes require the same
   explicit footprint. Array elements use ordinary indexed memory ranges, and a
-  global write not named in `mutable` is rejected. String literals remain
-  read-only through copied pointers; designated initializers and arrays of
-  aggregates,
+  global write not named in `mutable` is rejected. Aggregate-array indexed
+  fields use the same ABI offsets and effect checks. String literals remain
+  read-only through copied pointers; designated initializers and
   multidimensional/incomplete arrays, dynamic or non-literal initialization,
   initialization ordering, and wider literal forms remain open.
 - `scripts/check.sh` passes.

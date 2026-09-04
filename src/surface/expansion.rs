@@ -1557,13 +1557,14 @@ fn parse_source_with_c_layouts(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts, aggregate_objects) =
+    let (struct_layouts, union_layouts, aggregate_objects, aggregate_array_objects) =
         parse_c_layouts(click_source, &sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
         union_layouts,
         aggregate_objects,
+        aggregate_array_objects,
     )
 }
 

@@ -19,12 +19,14 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
 ) -> Result<ClickFile, ClickError> {
     Parser::new_with_layouts_and_aggregate_objects(
         source,
         struct_layouts,
         union_layouts,
         aggregate_objects_by_function,
+        aggregate_array_objects_by_function,
     )?
     .parse_file()
 }
@@ -152,6 +154,7 @@ struct Parser {
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
 }
@@ -271,6 +274,7 @@ impl Parser {
             struct_layouts,
             union_layouts,
             BTreeMap::new(),
+            BTreeMap::new(),
         )
     }
 
@@ -279,6 +283,7 @@ impl Parser {
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
         union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
         aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+        aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
@@ -291,6 +296,7 @@ impl Parser {
             union_layouts,
             current_struct_params: BTreeMap::new(),
             aggregate_objects_by_function,
+            aggregate_array_objects_by_function,
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
         })
@@ -788,8 +794,22 @@ impl Parser {
             .unwrap_or_default();
         let previous_aggregate_objects =
             std::mem::replace(&mut self.current_aggregate_objects, aggregate_objects);
-        let previous_struct_array_params =
-            std::mem::replace(&mut self.current_struct_array_params, struct_array_params);
+        let mut visible_struct_array_params = struct_array_params;
+        if let Some(aggregate_array_objects) = self
+            .aggregate_array_objects_by_function
+            .get(signature.name())
+        {
+            visible_struct_array_params.extend(
+                aggregate_array_objects
+                    .iter()
+                    .filter(|name| !parameter_names.contains(*name))
+                    .cloned(),
+            );
+        }
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            visible_struct_array_params,
+        );
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("let") => {

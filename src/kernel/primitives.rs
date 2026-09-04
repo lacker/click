@@ -870,6 +870,18 @@ pub struct CGlobalAggregate {
     pub(super) initializers: Vec<CAggregateInitializer>,
 }
 
+/// A linked file-scope array of supported struct aggregates. Initializer
+/// offsets are relative to the complete array block; omitted cells are
+/// zero-filled when the block is first materialized.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobalAggregateArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) length: u32,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CStaticLocal {
     pub(super) source_name: String,
@@ -897,6 +909,16 @@ pub struct CStaticAggregate {
     pub(super) initializers: Vec<CAggregateInitializer>,
 }
 
+/// A function-local static array of supported struct aggregates.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticAggregateArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) length: u32,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
 /// Static-storage metadata shared by all copies of a function descriptor.
 /// Keeping the collections behind the existing static-storage pointer avoids
 /// increasing the size of the recursive `Proposition` enum's
@@ -905,7 +927,9 @@ pub struct CStaticAggregate {
 pub(super) struct CFunctionStaticStorage {
     pub(super) static_arrays: Vec<CStaticArray>,
     pub(super) global_aggregates: Vec<CGlobalAggregate>,
+    pub(super) global_aggregate_arrays: Vec<CGlobalAggregateArray>,
     pub(super) static_aggregates: Vec<CStaticAggregate>,
+    pub(super) static_aggregate_arrays: Vec<CStaticAggregateArray>,
 }
 
 /// A function's embedded C string constant. The bytes include the trailing

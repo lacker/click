@@ -129,9 +129,11 @@ pub struct C0Function {
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
     global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
     static_aggregates: BTreeMap<String, C0StaticAggregate>,
+    static_aggregate_arrays: BTreeMap<String, C0StaticAggregateArray>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -385,6 +387,119 @@ pub struct C0GlobalAggregate {
     initializer: Option<Vec<C0AggregateInitializer>>,
     defined: bool,
     file_static: bool,
+}
+
+/// A fixed-size one-dimensional file-scope array of supported struct
+/// aggregates. The initializer offsets are relative to the beginning of the
+/// complete array block; omitted elements and fields are zero-initialized by
+/// the kernel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0GlobalAggregateArray {
+    name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    length: u32,
+    initializer: Option<Vec<C0AggregateInitializer>>,
+    file_static: bool,
+}
+
+impl C0GlobalAggregateArray {
+    fn declaration(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer: None,
+            file_static,
+        }
+    }
+
+    fn definition(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        initializer: Vec<C0AggregateInitializer>,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer: Some(initializer),
+            file_static,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        C0Type::UInt8Array(
+            self.length
+                .checked_mul(self.layout.size_bytes())
+                .expect("validated aggregate array size"),
+        )
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.initializer.is_some()
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
+    }
+
+    pub fn initializer(&self) -> Option<&[C0AggregateInitializer]> {
+        self.initializer.as_deref()
+    }
+
+    pub(crate) fn to_kernel_global_aggregate_array(
+        &self,
+    ) -> Option<crate::kernel::CGlobalAggregateArray> {
+        let initializer = self.initializer.as_ref()?;
+        let initializers = initializer
+            .iter()
+            .map(C0AggregateInitializer::to_kernel)
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::kernel::CGlobalAggregateArray::new(
+            self.name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+            self.length,
+            initializers,
+        ))
+    }
 }
 
 impl C0GlobalAggregate {
@@ -759,6 +874,85 @@ pub struct C0StaticAggregate {
     struct_name: String,
     layout: C0StructLayout,
     initializer: Vec<C0AggregateInitializer>,
+}
+
+/// A fixed-size one-dimensional function-local static array of supported
+/// struct aggregates. Its storage is qualified by the owning function and is
+/// initialized once for the whole symbolic execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticAggregateArray {
+    source_name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    length: u32,
+    initializer: Vec<C0AggregateInitializer>,
+}
+
+impl C0StaticAggregateArray {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        initializer: Vec<C0AggregateInitializer>,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        C0Type::UInt8Array(
+            self.length
+                .checked_mul(self.layout.size_bytes())
+                .expect("validated static aggregate array size"),
+        )
+    }
+
+    pub fn initializer(&self) -> &[C0AggregateInitializer] {
+        &self.initializer
+    }
+
+    pub(crate) fn to_kernel_static_aggregate_array(&self) -> crate::kernel::CStaticAggregateArray {
+        crate::kernel::CStaticAggregateArray::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+            self.length,
+            self.initializer
+                .iter()
+                .map(C0AggregateInitializer::to_kernel)
+                .collect::<Option<Vec<_>>>()
+                .expect("validated static aggregate array initializer"),
+        )
+    }
 }
 
 impl C0StaticAggregate {
@@ -1267,9 +1461,11 @@ impl C0Function {
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
             global_aggregates: BTreeMap::new(),
+            global_aggregate_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
             static_aggregates: BTreeMap::new(),
+            static_aggregate_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -1318,6 +1514,10 @@ impl C0Function {
         &self.global_aggregates
     }
 
+    pub fn global_aggregate_arrays(&self) -> &BTreeMap<String, C0GlobalAggregateArray> {
+        &self.global_aggregate_arrays
+    }
+
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
     }
@@ -1328,6 +1528,10 @@ impl C0Function {
 
     pub fn static_aggregates(&self) -> &BTreeMap<String, C0StaticAggregate> {
         &self.static_aggregates
+    }
+
+    pub fn static_aggregate_arrays(&self) -> &BTreeMap<String, C0StaticAggregateArray> {
+        &self.static_aggregate_arrays
     }
 
     pub fn string_literals(&self) -> &[C0StringLiteral] {
@@ -1352,6 +1556,14 @@ impl C0Function {
         global_aggregates: BTreeMap<String, C0GlobalAggregate>,
     ) -> Self {
         self.global_aggregates = global_aggregates;
+        self
+    }
+
+    pub(crate) fn with_global_aggregate_arrays(
+        mut self,
+        global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
+    ) -> Self {
+        self.global_aggregate_arrays = global_aggregate_arrays;
         self
     }
 
@@ -1400,6 +1612,12 @@ impl C0Function {
                     .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
                     .collect(),
             )
+            .with_global_aggregate_arrays(
+                self.global_aggregate_arrays
+                    .values()
+                    .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
+                    .collect(),
+            )
             .with_static_variables(
                 self.static_locals
                     .values()
@@ -1416,6 +1634,12 @@ impl C0Function {
                 self.static_aggregates
                     .values()
                     .map(C0StaticAggregate::to_kernel_static_aggregate)
+                    .collect(),
+            )
+            .with_static_aggregate_arrays(
+                self.static_aggregate_arrays
+                    .values()
+                    .map(C0StaticAggregateArray::to_kernel_static_aggregate_array)
                     .collect(),
             )
             .with_string_literals(
@@ -2769,9 +2993,11 @@ struct Parser {
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
     global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
     static_aggregates: BTreeMap<String, C0StaticAggregate>,
+    static_aggregate_arrays: BTreeMap<String, C0StaticAggregateArray>,
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
@@ -2851,9 +3077,11 @@ impl Parser {
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
             global_aggregates: BTreeMap::new(),
+            global_aggregate_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
             static_aggregates: BTreeMap::new(),
+            static_aggregate_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
@@ -2896,6 +3124,11 @@ impl Parser {
             })
             .or_else(|| {
                 self.global_aggregates
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
+            .or_else(|| {
+                self.global_aggregate_arrays
                     .get(source_name)
                     .map(|global| global.kernel_name().to_string())
             })
@@ -3222,9 +3455,11 @@ impl Parser {
             globals: self.globals.clone(),
             global_arrays: self.global_arrays.clone(),
             global_aggregates: self.global_aggregates.clone(),
+            global_aggregate_arrays: self.global_aggregate_arrays.clone(),
             static_locals,
             static_arrays: std::mem::take(&mut self.static_arrays),
             static_aggregates: std::mem::take(&mut self.static_aggregates),
+            static_aggregate_arrays: std::mem::take(&mut self.static_aggregate_arrays),
             string_literals,
         })
     }
@@ -3287,6 +3522,7 @@ impl Parser {
         if self.globals.contains_key(&header.name)
             || self.global_arrays.contains_key(&header.name)
             || self.global_aggregates.contains_key(&header.name)
+            || self.global_aggregate_arrays.contains_key(&header.name)
         {
             return Err(self.error_here(format!(
                 "function `{}` conflicts with a global declaration",
@@ -3415,9 +3651,64 @@ impl Parser {
             };
             if let Some((struct_name, layout)) = &aggregate_struct {
                 if self.peek() == Some(&Token::LBracket) {
-                    return Err(
-                        self.error_here("arrays of file-scope aggregates are not supported yet")
-                    );
+                    let length = self
+                        .parse_global_array_length(&name)?
+                        .expect("aggregate array has an array suffix");
+                    let initializer = if self.peek() == Some(&Token::Equal) {
+                        if is_extern {
+                            return Err(self.error_here(
+                                "`extern` aggregate global array declarations may not have an initializer",
+                            ));
+                        }
+                        self.position += 1;
+                        Some(self.parse_aggregate_array_initializer(
+                            &name,
+                            struct_name,
+                            layout,
+                            length,
+                        )?)
+                    } else if is_extern {
+                        None
+                    } else {
+                        Some(Vec::new())
+                    };
+                    let declaration = initializer
+                        .map(|initializer| {
+                            C0GlobalAggregateArray::definition(
+                                name.clone(),
+                                kernel_name.clone(),
+                                struct_name.clone(),
+                                layout.clone(),
+                                length,
+                                initializer,
+                                is_file_static,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            C0GlobalAggregateArray::declaration(
+                                name.clone(),
+                                kernel_name.clone(),
+                                struct_name.clone(),
+                                layout.clone(),
+                                length,
+                                is_file_static,
+                            )
+                        });
+                    self.register_global_aggregate_array_declaration(name.clone(), declaration)?;
+                    let bytes = length
+                        .checked_mul(layout.size_bytes())
+                        .expect("validated aggregate global array size");
+                    self.variable_types
+                        .insert(kernel_name.clone(), C0Type::UInt8Array(bytes));
+                    self.variable_array_shapes
+                        .insert(kernel_name.clone(), vec![length]);
+                    self.variable_structs
+                        .insert(kernel_name.clone(), struct_name.clone());
+                    if self.peek() == Some(&Token::Comma) {
+                        self.position += 1;
+                        continue;
+                    }
+                    break;
                 }
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     if is_extern {
@@ -3667,6 +3958,7 @@ impl Parser {
         if self.function_declarations.contains_key(&name)
             || self.global_arrays.contains_key(&name)
             || self.global_aggregates.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
         {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or array declaration"
@@ -3711,6 +4003,7 @@ impl Parser {
         if self.function_declarations.contains_key(&name)
             || self.globals.contains_key(&name)
             || self.global_aggregates.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
         {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or scalar global declaration"
@@ -3750,6 +4043,7 @@ impl Parser {
         if self.function_declarations.contains_key(&name)
             || self.globals.contains_key(&name)
             || self.global_arrays.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
         {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or scalar declaration"
@@ -3780,6 +4074,52 @@ impl Parser {
             _ => declaration,
         };
         self.global_aggregates.insert(name, merged);
+        Ok(())
+    }
+
+    fn register_global_aggregate_array_declaration(
+        &mut self,
+        name: String,
+        declaration: C0GlobalAggregateArray,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
+        {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function or non-array declaration"
+            )));
+        }
+        if let Some(previous) = self.global_aggregate_arrays.get(&name) {
+            if previous.struct_name() != declaration.struct_name()
+                || previous.layout() != declaration.layout()
+                || previous.length() != declaration.length()
+            {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for aggregate global array `{name}`"
+                )));
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for aggregate global array `{name}`"
+                )));
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(self.error_here(format!(
+                    "duplicate definition of aggregate global array `{name}`"
+                )));
+            }
+        }
+        let merged = match (
+            self.global_aggregate_arrays.get(&name),
+            declaration.is_defined(),
+        ) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.global_aggregate_arrays.insert(name, merged);
         Ok(())
     }
 
@@ -5390,6 +5730,63 @@ impl Parser {
         self.parse_aggregate_initializer_level(object_name, struct_name, 0)
     }
 
+    fn parse_aggregate_array_initializer(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+        layout: &C0StructLayout,
+        length: u32,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let mut initializers = Vec::new();
+        let mut element_index = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if element_index == length {
+                    return Err(self.error_here(format!(
+                        "too many initializers for aggregate array `{object_name}[{length}]`"
+                    )));
+                }
+                if self.peek() != Some(&Token::LBrace) {
+                    return Err(self.error_here(
+                        "aggregate array elements require nested `{...}` initializer groups",
+                    ));
+                }
+                let base_offset = element_index
+                    .checked_mul(layout.size_bytes())
+                    .expect("validated aggregate array initializer offset");
+                initializers.extend(self.parse_aggregate_initializer_level(
+                    object_name,
+                    struct_name,
+                    base_offset,
+                )?);
+                element_index += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate array initializer for `{object_name}`, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate array initializer for `{object_name}`, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(initializers)
+    }
+
     fn parse_aggregate_initializer_level(
         &mut self,
         object_name: &str,
@@ -6316,9 +6713,43 @@ impl Parser {
             let kernel_name = self.declare_static_name(&source_name)?;
             if let Some((struct_name, layout)) = &aggregate_struct {
                 if self.peek() == Some(&Token::LBracket) {
-                    return Err(self.error_here(
-                        "arrays of function-local aggregate statics are not supported yet",
-                    ));
+                    let length = self.parse_static_array_length(&source_name)?;
+                    let initializer = if self.peek() == Some(&Token::Equal) {
+                        self.position += 1;
+                        self.parse_aggregate_array_initializer(
+                            &source_name,
+                            struct_name,
+                            layout,
+                            length,
+                        )?
+                    } else {
+                        Vec::new()
+                    };
+                    let bytes = length
+                        .checked_mul(layout.size_bytes())
+                        .expect("validated static aggregate array size");
+                    self.variable_types
+                        .insert(kernel_name.clone(), C0Type::UInt8Array(bytes));
+                    self.variable_array_shapes
+                        .insert(kernel_name.clone(), vec![length]);
+                    self.variable_structs
+                        .insert(kernel_name.clone(), struct_name.clone());
+                    self.static_aggregate_arrays.insert(
+                        kernel_name.clone(),
+                        C0StaticAggregateArray::new(
+                            source_name,
+                            kernel_name,
+                            struct_name.clone(),
+                            layout.clone(),
+                            length,
+                            initializer,
+                        ),
+                    );
+                    if self.peek() != Some(&Token::Comma) {
+                        break;
+                    }
+                    self.position += 1;
+                    continue;
                 }
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;

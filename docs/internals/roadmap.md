@@ -86,13 +86,14 @@ Likely additions:
 - Basic ASCII string literal support now lowers to null-terminated, read-only
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
-- Remaining static-storage work: designated aggregate initializers and arrays of
-  aggregates, other linkage forms, immutable global tables, and initialization
-  ordering. Fixed-size
+- Remaining static-storage work: designated aggregate initializers, other
+  linkage forms, immutable global tables, and initialization ordering. Fixed-size
   one-dimensional scalar global arrays now use stable cross-translation-unit
   or translation-unit-private storage with literal/zero element
-  initialization; designated aggregate, aggregate-array, and multidimensional
-  tables remain open.
+  initialization. Fixed-size one-dimensional arrays of supported scalar-field
+  aggregates now use the same stable linkage and ABI-sized element storage;
+  designated, incomplete, multidimensional, and dynamically initialized
+  aggregate tables remain open.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use
@@ -102,8 +103,8 @@ Likely additions:
   one-dimensional scalar arrays are also supported for function-local statics;
   aggregate, multidimensional, incomplete, and dynamic-initialization cases
   remain open; zero-initialized and positional compile-time initialized
-  scalar-field aggregate globals and function-local statics now use the same
-  stable typed-field storage model.
+  scalar-field aggregate globals, aggregate arrays, and function-local statics
+  now use the same stable typed-field storage model.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded

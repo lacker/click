@@ -400,15 +400,87 @@ fn c0_collects_aggregate_static_initializers() {
 }
 
 #[test]
-fn c0_rejects_aggregate_static_arrays_and_nonconstant_initializers() {
+fn c0_collects_aggregate_arrays() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct entry {
+            int32 value;
+            uint8 ready;
+        };
+
+        static struct entry private_table[2] = {{4, 1}, {5}};
+        struct entry shared_table[2] = {{7, 1}, {3}};
+
+        int32 read() {
+            static struct entry local_table[2] = {{2}, {6, 1}};
+            return private_table[1].value + shared_table[0].value
+                + local_table[1].ready;
+        }
+        "#,
+        "aggregate_arrays.c",
+    )
+    .expect("aggregate arrays should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("aggregate-array reader function");
+
+    let global = &function.global_aggregate_arrays()["shared_table"];
+    assert!(global.is_defined());
+    assert!(global.is_file_static() == false);
+    assert_eq!(global.length(), 2);
+    assert_eq!(global.c_type(), syntax::C0Type::UInt8Array(16));
+    let global_initializers = global.initializer().expect("global array initializer");
+    assert_eq!(global_initializers.len(), 3);
+    assert_eq!(global_initializers[0].offset_bytes(), 0);
+    assert_eq!(global_initializers[1].offset_bytes(), 4);
+    assert_eq!(global_initializers[2].offset_bytes(), 8);
+
+    let private = &function.global_aggregate_arrays()["private_table"];
+    assert!(private.is_file_static());
+    assert_ne!(private.kernel_name(), private.name());
+    assert_eq!(private.initializer().unwrap().len(), 3);
+
+    let local = function
+        .static_aggregate_arrays()
+        .values()
+        .next()
+        .expect("local aggregate array metadata");
+    assert_eq!(local.name(), "local_table");
+    assert_eq!(local.length(), 2);
+    assert_eq!(local.c_type(), syntax::C0Type::UInt8Array(16));
+    assert_eq!(local.initializer().len(), 3);
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_global = kernel_function
+        .global_aggregate_arrays()
+        .iter()
+        .find(|array| array.source_name() == "shared_table")
+        .expect("kernel global aggregate array metadata");
+    assert_eq!(kernel_global.kernel_name(), "shared_table");
+    assert_eq!(kernel_global.length(), 2);
+    assert_eq!(kernel_global.initializers().len(), 3);
+    let kernel_local = kernel_function
+        .static_aggregate_arrays()
+        .iter()
+        .next()
+        .expect("kernel local aggregate array metadata");
+    assert_eq!(kernel_local.source_name(), "local_table");
+    assert_eq!(kernel_local.kernel_name(), local.kernel_name());
+    assert_eq!(kernel_local.initializers().len(), 3);
+}
+
+#[test]
+fn c0_rejects_unsupported_aggregate_array_initializers() {
     for (source, expected) in [
         (
-            "struct state { int32 value; }; struct state shared[2];",
-            "arrays of file-scope aggregates",
+            "struct state { int32 value; }; struct state shared[2][2];",
+            "multidimensional file-scope arrays",
         ),
         (
-            "struct state { int32 value; }; int32 f() { static struct state state[2]; return 0; }",
-            "arrays of function-local aggregate statics",
+            "struct state { int32 value; }; struct state shared[2] = {1};",
+            "aggregate array elements require nested",
         ),
         (
             "struct state { int32 value; }; int32 seed; struct state shared = {seed}; int32 f() { return 0; }",
