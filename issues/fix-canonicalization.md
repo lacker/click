@@ -105,14 +105,24 @@ retain their input spelling so existing consumers can reproduce recorded
 vocabulary. Thus even two members of one proved equality class are not
 guaranteed to produce one representative.
 
-The two transformations do not commute. Selecting an equal whole term may
-expose simplifications in its children; those simplifications may construct a
-term that has another recorded equality edge. Alternating them is therefore a
-bounded approximation to contextual congruence/equality closure. Three rounds
-are enough for the motivating `new_len -> old_len + 1 -> 1` shapes, but there
-is no invariant that three rounds reach a fixed point. Calling the operation
-again can in principle perform three more rounds. By the idempotence criterion,
-this is not canonicalization.
+The two transformations do not commute, but the three-round loop is not the
+effective bound it first appears to be. The equality worklist simplifies every
+vertex it visits and adds that result to the same worklist. A selected whole
+term can therefore expose a child simplification, enter another recorded
+equality component, and repeat without consuming another outer round. An
+eight-layer adversarial chain reaches its final constant in one such phase.
+The outer loop merely reapplies the preference-gated result and is not a bound
+on either equality/simplification alternation or work.
+
+This explains why the obvious “more than three layers” counterexample does
+not make a second call progress further. It is not a general idempotence proof:
+the contextual simplifier includes constructors such as fold instantiation,
+and the representative-selection rule intentionally refuses same-load-count
+nonconstant vocabulary changes. The precise current contract is therefore a
+visited-set worklist closure over exact generated terms, followed by a
+preference-gated extraction, with up to three reapplications. That is a search
+operation, not canonicalization, whether or not all currently reachable terms
+happen to stabilize after one public call.
 
 There are broader boundary and scaling concerns hidden inside the first step:
 
@@ -125,25 +135,62 @@ There are broader boundary and scaling concerns hidden inside the first step:
   than only the selected equality evidence.
 - `lower_bitvector_via_recorded_equalities` generates simplified terms
   while walking one equality component and may thereby reach another
-  component. Its visited set prevents revisiting an exact term, but the claim
-  that work is capped at twice the original recorded class size is not an
-  obvious bound on the generated closure.
+  component. Its visited set prevents revisiting an exact term, but does not
+  cap the generated closure at twice the original recorded class size. The
+  former comment claiming that bound was incorrect.
 
-The direct callers are narrow and should be audited before changing the
-representation:
+The direct callers are narrow:
 
-- `lower_memory_range_under_assumptions`, used when verified-call mutable
-  ranges and resource ranges are recorded;
-- `lower_pointer_under_assumptions` and
-  `lower_pointer_offset_under_assumptions`, used by load-variable congruence
-  handling; and
-- any test or downstream matcher that depends on the original-spelling rule
-  for same-load-count representatives.
+- `lower_memory_range_under_assumptions` is called only from the verified-call
+  rule, after a contract mutable segment has been evaluated and its facts have
+  entered `effective_assumptions`. It lowers the base offset and both bounds.
+  The result is used both to construct `CMemory::with_call_memory_havoc` and to
+  record the call's `CMemoryEffectSummary`. Those copies must stay identical,
+  preserve block and element width, remain equal to the evaluated segment
+  under the exact entry facts, and retain a vocabulary that later write-set,
+  disjointness, and frame queries can match. Resource-segment evaluation is
+  upstream of this call; it is not another direct caller.
+- `lower_pointer_under_assumptions` is called only by
+  `load_variable_congruence_neighbor`; its offset helper is otherwise private
+  to range and pointer lowering. The neighbor is consulted from both sides of
+  `bitvector_terms_equal_from_facts`' equality-graph walk. It must preserve the
+  memory snapshot and base block, and may connect load variables only when the
+  address equality is justified by the facts in the current context.
+- `lower_bitvector_under_assumptions` has no other production caller. Direct
+  uses outside those two paths are characterization tests.
 
 `simplify_bitvector_under_assumptions` has many other callers. This issue does
 not assume that the general simplifier can simply be deleted; it requires that
 canonical identity and contextual footprint lowering stop depending on its
 search-capable behavior.
+
+### Stage 2 deterministic-work characterization
+
+Test-only counters measure actual contextual simplifier calls, full-fact
+visits made by direct constant-equality lookup, equality-worklist vertices,
+and outer rounds. The regression uses raw terms so eager constructors cannot
+erase the intended shape. Current results are deterministic:
+
+| input axis | sizes | simplifier visits | equality vertices | direct fact visits |
+| --- | --- | --- | --- | --- |
+| raw addition depth, no facts | 8 / 16 / 32 | 34 / 66 / 130 | 1 / 1 / 1 | 0 / 0 / 0 |
+| direct equality-path length | 4 / 8 / 16 | 6 / 10 / 18 | 5 / 9 / 17 | 120 / 720 / 4896 |
+| unrelated facts, fixed depth 8 | 8 / 16 / 32 | 34 / 34 / 34 | 1 / 1 / 1 | 144 / 288 / 576 |
+
+All samples finish in one outer round. Structural traversal is linear in term
+depth, and the equality worklist visits one vertex per class member. The
+hidden cost is `bitvector_constant_from_direct_equalities`: it scans the whole
+fact map for every term in its own equality walk, and contextual lowering calls
+it again for every equality-worklist vertex. For a path of length `n`, the
+measured fact visits are exactly `n(n + 1)(n + 2)`, cubic in this deliberately
+simple shape. Unrelated facts also multiply the number of nonconstant term
+visits even when they cannot affect the result.
+
+This is the stage-2 design constraint for stage 4: replacing the outer
+three-round loop alone would not remove the search or scaling problem. The
+replacement must use an indexed, target-directed equality path (with explicit
+authority) and must not invoke a full ambient-fact scan at every generated
+term. Nothing in the observed callers currently justifies a general e-graph.
 
 ### Context-dependent order-endpoint keys
 
@@ -323,11 +370,12 @@ useful on its own.
    idempotence and assumption-independence tests cover `canonical_term`.
    Private helpers whose behavior is contextual or key-specific are named as
    lowering and bucket-key operations, without changing semantics.
-2. **Reproduce and inventory.** Add the layered contextual-lowering
+2. **Reproduce and inventory (complete).** Add the layered contextual-lowering
    reproduction, record every direct caller and required output property, and
    measure work across term depth, equality-path length, and unrelated facts.
-   If the current loop is unexpectedly idempotent, replace speculation with a
-   proof of that property before choosing the next design.
+   The layered case is closed by the inner generated-term worklist rather than
+   the nominal round count; the exact boundary and remaining lack of a general
+   idempotence proof are recorded above.
 3. **Make true canonicalization complete and stack-safe.** Replace recursive
    deep-load traversal with an iterative implementation, delete the 64-level
    preflight, and land multi-size regressions. This stage is independent of

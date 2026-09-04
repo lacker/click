@@ -488,6 +488,151 @@ fn canonical_term_is_independent_of_contextual_equalities() {
     assert_eq!(canonical, term);
 }
 
+fn layered_contextual_equalities(
+    layers: usize,
+) -> (PureFactContext, Bitvector32Term, Bitvector32Term) {
+    let variable = |index| Bitvector32Term::Variable(Variable(31_000 + index as u64));
+    let mut assumptions = PureFactContext::new();
+    for index in 0..layers {
+        // Construct this raw rather than through `Bitvector32Term::add`: the
+        // point is that selecting the equality exposes a simplification which
+        // exposes the next equality component.
+        let next = Bitvector32Term::Add(
+            Box::new(variable(index + 1)),
+            Box::new(Bitvector32Term::Constant(0)),
+        );
+        assumptions = assumptions.assume_condition(
+            ConditionTerm::Bitvector32Equal(Box::new(variable(index)), Box::new(next)),
+            true,
+        );
+    }
+    let result = Bitvector32Term::Constant(7);
+    assumptions = assumptions.assume_condition(
+        ConditionTerm::Bitvector32Equal(Box::new(variable(layers)), Box::new(result.clone())),
+        true,
+    );
+    (assumptions, variable(0), result)
+}
+
+#[test]
+fn contextual_memory_range_lowering_closes_more_than_three_layers_in_one_phase() {
+    let (assumptions, endpoint, expected) = layered_contextual_equalities(8);
+    let range = CMemoryRange::new(
+        Pointer {
+            block: "layered-contextual-range".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        endpoint.clone(),
+    );
+
+    // The equality worklist does not merely select one class member. Every
+    // member it visits is simplified and the result is put back on the same
+    // worklist, so one phase already computes the alternating closure for
+    // this adversarial eight-layer chain.
+    let one_phase = assumptions.lower_bitvector_via_recorded_equalities(
+        &assumptions.simplify_bitvector_under_assumptions(&endpoint),
+    );
+    assert_eq!(one_phase, expected);
+
+    let once = assumptions.lower_memory_range_under_assumptions(&range);
+    assert_eq!(once.end(), &expected);
+    assert_eq!(
+        assumptions.lower_memory_range_under_assumptions(&once),
+        once,
+        "the actual memory-range caller must be idempotent for the layered closure",
+    );
+}
+
+fn raw_addition_depth(depth: usize) -> Bitvector32Term {
+    (0..depth).fold(
+        Bitvector32Term::Variable(Variable(32_000)),
+        |term, index| {
+            Bitvector32Term::Add(
+                Box::new(term),
+                Box::new(Bitvector32Term::Constant(index as u32 + 1)),
+            )
+        },
+    )
+}
+
+fn direct_equality_path(length: usize) -> (PureFactContext, Bitvector32Term) {
+    let variable = |index| Bitvector32Term::Variable(Variable(33_000 + index as u64));
+    let mut assumptions = PureFactContext::new();
+    for index in 0..length {
+        assumptions = assumptions.assume_condition(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(variable(index)),
+                Box::new(variable(index + 1)),
+            ),
+            true,
+        );
+    }
+    (assumptions, variable(0))
+}
+
+fn unrelated_condition_context(count: usize) -> PureFactContext {
+    (0..count).fold(PureFactContext::new(), |assumptions, index| {
+        assumptions.assume_condition(
+            ConditionTerm::Variable(Variable(34_000 + index as u64)),
+            true,
+        )
+    })
+}
+
+#[test]
+fn contextual_lowering_work_is_characterized_across_each_input_axis() {
+    let mut depth_work = Vec::new();
+    for depth in [8, 16, 32] {
+        PureFactContext::reset_contextual_lowering_work();
+        let term = raw_addition_depth(depth);
+        let _ = PureFactContext::new().lower_bitvector_under_assumptions(&term);
+        let work = PureFactContext::contextual_lowering_work();
+        assert!(work.simplifier_term_visits >= depth);
+        assert!(work.simplifier_term_visits <= 8 * depth + 16);
+        assert_eq!(work.rounds, 1);
+        depth_work.push((depth, work));
+    }
+
+    let mut equality_work = Vec::new();
+    for path_length in [4, 8, 16] {
+        let (assumptions, term) = direct_equality_path(path_length);
+        PureFactContext::reset_contextual_lowering_work();
+        assert_eq!(
+            assumptions.lower_bitvector_under_assumptions(&term),
+            term,
+            "same-cost aliases retain their original vocabulary",
+        );
+        let work = PureFactContext::contextual_lowering_work();
+        assert!(work.equality_vertex_visits > 0);
+        assert!(work.equality_vertex_visits <= path_length + 1);
+        // This deliberately loose ceiling permits the indexed implementation
+        // planned by stage 4 while catching work worse than the currently
+        // observed cubic repeated-scan behavior.
+        assert!(work.direct_equality_fact_visits > 0);
+        assert!(work.direct_equality_fact_visits <= 2 * path_length.pow(3) + 128);
+        assert_eq!(work.rounds, 1);
+        equality_work.push((path_length, work));
+    }
+
+    let term = raw_addition_depth(8);
+    let mut unrelated_work = Vec::new();
+    for unrelated_facts in [8, 16, 32] {
+        let assumptions = unrelated_condition_context(unrelated_facts);
+        PureFactContext::reset_contextual_lowering_work();
+        let _ = assumptions.lower_bitvector_under_assumptions(&term);
+        let work = PureFactContext::contextual_lowering_work();
+        assert!(work.direct_equality_fact_visits > 0);
+        assert!(work.direct_equality_fact_visits <= work.simplifier_term_visits * unrelated_facts);
+        assert_eq!(work.rounds, 1);
+        unrelated_work.push((unrelated_facts, work));
+    }
+
+    eprintln!("contextual lowering term-depth work: {depth_work:?}");
+    eprintln!("contextual lowering equality-path work: {equality_work:?}");
+    eprintln!("contextual lowering unrelated-fact work: {unrelated_work:?}");
+}
+
 #[test]
 fn canonical_term_resolves_equal_loads_to_one_form() {
     let pointer = Pointer {

@@ -298,6 +298,8 @@ impl PureFactContext {
                 return Some(value);
             }
             for (condition, value) in self.condition_facts.iter() {
+                #[cfg(test)]
+                DIRECT_CONSTANT_EQUALITY_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
                 let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
                 else {
                     continue;
@@ -603,6 +605,8 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Bitvector32Term {
+        #[cfg(test)]
+        CONTEXTUAL_SIMPLIFIER_TERM_VISITS.with(|visits| visits.set(visits.get() + 1));
         if let Some(value) = self.bitvector_constant_from_direct_equalities(term) {
             return Bitvector32Term::Constant(value);
         }
