@@ -592,10 +592,10 @@ Click implements:
 Not implemented yet:
 
 - fractional permissions,
-- general C allocation APIs beyond exact struct allocation, runtime-sized
-  `int32` arrays, `uint8` byte buffers, pointer-array `malloc`/`calloc`, and
-  bounded `int32`/`uint8` `realloc` (including preserved zeroed prefixes),
-  including arbitrary-layout reallocations and unsupported allocator forms,
+- general C allocation APIs beyond the modeled exact struct allocation,
+  runtime-sized `int32`/`uint8` buffers, pointer-array `malloc`/`calloc`/`realloc`,
+  and bounded typed reallocations; arbitrary-layout reallocations and other
+  unsupported allocator forms,
 - custom resource-family algebra,
 - implicit resource unfold/fold search in `auto`,
 - persistent token resources,

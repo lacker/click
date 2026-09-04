@@ -110,6 +110,12 @@ retain, nonfinal release, final release, and free across opaque calls.
   complete reclamation.
 - `mdtests/calloc_pointer_array_null_deref.md`: null pointer-array cells remain
   invalid to dereference.
+- `mdtests/realloc_pointer_arrays.md`: pointer-array prefix preservation across
+  growth and shrink.
+- `mdtests/realloc_calloc_pointer_arrays.md`: zeroed pointer-array prefix
+  preservation and writable growth tails.
+- `mdtests/realloc_calloc_pointer_array_tail_is_uninitialized.md`: grown
+  zeroed pointer-array tails remain uninitialized.
 
 ## Aliasing and separation
 

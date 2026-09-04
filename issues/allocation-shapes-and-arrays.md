@@ -35,13 +35,14 @@ items[8]` indexed by field.
 Byte-buffer regressions also cover `uint8* p = malloc(n * sizeof(uint8))`
 with one-byte access and `calloc(n, sizeof(uint8))` zeroing before `free(p)`.
 
-The bounded `realloc` implementation now applies to `uint8*` as well as
-`int32*`, including symbolic byte extents and preserved zeroed prefixes. The
-remaining arbitrary-layout `realloc` cases stay outside this issue's supported
-typed allocation model. Heap `malloc` and `free` now also support
+The bounded `realloc` implementation now applies to `uint8*` and pointer
+arrays as well as `int32*`, including symbolic byte extents and preserved
+zeroed prefixes. The remaining arbitrary-layout `realloc` cases stay outside
+this issue's supported typed allocation model. Heap `malloc` and `free` now also support
 `int32**`/`uint8**` pointer arrays with their eight-byte pointer stride;
-pointer-array `calloc` now initializes each pointer cell to null; pointer-array
-`realloc` remains follow-up work.
+pointer-array `calloc` initializes each pointer cell to null, and bounded
+pointer-array `realloc` preserves fitting initialized cells and zeroed
+prefixes. Arbitrary-layout realloc remains follow-up work.
 
 ## Acceptance criteria
 
@@ -56,9 +57,10 @@ pointer-array `calloc` now initializes each pointer cell to null; pointer-array
 - `malloc` and `calloc` assigned to `uint8*` are modeled as positive byte
   extents, with one-byte access ranges and zeroed `calloc` reads; their
   complete ranges can be reclaimed by `free`.
-- `malloc` and `calloc` assigned to `int32**` or `uint8**` are modeled as a
-  positive pointer-sized range, with pointer-cell loads/stores, null
-  initialization for `calloc`, and complete `free` reclamation.
+- `malloc`, `calloc`, and bounded `realloc` assigned to `int32**` or `uint8**`
+  are modeled as positive pointer-sized ranges, with pointer-cell
+  loads/stores, null initialization for `calloc`, prefix preservation, and
+  complete `free` reclamation.
 - Multidimensional arrays, initializers, and arrays of structs parse and
   lower to the existing block model with correct byte offsets.
 - `scripts/check.sh` passes.

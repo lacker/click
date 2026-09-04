@@ -622,8 +622,12 @@ pub(crate) fn execute_c_realloc_assign_paths(
             obligations: Vec::new(),
         }]);
     };
-    let Some(target_type @ (CType::Int32Pointer | CType::UInt8Pointer)) =
-        state.local_object_type(target)
+    let Some(
+        target_type @ (CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer),
+    ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
