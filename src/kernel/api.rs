@@ -692,6 +692,10 @@ pub fn c_float_classification(
     }
 }
 
+pub fn c_float_negate(expression: CExpression) -> CExpression {
+    CExpression::FloatNegate(Box::new(expression))
+}
+
 pub fn c_addr_of(name: impl Into<String>) -> CExpression {
     CExpression::AddressOf(Box::new(c_variable(name)))
 }
@@ -4413,6 +4417,30 @@ fn rewrite_int32_term_by_exact_equality(
         Bitvector32Term::BitwiseNot(value) => Bitvector32Term::BitwiseNot(Box::new(
             rewrite_int32_term_by_exact_equality(value, from, to),
         )),
+        Bitvector32Term::Float32Negate(value) => Bitvector32Term::Float32Negate(Box::new(
+            rewrite_int32_term_by_exact_equality(value, from, to),
+        )),
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::Float32Binary {
+            operator: *operator,
+            left: Box::new(rewrite_int32_term_by_exact_equality(left, from, to)),
+            right: Box::new(rewrite_int32_term_by_exact_equality(right, from, to)),
+        },
+        Bitvector32Term::Float64Negate(value) => Bitvector32Term::Float64Negate(Box::new(
+            rewrite_int32_term_by_exact_equality(value, from, to),
+        )),
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::Float64Binary {
+            operator: *operator,
+            left: Box::new(rewrite_int32_term_by_exact_equality(left, from, to)),
+            right: Box::new(rewrite_int32_term_by_exact_equality(right, from, to)),
+        },
         Bitvector32Term::If {
             condition,
             then_term,
@@ -5228,7 +5256,13 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             | Bitvector32Term::UInt64BitwiseXor(left, right) => {
                 term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
             }
-            Bitvector32Term::BitwiseNot(value) => term_depth_exceeds(value, remaining - 1),
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            Bitvector32Term::BitwiseNot(value)
+            | Bitvector32Term::Float32Negate(value)
+            | Bitvector32Term::Float64Negate(value) => term_depth_exceeds(value, remaining - 1),
             Bitvector32Term::If {
                 condition,
                 then_term,

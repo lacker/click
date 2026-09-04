@@ -1985,6 +1985,9 @@ pub(in crate::surface) fn substitute_c_fragment(
             expression: Box::new(substitute_c_fragment(expression, substitutions)?),
             target_type: *target_type,
         }),
+        CExpression::FloatNegate(expression) => Ok(CExpression::FloatNegate(Box::new(
+            substitute_c_fragment(expression, substitutions)?,
+        ))),
         CExpression::FloatClassification {
             expression,
             classification,

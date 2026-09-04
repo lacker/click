@@ -54,7 +54,11 @@ fn signed_term_interval(
         }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
-        | Bitvector32Term::PureFunctionApplication { .. } => Some(
+        | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => Some(
             bounds
                 .get(&crate::kernel::eval::canonical_term(term))
                 .copied()
@@ -359,7 +363,11 @@ fn collect_signed_affine_terms(
         | Bitvector32Term::UInt64BitwiseAnd(_, _)
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
-        | Bitvector32Term::UInt64BitwiseNot(_) => return None,
+        | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => return None,
     }
     Some(())
 }
@@ -547,7 +555,11 @@ fn signed_affine_term_is_defined(
         | Bitvector32Term::UInt64BitwiseAnd(_, _)
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
-        | Bitvector32Term::UInt64BitwiseNot(_) => false,
+        | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => false,
     }
 }
 

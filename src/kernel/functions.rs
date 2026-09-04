@@ -2806,7 +2806,8 @@ fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
                 && c_expression_is_snapshot_independent(then_branch)
                 && c_expression_is_snapshot_independent(else_branch)
         }
-        CExpression::FloatClassification { expression, .. } => {
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
             c_expression_is_snapshot_independent(expression)
         }
         CExpression::AddressOf(inner)

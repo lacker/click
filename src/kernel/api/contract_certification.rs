@@ -655,7 +655,14 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                 collect_shallow_term_variables(left, variables);
                 collect_shallow_term_variables(right, variables);
             }
-            Bitvector32Term::BitwiseNot(inner) => {
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                collect_shallow_term_variables(left, variables);
+                collect_shallow_term_variables(right, variables);
+            }
+            Bitvector32Term::BitwiseNot(inner)
+            | Bitvector32Term::Float32Negate(inner)
+            | Bitvector32Term::Float64Negate(inner) => {
                 collect_shallow_term_variables(inner, variables);
             }
             Bitvector32Term::If {
@@ -884,7 +891,14 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                 collect_loads(left, loads);
                 collect_loads(right, loads);
             }
-            Bitvector32Term::BitwiseNot(inner) => collect_loads(inner, loads),
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                collect_loads(left, loads);
+                collect_loads(right, loads);
+            }
+            Bitvector32Term::BitwiseNot(inner)
+            | Bitvector32Term::Float32Negate(inner)
+            | Bitvector32Term::Float64Negate(inner) => collect_loads(inner, loads),
             Bitvector32Term::If {
                 then_term,
                 else_term,

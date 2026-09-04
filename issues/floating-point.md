@@ -1,10 +1,11 @@
 # Model floating-point values
 
-The kernel now has typed opaque storage values for `float` and `double`, but it
-does not yet model their arithmetic or other value semantics. Real C libraries
-commonly use `double` for numeric fields, including the pilot json-c target.
-Keep this as one issue, but land the work in the ordered slices below so that
-each commit has a usable, checkable boundary.
+The kernel now has typed IEEE-754 values and rounded same-width arithmetic for
+`float` and `double`; remaining conversion, promotion, contract, and library
+integration work is tracked in Slice 5. Real C libraries commonly use `double`
+for numeric fields, including the pilot json-c target. Keep this as one issue,
+but land the work in the ordered slices below so that each commit has a usable,
+checkable boundary.
 
 ## Violated invariant
 
@@ -132,7 +133,7 @@ Acceptance:
 - Symbolic comparison terms remain checkable and do not use an ordered-real
   shortcut that treats NaN as an ordinary value.
 
-### Slice 4: rounded arithmetic
+### Slice 4: rounded arithmetic (implemented)
 
 Add `+`, `-`, `*`, and `/` for both precisions, with unary operations and
 constant folding driven by an exact, deterministic IEEE implementation. Model

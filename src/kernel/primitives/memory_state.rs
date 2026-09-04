@@ -230,6 +230,42 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::Bitvector(*value));
                     }
+                    Bitvector32Term::Float32Negate(value) => {
+                        identity.push_str("tf32n(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        identity.push_str("tf64n(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let tag = match operator {
+                            CFloatBinaryOperator::Add => "tf32a",
+                            CFloatBinaryOperator::Subtract => "tf32s",
+                            CFloatBinaryOperator::Multiply => "tf32m",
+                            CFloatBinaryOperator::Divide => "tf32d",
+                        };
+                        push_havoc_binary(&mut identity, &mut tasks, tag, *left, *right);
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let tag = match operator {
+                            CFloatBinaryOperator::Add => "tf64a",
+                            CFloatBinaryOperator::Subtract => "tf64s",
+                            CFloatBinaryOperator::Multiply => "tf64m",
+                            CFloatBinaryOperator::Divide => "tf64d",
+                        };
+                        push_havoc_binary(&mut identity, &mut tasks, tag, *left, *right);
+                    }
                     Bitvector32Term::Int64From32(value) => push_havoc_binary(
                         &mut identity,
                         &mut tasks,

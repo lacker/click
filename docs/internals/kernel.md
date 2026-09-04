@@ -358,14 +358,16 @@ the supported LP64 host ABI.
 ## Floating-point semantic boundary
 
 The kernel models `float` and `double` as typed IEEE-754 payloads in `CType`
-and `CValue`. Slices 1 through 3 carry those payloads through parameters, locals,
+and `CValue`. Slices 1 through 4 carry those payloads through parameters, locals,
 structs, arrays, allocation, typed memory loads/stores, and copies at their
 declared widths. Constant casts use integer-space round-to-nearest,
 ties-to-even conversion, and unary negation is a sign-bit operation. Same-width
 comparisons and classification predicates use typed conditions: symbolic values
 split paths without being coerced to ordered mathematical reals. Floating
-arithmetic remains unsupported until later slices. The source expander still
-rejects floating-point environment directives.
+arithmetic uses typed `Float32`/`Float64` operation terms. Constant operations
+are evaluated by an integer-space IEEE-754 evaluator; symbolic operations remain
+opaque until their operands become constant. The source expander still rejects
+floating-point environment directives.
 
 The C model is deliberately fixed to the supported LP64 ABI: `float` is
 IEEE-754 binary32 with size and alignment 4, and `double` is IEEE-754 binary64
@@ -378,7 +380,8 @@ excess precision must not affect a certificate.
 Floating-point terms and values retain enough representation to
 distinguish finite values, signed zero, infinities, and NaNs. Copying a value
 preserves its representation, while generated NaNs use one documented
-canonical representation. Comparisons follow the C/IEEE rules: signed zeros
+canonical representation. Arithmetic and comparisons follow the C/IEEE rules:
+signed zeros
 compare equal, every ordered comparison with a NaN is false, and `!=` with a
 NaN is true. IEEE overflow and floating division by zero produce infinity or
 NaN results; those are not integer-style C undefined behavior. Converting to an
@@ -395,11 +398,10 @@ until definedness checks are carried into the symbolic model.
 
 Unsupported floating-point syntax must remain an actionable, source-positioned
 frontend diagnostic. Slice 1 accepts decimal literals only as typed payloads;
-hexadecimal literals and unsupported suffixes remain rejected. A proof cannot
-claim a floating-point result merely because an implementation language can
-evaluate `f32` or `f64`; the symbolic semantics and certificate checker must
-agree on the exact width, rounding, exceptional values, and conversion rules
-before operations are added.
+hexadecimal literals and unsupported suffixes remain rejected. The evaluator
+does not delegate symbolic semantics to host `f32` or `f64`; the operation term,
+integer-space evaluator, and certificate checker agree on the exact width,
+rounding, exceptional values, and conversion rules.
 
 Named unions are represented on the C0 side as address-backed layouts. Every
 modeled member has offset zero, and a member read lowers to a kernel typed load

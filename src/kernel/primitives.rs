@@ -153,6 +153,18 @@ pub enum Bitvector32Term {
     UInt64BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
     UInt64BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
     UInt64BitwiseNot(Box<Bitvector32Term>),
+    Float32Negate(Box<Bitvector32Term>),
+    Float32Binary {
+        operator: CFloatBinaryOperator,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    },
+    Float64Negate(Box<Bitvector32Term>),
+    Float64Binary {
+        operator: CFloatBinaryOperator,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -338,11 +350,9 @@ pub enum CValue {
     UInt32(Bitvector32Term),
     Int64(Bitvector32Term),
     UInt64(Bitvector32Term),
-    /// Opaque IEEE-754 binary32 payload. Slice 1 only preserves and moves the
-    /// representation; no integer or real arithmetic may consume this term.
+    /// IEEE-754 binary32 payload represented in the shared checked term arena.
     Float32(Bitvector32Term),
-    /// Opaque IEEE-754 binary64 payload. Slice 1 only preserves and moves the
-    /// representation; no integer or real arithmetic may consume this term.
+    /// IEEE-754 binary64 payload represented in the shared checked term arena.
     Float64(Bitvector32Term),
     Pointer(CPointerValue),
 }
@@ -416,6 +426,7 @@ pub enum CExpression {
         then_branch: Box<CExpression>,
         else_branch: Box<CExpression>,
     },
+    FloatNegate(Box<CExpression>),
     FloatClassification {
         expression: Box<CExpression>,
         classification: CFloatClassification,
@@ -461,6 +472,14 @@ pub enum CComparisonOperator {
     LessEqual,
     GreaterThan,
     GreaterEqual,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFloatBinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

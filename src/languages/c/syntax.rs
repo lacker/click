@@ -905,6 +905,7 @@ pub enum C0Expression {
         then_branch: Box<C0Expression>,
         else_branch: Box<C0Expression>,
     },
+    FloatNegate(Box<C0Expression>),
     FloatClassification {
         expression: Box<C0Expression>,
         classification: C0FloatClassification,
@@ -919,11 +920,9 @@ pub enum C0Expression {
     UInt32Literal(u32),
     Int64Literal(i64),
     UInt64Literal(u64),
-    /// The IEEE-754 binary32 representation, kept opaque until float
-    /// operations are modeled in a later slice.
+    /// The IEEE-754 binary32 representation used by the typed float model.
     Float32Literal(u32),
-    /// The IEEE-754 binary64 representation, kept opaque until float
-    /// operations are modeled in a later slice.
+    /// The IEEE-754 binary64 representation used by the typed double model.
     Float64Literal(u64),
     SizeOfStruct {
         name: String,
@@ -1590,6 +1589,9 @@ impl C0Expression {
                 then_branch.to_kernel_expression(),
                 else_branch.to_kernel_expression(),
             ),
+            Self::FloatNegate(expression) => {
+                crate::kernel::c_float_negate(expression.to_kernel_expression())
+            }
             Self::FloatClassification {
                 expression,
                 classification,
@@ -2094,6 +2096,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         C0Expression::Call { .. } => false,
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatNegate(expression)
         | C0Expression::FloatClassification { expression, .. }
         | C0Expression::PointerOffsetBytes {
             pointer: expression,
@@ -6303,6 +6306,10 @@ impl Parser {
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
+            C0Expression::FloatNegate(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((prefix, C0Expression::FloatNegate(Box::new(expression))))
+            }
             C0Expression::FloatClassification {
                 expression,
                 classification,
@@ -6814,6 +6821,9 @@ impl Parser {
             if let Some(expression) = negate_float_literal(expression.clone()) {
                 return Ok(expression);
             }
+            if self.expression_is_float(&expression) {
+                return Ok(C0Expression::FloatNegate(Box::new(expression)));
+            }
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),
                 Box::new(expression),
@@ -7094,6 +7104,92 @@ impl Parser {
             return None;
         };
         Some(shape.clone())
+    }
+
+    fn expression_is_float(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::FloatNegate(_) => true,
+            C0Expression::Variable(name) => matches!(
+                self.variable_types.get(name),
+                Some(C0Type::Float32 | C0Type::Float64)
+            ),
+            C0Expression::Cast { c_type, .. } => {
+                matches!(c_type, C0Type::Float32 | C0Type::Float64)
+            }
+            C0Expression::Field { field_type, .. }
+            | C0Expression::UnionField { field_type, .. } => {
+                matches!(field_type, C0Type::Float32 | C0Type::Float64)
+            }
+            C0Expression::Load(pointer) => self.expression_pointee_is_float(pointer),
+            C0Expression::Index(base, _) => self.expression_pointee_is_float(base),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => self.expression_is_float(then_branch) || self.expression_is_float(else_branch),
+            C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right) => {
+                self.expression_is_float(left) || self.expression_is_float(right)
+            }
+            C0Expression::Void
+            | C0Expression::Call { .. }
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::FloatClassification { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::LessThan(_, _)
+            | C0Expression::LessEqual(_, _)
+            | C0Expression::GreaterThan(_, _)
+            | C0Expression::GreaterEqual(_, _)
+            | C0Expression::Equal(_, _)
+            | C0Expression::NotEqual(_, _)
+            | C0Expression::Not(_)
+            | C0Expression::And(_, _)
+            | C0Expression::Or(_, _)
+            | C0Expression::Remainder(_, _)
+            | C0Expression::ShiftLeft(_, _)
+            | C0Expression::ShiftRight(_, _)
+            | C0Expression::BitwiseAnd(_, _)
+            | C0Expression::BitwiseOr(_, _)
+            | C0Expression::BitwiseXor(_, _)
+            | C0Expression::BitwiseNot(_)
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. } => false,
+        }
+    }
+
+    fn expression_pointee_is_float(&self, expression: &C0Expression) -> bool {
+        let c_type = match expression {
+            C0Expression::Variable(name) => self.variable_types.get(name).copied(),
+            C0Expression::Field { field_type, .. }
+            | C0Expression::UnionField { field_type, .. } => Some(*field_type),
+            C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::Index(base, _) => {
+                return self.expression_pointee_is_float(base);
+            }
+            _ => None,
+        };
+        matches!(
+            c_type,
+            Some(
+                C0Type::Float32Pointer
+                    | C0Type::Float64Pointer
+                    | C0Type::Float32Array(_)
+                    | C0Type::Float64Array(_)
+            )
+        )
     }
 
     fn struct_pointer_name(&self, expression: &C0Expression) -> Option<String> {
@@ -8110,6 +8206,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             ..
         } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatNegate(expression)
         | C0Expression::FloatClassification { expression, .. }
         | C0Expression::AddressOf(expression)
         | C0Expression::PointerOffsetBytes {
@@ -8173,6 +8270,7 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
         match expression {
             C0Expression::Call { .. } => return true,
             C0Expression::Cast { expression, .. }
+            | C0Expression::FloatNegate(expression)
             | C0Expression::FloatClassification { expression, .. }
             | C0Expression::AddressOf(expression)
             | C0Expression::PointerOffsetBytes {

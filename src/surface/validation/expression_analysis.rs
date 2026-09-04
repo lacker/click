@@ -5,7 +5,8 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
         CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
         CExpression::Variable(name) => name == variable,
         CExpression::Cast { expression, .. } => c_expression_uses_variable(expression, variable),
-        CExpression::FloatClassification { expression, .. } => {
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
             c_expression_uses_variable(expression, variable)
         }
         CExpression::Conditional {

@@ -1539,6 +1539,7 @@ pub(in crate::surface) fn c0_statement_calls(
                 names.insert(name.clone());
             }
             syntax::C0Expression::Cast { expression, .. }
+            | syntax::C0Expression::FloatNegate(expression)
             | syntax::C0Expression::FloatClassification { expression, .. }
             | syntax::C0Expression::AddressOf(expression)
             | syntax::C0Expression::AggregateAddress {

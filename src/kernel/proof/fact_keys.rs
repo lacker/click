@@ -6,8 +6,9 @@
 
 use crate::kernel::Sort;
 use crate::kernel::{
-    Bitvector32Term, CComparisonOperator, CFloatClassification, CFloatCondition, CMemoryRange,
-    CResource, ConditionTerm, Pointer, PointerBlock, PointerOffsetTerm, Proposition, Variable,
+    Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
+    CFloatCondition, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
+    PointerOffsetTerm, Proposition, Variable,
 };
 use std::collections::BTreeMap;
 
@@ -499,6 +500,8 @@ enum AlphaBitvectorBinaryOp {
     UInt64BitwiseAnd,
     UInt64BitwiseOr,
     UInt64BitwiseXor,
+    Float32(CFloatBinaryOperator),
+    Float64(CFloatBinaryOperator),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -511,6 +514,8 @@ enum AlphaBitvectorKey {
     BitwiseNot(Box<Self>),
     Int64BitwiseNot(Box<Self>),
     UInt64BitwiseNot(Box<Self>),
+    Float32Negate(Box<Self>),
+    Float64Negate(Box<Self>),
     If {
         condition: Box<AlphaConditionKey>,
         then_term: Box<Self>,
@@ -784,6 +789,16 @@ fn alpha_bitvector_key(
         Bitvector32Term::UInt64BitwiseXor(left, right) => {
             binary(AlphaBitvectorBinaryOp::UInt64BitwiseXor, left, right)?
         }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => binary(AlphaBitvectorBinaryOp::Float32(*operator), left, right)?,
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => binary(AlphaBitvectorBinaryOp::Float64(*operator), left, right)?,
         Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
@@ -791,6 +806,12 @@ fn alpha_bitvector_key(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64BitwiseNot(body) => AlphaBitvectorKey::UInt64BitwiseNot(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Float32Negate(body) => AlphaBitvectorKey::Float32Negate(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Float64Negate(body) => AlphaBitvectorKey::Float64Negate(Box::new(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
         Bitvector32Term::If {

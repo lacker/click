@@ -467,9 +467,12 @@ fn infer_contract_expression_type(
         ContractExpression::Subtract(left, right) => {
             infer_subtract_expression_type(left, right, variables, click_functions, context)
         }
-        ContractExpression::Multiply(left, right)
-        | ContractExpression::Divide(left, right)
-        | ContractExpression::Remainder(left, right)
+        ContractExpression::Multiply(left, right) | ContractExpression::Divide(left, right) => {
+            let left = infer_contract_expression_type(left, variables, click_functions, context)?;
+            let right = infer_contract_expression_type(right, variables, click_functions, context)?;
+            Ok(arithmetic_result_type(left, right))
+        }
+        ContractExpression::Remainder(left, right)
         | ContractExpression::BitwiseAnd(left, right)
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right) => {
@@ -659,6 +662,9 @@ fn infer_c_expression_type(
                 _ => None,
             }
         }
+        CExpression::FloatNegate(expression) => {
+            infer_c_expression_type(expression, variables).filter(|c_type| type_is_float(*c_type))
+        }
         CExpression::FloatClassification { expression, .. } => matches!(
             infer_c_expression_type(expression, variables),
             Some(C0Type::Float32 | C0Type::Float64)
@@ -679,9 +685,12 @@ fn infer_c_expression_type(
         | CExpression::Or(_, _) => Some(C0Type::Int32),
         CExpression::Add(left, right) => infer_c_add_type(left, right, variables),
         CExpression::Subtract(left, right) => infer_c_subtract_type(left, right, variables),
-        CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
+        CExpression::Multiply(left, right) | CExpression::Divide(left, right) => {
+            let left = infer_c_expression_type(left, variables);
+            let right = infer_c_expression_type(right, variables);
+            arithmetic_result_type(left, right)
+        }
+        CExpression::Remainder(left, right)
         | CExpression::BitwiseAnd(left, right)
         | CExpression::BitwiseOr(left, right)
         | CExpression::BitwiseXor(left, right) => {
@@ -758,7 +767,7 @@ fn infer_add_expression_type(
 ) -> Result<Option<C0Type>, ClickError> {
     let left = infer_contract_expression_type(left, variables, click_functions, context)?;
     let right = infer_contract_expression_type(right, variables, click_functions, context)?;
-    Ok(pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right)))
+    Ok(pointer_arithmetic_type(left, right).or_else(|| arithmetic_result_type(left, right)))
 }
 
 fn infer_subtract_expression_type(
@@ -774,7 +783,7 @@ fn infer_subtract_expression_type(
         (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
             Some(left)
         }
-        _ => scalar_arithmetic_type(left, right),
+        _ => arithmetic_result_type(left, right),
     })
 }
 
@@ -785,7 +794,7 @@ fn infer_c_add_type(
 ) -> Option<C0Type> {
     let left = infer_c_expression_type(left, variables);
     let right = infer_c_expression_type(right, variables);
-    pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right))
+    pointer_arithmetic_type(left, right).or_else(|| arithmetic_result_type(left, right))
 }
 
 fn infer_c_subtract_type(
@@ -799,7 +808,7 @@ fn infer_c_subtract_type(
         (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
             Some(left)
         }
-        _ => scalar_arithmetic_type(left, right),
+        _ => arithmetic_result_type(left, right),
     }
 }
 
@@ -820,6 +829,19 @@ fn scalar_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option
         (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
             Some(scalar_arithmetic_result_type(left, right))
         }
+        _ => None,
+    }
+}
+
+fn type_is_float(c_type: C0Type) -> bool {
+    matches!(c_type, C0Type::Float32 | C0Type::Float64)
+}
+
+fn arithmetic_result_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
+    match (left, right) {
+        (Some(C0Type::Float32), Some(C0Type::Float32)) => Some(C0Type::Float32),
+        (Some(C0Type::Float64), Some(C0Type::Float64)) => Some(C0Type::Float64),
+        (Some(left), Some(right)) => scalar_arithmetic_type(Some(left), Some(right)),
         _ => None,
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::{CComparisonOperator, CFloatCondition};
+use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition};
 use std::fmt::Write;
 
 const MAX_DIAGNOSTIC_ITEMS: usize = 12;
@@ -903,6 +903,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
             expression,
             target_type,
         } => format!("({target_type:?}){}", describe_c_expression(expression)),
+        CExpression::FloatNegate(expression) => format!("-{}", describe_c_expression(expression)),
         CExpression::FloatClassification {
             expression,
             classification,
@@ -1325,6 +1326,30 @@ pub(super) fn describe_bitvector_with_context(
                 "~{}",
                 describe_bitvector_with_context(value, parameters, arguments)
             )
+        }
+        Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
+            format!(
+                "-{}",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        }
+        | Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let symbol = match operator {
+                CFloatBinaryOperator::Add => "+",
+                CFloatBinaryOperator::Subtract => "-",
+                CFloatBinaryOperator::Multiply => "*",
+                CFloatBinaryOperator::Divide => "/",
+            };
+            describe_binary_bitvector_with_context(left, symbol, right, parameters, arguments)
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)

@@ -2744,6 +2744,11 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                     pending.push(Node::Term(right, depth + 1));
                     pending.push(Node::Term(left, depth + 1));
                 }
+                Bitvector32Term::Float32Binary { left, right, .. }
+                | Bitvector32Term::Float64Binary { left, right, .. } => {
+                    pending.push(Node::Term(right, depth + 1));
+                    pending.push(Node::Term(left, depth + 1));
+                }
                 Bitvector32Term::BitwiseNot(value)
                 | Bitvector32Term::Int64From32(value)
                 | Bitvector32Term::Int64FromUInt32(value)
@@ -2751,7 +2756,9 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                 | Bitvector32Term::UInt64FromInt32(value)
                 | Bitvector32Term::UInt64FromInt64(value)
                 | Bitvector32Term::Int64BitwiseNot(value)
-                | Bitvector32Term::UInt64BitwiseNot(value) => {
+                | Bitvector32Term::UInt64BitwiseNot(value)
+                | Bitvector32Term::Float32Negate(value)
+                | Bitvector32Term::Float64Negate(value) => {
                     pending.push(Node::Term(value, depth + 1));
                 }
                 Bitvector32Term::If {
@@ -2857,6 +2864,11 @@ enum AtomicCanonicalizationTask<'a> {
     VisitOffset(&'a PointerOffsetTerm),
     RebuildBinary(AtomicBinaryConstructor),
     RebuildUnary(AtomicUnaryConstructor),
+    RebuildFloatUnary(bool),
+    RebuildFloatBinary {
+        is_float64: bool,
+        operator: CFloatBinaryOperator,
+    },
     RebuildConditionBinary(AtomicConditionConstructor),
     RebuildFloatCondition {
         is_float64: bool,
@@ -3057,6 +3069,38 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                     }
                     Bitvector32Term::BitwiseNot(value) => {
                         visit_unary!(Bitvector32Term::BitwiseNot, value, tasks)
+                    }
+                    Bitvector32Term::Float32Negate(value) => {
+                        tasks.push(AtomicCanonicalizationTask::RebuildFloatUnary(false));
+                        tasks.push(AtomicCanonicalizationTask::Visit(value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        tasks.push(AtomicCanonicalizationTask::RebuildFloatUnary(true));
+                        tasks.push(AtomicCanonicalizationTask::Visit(value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(AtomicCanonicalizationTask::RebuildFloatBinary {
+                            is_float64: false,
+                            operator: *operator,
+                        });
+                        tasks.push(AtomicCanonicalizationTask::Visit(right));
+                        tasks.push(AtomicCanonicalizationTask::Visit(left));
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(AtomicCanonicalizationTask::RebuildFloatBinary {
+                            is_float64: true,
+                            operator: *operator,
+                        });
+                        tasks.push(AtomicCanonicalizationTask::Visit(right));
+                        tasks.push(AtomicCanonicalizationTask::Visit(left));
                     }
                     Bitvector32Term::Int64From32(value) => {
                         visit_unary!(Bitvector32Term::Int64From32, value, tasks)
@@ -3454,6 +3498,26 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                 let value = results.pop().expect("visited unary term");
                 results.push(constructor(Box::new(value)));
             }
+            AtomicCanonicalizationTask::RebuildFloatUnary(is_float64) => {
+                let value = results.pop().expect("visited float unary term");
+                results.push(if is_float64 {
+                    Bitvector32Term::float64_negate(value)
+                } else {
+                    Bitvector32Term::float32_negate(value)
+                });
+            }
+            AtomicCanonicalizationTask::RebuildFloatBinary {
+                is_float64,
+                operator,
+            } => {
+                let right = results.pop().expect("visited right float term");
+                let left = results.pop().expect("visited left float term");
+                results.push(if is_float64 {
+                    Bitvector32Term::float64_binary(left, right, operator)
+                } else {
+                    Bitvector32Term::float32_binary(left, right, operator)
+                });
+            }
             AtomicCanonicalizationTask::RebuildConditionBinary(constructor) => {
                 let right = results.pop().expect("visited right condition operand");
                 let left = results.pop().expect("visited left condition operand");
@@ -3741,9 +3805,15 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             | Bitvector32Term::BitwiseXor(left, right) => {
                 bitvector_has_memory(left) || bitvector_has_memory(right)
             }
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                bitvector_has_memory(left) || bitvector_has_memory(right)
+            }
             Bitvector32Term::BitwiseNot(term)
             | Bitvector32Term::Int64BitwiseNot(term)
-            | Bitvector32Term::UInt64BitwiseNot(term) => bitvector_has_memory(term),
+            | Bitvector32Term::UInt64BitwiseNot(term)
+            | Bitvector32Term::Float32Negate(term)
+            | Bitvector32Term::Float64Negate(term) => bitvector_has_memory(term),
             Bitvector32Term::Int64From32(term)
             | Bitvector32Term::UInt64From32(term)
             | Bitvector32Term::Int64FromUInt32(term)
@@ -3959,6 +4029,14 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             collect_bitvector_memories(left, memories);
             collect_bitvector_memories(right, memories);
+        }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_bitvector_memories(left, memories);
+            collect_bitvector_memories(right, memories);
+        }
+        Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
+            collect_bitvector_memories(value, memories)
         }
         Bitvector32Term::BitwiseNot(term)
         | Bitvector32Term::Int64BitwiseNot(term)
@@ -4341,6 +4419,28 @@ fn transport_framed_atomic_bitvector(
         Bitvector32Term::UInt64BitwiseNot(value) => Bitvector32Term::uint64_bitwise_not(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
         ),
+        Bitvector32Term::Float32Negate(value) => Bitvector32Term::float32_negate(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::float32_binary(left, right, *operator)
+        }
+        Bitvector32Term::Float64Negate(value) => Bitvector32Term::float64_negate(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let (left, right) = binary(left, right)?;
+            Bitvector32Term::float64_binary(left, right, *operator)
+        }
         Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
             Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
             Box::new(transport_framed_atomic_bitvector(
@@ -4642,8 +4742,16 @@ enum ExactLoadNormalizationTask {
     Visit(Bitvector32Term),
     RebuildBinary(ExactLoadBinary),
     RebuildUnary(ExactLoadUnary),
+    RebuildFloatUnary(bool),
+    RebuildFloatBinary {
+        is_float64: bool,
+        operator: CFloatBinaryOperator,
+    },
     RebuildIf(ConditionTerm),
-    RebuildPureFunction { name: String, argument_count: usize },
+    RebuildPureFunction {
+        name: String,
+        argument_count: usize,
+    },
     LeaveLoad(Bitvector32Term),
 }
 
@@ -4856,6 +4964,38 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                     Bitvector32Term::UInt64BitwiseXor(left, right) => {
                         push_binary(&mut tasks, ExactLoadBinary::UInt64BitwiseXor, left, right)
                     }
+                    Bitvector32Term::Float32Negate(value) => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildFloatUnary(false));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildFloatUnary(true));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildFloatBinary {
+                            is_float64: false,
+                            operator,
+                        });
+                        tasks.push(ExactLoadNormalizationTask::Visit(*right));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*left));
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(ExactLoadNormalizationTask::RebuildFloatBinary {
+                            is_float64: true,
+                            operator,
+                        });
+                        tasks.push(ExactLoadNormalizationTask::Visit(*right));
+                        tasks.push(ExactLoadNormalizationTask::Visit(*left));
+                    }
                     Bitvector32Term::BitwiseNot(value) => {
                         push_unary(&mut tasks, ExactLoadUnary::BitwiseNot, value)
                     }
@@ -4930,6 +5070,26 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
             ExactLoadNormalizationTask::RebuildUnary(operator) => {
                 let value = results.pop().expect("visited unary bitvector term");
                 results.push(rebuild_unary(operator, value));
+            }
+            ExactLoadNormalizationTask::RebuildFloatUnary(is_float64) => {
+                let value = results.pop().expect("visited float unary bitvector term");
+                results.push(if is_float64 {
+                    Bitvector32Term::float64_negate(value)
+                } else {
+                    Bitvector32Term::float32_negate(value)
+                });
+            }
+            ExactLoadNormalizationTask::RebuildFloatBinary {
+                is_float64,
+                operator,
+            } => {
+                let right = results.pop().expect("visited right float bitvector term");
+                let left = results.pop().expect("visited left float bitvector term");
+                results.push(if is_float64 {
+                    Bitvector32Term::float64_binary(left, right, operator)
+                } else {
+                    Bitvector32Term::float32_binary(left, right, operator)
+                });
             }
             ExactLoadNormalizationTask::RebuildIf(condition) => {
                 let else_term = results.pop().expect("visited else term");
@@ -5039,6 +5199,28 @@ fn normalize_exact_memory_loads_in_bitvector_recursive(
         Bitvector32Term::BitwiseNot(value) => Bitvector32Term::bitwise_not(
             normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
         ),
+        Bitvector32Term::Float32Negate(value) => Bitvector32Term::float32_negate(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::float32_binary(left, right, *operator)
+        }
+        Bitvector32Term::Float64Negate(value) => Bitvector32Term::float64_negate(
+            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::float64_binary(left, right, *operator)
+        }
         Bitvector32Term::Int64From32(value) => Bitvector32Term::int64_from_32(
             normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
         ),

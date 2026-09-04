@@ -398,7 +398,7 @@ pub(in crate::surface) fn collect_c_expression_referenced_names(
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }
-        CExpression::Cast { expression, .. } => {
+        CExpression::Cast { expression, .. } | CExpression::FloatNegate(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
         CExpression::Conditional {

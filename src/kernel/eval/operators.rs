@@ -174,6 +174,28 @@ pub(in crate::kernel) fn apply_c_add(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let (CValue::Float32(left), CValue::Float32(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Add,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
+    if let (CValue::Float64(left), CValue::Float64(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Add,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_add(left, right, width, facts, obligations, assumptions);
     }
@@ -668,6 +690,28 @@ pub(in crate::kernel) fn apply_c_multiply(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let (CValue::Float32(left), CValue::Float32(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Multiply,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
+    if let (CValue::Float64(left), CValue::Float64(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Multiply,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_multiply(left, right, width, facts, obligations, assumptions);
     }
@@ -713,6 +757,28 @@ pub(in crate::kernel) fn apply_c_divide(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let (CValue::Float32(left), CValue::Float32(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Divide,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
+    if let (CValue::Float64(left), CValue::Float64(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Divide,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_divide(left, right, width, facts, obligations, assumptions);
     }
@@ -1214,6 +1280,28 @@ pub(in crate::kernel) fn apply_c_subtract(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let (CValue::Float32(left), CValue::Float32(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Subtract,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
+    if let (CValue::Float64(left), CValue::Float64(right)) = (&left, &right) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_binary(
+                left.clone(),
+                right.clone(),
+                CFloatBinaryOperator::Subtract,
+            ))),
+            facts,
+            obligations,
+        }];
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_subtract(left, right, width, facts, obligations, assumptions);
     }

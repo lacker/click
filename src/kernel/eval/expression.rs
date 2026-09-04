@@ -721,6 +721,9 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             assumptions,
             budget,
         )?,
+        CExpression::FloatNegate(expression) => {
+            evaluate_c_float_negate_paths(state, expression, assumptions, budget)?
+        }
         CExpression::FloatClassification {
             expression,
             classification,
@@ -1070,6 +1073,44 @@ fn evaluate_c_float_classification_paths(
                 obligations: path.obligations,
             }),
         }
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_float_negate_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = path;
+        let outcome = match outcome {
+            CExpressionOutcome::Value(CValue::Float32(value)) => {
+                CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_negate(value)))
+            }
+            CExpressionOutcome::Value(CValue::Float64(value)) => {
+                CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_negate(value)))
+            }
+            CExpressionOutcome::Value(_) => {
+                CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+            }
+            CExpressionOutcome::UndefinedBehavior(error) => {
+                CExpressionOutcome::UndefinedBehavior(error)
+            }
+            CExpressionOutcome::RuntimeError(error) => CExpressionOutcome::RuntimeError(error),
+        };
+        paths.push(CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        });
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)

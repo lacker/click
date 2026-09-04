@@ -947,7 +947,8 @@ fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize 
                 pending.push((then_branch, false));
                 pending.push((else_branch, false));
             }
-            CExpression::FloatClassification { expression, .. } => {
+            CExpression::FloatNegate(expression)
+            | CExpression::FloatClassification { expression, .. } => {
                 pending.push((expression, false))
             }
             // Scalar variables add an lvalue visit. Arrays skip it, so this is

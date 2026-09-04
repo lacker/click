@@ -6487,6 +6487,42 @@ fn c0_floating_point_conditions_accept_symbolic_operands() {
 }
 
 #[test]
+fn c0_floating_point_arithmetic_accepts_symbolic_same_width_operands() {
+    let functions = syntax::parse_functions(
+        r#"
+        float single(float value) { return -(value + 1.0f) * 2.0f; }
+        double double_value(double value) { return (value * 2.0) / 3.0; }
+        "#,
+    )
+    .expect("same-width floating arithmetic should parse");
+
+    assert!(matches!(
+        functions[0].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Multiply(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::FloatNegate(inner)
+                if matches!(inner.as_ref(), syntax::C0Expression::Add(_, _)))
+                && matches!(right.as_ref(), syntax::C0Expression::Float32Literal(bits)
+                    if *bits == 2.0f32.to_bits())
+    ));
+    assert!(matches!(
+        functions[1].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Divide(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Multiply(_, _))
+                && matches!(right.as_ref(), syntax::C0Expression::Float64Literal(bits)
+                    if *bits == 3.0f64.to_bits())
+    ));
+
+    assert_eq!(
+        functions[0].to_kernel_function().return_type(),
+        crate::kernel::CType::Float32
+    );
+    assert_eq!(
+        functions[1].to_kernel_function().return_type(),
+        crate::kernel::CType::Float64
+    );
+}
+
+#[test]
 fn c0_floating_point_storage_initializers_cover_static_local_arrays_and_calloc() {
     let functions = syntax::parse_functions(
         r#"

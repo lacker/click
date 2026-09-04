@@ -1175,6 +1175,11 @@ fn substitute_load_variables(
         VisitOffset(&'a PointerOffsetTerm),
         RebuildBinary(BinaryConstructor),
         RebuildUnary(UnaryConstructor),
+        RebuildFloatUnary(bool),
+        RebuildFloatBinary {
+            is_float64: bool,
+            operator: CFloatBinaryOperator,
+        },
         RebuildIf,
         RebuildPureFunction {
             name: String,
@@ -1284,6 +1289,38 @@ fn substitute_load_variables(
                     }
                     Bitvector32Term::BitwiseNot(value) => {
                         visit_unary!(Bitvector32Term::BitwiseNot, value, tasks)
+                    }
+                    Bitvector32Term::Float32Negate(value) => {
+                        tasks.push(Task::RebuildFloatUnary(false));
+                        tasks.push(Task::VisitTerm(value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        tasks.push(Task::RebuildFloatUnary(true));
+                        tasks.push(Task::VisitTerm(value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(Task::RebuildFloatBinary {
+                            is_float64: false,
+                            operator: *operator,
+                        });
+                        tasks.push(Task::VisitTerm(right));
+                        tasks.push(Task::VisitTerm(left));
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(Task::RebuildFloatBinary {
+                            is_float64: true,
+                            operator: *operator,
+                        });
+                        tasks.push(Task::VisitTerm(right));
+                        tasks.push(Task::VisitTerm(left));
                     }
                     Bitvector32Term::Int64From32(value) => {
                         visit_unary!(Bitvector32Term::Int64From32, value, tasks)
@@ -1662,6 +1699,26 @@ fn substitute_load_variables(
                 let value = term_results.pop().expect("visited unary term");
                 term_results.push(constructor(Box::new(value)));
             }
+            Task::RebuildFloatUnary(is_float64) => {
+                let value = term_results.pop().expect("visited float unary term");
+                term_results.push(if is_float64 {
+                    Bitvector32Term::float64_negate(value)
+                } else {
+                    Bitvector32Term::float32_negate(value)
+                });
+            }
+            Task::RebuildFloatBinary {
+                is_float64,
+                operator,
+            } => {
+                let right = term_results.pop().expect("visited right float term");
+                let left = term_results.pop().expect("visited left float term");
+                term_results.push(if is_float64 {
+                    Bitvector32Term::float64_binary(left, right, operator)
+                } else {
+                    Bitvector32Term::float32_binary(left, right, operator)
+                });
+            }
             Task::RebuildIf => {
                 let else_term = term_results.pop().expect("visited else term");
                 let then_term = term_results.pop().expect("visited then term");
@@ -1811,6 +1868,10 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseXor(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -1840,7 +1901,9 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
-        Bitvector32Term::BitwiseNot(value) => term_mentions_a_memory_load(value),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => term_mentions_a_memory_load(value),
         Bitvector32Term::If {
             condition,
             then_term,

@@ -726,7 +726,8 @@ fn collect_c_expression_bound_variables(
             collect_c_expression_bound_variables(then_branch, variables);
             collect_c_expression_bound_variables(else_branch, variables);
         }
-        CExpression::FloatClassification { expression, .. } => {
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
             collect_c_expression_bound_variables(expression, variables);
         }
         CExpression::AddressOf(body)
@@ -1058,7 +1059,9 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
-        Bitvector32Term::BitwiseNot(value) => {
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => {
             collect_bitvector_bound_variables(value, variables);
         }
         Bitvector32Term::If {
@@ -1126,7 +1129,9 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         | Bitvector32Term::UInt64LogicalShiftRight(left, right)
         | Bitvector32Term::UInt64BitwiseAnd(left, right)
         | Bitvector32Term::UInt64BitwiseOr(left, right)
-        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+        | Bitvector32Term::UInt64BitwiseXor(left, right)
+        | Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
@@ -1280,6 +1285,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             )),
             classification: *classification,
         },
+        CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        )),
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),
@@ -2791,6 +2799,30 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         Bitvector32Term::UInt64BitwiseNot(value) => {
             Bitvector32Term::uint64_bitwise_not(substitute_bitvector_variable(value, from, to))
         }
+        Bitvector32Term::Float32Negate(value) => {
+            Bitvector32Term::float32_negate(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::float32_binary(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        Bitvector32Term::Float64Negate(value) => {
+            Bitvector32Term::float64_negate(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::float64_binary(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
         Bitvector32Term::Add(left, right) => Bitvector32Term::add(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
@@ -3589,6 +3621,9 @@ fn substitute_pointer_variable_in_c_expression(
             )),
             classification: *classification,
         },
+        CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
+            substitute_pointer_variable_in_c_expression(expression, from, to),
+        )),
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_pointer_variable_in_c_expression(body, from, to),
         )),

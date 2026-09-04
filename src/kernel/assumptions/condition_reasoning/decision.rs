@@ -704,6 +704,30 @@ impl PureFactContext {
             Bitvector32Term::BitwiseNot(value) => {
                 Bitvector32Term::bitwise_not(self.simplify_bitvector_under_assumptions(value))
             }
+            Bitvector32Term::Float32Negate(value) => {
+                Bitvector32Term::float32_negate(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Float32Binary {
+                operator,
+                left,
+                right,
+            } => Bitvector32Term::float32_binary(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            Bitvector32Term::Float64Negate(value) => {
+                Bitvector32Term::float64_negate(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Float64Binary {
+                operator,
+                left,
+                right,
+            } => Bitvector32Term::float64_binary(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
             Bitvector32Term::Int64Constant(value) => Bitvector32Term::Int64Constant(*value),
             Bitvector32Term::UInt64Constant(value) => Bitvector32Term::UInt64Constant(*value),
             Bitvector32Term::Int64From32(value) => {

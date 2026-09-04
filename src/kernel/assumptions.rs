@@ -1054,6 +1054,11 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            hash_memory_blind_bitvector(left, hasher);
+            hash_memory_blind_bitvector(right, hasher);
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -1084,7 +1089,9 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
-        Bitvector32Term::BitwiseNot(value) => hash_memory_blind_bitvector(value, hasher),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => hash_memory_blind_bitvector(value, hasher),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -1218,6 +1225,11 @@ fn collect_bitvector_memory_load_keys(
             collect_bitvector_memory_load_keys(left, keys);
             collect_bitvector_memory_load_keys(right, keys);
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_bitvector_memory_load_keys(left, keys);
+            collect_bitvector_memory_load_keys(right, keys);
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -1250,7 +1262,9 @@ fn collect_bitvector_memory_load_keys(
             collect_bitvector_memory_load_keys(left, keys);
             collect_bitvector_memory_load_keys(right, keys);
         }
-        Bitvector32Term::BitwiseNot(value) => collect_bitvector_memory_load_keys(value, keys),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => collect_bitvector_memory_load_keys(value, keys),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -1532,6 +1546,10 @@ impl PureFactContext {
                 | Bitvector32Term::BitwiseXor(left, right) => {
                     memory_load_nodes(left) + memory_load_nodes(right)
                 }
+                Bitvector32Term::Float32Binary { left, right, .. }
+                | Bitvector32Term::Float64Binary { left, right, .. } => {
+                    memory_load_nodes(left) + memory_load_nodes(right)
+                }
                 Bitvector32Term::Int64From32(value)
                 | Bitvector32Term::Int64FromUInt32(value)
                 | Bitvector32Term::UInt64From32(value)
@@ -1561,7 +1579,9 @@ impl PureFactContext {
                 | Bitvector32Term::UInt64BitwiseXor(left, right) => {
                     memory_load_nodes(left) + memory_load_nodes(right)
                 }
-                Bitvector32Term::BitwiseNot(value) => memory_load_nodes(value),
+                Bitvector32Term::BitwiseNot(value)
+                | Bitvector32Term::Float32Negate(value)
+                | Bitvector32Term::Float64Negate(value) => memory_load_nodes(value),
                 Bitvector32Term::If {
                     then_term,
                     else_term,
@@ -3628,6 +3648,10 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseXor(left, right) => {
             bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -3657,7 +3681,9 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
         }
-        Bitvector32Term::BitwiseNot(value) => bitvector_term_contains_load(value),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => bitvector_term_contains_load(value),
         Bitvector32Term::If {
             then_term,
             else_term,

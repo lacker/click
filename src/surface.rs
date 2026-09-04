@@ -697,7 +697,8 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
         CExpression::Cast { expression, .. } => {
             collect_c_expression_variables(expression, names);
         }
-        CExpression::FloatClassification { expression, .. } => {
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
             collect_c_expression_variables(expression, names);
         }
         CExpression::Conditional {
