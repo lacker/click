@@ -430,17 +430,17 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
         panic!("first allocation should assign a pointer");
     };
     let first_pointer = first_pointer.clone();
-    assert!(pointers_proven_distinct(
+    assert!(pointers_proven_distinct_for_memory_resolution(
         &first_pointer,
         &Pointer::null(),
         &PureFactContext::new(),
     ));
-    assert!(pointers_proven_distinct(
+    assert!(pointers_proven_distinct_for_memory_resolution(
         &first_pointer,
         &CMemory::local_pointer("local"),
         &PureFactContext::new(),
     ));
-    assert!(pointers_proven_distinct(
+    assert!(pointers_proven_distinct_for_memory_resolution(
         &first_pointer,
         &Pointer {
             block: PointerBlock::ExternalArgument,
@@ -483,7 +483,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     let Some(CValue::Pointer(second_pointer)) = second.locals().get("q") else {
         panic!("second allocation should resolve to a pointer");
     };
-    assert!(pointers_proven_distinct(
+    assert!(pointers_proven_distinct_for_memory_resolution(
         &first_pointer,
         second_pointer,
         &PureFactContext::new(),

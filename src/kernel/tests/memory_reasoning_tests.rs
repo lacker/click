@@ -2387,64 +2387,6 @@ fn while_invariant_rule_is_not_exported_from_the_kernel() {
 }
 
 #[test]
-fn same_block_frame_uses_symbolic_offset_inequality() {
-    let i = Variable(73);
-    let j = Variable(74);
-    let i_bits = Bitvector32Term::Variable(i);
-    let j_bits = Bitvector32Term::Variable(j);
-    let base = Pointer {
-        block: "array".into(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let stored_pointer = base.offset_by_int32_elements(i_bits);
-    let loaded_pointer = base.offset_by_int32_elements(j_bits);
-    let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
-    let assumptions = PureFactContext::new().assume_condition(
-        ConditionTerm::pointer_offset_equal(
-            stored_pointer.offset.clone(),
-            loaded_pointer.offset.clone(),
-        ),
-        false,
-    );
-    let theorem = prove_memory_load_after_store_distinct_under_assumptions(
-        memory.clone(),
-        stored_pointer.clone(),
-        int32(9),
-        loaded_pointer.clone(),
-        assumptions,
-    )
-    .expect("i != j should prove store p[i] preserves load p[j]");
-
-    assert_eq!(
-        theorem.proposition().peel_implications(),
-        &Proposition::CMemoryLoads {
-            memory: memory.store(stored_pointer, int32(9)),
-            pointer: loaded_pointer,
-            outcome: CExpressionOutcome::Value(int32(42)),
-        }
-    );
-}
-
-#[test]
-fn same_symbolic_base_constant_offsets_are_distinct() {
-    let base = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4);
-    let first = Pointer {
-        block: "arg-memory".into(),
-        offset: base.clone(),
-    };
-    let second = Pointer {
-        block: "arg-memory".into(),
-        offset: PointerOffsetTerm::add(base, PointerOffsetTerm::Constant(4)),
-    };
-
-    assert!(pointers_proven_distinct(
-        &first,
-        &second,
-        &PureFactContext::new()
-    ));
-}
-
-#[test]
 fn additive_equality_cancellation_feeds_range_contradictions() {
     let base = Bitvector32Term::Variable(Variable(91));
     let index = Bitvector32Term::Variable(Variable(92));

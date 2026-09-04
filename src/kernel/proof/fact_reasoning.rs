@@ -1460,7 +1460,7 @@ mod tests {
     };
 
     #[test]
-    fn canonical_origin_transport_suppresses_general_snapshot_alias_search() {
+    fn canonical_origin_transport_uses_bounded_snapshot_alias_check() {
         let preserved = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
@@ -1500,10 +1500,9 @@ mod tests {
             "the effect fact should transport the preserved cell"
         );
 
-        // Also force the snapshot-comparison fallback with a write to the
-        // queried cell. The answer is false, but the load-variable bridge
-        // must reach that answer through the bounded alias route rather than
-        // re-entering the general alias search it exists to avoid.
+        // Also force snapshot comparison with a write to the queried cell.
+        // The answer is false, and the load-variable bridge must reach it
+        // through the bounded alias route.
         let loaded = preserved;
         let changed_before =
             CMemory::new().store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
@@ -1538,14 +1537,6 @@ mod tests {
                     if name == "snapshot comparison: bounded alias"
             )),
             "the regression must exercise bounded snapshot comparison: {events:#?}"
-        );
-        assert!(
-            events.iter().all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "snapshot comparison: general alias"
-            )),
-            "canonical-origin transport must not re-enter general alias search: {events:#?}"
         );
     }
 

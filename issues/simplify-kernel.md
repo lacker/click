@@ -62,6 +62,13 @@ depth of two (`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`) remains separately measured
 and designed in `issues/load-equality-prover-in-kernel.md` because it caps a
 fact-branching search rather than a structural walk.
 
+The first two ordered changes are complete. This issue now states the
+operational boundary and corrected inventory, and the unused general pointer
+distinctness fallback has been deleted. Click has no compatibility commitment
+for the low-level kernel API, so its contextual theorem constructor was deleted
+with it rather than deprecated or replaced with a compatibility shim. Memory
+resolution retains only its narrower exact, query-bounded distinctness check.
+
 ## Current inventory
 
 Counts below are examples / mdtests, times the bound or route fired, measured
@@ -138,21 +145,13 @@ change an answer.
    effect/DAG route, and a typed certificate records the route and per-edge
    framing evidence for linear checking. The existing surface `transport`
    checker still calls global load equality and is not yet that boundary.
-4. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` and
-   `inside_condition_decision` around snapshot aliasing,
+4. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
+   snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
    `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
    every nested query rather than only an identical in-progress query. Remove
    them with their owning search, or replace a genuinely structural recursion
    with a guard keyed by the exact query.
-5. **General pointer distinctness**, `pointers_proven_distinct` in
-   `src/kernel/reasoning/memory_resolution.rs`. The route never supplied the
-   decisive answer over the measured corpus (38 / 778 queries), but it is used
-   by memory-load evaluation, a snapshot-comparison fallback, and the exported
-   theorem constructor
-   `prove_memory_load_after_store_distinct_under_assumptions`. Resolve the
-   public API choice below before deleting or narrowing it.
-
 ### Incomplete-answer and authority audit
 
 1. **`search_truncations` and negative-memo gating**. The counter currently
@@ -179,36 +178,26 @@ change an answer.
    invariant. Contract certification's existing ban on
    `PureFactContext::proves` is necessary but not a complete authority audit.
 
-## Public API decision: pointer distinctness
+## Pointer-distinctness disposition
 
-There are two decisions, not one:
+The general `pointers_proven_distinct` fallback and exported
+`prove_memory_load_after_store_distinct_under_assumptions` constructor are
+deleted. There is no compatibility interval for this low-level API. Keeping a
+constructor that accepted an ambient `PureFactContext` would have preserved
+proof discovery inside the authoritative kernel; silently narrowing it would
+also have left callers with an opaque completeness change.
 
-1. The internal general fallback can be deleted if a fresh census confirms it
-   is still never decisive. Keep the narrower
-   `pointers_proven_distinct_for_memory_resolution` only to the extent that its
-   rules are exact and bounded by the pointer query and indexed evidence.
-2. `prove_memory_load_after_store_distinct_under_assumptions` is exported
-   through the public `click::kernel::api` module. Deleting it is therefore a
-   source-level API break even though this repository only calls it from kernel
-   tests. Keeping its current signature also keeps proof discovery inside an
-   authoritative theorem constructor: the caller supplies an ambient
-   `PureFactContext`, and the kernel chooses how to prove distinctness.
-
-Preferred migration: introduce a checked constructor that receives explicit
-pointer-distinctness evidence (or an already checked proposition/theorem), move
-candidate selection to the surface, deprecate the contextual-search constructor
-for one compatibility interval, then remove it. If Click makes no compatibility
-commitment for this low-level API, delete it with the general fallback instead.
-Narrowing the old function to a subset of exact rules is source-compatible but
-silently changes which calls return `Some`, so it should be documented and
-tested as an intentional completeness change rather than treated as no API
-change.
+The internal `pointers_proven_distinct_for_memory_resolution` remains. Its
+rules are limited to exact block identity, offset cancellation or disequality,
+an exact pointer-equality fact, and explicit range evidence, all bounded by the
+pointer query and indexed evidence. Memory-load evaluation and whole-snapshot
+comparison now use only that narrower predicate for distinctness.
 
 ## Implementation order
 
-1. Correct the inventory and operational definition in this issue.
-2. Resolve the pointer-distinctness API choice; delete or narrow the general
-   fallback and its route-specific tests.
+1. **Complete:** correct the inventory and operational definition in this issue.
+2. **Complete:** delete the general pointer-distinctness fallback, its exported
+   contextual constructor, and route-specific tests.
 3. Replace the structural and fixed-point cuts with complete input-sized walks,
    landing a scaling regression with each change.
 4. Move upper-bound split selection to a surface planner that emits checked
@@ -291,9 +280,9 @@ the bound can change what the checker accepts.
 - Global load equality is decided from recorded evidence. Its typed certificate
   and migration cover fact matching, transport, certification, loops,
   resources, and other kernel consumers.
-- General pointer distinctness and its exported theorem constructor have the
-  explicitly chosen API disposition; no retained constructor discovers a proof
-  by ambient global fallback.
+- General pointer distinctness and its exported theorem constructor are
+  deleted; no retained constructor discovers a proof by ambient global
+  fallback.
 - Coarse reentrancy tiers are gone. Exact-query cycle cuts cannot poison a
   negative memo, and the incompleteness epoch is deleted or named and
   documented for every cause it actually records.

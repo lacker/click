@@ -4913,35 +4913,6 @@ pub fn prove_memory_load_after_store_other(
     }))
 }
 
-pub fn prove_memory_load_after_store_distinct_under_assumptions(
-    memory: CMemory,
-    stored_pointer: Pointer,
-    stored_value: CValue,
-    loaded_pointer: Pointer,
-    assumptions: PureFactContext,
-) -> Option<Theorem> {
-    if !pointers_proven_distinct(&stored_pointer, &loaded_pointer, &assumptions) {
-        return None;
-    }
-
-    let outcome = memory.load(&loaded_pointer);
-    let stored = memory.store(stored_pointer, stored_value);
-    if stored.load(&loaded_pointer) != outcome {
-        return None;
-    }
-
-    Some(Theorem::new(wrap_proof_facts(
-        Proposition::CMemoryLoads {
-            memory: stored,
-            pointer: loaded_pointer,
-            outcome,
-        },
-        &assumptions,
-        &[],
-        &[],
-    )))
-}
-
 /// Unsound partial while-rule, fenced to kernel tests. NOT an axiom.
 ///
 /// This is deliberately not exported: it is `#[cfg(test)]`-only and

@@ -213,11 +213,6 @@ fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
         offset: PointerOffsetTerm::Constant(0),
     };
 
-    assert!(!pointers_proven_distinct(
-        &symbolic,
-        &concrete,
-        &PureFactContext::new()
-    ));
     assert_eq!(
         PureFactContext::new().decide(&ConditionTerm::pointer_equal(symbolic, concrete)),
         None

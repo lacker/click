@@ -5,7 +5,6 @@ struct MemoryLoadAliasCache {
     resolution_equal: BTreeMap<(u64, Pointer), bool>,
     resolution_distinct: BTreeMap<(u64, Pointer), bool>,
     equal: BTreeMap<(u64, Pointer), bool>,
-    distinct: BTreeMap<(u64, Pointer), bool>,
 }
 
 impl MemoryLoadAliasCache {
@@ -47,18 +46,6 @@ impl MemoryLoadAliasCache {
             .equal
             .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
             .or_insert_with(|| pointers_proven_equal(pointer, stored_pointer, assumptions))
-    }
-
-    fn distinct(
-        &mut self,
-        pointer: &Pointer,
-        stored_pointer: &Pointer,
-        assumptions: &PureFactContext,
-    ) -> bool {
-        *self
-            .distinct
-            .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
-            .or_insert_with(|| pointers_proven_distinct(pointer, stored_pointer, assumptions))
     }
 }
 
@@ -340,8 +327,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
                 && !alias_cache.resolution_equal(&pointer, stored_pointer, assumptions)
                 && (assumptions.should_defer_non_exact_condition_reasoning()
-                    || !alias_cache.distinct(&pointer, stored_pointer, assumptions)
-                        && !alias_cache.equal(&pointer, stored_pointer, assumptions)))
+                    || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
             .then(|| (stored_pointer.clone(), stored_value.clone()))
         });
     if let Some((stored_pointer, stored_value)) = unresolved {

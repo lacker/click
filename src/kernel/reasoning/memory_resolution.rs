@@ -289,64 +289,6 @@ pub(in crate::kernel) fn condition_contexts_for_truthiness(
     contexts
 }
 
-pub(in crate::kernel) fn pointers_proven_distinct(
-    left: &Pointer,
-    right: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    if left == right {
-        return false;
-    }
-    if left.blocks_proven_distinct(right) {
-        return true;
-    }
-    if crate::instrumentation::measure_operation(
-        "kernel",
-        "resource context equality",
-        "general alias: explicit range",
-        || {
-            assumptions
-                .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
-        },
-    ) || crate::instrumentation::measure_operation(
-        "kernel",
-        "resource context equality",
-        "general alias: common base",
-        || pointer_offsets_with_common_base_proven_distinct(left, right, assumptions),
-    ) || crate::instrumentation::measure_operation(
-        "kernel",
-        "resource context equality",
-        "general alias: range",
-        || assumptions.pointers_proven_disjoint_by_range(left, right),
-    ) {
-        return true;
-    }
-    if left.block == right.block
-        && crate::instrumentation::measure_operation(
-            "kernel",
-            "resource context equality",
-            "general alias: offset disequality",
-            || {
-                assumptions.decide(&ConditionTerm::pointer_offset_equal(
-                    left.offset.clone(),
-                    right.offset.clone(),
-                )) == Some(false)
-            },
-        )
-    {
-        return true;
-    }
-    crate::instrumentation::measure_operation(
-        "kernel",
-        "resource context equality",
-        "general alias: pointer disequality",
-        || {
-            assumptions.decide(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
-                == Some(false)
-        },
-    )
-}
-
 /// Alias check used while resolving a symbolic memory load. This deliberately
 /// avoids general equality transport because that transport may itself resolve
 /// memory loads.
@@ -1364,13 +1306,6 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
         .into_iter()
         .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
         .all(|cell_pointer| {
-            // Inside a condition decision only the bounded resolution check
-            // is safe: the general distinctness check consults `decide`,
-            // whose order-fact matching resolves memory loads and re-enters
-            // this function, forming an unbounded cycle. Suppressing the
-            // general check weakens the search, so record a truncation: a
-            // negative answer from this weaker context must not be memoized
-            // and checked where the full check would have run.
             crate::instrumentation::measure_operation(
                 "kernel",
                 "resource context equality",
@@ -1382,19 +1317,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
                         assumptions,
                     )
                 },
-            ) || if crate::kernel::assumptions::inside_condition_decision()
-                || bounded_snapshot_comparison_active()
-            {
-                crate::kernel::assumptions::note_search_truncation();
-                false
-            } else {
-                crate::instrumentation::measure_operation(
-                    "kernel",
-                    "resource context equality",
-                    "snapshot comparison: general alias",
-                    || pointers_proven_distinct(&cell_pointer, pointer, assumptions),
-                )
-            }
+            )
         })
 }
 
