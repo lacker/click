@@ -721,6 +721,16 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             assumptions,
             budget,
         )?,
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => evaluate_c_float_classification_paths(
+            state,
+            expression,
+            *classification,
+            assumptions,
+            budget,
+        )?,
         CExpression::AddressOf(target) => {
             address_of_lvalue_paths(state, target, assumptions, budget)?
         }
@@ -1013,6 +1023,53 @@ fn evaluate_c_cast_paths(
             facts,
             obligations,
         });
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_float_classification_paths(
+    state: &CState,
+    expression: &CExpression,
+    classification: CFloatClassification,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        match path.outcome {
+            CExpressionOutcome::Value(CValue::Float32(value)) => {
+                paths.extend(condition_as_c_int32_paths(
+                    ConditionTerm::float32_classification(value, classification),
+                    path.facts,
+                    path.obligations,
+                    assumptions,
+                ));
+            }
+            CExpressionOutcome::Value(CValue::Float64(value)) => {
+                paths.extend(condition_as_c_int32_paths(
+                    ConditionTerm::float64_classification(value, classification),
+                    path.facts,
+                    path.obligations,
+                    assumptions,
+                ));
+            }
+            CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExpressionOutcome::UndefinedBehavior(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(error),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+        }
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
@@ -1721,9 +1778,18 @@ pub(in crate::kernel) fn c_truthiness_paths(
                 }
             }
         }
-        CValue::Float32(_) | CValue::Float64(_) => {
-            unreachable!("floating-point truthiness is outside the storage slice")
-        }
+        CValue::Float32(bits) => c_float_truthiness_paths(
+            ConditionTerm::float32_classification(bits, CFloatClassification::Zero),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        CValue::Float64(bits) => c_float_truthiness_paths(
+            ConditionTerm::float64_classification(bits, CFloatClassification::Zero),
+            facts,
+            obligations,
+            assumptions,
+        ),
         CValue::Pointer(pointer) => {
             let is_null = pointer_is_null_condition(pointer.pointer().clone());
             match decide_with_facts(assumptions, &facts, &is_null) {
@@ -1765,6 +1831,41 @@ pub(in crate::kernel) fn c_truthiness_paths(
                     ]
                 }
             }
+        }
+    }
+}
+
+fn c_float_truthiness_paths(
+    is_zero: ConditionTerm,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CTruthinessPath> {
+    match decide_with_facts(assumptions, &facts, &is_zero) {
+        Some(is_zero) => vec![CTruthinessPath {
+            is_true: !is_zero,
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut true_facts = facts.clone();
+            add_condition_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                .expect("unknown floating truthiness fact should be consistent");
+            let mut false_facts = facts;
+            add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
+                .expect("unknown floating truthiness fact should be consistent");
+            vec![
+                CTruthinessPath {
+                    is_true: true,
+                    facts: true_facts,
+                    obligations: obligations.clone(),
+                },
+                CTruthinessPath {
+                    is_true: false,
+                    facts: false_facts,
+                    obligations,
+                },
+            ]
         }
     }
 }

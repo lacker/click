@@ -100,6 +100,161 @@ fn floating_point_to_integer_conversion_truncates_and_rejects_invalid_values() {
         );
     }
 }
+
+#[test]
+fn floating_point_conditions_follow_ieee_ordering_and_classification() {
+    let state = CState::new();
+    let evaluate = |condition| {
+        let evaluation =
+            prove_symbolic_c_condition_evaluation(state.clone(), condition, PureFactContext::new());
+        assert_eq!(evaluation.paths().len(), 1);
+        match evaluation.paths()[0]
+            .theorem()
+            .proposition()
+            .peel_implications()
+        {
+            Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(value),
+                ..
+            } => *value,
+            proposition => panic!("unexpected concrete float condition {proposition:?}"),
+        }
+    };
+    let assert_ordering =
+        |left: CExpression, right: CExpression, expected: (bool, bool, bool, bool, bool, bool)| {
+            assert_eq!(
+                evaluate(c_less_than(left.clone(), right.clone())),
+                expected.0
+            );
+            assert_eq!(
+                evaluate(c_less_equal(left.clone(), right.clone())),
+                expected.1
+            );
+            assert_eq!(
+                evaluate(c_greater_than(left.clone(), right.clone())),
+                expected.2
+            );
+            assert_eq!(
+                evaluate(c_greater_equal(left.clone(), right.clone())),
+                expected.3
+            );
+            assert_eq!(evaluate(c_equal(left.clone(), right.clone())), expected.4);
+            assert_eq!(evaluate(c_not_equal(left, right)), expected.5);
+        };
+
+    assert_ordering(
+        c_float32_literal(1.0f32.to_bits()),
+        c_float32_literal(2.0f32.to_bits()),
+        (true, true, false, false, false, true),
+    );
+    assert_ordering(
+        c_float64_literal(1.0f64.to_bits()),
+        c_float64_literal(2.0f64.to_bits()),
+        (true, true, false, false, false, true),
+    );
+    assert_ordering(
+        c_float32_literal(0),
+        c_float32_literal(0x8000_0000),
+        (false, true, false, true, true, false),
+    );
+    assert_ordering(
+        c_float64_literal(0),
+        c_float64_literal(0x8000_0000_0000_0000),
+        (false, true, false, true, true, false),
+    );
+    assert_ordering(
+        c_float32_literal(0x7fc0_0000),
+        c_float32_literal(1.0f32.to_bits()),
+        (false, false, false, false, false, true),
+    );
+    assert_ordering(
+        c_float64_literal(0x7ff8_0000_0000_0000),
+        c_float64_literal(1.0f64.to_bits()),
+        (false, false, false, false, false, true),
+    );
+
+    let classifications = [
+        (1.0f32.to_bits(), CFloatClassification::Finite),
+        (f32::INFINITY.to_bits(), CFloatClassification::Infinite),
+        (0, CFloatClassification::Zero),
+        (1, CFloatClassification::Subnormal),
+        (0x7fc0_0000, CFloatClassification::Nan),
+    ];
+    for (bits, expected_classification) in classifications {
+        for classification in [
+            CFloatClassification::Finite,
+            CFloatClassification::Infinite,
+            CFloatClassification::Zero,
+            CFloatClassification::Subnormal,
+            CFloatClassification::Nan,
+        ] {
+            assert_eq!(
+                evaluate(c_float_classification(
+                    c_float32_literal(bits),
+                    classification,
+                )),
+                match expected_classification {
+                    CFloatClassification::Finite => classification == CFloatClassification::Finite,
+                    CFloatClassification::Zero => matches!(
+                        classification,
+                        CFloatClassification::Finite | CFloatClassification::Zero
+                    ),
+                    CFloatClassification::Subnormal => matches!(
+                        classification,
+                        CFloatClassification::Finite | CFloatClassification::Subnormal
+                    ),
+                    _ => classification == expected_classification,
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn symbolic_floating_conditions_split_and_preserve_float_truthiness() {
+    let variable = Variable(901);
+    let state = CState::new().with_local("value", float32(Bitvector32Term::Variable(variable)));
+    let outcomes = |condition| {
+        prove_symbolic_c_condition_evaluation(state.clone(), condition, PureFactContext::new())
+            .paths()
+            .iter()
+            .map(
+                |path| match path.theorem().proposition().peel_implications() {
+                    Proposition::CConditionEvaluates { outcome, .. } => outcome.clone(),
+                    proposition => panic!("unexpected symbolic float condition {proposition:?}"),
+                },
+            )
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        outcomes(c_less_than(
+            c_variable("value"),
+            c_float32_literal(1.0f32.to_bits()),
+        )),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+    assert_eq!(
+        outcomes(c_float_classification(
+            c_variable("value"),
+            CFloatClassification::Nan,
+        )),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+    assert_eq!(
+        outcomes(c_variable("value")),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+}
+
 #[test]
 fn signed_add_overflow_is_native_undefined_behavior() {
     let state = CState::new();

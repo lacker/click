@@ -2595,6 +2595,9 @@ pub(super) fn collect_address_taken_in_expression(
             collect_address_taken_in_expression(then_branch, names);
             collect_address_taken_in_expression(else_branch, names);
         }
+        CExpression::FloatClassification { expression, .. } => {
+            collect_address_taken_in_expression(expression, names)
+        }
         CExpression::PointerOffsetBytes { pointer, .. } => {
             collect_address_taken_in_expression(pointer, names)
         }
@@ -2647,6 +2650,9 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
             collect_variable_names(condition, names);
             collect_variable_names(then_branch, names);
             collect_variable_names(else_branch, names);
+        }
+        CExpression::FloatClassification { expression, .. } => {
+            collect_variable_names(expression, names)
         }
         CExpression::PointerOffsetBytes { pointer, .. } => collect_variable_names(pointer, names),
         CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {

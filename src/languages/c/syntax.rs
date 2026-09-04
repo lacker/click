@@ -872,6 +872,15 @@ pub enum C0UpdateOperator {
     BitwiseXor,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum C0FloatClassification {
+    Finite,
+    Infinite,
+    Zero,
+    Subnormal,
+    Nan,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Expression {
     Void,
@@ -895,6 +904,10 @@ pub enum C0Expression {
         condition: Box<C0Expression>,
         then_branch: Box<C0Expression>,
         else_branch: Box<C0Expression>,
+    },
+    FloatClassification {
+        expression: Box<C0Expression>,
+        classification: C0FloatClassification,
     },
     AddressOf(Box<C0Expression>),
     PointerOffsetBytes {
@@ -1577,6 +1590,23 @@ impl C0Expression {
                 then_branch.to_kernel_expression(),
                 else_branch.to_kernel_expression(),
             ),
+            Self::FloatClassification {
+                expression,
+                classification,
+            } => crate::kernel::c_float_classification(
+                expression.to_kernel_expression(),
+                match classification {
+                    C0FloatClassification::Finite => crate::kernel::CFloatClassification::Finite,
+                    C0FloatClassification::Infinite => {
+                        crate::kernel::CFloatClassification::Infinite
+                    }
+                    C0FloatClassification::Zero => crate::kernel::CFloatClassification::Zero,
+                    C0FloatClassification::Subnormal => {
+                        crate::kernel::CFloatClassification::Subnormal
+                    }
+                    C0FloatClassification::Nan => crate::kernel::CFloatClassification::Nan,
+                },
+            ),
             Self::AddressOf(target) => match target.as_ref() {
                 Self::AggregateAddress { pointer, .. } | Self::UnionAddress { pointer, .. } => {
                     pointer.to_kernel_expression()
@@ -2064,6 +2094,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         C0Expression::Call { .. } => false,
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatClassification { expression, .. }
         | C0Expression::PointerOffsetBytes {
             pointer: expression,
             ..
@@ -6272,6 +6303,19 @@ impl Parser {
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
+            C0Expression::FloatClassification {
+                expression,
+                classification,
+            } => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((
+                    prefix,
+                    C0Expression::FloatClassification {
+                        expression: Box::new(expression),
+                        classification,
+                    },
+                ))
+            }
             C0Expression::AddressOf(expression) => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((prefix, C0Expression::AddressOf(Box::new(expression))))
@@ -7594,7 +7638,11 @@ fn parse_float_classification_call(
     arguments: &[C0Expression],
 ) -> Option<Result<C0Expression, &'static str>> {
     let classification = match function_name {
-        "isfinite" | "isinf" | "iszero" | "issubnormal" | "isnan" => function_name,
+        "isfinite" => C0FloatClassification::Finite,
+        "isinf" => C0FloatClassification::Infinite,
+        "iszero" => C0FloatClassification::Zero,
+        "issubnormal" => C0FloatClassification::Subnormal,
+        "isnan" => C0FloatClassification::Nan,
         _ => return None,
     };
     if arguments.len() != 1 {
@@ -7604,16 +7652,29 @@ fn parse_float_classification_call(
     }
     let result = match &arguments[0] {
         C0Expression::Float32Literal(bits) => {
-            classify_float_bits(u64::from(*bits), 8, 23, classification)
+            classify_float_bits(u64::from(*bits), 8, 23, classification_name(classification))
         }
-        C0Expression::Float64Literal(bits) => classify_float_bits(*bits, 11, 52, classification),
+        C0Expression::Float64Literal(bits) => {
+            classify_float_bits(*bits, 11, 52, classification_name(classification))
+        }
         _ => {
-            return Some(Err(
-                "floating classification predicates currently require a float or double literal",
-            ));
+            return Some(Ok(C0Expression::FloatClassification {
+                expression: Box::new(arguments[0].clone()),
+                classification,
+            }));
         }
     };
     Some(Ok(C0Expression::Int32Literal(u32::from(result))))
+}
+
+fn classification_name(classification: C0FloatClassification) -> &'static str {
+    match classification {
+        C0FloatClassification::Finite => "isfinite",
+        C0FloatClassification::Infinite => "isinf",
+        C0FloatClassification::Zero => "iszero",
+        C0FloatClassification::Subnormal => "issubnormal",
+        C0FloatClassification::Nan => "isnan",
+    }
 }
 
 fn classify_float_bits(
@@ -8049,6 +8110,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             ..
         } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatClassification { expression, .. }
         | C0Expression::AddressOf(expression)
         | C0Expression::PointerOffsetBytes {
             pointer: expression,
@@ -8111,6 +8173,7 @@ fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
         match expression {
             C0Expression::Call { .. } => return true,
             C0Expression::Cast { expression, .. }
+            | C0Expression::FloatClassification { expression, .. }
             | C0Expression::AddressOf(expression)
             | C0Expression::PointerOffsetBytes {
                 pointer: expression,

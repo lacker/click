@@ -552,6 +552,9 @@ fn condition_fact_mentions_load_of(
             collect_loads(left, &mut loads);
             collect_loads(right, &mut loads);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
+        }
         ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _)
         | ConditionTerm::Constant(_)
@@ -971,6 +974,9 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
                 collect_loads(left, loads);
                 collect_loads(right, loads);
+            }
+            ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+                float_condition.for_each_bitvector_term(|term| collect_loads(term, loads));
             }
             ConditionTerm::PointerOffsetEqual(_, _)
             | ConditionTerm::PointerEqual(_, _)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::{CComparisonOperator, CFloatCondition};
 use std::fmt::Write;
 
 const MAX_DIAGNOSTIC_ITEMS: usize = 12;
@@ -228,6 +229,14 @@ pub(super) fn describe_pure_fact(
                 ConditionTerm::Bitvector64SignedDivideOverflows(_, _) => "int64 division overflow",
                 ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _) => {
                     "int64 left-shift overflow"
+                }
+                ConditionTerm::Float32(CFloatCondition::Comparison { .. }) => "float32 comparison",
+                ConditionTerm::Float32(CFloatCondition::Classification { .. }) => {
+                    "float32 classification"
+                }
+                ConditionTerm::Float64(CFloatCondition::Comparison { .. }) => "float64 comparison",
+                ConditionTerm::Float64(CFloatCondition::Classification { .. }) => {
+                    "float64 classification"
                 }
                 ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
                 ConditionTerm::PointerEqual(_, _) => "pointer equality",
@@ -894,6 +903,13 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
             expression,
             target_type,
         } => format!("({target_type:?}){}", describe_c_expression(expression)),
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => format!(
+            "is{classification:?}({})",
+            describe_c_expression(expression)
+        ),
         CExpression::Conditional {
             condition,
             then_branch,
@@ -1586,6 +1602,8 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
                 describe_bitvector(right)
             )
         }
+        ConditionTerm::Float32(float_condition) => describe_float_condition(float_condition),
+        ConditionTerm::Float64(float_condition) => describe_float_condition(float_condition),
         ConditionTerm::PointerOffsetEqual(left, right) => format!(
             "{} == {}",
             describe_pointer_offset(left),
@@ -1611,4 +1629,28 @@ pub(super) fn describe_binary_condition(
         describe_bitvector(left),
         describe_bitvector(right)
     )
+}
+
+fn describe_float_condition(condition: &CFloatCondition) -> String {
+    match condition {
+        CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        } => {
+            let operator = match operator {
+                CComparisonOperator::Equal => "==",
+                CComparisonOperator::NotEqual => "!=",
+                CComparisonOperator::LessThan => "<",
+                CComparisonOperator::LessEqual => "<=",
+                CComparisonOperator::GreaterThan => ">",
+                CComparisonOperator::GreaterEqual => ">=",
+            };
+            describe_binary_condition(left, operator, right)
+        }
+        CFloatCondition::Classification {
+            classification,
+            value,
+        } => format!("is{classification:?}({})", describe_bitvector(value)),
+    }
 }

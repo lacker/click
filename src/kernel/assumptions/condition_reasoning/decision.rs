@@ -592,6 +592,38 @@ impl PureFactContext {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Float32(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => ConditionTerm::float32_compare(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            ConditionTerm::Float32(CFloatCondition::Classification {
+                classification,
+                value,
+            }) => ConditionTerm::float32_classification(
+                self.simplify_bitvector_under_assumptions(value),
+                *classification,
+            ),
+            ConditionTerm::Float64(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => ConditionTerm::float64_compare(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            ConditionTerm::Float64(CFloatCondition::Classification {
+                classification,
+                value,
+            }) => ConditionTerm::float64_classification(
+                self.simplify_bitvector_under_assumptions(value),
+                *classification,
+            ),
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }

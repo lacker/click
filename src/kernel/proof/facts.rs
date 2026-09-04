@@ -809,6 +809,9 @@ fn collect_condition_bitvector_atoms(
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bitvector_atoms(left, atoms);
             collect_pointer_offset_bitvector_atoms(right, atoms);

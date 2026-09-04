@@ -726,6 +726,9 @@ fn collect_c_expression_bound_variables(
             collect_c_expression_bound_variables(then_branch, variables);
             collect_c_expression_bound_variables(else_branch, variables);
         }
+        CExpression::FloatClassification { expression, .. } => {
+            collect_c_expression_bound_variables(expression, variables);
+        }
         CExpression::AddressOf(body)
         | CExpression::Not(body)
         | CExpression::Load(body)
@@ -1163,6 +1166,10 @@ fn collect_condition_bound_variables(
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_bound_variables(term, variables));
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bound_variables(left, variables);
             collect_pointer_offset_bound_variables(right, variables);
@@ -1263,6 +1270,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
                 from,
                 to,
             )),
+        },
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => CExpression::FloatClassification {
+            expression: Box::new(substitute_bitvector_variable_in_c_expression(
+                expression, from, to,
+            )),
+            classification: *classification,
         },
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
@@ -2582,6 +2598,38 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        ConditionTerm::Float32(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => ConditionTerm::float32_compare(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        ConditionTerm::Float32(CFloatCondition::Classification {
+            classification,
+            value,
+        }) => ConditionTerm::float32_classification(
+            substitute_bitvector_variable(value, from, to),
+            *classification,
+        ),
+        ConditionTerm::Float64(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => ConditionTerm::float64_compare(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        ConditionTerm::Float64(CFloatCondition::Classification {
+            classification,
+            value,
+        }) => ConditionTerm::float64_classification(
+            substitute_bitvector_variable(value, from, to),
+            *classification,
+        ),
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             substitute_bitvector_variable_in_pointer_offset(left, from, to),
             substitute_bitvector_variable_in_pointer_offset(right, from, to),
@@ -3531,6 +3579,15 @@ fn substitute_pointer_variable_in_c_expression(
                 from,
                 to,
             )),
+        },
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => CExpression::FloatClassification {
+            expression: Box::new(substitute_pointer_variable_in_c_expression(
+                expression, from, to,
+            )),
+            classification: *classification,
         },
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_pointer_variable_in_c_expression(body, from, to),

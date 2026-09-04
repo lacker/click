@@ -2812,6 +2812,16 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                     pending.push(Node::Term(right, depth + 1));
                     pending.push(Node::Term(left, depth + 1));
                 }
+                ConditionTerm::Float32(float_condition)
+                | ConditionTerm::Float64(float_condition) => match float_condition {
+                    CFloatCondition::Comparison { left, right, .. } => {
+                        pending.push(Node::Term(right, depth + 1));
+                        pending.push(Node::Term(left, depth + 1));
+                    }
+                    CFloatCondition::Classification { value, .. } => {
+                        pending.push(Node::Term(value, depth + 1));
+                    }
+                },
                 ConditionTerm::PointerOffsetEqual(left, right) => {
                     pending.push(Node::Offset(right, depth + 1));
                     pending.push(Node::Offset(left, depth + 1));
@@ -2848,6 +2858,11 @@ enum AtomicCanonicalizationTask<'a> {
     RebuildBinary(AtomicBinaryConstructor),
     RebuildUnary(AtomicUnaryConstructor),
     RebuildConditionBinary(AtomicConditionConstructor),
+    RebuildFloatCondition {
+        is_float64: bool,
+        condition: CFloatCondition,
+        term_count: usize,
+    },
     RebuildPointerOffsetEqual,
     RebuildPointerEqual {
         left_block: PointerBlock,
@@ -3351,6 +3366,46 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                         tasks
                     )
                 }
+                ConditionTerm::Float32(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(AtomicCanonicalizationTask::RebuildFloatCondition {
+                        is_float64: false,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(AtomicCanonicalizationTask::Visit(right));
+                            tasks.push(AtomicCanonicalizationTask::Visit(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(AtomicCanonicalizationTask::Visit(value));
+                        }
+                    }
+                }
+                ConditionTerm::Float64(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(AtomicCanonicalizationTask::RebuildFloatCondition {
+                        is_float64: true,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(AtomicCanonicalizationTask::Visit(right));
+                            tasks.push(AtomicCanonicalizationTask::Visit(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(AtomicCanonicalizationTask::Visit(value));
+                        }
+                    }
+                }
                 ConditionTerm::PointerOffsetEqual(left, right) => {
                     tasks.push(AtomicCanonicalizationTask::RebuildPointerOffsetEqual);
                     tasks.push(AtomicCanonicalizationTask::VisitOffset(right));
@@ -3403,6 +3458,25 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                 let right = results.pop().expect("visited right condition operand");
                 let left = results.pop().expect("visited left condition operand");
                 condition_results.push(constructor(Box::new(left), Box::new(right)));
+            }
+            AtomicCanonicalizationTask::RebuildFloatCondition {
+                is_float64,
+                condition,
+                term_count,
+            } => {
+                let first = results.len() - term_count;
+                let mut index = first;
+                let rebuilt = condition.map_bitvector_terms(|_| {
+                    let term = results[index].clone();
+                    index += 1;
+                    term
+                });
+                results.truncate(first);
+                condition_results.push(if is_float64 {
+                    ConditionTerm::Float64(rebuilt)
+                } else {
+                    ConditionTerm::Float32(rebuilt)
+                });
             }
             AtomicCanonicalizationTask::RebuildPointerOffsetEqual => {
                 let right = offset_results.pop().expect("visited right pointer offset");
@@ -3763,6 +3837,13 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             bitvector_has_memory(left) || bitvector_has_memory(right)
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            let mut has_memory = false;
+            float_condition.for_each_bitvector_term(|term| {
+                has_memory |= bitvector_has_memory(term);
+            });
+            has_memory
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             offset_has_memory(left) || offset_has_memory(right)
         }
@@ -3803,6 +3884,10 @@ fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<Shar
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_binary(left, right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_memories(term, memories));
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_memories(left, memories);
@@ -4022,6 +4107,16 @@ fn transport_framed_atomic_condition(
         ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             let (left, right) = binary(left, right)?;
             ConditionTerm::int64_signed_shift_left_overflows(left, right)
+        }
+        ConditionTerm::Float32(float_condition) => {
+            ConditionTerm::Float32(float_condition.try_map_bitvector_terms(|term| {
+                transport_framed_atomic_bitvector(term, after, assumptions)
+            })?)
+        }
+        ConditionTerm::Float64(float_condition) => {
+            ConditionTerm::Float64(float_condition.try_map_bitvector_terms(|term| {
+                transport_framed_atomic_bitvector(term, after, assumptions)
+            })?)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             transport_framed_atomic_pointer_offset(left, after, assumptions)?,

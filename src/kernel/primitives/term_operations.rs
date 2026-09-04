@@ -1037,6 +1037,72 @@ impl PointerOffsetTerm {
 }
 
 impl ConditionTerm {
+    pub(crate) fn float32_compare(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        operator: CComparisonOperator,
+    ) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant(compare_float_bits(
+                u64::from(left),
+                u64::from(right),
+                8,
+                23,
+                operator,
+            )),
+            _ => Self::Float32(CFloatCondition::Comparison {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+        }
+    }
+
+    pub(crate) fn float64_compare(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        operator: CComparisonOperator,
+    ) -> Self {
+        match (left.uint64_as_const(), right.uint64_as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant(compare_float_bits(left, right, 11, 52, operator))
+            }
+            _ => Self::Float64(CFloatCondition::Comparison {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+        }
+    }
+
+    pub(crate) fn float32_classification(
+        value: Bitvector32Term,
+        classification: CFloatClassification,
+    ) -> Self {
+        match value.as_const() {
+            Some(value) => {
+                Self::Constant(classify_float_bits(u64::from(value), 8, 23, classification))
+            }
+            None => Self::Float32(CFloatCondition::Classification {
+                classification,
+                value: Box::new(value),
+            }),
+        }
+    }
+
+    pub(crate) fn float64_classification(
+        value: Bitvector32Term,
+        classification: CFloatClassification,
+    ) -> Self {
+        match value.uint64_as_const() {
+            Some(value) => Self::Constant(classify_float_bits(value, 11, 52, classification)),
+            None => Self::Float64(CFloatCondition::Classification {
+                classification,
+                value: Box::new(value),
+            }),
+        }
+    }
+
     pub(crate) fn int64_signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.int64_as_const(), right.int64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left < right),
@@ -1329,6 +1395,83 @@ impl ConditionTerm {
         } else {
             Self::PointerEqual(Box::new(left), Box::new(right))
         }
+    }
+}
+
+fn classify_float_bits(
+    bits: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    classification: CFloatClassification,
+) -> bool {
+    let exponent_mask = (1u64 << exponent_bits) - 1;
+    let exponent = (bits >> fraction_bits) & exponent_mask;
+    let fraction = bits & ((1u64 << fraction_bits) - 1);
+    let all_ones = exponent == exponent_mask;
+    let zero_exponent = exponent == 0;
+    match classification {
+        CFloatClassification::Finite => !all_ones,
+        CFloatClassification::Infinite => all_ones && fraction == 0,
+        CFloatClassification::Zero => zero_exponent && fraction == 0,
+        CFloatClassification::Subnormal => zero_exponent && fraction != 0,
+        CFloatClassification::Nan => all_ones && fraction != 0,
+    }
+}
+
+fn compare_float_bits(
+    left: u64,
+    right: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    operator: CComparisonOperator,
+) -> bool {
+    let nan = CFloatClassification::Nan;
+    let left_nan = classify_float_bits(left, exponent_bits, fraction_bits, nan);
+    let right_nan = classify_float_bits(right, exponent_bits, fraction_bits, nan);
+    if left_nan || right_nan {
+        return matches!(operator, CComparisonOperator::NotEqual);
+    }
+
+    let left_zero = classify_float_bits(
+        left,
+        exponent_bits,
+        fraction_bits,
+        CFloatClassification::Zero,
+    );
+    let right_zero = classify_float_bits(
+        right,
+        exponent_bits,
+        fraction_bits,
+        CFloatClassification::Zero,
+    );
+    let equal = (left_zero && right_zero) || left == right;
+    if equal {
+        return matches!(
+            operator,
+            CComparisonOperator::Equal
+                | CComparisonOperator::LessEqual
+                | CComparisonOperator::GreaterEqual
+        );
+    }
+
+    let sign_bit = 1u64 << (exponent_bits + fraction_bits);
+    let left_key = if left & sign_bit != 0 {
+        !left
+    } else {
+        left ^ sign_bit
+    };
+    let right_key = if right & sign_bit != 0 {
+        !right
+    } else {
+        right ^ sign_bit
+    };
+    match operator {
+        CComparisonOperator::Equal => false,
+        CComparisonOperator::NotEqual => true,
+        CComparisonOperator::LessThan => left_key < right_key,
+        CComparisonOperator::LessEqual => left_key <= right_key,
+        CComparisonOperator::GreaterThan => left_key > right_key,
+        CComparisonOperator::GreaterEqual => left_key >= right_key,
     }
 }
 

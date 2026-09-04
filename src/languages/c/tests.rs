@@ -6451,6 +6451,42 @@ fn c0_floating_point_constants_cover_ties_signs_and_classification() {
 }
 
 #[test]
+fn c0_floating_point_conditions_accept_symbolic_operands() {
+    let functions = syntax::parse_functions(
+        r#"
+        int compare(float value) { return value < 1.0f; }
+        int classify(double value) { return isfinite(value) && !isnan(value); }
+        "#,
+    )
+    .expect("symbolic floating comparisons and classifications should parse");
+
+    assert!(matches!(
+        functions[0].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::LessThan(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Variable(name) if name == "value")
+                && matches!(right.as_ref(), syntax::C0Expression::Float32Literal(bits) if *bits == 1.0f32.to_bits())
+    ));
+    assert!(matches!(
+        functions[1].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::And(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::FloatClassification {
+                expression,
+                classification: syntax::C0FloatClassification::Finite,
+            } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "value"))
+                && matches!(right.as_ref(), syntax::C0Expression::Not(inner)
+                    if matches!(inner.as_ref(), syntax::C0Expression::FloatClassification {
+                        expression,
+                        classification: syntax::C0FloatClassification::Nan,
+                    } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "value")))
+    ));
+
+    let compare = functions[0].to_kernel_function();
+    assert_eq!(compare.return_type(), crate::kernel::CType::Int32);
+    let classify = functions[1].to_kernel_function();
+    assert_eq!(classify.return_type(), crate::kernel::CType::Int32);
+}
+
+#[test]
 fn c0_floating_point_storage_initializers_cover_static_local_arrays_and_calloc() {
     let functions = syntax::parse_functions(
         r#"

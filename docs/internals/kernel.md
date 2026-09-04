@@ -233,7 +233,8 @@ In `src/kernel/`:
   `If`, `RangeFold`, and memory loads.
 - `PointerOffsetTerm`: pointer-offset expressions.
 - `ConditionTerm`: proof-level truth-valued conditions such as signed and
-  unsigned order, equality, overflow, and pointer-offset equality.
+  unsigned order, equality, overflow, pointer-offset equality, and typed
+  IEEE floating comparisons/classifications.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
   including the non-object `Void` return value, scalar `int16`, `int32`,
   `uint8`, `uint16`, `uint32`, `int64`, and `uint64`, pointers, and typed
@@ -357,13 +358,14 @@ the supported LP64 host ABI.
 ## Floating-point semantic boundary
 
 The kernel models `float` and `double` as typed IEEE-754 payloads in `CType`
-and `CValue`. Slices 1 and 2 carry those payloads through parameters, locals,
+and `CValue`. Slices 1 through 3 carry those payloads through parameters, locals,
 structs, arrays, allocation, typed memory loads/stores, and copies at their
 declared widths. Constant casts use integer-space round-to-nearest,
-ties-to-even conversion, and unary negation is a sign-bit operation. Symbolic
-floating arithmetic, comparisons, and conditions remain unsupported until
-later slices. The source expander still rejects floating-point environment
-directives.
+ties-to-even conversion, and unary negation is a sign-bit operation. Same-width
+comparisons and classification predicates use typed conditions: symbolic values
+split paths without being coerced to ordered mathematical reals. Floating
+arithmetic remains unsupported until later slices. The source expander still
+rejects floating-point environment directives.
 
 The C model is deliberately fixed to the supported LP64 ABI: `float` is
 IEEE-754 binary32 with size and alignment 4, and `double` is IEEE-754 binary64
@@ -383,8 +385,10 @@ NaN results; those are not integer-style C undefined behavior. Converting to an
 integer is a separate checked operation and is undefined for NaN, infinity, or
 an out-of-range value. Classification predicates and raw representation casts
 are separate modeled interfaces, not permissions to inspect or reinterpret
-kernel internals. Literal classification is exposed through the source-level
+kernel internals. Classification is exposed through the source-level
 `isfinite`, `isinf`, `iszero`, `issubnormal`, and `isnan` builtins. Constant
+classification folds by IEEE bit rules; symbolic classification remains a
+checked condition suitable for path assumptions and contracts. Constant
 float-to-integer conversion is accepted only for finite, representable values;
 other float-to-integer casts remain explicit unsupported/type-error outcomes
 until definedness checks are carried into the symbolic model.

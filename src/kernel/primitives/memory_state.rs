@@ -21,6 +21,10 @@ enum HavocIdentityTask {
     PointerOffset(PointerOffsetTerm),
     Bitvector(Bitvector32Term),
     Condition(ConditionTerm),
+    FloatCondition {
+        condition: CFloatCondition,
+        is_float64: bool,
+    },
     LeaveRegisteredLoad(Variable),
 }
 
@@ -380,6 +384,34 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                     }
                 }
             }
+            HavocIdentityTask::FloatCondition {
+                condition,
+                is_float64,
+            } => {
+                crate::instrumentation::record_deterministic_work(1);
+                let width = if is_float64 { "64" } else { "32" };
+                match condition {
+                    CFloatCondition::Comparison {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let _ = write!(identity, "fc{width}cmp{operator:?}(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*right));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*left));
+                    }
+                    CFloatCondition::Classification {
+                        classification,
+                        value,
+                    } => {
+                        let _ = write!(identity, "fc{width}class{classification:?}(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                }
+            }
             HavocIdentityTask::Condition(condition) => {
                 crate::instrumentation::record_deterministic_work(1);
                 match condition {
@@ -542,6 +574,18 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                             *left,
                             *right,
                         )
+                    }
+                    ConditionTerm::Float32(condition) => {
+                        tasks.push(HavocIdentityTask::FloatCondition {
+                            condition,
+                            is_float64: false,
+                        });
+                    }
+                    ConditionTerm::Float64(condition) => {
+                        tasks.push(HavocIdentityTask::FloatCondition {
+                            condition,
+                            is_float64: true,
+                        });
                     }
                     ConditionTerm::PointerOffsetEqual(left, right) => {
                         identity.push_str("coe(");

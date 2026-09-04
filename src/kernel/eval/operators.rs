@@ -1188,6 +1188,18 @@ fn apply_c_comparison(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, operator),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, operator),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
@@ -3123,6 +3135,18 @@ pub(in crate::kernel) fn apply_c_equal(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, CComparisonOperator::Equal),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, CComparisonOperator::Equal),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
@@ -3234,6 +3258,18 @@ pub(in crate::kernel) fn apply_c_not_equal(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, CComparisonOperator::NotEqual),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, CComparisonOperator::NotEqual),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }

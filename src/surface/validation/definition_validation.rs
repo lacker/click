@@ -1366,6 +1366,9 @@ fn collect_resource_fact_reads_from_c_expression(
         CExpression::Cast { expression, .. } => {
             collect_resource_fact_reads_from_c_expression(expression, reads);
         }
+        CExpression::FloatClassification { expression, .. } => {
+            collect_resource_fact_reads_from_c_expression(expression, reads);
+        }
         CExpression::Conditional {
             condition,
             then_branch,

@@ -1787,6 +1787,8 @@ pub(in crate::surface) fn simp_condition_without_assumptions(
         | ConditionTerm::Bitvector64SignedMultiplyOverflows(_, _)
         | ConditionTerm::Bitvector64SignedDivideOverflows(_, _)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _)
+        | ConditionTerm::Float32(_)
+        | ConditionTerm::Float64(_)
         | ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _) => None,
     }

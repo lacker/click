@@ -6,8 +6,8 @@
 
 use crate::kernel::Sort;
 use crate::kernel::{
-    Bitvector32Term, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
-    PointerOffsetTerm, Proposition, Variable,
+    Bitvector32Term, CComparisonOperator, CFloatClassification, CFloatCondition, CMemoryRange,
+    CResource, ConditionTerm, Pointer, PointerBlock, PointerOffsetTerm, Proposition, Variable,
 };
 use std::collections::BTreeMap;
 
@@ -64,8 +64,23 @@ pub(crate) enum SnapshotBlindConditionKey {
     MultiplyOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
     DivideOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
     ShiftLeftOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    Float32(SnapshotBlindFloatConditionKey),
+    Float64(SnapshotBlindFloatConditionKey),
     PointerOffsetEqual(SnapshotBlindPointerOffsetKey, SnapshotBlindPointerOffsetKey),
     PointerEqual(SnapshotBlindPointerKey, SnapshotBlindPointerKey),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) enum SnapshotBlindFloatConditionKey {
+    Comparison {
+        operator: CComparisonOperator,
+        left: SnapshotBlindBitvectorKey,
+        right: SnapshotBlindBitvectorKey,
+    },
+    Classification {
+        classification: CFloatClassification,
+        value: SnapshotBlindBitvectorKey,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -134,6 +149,7 @@ impl SnapshotBlindConditionKey {
             | Self::ShiftLeftOverflows(left, right) => {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
+            Self::Float32(condition) | Self::Float64(condition) => condition.forgets_a_snapshot(),
             Self::PointerOffsetEqual(left, right) => {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
@@ -141,6 +157,17 @@ impl SnapshotBlindConditionKey {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
             Self::Constant(_) | Self::Variable(_) => false,
+        }
+    }
+}
+
+impl SnapshotBlindFloatConditionKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::Comparison { left, right, .. } => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::Classification { value, .. } => value.forgets_a_snapshot(),
         }
     }
 }
@@ -311,6 +338,12 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
             let (left, right) = terms(left, right);
             SnapshotBlindConditionKey::ShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Float32(float_condition) => {
+            SnapshotBlindConditionKey::Float32(snapshot_blind_float_condition_key(float_condition))
+        }
+        ConditionTerm::Float64(float_condition) => {
+            SnapshotBlindConditionKey::Float64(snapshot_blind_float_condition_key(float_condition))
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             SnapshotBlindConditionKey::PointerOffsetEqual(
                 snapshot_blind_pointer_offset_key(left),
@@ -321,6 +354,29 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
             snapshot_blind_pointer_key(left),
             snapshot_blind_pointer_key(right),
         ),
+    }
+}
+
+fn snapshot_blind_float_condition_key(
+    condition: &CFloatCondition,
+) -> SnapshotBlindFloatConditionKey {
+    match condition {
+        CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        } => SnapshotBlindFloatConditionKey::Comparison {
+            operator: *operator,
+            left: snapshot_blind_bitvector_key(left),
+            right: snapshot_blind_bitvector_key(right),
+        },
+        CFloatCondition::Classification {
+            classification,
+            value,
+        } => SnapshotBlindFloatConditionKey::Classification {
+            classification: *classification,
+            value: snapshot_blind_bitvector_key(value),
+        },
     }
 }
 

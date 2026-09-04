@@ -659,6 +659,11 @@ fn infer_c_expression_type(
                 _ => None,
             }
         }
+        CExpression::FloatClassification { expression, .. } => matches!(
+            infer_c_expression_type(expression, variables),
+            Some(C0Type::Float32 | C0Type::Float64)
+        )
+        .then_some(C0Type::Int32),
         CExpression::AddressOf(_) | CExpression::FunctionAddress(_) => None,
         CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)

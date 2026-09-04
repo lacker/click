@@ -270,6 +270,9 @@ pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
             collect_c_expression_bitvector_variables(then_branch, variables);
             collect_c_expression_bitvector_variables(else_branch, variables);
         }
+        CExpression::FloatClassification { expression, .. } => {
+            collect_c_expression_bitvector_variables(expression, variables)
+        }
         CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }
@@ -893,6 +896,10 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_variables(term, variables));
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bitvector_variables(left, variables);

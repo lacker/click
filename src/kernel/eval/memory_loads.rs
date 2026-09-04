@@ -1123,6 +1123,12 @@ pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
             let (left, right) = binary(left, right);
             ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Float32(float_condition) => {
+            ConditionTerm::Float32(float_condition.map_bitvector_terms(canonical_term))
+        }
+        ConditionTerm::Float64(float_condition) => {
+            ConditionTerm::Float64(float_condition.map_bitvector_terms(canonical_term))
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
             Box::new(canonical_offset_term(left)),
             Box::new(canonical_offset_term(right)),
@@ -1175,6 +1181,11 @@ fn substitute_load_variables(
             argument_count: usize,
         },
         RebuildConditionBinary(ConditionConstructor),
+        RebuildFloatCondition {
+            is_float64: bool,
+            condition: CFloatCondition,
+            term_count: usize,
+        },
         RebuildPointerOffsetEqual,
         RebuildPointerEqual {
             left_block: PointerBlock,
@@ -1563,6 +1574,46 @@ fn substitute_load_variables(
                         tasks
                     )
                 }
+                ConditionTerm::Float32(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(Task::RebuildFloatCondition {
+                        is_float64: false,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(Task::VisitTerm(right));
+                            tasks.push(Task::VisitTerm(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(Task::VisitTerm(value));
+                        }
+                    }
+                }
+                ConditionTerm::Float64(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(Task::RebuildFloatCondition {
+                        is_float64: true,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(Task::VisitTerm(right));
+                            tasks.push(Task::VisitTerm(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(Task::VisitTerm(value));
+                        }
+                    }
+                }
                 ConditionTerm::PointerOffsetEqual(left, right) => {
                     tasks.push(Task::RebuildPointerOffsetEqual);
                     tasks.push(Task::VisitOffset(right));
@@ -1633,6 +1684,25 @@ fn substitute_load_variables(
                 let right = term_results.pop().expect("visited right condition operand");
                 let left = term_results.pop().expect("visited left condition operand");
                 condition_results.push(constructor(Box::new(left), Box::new(right)));
+            }
+            Task::RebuildFloatCondition {
+                is_float64,
+                condition,
+                term_count,
+            } => {
+                let first = term_results.len() - term_count;
+                let mut index = first;
+                let rebuilt = condition.map_bitvector_terms(|_| {
+                    let term = term_results[index].clone();
+                    index += 1;
+                    term
+                });
+                term_results.truncate(first);
+                condition_results.push(if is_float64 {
+                    ConditionTerm::Float64(rebuilt)
+                } else {
+                    ConditionTerm::Float32(rebuilt)
+                });
             }
             Task::RebuildPointerOffsetEqual => {
                 let right = offset_results.pop().expect("visited right pointer offset");
@@ -1818,6 +1888,13 @@ fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            let mut mentions = false;
+            float_condition.for_each_bitvector_term(|term| {
+                mentions |= term_mentions_a_memory_load(term);
+            });
+            mentions
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             offset_mentions_a_memory_load(left) || offset_mentions_a_memory_load(right)

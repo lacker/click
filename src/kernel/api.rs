@@ -682,6 +682,16 @@ pub fn c_conditional(
     }
 }
 
+pub fn c_float_classification(
+    expression: CExpression,
+    classification: CFloatClassification,
+) -> CExpression {
+    CExpression::FloatClassification {
+        expression: Box::new(expression),
+        classification,
+    }
+}
+
 pub fn c_addr_of(name: impl Into<String>) -> CExpression {
     CExpression::AddressOf(Box::new(c_variable(name)))
 }
@@ -5275,6 +5285,13 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
             | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
                 term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+                let mut exceeds = false;
+                float_condition.for_each_bitvector_term(|term| {
+                    exceeds |= term_depth_exceeds(term, remaining - 1);
+                });
+                exceeds
             }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 offset_depth_exceeds(left, remaining - 1)

@@ -1016,6 +1016,9 @@ fn hash_memory_blind_condition<H: std::hash::Hasher>(condition: &ConditionTerm, 
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            std::hash::Hash::hash(float_condition, hasher);
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             hash_memory_blind_pointer_offset(left, hasher);
             hash_memory_blind_pointer_offset(right, hasher);
@@ -1149,6 +1152,10 @@ fn collect_condition_memory_load_keys(
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_binary(left, right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_memory_load_keys(term, keys));
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_memory_load_keys(left, keys);
