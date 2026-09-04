@@ -2,7 +2,7 @@
 //!
 //! This is deliberately a small source expander, not a general C preprocessor.
 //! It expands supplied project-local headers, a narrow literal-only macro
-//! subset, a bounded one-parameter function-like macro subset, a bounded
+//! subset, a bounded function-like macro subset, a bounded
 //! conditional-compilation subset, and rejects all other preprocessor
 //! directives so the C0 parser never silently verifies a different program.
 
@@ -71,7 +71,7 @@ enum SourceDirective {
 enum MacroDefinition {
     ObjectLike(String),
     FunctionLike {
-        parameter: String,
+        parameters: Vec<String>,
         replacement: String,
     },
 }
@@ -138,7 +138,7 @@ struct ConditionalFrame {
 
 /// Returns the normalized project-local headers directly included by a source.
 /// Unsupported system headers and preprocessor directives are rejected. The
-/// supported object-like and one-parameter function-like macro definitions are
+/// supported object-like and bounded function-like macro definitions are
 /// accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
     let analysis = analyze_source(source_path, source)?;
@@ -1332,14 +1332,29 @@ fn parse_macro_literal(input: &str) -> Option<String> {
 fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'static str> {
     let Some(close) = input.find(')') else {
         return Err(
-            "malformed function-like macro; expected exactly one identifier parameter and a replacement",
+            "malformed function-like macro; expected one to three identifier parameters and a replacement",
         );
     };
-    let parameters = input[1..close].trim();
-    let (parameter, trailing) = split_identifier(parameters);
-    let Some(parameter) = parameter.filter(|_| trailing_comments_only(trailing)) else {
-        return Err("function-like macros currently support exactly one identifier parameter");
-    };
+    let parameters = input[1..close]
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if parameters.len() > 3 {
+        return Err("function-like macros currently support at most three identifier parameters");
+    }
+    let mut parameter_names = Vec::with_capacity(parameters.len());
+    for parameter in parameters {
+        let (parameter, trailing) = split_identifier(parameter);
+        let Some(parameter) = parameter.filter(|_| trailing_comments_only(trailing)) else {
+            return Err(
+                "function-like macros currently support one to three identifier parameters",
+            );
+        };
+        if parameter_names.iter().any(|name| name == &parameter) {
+            return Err("function-like macro parameter names must be unique");
+        }
+        parameter_names.push(parameter);
+    }
     let replacement = input[close + 1..].trim_start();
     if replacement.contains('#') {
         return Err("function-like macro stringification and token pasting are not supported");
@@ -1350,7 +1365,7 @@ fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'sta
         replacement.trim_end().to_string()
     };
     Ok(MacroDefinition::FunctionLike {
-        parameter,
+        parameters: parameter_names,
         replacement,
     })
 }
@@ -1548,13 +1563,13 @@ fn expand_macro_text(
                     expanded.push_str(&expand_macro_replacement(&name, &value, macros, state)?);
                 }
                 MacroDefinition::FunctionLike {
-                    parameter,
+                    parameters,
                     replacement,
                 } if chars.get(index) == Some(&'(') => {
                     let (arguments, end) = parse_macro_arguments(&chars, index, &name)?;
                     expanded.push_str(&expand_function_macro(
                         &name,
-                        &parameter,
+                        &parameters,
                         &replacement,
                         &arguments,
                         macros,
@@ -1589,20 +1604,33 @@ fn expand_macro_replacement(
 
 fn expand_function_macro(
     name: &str,
-    parameter: &str,
+    parameters: &[String],
     replacement: &str,
     arguments: &[String],
     macros: &BTreeMap<String, MacroDefinition>,
     state: &mut MacroExpansionState,
 ) -> Result<String, String> {
-    if arguments.len() != 1 || arguments[0].trim().is_empty() {
+    if arguments.len() != parameters.len()
+        || arguments.iter().any(|argument| argument.trim().is_empty())
+    {
+        if parameters.len() == 1 {
+            return Err(format!(
+                "macro `{name}` expects exactly one non-empty argument"
+            ));
+        }
         return Err(format!(
-            "macro `{name}` expects exactly one non-empty argument"
+            "macro `{name}` expects exactly {} non-empty arguments",
+            parameters.len()
         ));
     }
-    let mut argument_comments = false;
-    let argument = expand_macro_text(arguments[0].trim(), macros, &mut argument_comments, state)?;
-    let substituted = substitute_macro_parameter(replacement, parameter, &argument);
+    let arguments = arguments
+        .iter()
+        .map(|argument| {
+            let mut argument_comments = false;
+            expand_macro_text(argument.trim(), macros, &mut argument_comments, state)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let substituted = substitute_macro_parameters(replacement, parameters, &arguments);
     expand_macro_replacement(name, &substituted, macros, state)
 }
 
@@ -1673,7 +1701,11 @@ fn parse_macro_arguments(
     ))
 }
 
-fn substitute_macro_parameter(replacement: &str, parameter: &str, argument: &str) -> String {
+fn substitute_macro_parameters(
+    replacement: &str,
+    parameters: &[String],
+    arguments: &[String],
+) -> String {
     let chars = replacement.chars().collect::<Vec<_>>();
     let mut expanded = String::with_capacity(replacement.len());
     let mut index = 0;
@@ -1709,8 +1741,10 @@ fn substitute_macro_parameter(replacement: &str, parameter: &str, argument: &str
                 index += 1;
             }
             let name = chars[start..index].iter().collect::<String>();
-            if name == parameter {
-                expanded.push_str(argument);
+            if let Some(parameter_index) =
+                parameters.iter().position(|parameter| parameter == &name)
+            {
+                expanded.push_str(&arguments[parameter_index]);
             } else {
                 expanded.extend(chars[start..index].iter().copied());
             }
@@ -2036,8 +2070,12 @@ mod tests {
         let cases = [
             ("#define LIMIT (1 + 2)\n", "unsupported macro definition"),
             (
-                "#define LIMIT(left, right) left\n",
-                "exactly one identifier parameter",
+                "#define LIMIT(first, second, third, fourth) first\n",
+                "at most three identifier parameters",
+            ),
+            (
+                "#define LIMIT(value, value) value\n",
+                "parameter names must be unique",
             ),
             (
                 "#define LIMIT(value) #value\n",
@@ -2090,6 +2128,67 @@ int32 preserved(int32 value) { /* APPLY(value) */ return value; }
         assert!(!expanded.source().contains("TWICE("));
         assert!(!expanded.source().contains("return APPLY("));
         assert!(expanded.dependencies().contains("macros.h"));
+    }
+
+    #[test]
+    fn multi_parameter_function_macros_expand_across_headers_and_nested_calls() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#include "macros.h"
+int32 run(int32 value) { return WRAP(value, ADD(2, 3)); }
+int32 nested(int32 value) { return ADD((value + value), SUM3(1, 2, 3)); }
+int32 three() { return SUM3(1, 2, 3); }
+"##,
+            ),
+            (
+                "macros.h",
+                r##"#ifndef MACROS_H
+#define MACROS_H
+#define ADD(left, right) ((left) + (right))
+#define SUM3(first, second, third) ((first) + (second) + (third))
+#define WRAP(left, right) ADD(left, right)
+#endif
+"##,
+            ),
+        ]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(
+            expanded
+                .source()
+                .contains("int32 three() { return ((1) + (2) + (3)); }")
+        );
+        assert!(expanded.source().contains("(value + value)"));
+        assert!(expanded.source().contains("(2) + (3)"));
+        assert!(!expanded.source().contains("ADD("));
+        assert!(!expanded.source().contains("SUM3("));
+        assert!(!expanded.source().contains("WRAP("));
+        assert!(expanded.dependencies().contains("macros.h"));
+    }
+
+    #[test]
+    fn multi_parameter_function_macro_invocations_report_arity_errors() {
+        let too_few = BTreeMap::from([(
+            "main.c",
+            "#define ADD(left, right) (left + right)\nint32 run() { return ADD(1); }\n",
+        )]);
+        let error = expand_includes("main.c", &too_few).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("macro `ADD` expects exactly 2 non-empty arguments")
+        );
+
+        let empty = BTreeMap::from([(
+            "main.c",
+            "#define ADD(left, right) (left + right)\nint32 run() { return ADD(1, ); }\n",
+        )]);
+        let error = expand_includes("main.c", &empty).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("macro `ADD` expects exactly 2 non-empty arguments")
+        );
     }
 
     #[test]

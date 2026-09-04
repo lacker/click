@@ -41,7 +41,10 @@ literals, literal-valued macros, and `defined(NAME)`, including their use inside
 the existing boolean expressions. The first function-like macro slice now
 supports one-parameter calls with balanced nested arguments, ordinary
 substitution, bounded replacement rescanning, and source-named diagnostics for
-wrong arity, recursion, stringification, and token pasting.
+wrong arity, recursion, stringification, and token pasting. The follow-up slice
+now extends ordinary substitution and bounded rescanning to function-like
+macros with up to three unique named parameters, while keeping variadics, empty
+arguments, stringification, and token pasting unsupported.
 
 ## Violated invariant
 
@@ -81,18 +84,20 @@ general conditional expression.
   uses in comments and quoted literals remain untouched, and redefinitions or
   other macro forms receive source-named diagnostics. `#undef NAME` removes a
   macro and permits a later literal redefinition.
-- One-parameter function-like macros perform ordinary substitution with
-  balanced nested arguments and bounded replacement rescanning across source
-  files and included headers. Wrong arity, recursive expansion, stringification,
-  and token pasting receive source-named diagnostics.
-- Function-like macros with more than one parameter, stringification, token
+- One- to three-parameter function-like macros perform ordinary substitution
+  with balanced nested arguments and bounded replacement rescanning across
+  source files and included headers. Wrong arity, empty arguments, duplicate
+  parameter names, recursive expansion, stringification, and token pasting
+  receive source-named diagnostics.
+- Function-like macros with more than three parameters, stringification, token
   pasting, multi-token object-like macros, system headers other than the modeled
   `<stdint.h>`, relational comparisons, arithmetic, ternaries, and other
   general conditional expressions remain explicitly unsupported until a
-  documented allowlist or preprocessor subset is implemented. One-parameter
-  function-like macros with ordinary substitution and bounded rescanning are
-  supported. Bounded `==` and `!=` comparisons are supported between integer or
-  character literals, literal-valued macros, and `defined(NAME)`.
+  documented allowlist or preprocessor subset is implemented. One- to
+  three-parameter function-like macros with ordinary substitution and bounded
+  rescanning are supported. Bounded `==` and `!=` comparisons are supported
+  between integer or character literals, literal-valued macros, and
+  `defined(NAME)`.
 - The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
   previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif`
   with those same conditions, `#if defined(NAME)`, `#if !defined(NAME)`,

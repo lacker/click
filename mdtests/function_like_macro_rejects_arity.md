@@ -1,7 +1,7 @@
 # Function-like macros reject unsupported arity
 
-The first function-like macro slice accepts exactly one parameter and reports
-the macro name when an invocation supplies the wrong number of arguments.
+A one-parameter function-like macro reports its name when an invocation
+supplies the wrong number of arguments.
 
 ```c filename=main.c
 #define WRAP(value) (value)

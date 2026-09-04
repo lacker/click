@@ -88,8 +88,8 @@ forward prototypes. Project-local quoted includes such as
 the named header is supplied in the source bundle. Headers are declaration-only
 and may contain supported structs, typedefs, enums, and prototypes. System
 header includes other than the modeled no-op `<stdint.h>`, function-like macros
-with more than one parameter, stringification, token pasting, or multi-token
-object-like macros, macro redefinitions without an intervening `#undef`,
+with more than three parameters, empty arguments, stringification, token pasting,
+or multi-token object-like macros, macro redefinitions without an intervening `#undef`,
 relational comparisons, arithmetic, ternaries, and other general conditional
 expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
 when both operands are integer or character literals, literal-valued macros, or
@@ -107,10 +107,11 @@ parentheses. `#elif` with those same conditions, `#else`, and `#endif` are
 supported, including nesting; unsupported active conditions receive a
 diagnostic.
 
-One-parameter function-like macros are also supported with ordinary argument
-substitution, balanced nested calls, and bounded rescanning of replacements.
-They are expanded in source order across a source file and its local headers.
-Recursive expansion and unsupported parameter features receive diagnostics.
+One- to three-parameter function-like macros are also supported with ordinary
+argument substitution, balanced nested calls, and bounded rescanning of
+replacements. They are expanded in source order across a source file and its
+local headers. Recursive expansion and unsupported parameter features receive
+diagnostics.
 
 ## Type support is still narrow
 
