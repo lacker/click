@@ -1,9 +1,9 @@
 # Bounded conditional compilation selects active source branches
 
 Click supports `#if 0`, `#if 1`, `#if NAME` for a known 0/1 macro, `#ifdef`,
-`#ifndef`, `#else`, and `#endif`. Inactive branches are removed before the C0
-parser sees the translation unit, so unsupported code and missing includes in
-those branches do not affect verification.
+`#ifndef`, `#elif`, `#else`, and `#endif`. Inactive branches are removed before
+the C0 parser sees the translation unit, so unsupported code and missing
+includes in those branches do not affect verification.
 
 ```c filename=include/config.h
 #ifndef CONFIG_H

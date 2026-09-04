@@ -27,7 +27,9 @@ character literal, expanding them in source order across a translation unit
 and its included headers. The conditional-compilation slice now selects active
 branches for `#if 0`, `#if 1`, `#if NAME` when `NAME` is a known 0/1 literal,
 `#ifdef`, `#ifndef`, `#else`, and `#endif`, including nesting, while keeping
-general preprocessor expressions unsupported.
+general preprocessor expressions unsupported. The follow-up conditional slice
+now supports ordered `#elif` chains with the same bounded conditions and skips
+conditions in branches that cannot be selected.
 
 ## Violated invariant
 
@@ -71,10 +73,10 @@ general conditional expression.
   directives remain explicitly unsupported until a documented allowlist or
   preprocessor subset is implemented.
 - The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
-  previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#else`,
-  and `#endif`, including nested conditionals. Inactive branches are removed
-  before C parsing, and malformed structure or unsupported active conditions
-  receive source-named diagnostics.
+  previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#elif`
+  with those same conditions, `#else`, and `#endif`, including nested
+  conditionals. Inactive branches are removed before C parsing, and malformed
+  structure or unsupported active conditions receive source-named diagnostics.
 - Shared struct declarations are reused across functions and files, replacing
   the per-file re-declaration in examples.
 - `scripts/check.sh` passes.

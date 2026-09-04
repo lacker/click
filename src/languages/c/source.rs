@@ -56,6 +56,7 @@ enum SourceDirective {
     HeaderGuardDefine(String),
     MacroDefinition { name: String, value: String },
     ConditionalStart(Conditional),
+    ConditionalElif(Conditional),
     ConditionalElse,
     ConditionalEnd,
     PragmaOnce,
@@ -94,7 +95,7 @@ enum ConditionalTruth {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ConditionalFrame {
     parent_active: ConditionalTruth,
-    condition_active: ConditionalTruth,
+    branch_taken: ConditionalTruth,
     else_seen: bool,
 }
 
@@ -203,15 +204,40 @@ fn expand_source<'a>(
                 let condition_active = if active == ConditionalTruth::False {
                     ConditionalTruth::False
                 } else {
-                    evaluate_condition(condition, macros, defined_macros)
+                    evaluate_condition(condition, "if", macros, defined_macros)
                         .map_err(|message| CSourceError::new(source_path, line_number, message))?
                 };
                 conditional_stack.push(ConditionalFrame {
                     parent_active: active,
-                    condition_active,
+                    branch_taken: condition_active,
                     else_seen: false,
                 });
                 active = and_truth(active, condition_active);
+                expanded.push('\n');
+            }
+            SourceDirective::ConditionalElif(condition) => {
+                let Some(frame) = conditional_stack.last_mut() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                let previous_branch_taken = frame.branch_taken;
+                let condition_active = if frame.parent_active == ConditionalTruth::False
+                    || previous_branch_taken == ConditionalTruth::True
+                {
+                    ConditionalTruth::False
+                } else if let Conditional::Unsupported(expression) = condition {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        unsupported_condition_message(expression),
+                    ));
+                } else {
+                    evaluate_condition(condition, "elif", macros, defined_macros)
+                        .map_err(|message| CSourceError::new(source_path, line_number, message))?
+                };
+                let branch_active =
+                    and_truth(negate_truth(previous_branch_taken), condition_active);
+                frame.branch_taken = or_truth(previous_branch_taken, condition_active);
+                active = and_truth(frame.parent_active, branch_active);
                 expanded.push('\n');
             }
             SourceDirective::ConditionalElse => {
@@ -219,7 +245,7 @@ fn expand_source<'a>(
                     unreachable!("analyze_source validates conditional structure")
                 };
                 frame.else_seen = true;
-                active = and_truth(frame.parent_active, negate_truth(frame.condition_active));
+                active = and_truth(frame.parent_active, negate_truth(frame.branch_taken));
                 expanded.push('\n');
             }
             SourceDirective::ConditionalEnd => {
@@ -353,17 +379,45 @@ fn collect_local_include_paths(
                 };
                 conditional_stack.push(ConditionalFrame {
                     parent_active: active,
-                    condition_active,
+                    branch_taken: condition_active,
                     else_seen: false,
                 });
                 active = and_truth(active, condition_active);
+            }
+            SourceDirective::ConditionalElif(condition) => {
+                let Some(frame) = conditional_stack.last_mut() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                let previous_branch_taken = frame.branch_taken;
+                let condition_active = if frame.parent_active == ConditionalTruth::False
+                    || previous_branch_taken == ConditionalTruth::True
+                {
+                    ConditionalTruth::False
+                } else if let Conditional::Unsupported(expression) = condition {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        unsupported_condition_message(expression),
+                    ));
+                } else {
+                    evaluate_condition_for_discovery(
+                        condition,
+                        &macros,
+                        &defined_macros,
+                        may_have_external_macros,
+                    )
+                };
+                let branch_active =
+                    and_truth(negate_truth(previous_branch_taken), condition_active);
+                frame.branch_taken = or_truth(previous_branch_taken, condition_active);
+                active = and_truth(frame.parent_active, branch_active);
             }
             SourceDirective::ConditionalElse => {
                 let Some(frame) = conditional_stack.last_mut() else {
                     unreachable!("analyze_source validates conditional structure")
                 };
                 frame.else_seen = true;
-                active = and_truth(frame.parent_active, negate_truth(frame.condition_active));
+                active = and_truth(frame.parent_active, negate_truth(frame.branch_taken));
             }
             SourceDirective::ConditionalEnd => {
                 let Some(frame) = conditional_stack.pop() else {
@@ -428,6 +482,7 @@ fn collect_local_include_paths(
 
 fn evaluate_condition(
     condition: &Conditional,
+    directive_name: &str,
     macros: &BTreeMap<String, String>,
     defined_macros: &BTreeSet<String>,
 ) -> Result<ConditionalTruth, String> {
@@ -440,12 +495,12 @@ fn evaluate_condition(
         Conditional::Macro(name) => {
             let Some(value) = macros.get(name) else {
                 return Err(format!(
-                    "unsupported conditional expression `#if {name}`; expected a previously defined literal macro"
+                    "unsupported conditional expression `#{directive_name} {name}`; expected a previously defined literal macro"
                 ));
             };
             macro_condition_truth(value).ok_or_else(|| {
                 format!(
-                    "unsupported conditional expression `#if {name}`; expected `{name}` to be defined as 0 or 1"
+                    "unsupported conditional expression `#{directive_name} {name}`; expected `{name}` to be defined as 0 or 1"
                 )
             })
         }
@@ -525,6 +580,14 @@ fn and_truth(left: ConditionalTruth, right: ConditionalTruth) -> ConditionalTrut
     }
 }
 
+fn or_truth(left: ConditionalTruth, right: ConditionalTruth) -> ConditionalTruth {
+    match (left, right) {
+        (ConditionalTruth::True, _) | (_, ConditionalTruth::True) => ConditionalTruth::True,
+        (ConditionalTruth::False, ConditionalTruth::False) => ConditionalTruth::False,
+        _ => ConditionalTruth::Unknown,
+    }
+}
+
 fn negate_truth(value: ConditionalTruth) -> ConditionalTruth {
     match value {
         ConditionalTruth::True => ConditionalTruth::False,
@@ -578,6 +641,22 @@ fn validate_conditional_structure(
     for (&line_number, directive) in directives {
         match directive {
             SourceDirective::ConditionalStart(_) => stack.push((line_number, false)),
+            SourceDirective::ConditionalElif(_) => {
+                let Some((_, else_seen)) = stack.last() else {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "unmatched `#elif`; expected an open conditional",
+                    ));
+                };
+                if *else_seen {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "`#elif` after `#else` is not supported",
+                    ));
+                }
+            }
             SourceDirective::ConditionalElse => {
                 let Some((_, else_seen)) = stack.last_mut() else {
                     return Err(CSourceError::new(
@@ -746,21 +825,16 @@ fn parse_directive<'a>(
     if let Some(rest) = directive.strip_prefix("if")
         && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
     {
-        let rest = rest.trim_start();
-        let condition = if rest.starts_with('0') && trailing_comments_only(&rest[1..]) {
-            Conditional::Literal(false)
-        } else if rest.starts_with('1') && trailing_comments_only(&rest[1..]) {
-            Conditional::Literal(true)
-        } else if let (Some(name), trailing) = split_identifier(rest) {
-            if trailing_comments_only(trailing) {
-                Conditional::Macro(name)
-            } else {
-                Conditional::Unsupported(format!("if {}", rest.trim()))
-            }
-        } else {
-            Conditional::Unsupported(format!("if {}", rest.trim()))
-        };
-        return Ok(Some(SourceDirective::ConditionalStart(condition)));
+        return Ok(Some(SourceDirective::ConditionalStart(parse_condition(
+            "if", rest,
+        ))));
+    }
+    if let Some(rest) = directive.strip_prefix("elif")
+        && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
+    {
+        return Ok(Some(SourceDirective::ConditionalElif(parse_condition(
+            "elif", rest,
+        ))));
     }
     if let Some(rest) = directive.strip_prefix("define")
         && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
@@ -810,6 +884,23 @@ fn parse_directive<'a>(
     Ok(Some(SourceDirective::Unsupported(format!(
         "unsupported preprocessor directive `#{directive}`"
     ))))
+}
+
+fn parse_condition(directive_name: &str, input: &str) -> Conditional {
+    let rest = input.trim_start();
+    if rest.starts_with('0') && trailing_comments_only(&rest[1..]) {
+        Conditional::Literal(false)
+    } else if rest.starts_with('1') && trailing_comments_only(&rest[1..]) {
+        Conditional::Literal(true)
+    } else if let (Some(name), trailing) = split_identifier(rest) {
+        if trailing_comments_only(trailing) {
+            Conditional::Macro(name)
+        } else {
+            Conditional::Unsupported(format!("{directive_name} {}", rest.trim()))
+        }
+    } else {
+        Conditional::Unsupported(format!("{directive_name} {}", rest.trim()))
+    }
 }
 
 fn parse_macro_literal(input: &str) -> Option<String> {
@@ -1307,14 +1398,51 @@ int32 wrong_again(void) { return 0; }
     }
 
     #[test]
+    fn bounded_conditional_chains_select_the_first_true_branch() {
+        let sources = BTreeMap::from([(
+            "main.c",
+            r##"#define FEATURE 0
+#if FEATURE
+int32 wrong_feature(void) { return 0; }
+#elif 0
+int32 wrong_literal(void) { return 0; }
+#elif 1
+int32 run(void) { return 7; }
+#elif defined(SKIPPED)
+#include "missing.h"
+#else
+int32 wrong_else(void) { return 0; }
+#endif
+"##,
+        )]);
+        assert!(
+            local_include_paths("main.c", sources["main.c"])
+                .unwrap()
+                .is_empty()
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 run(void) { return 7; }"));
+        assert!(!expanded.source().contains("wrong_feature"));
+        assert!(!expanded.source().contains("wrong_literal"));
+        assert!(!expanded.source().contains("wrong_else"));
+        assert!(!expanded.source().contains("missing.h"));
+    }
+
+    #[test]
     fn conditionals_require_balanced_structure_and_supported_active_conditions() {
         let cases = [
             ("#else\n", "unmatched `#else`"),
+            ("#elif 1\n", "unmatched `#elif`"),
             ("#if 1\n#else\n#else\n#endif\n", "multiple `#else`"),
+            ("#if 0\n#else\n#elif 1\n#endif\n", "`#elif` after `#else`"),
             ("#if 1\n", "unterminated conditional"),
             (
                 "#if defined(FEATURE)\n#endif\n",
                 "unsupported conditional expression",
+            ),
+            (
+                "#if 0\n#elif defined(FEATURE)\n#endif\n",
+                "unsupported conditional expression `#elif defined(FEATURE)`",
             ),
         ];
         for (source, expected) in cases {
