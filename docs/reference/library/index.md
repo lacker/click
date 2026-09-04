@@ -785,6 +785,50 @@ predicate cstr(bytes: uint8[]) {
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr)` when a proof needs the predicate body.
 
+### `cstr_readable_len`
+
+```click
+predicate cstr_readable_len(bytes: uint8[], len: int32) {
+    0 <= len and
+        loadable(bytes[0..len + 1]) and
+        forall (k: int32) {
+            0 <= k and k < len implies bytes[k] != '\0'
+        } and
+        bytes[len] == '\0'
+}
+```
+
+**Meaning:** States that `len` is a nonnegative C-string length, the complete
+prefix through its terminator is dynamically loadable, the prefix has no
+embedded terminator, and the terminator byte is null.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_readable_len)` when a proof needs the predicate body.
+
+### `cstr_readable`
+
+```click
+predicate cstr_readable(bytes: uint8[]) {
+    exists (len: int32) {
+        0 <= len and
+            loadable(bytes[0..len + 1]) and
+            forall (k: int32) {
+                0 <= k and k < len implies bytes[k] != '\0'
+            } and
+            bytes[len] == '\0'
+    }
+}
+```
+
+**Meaning:** States that the byte array has some dynamically loadable,
+null-terminated C-string prefix. The length remains existential; unfold the
+predicate when a proof needs to expose that witness.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_readable)` when a proof needs the predicate body.
+
 ### `cstr_bounded`
 
 ```click
@@ -950,16 +994,22 @@ value and returns the destination pointer.
 
 ```click
 extern int32 strlen(uint8 bytes[]) {
-    requires loadable(bytes[0..1]);
-    requires bytes[0] == '\0';
+    requires cstr_readable(bytes);
     immutable;
-    ensures result == 0;
+    ensures 0 <= result;
+    ensures loadable(bytes[0..result + 1]);
+    ensures forall (k: int32) {
+        0 <= k and k < result implies bytes[k] != '\0'
+    };
+    ensures cstr_readable_len(bytes, result);
+    ensures old(bytes[0]) == '\0' implies result == 0;
 }
 ```
 
-**Meaning:** Returns zero for a readable byte string whose first byte is the
-terminator, without mutation. This is the currently checkable `strlen` slice;
-general variable-length string loadability remains outside the model.
+**Meaning:** Returns a length for a dynamically loadable, null-terminated byte
+string without mutation. The result satisfies the readable-length relation; the
+separate `old(bytes[0])` consequence retains the concrete empty-string
+guarantee. Uniqueness of symbolic terminator lengths remains future work.
 
 **Kind:** external C contract. The declaration is an explicit verification assumption.
 

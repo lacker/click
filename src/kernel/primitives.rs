@@ -2241,6 +2241,30 @@ pub(super) enum PropositionDerivationRule {
     },
     ImpliesFalseAntecedent(Box<PropositionDerivation>),
     ForAllBody(Box<PropositionDerivation>),
+    /// Prove an existential by selecting the bound variable from an exact
+    /// existential fact and checking the target body under that witness's
+    /// conjuncts.
+    ExistsFromFact {
+        source: Proposition,
+        body: Box<PropositionDerivation>,
+    },
+    /// Prove an existential by selecting a free witness term and checking the
+    /// substituted body against the current context.
+    ExistsFromWitness {
+        witness: Bitvector32Term,
+        body: Box<PropositionDerivation>,
+    },
+    /// Prove an in-range one-byte loadability universal from one exact wider
+    /// loadability range and the universal body's guard premises.
+    ForAllLoadableRange {
+        source: Proposition,
+    },
+    /// Prove an existential one-byte loadability fact by selecting the
+    /// constant zero index from one exact wider range.
+    ExistsLoadableRange {
+        source: Proposition,
+        witness: Bitvector32Term,
+    },
     FiniteForAll {
         instances: Vec<PropositionDerivation>,
     },

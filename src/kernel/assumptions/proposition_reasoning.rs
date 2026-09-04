@@ -6,6 +6,26 @@ thread_local! {
     static CONTEXT_INCONSISTENCY_NEGATIVE_MEMO: RefCell<HashSet<(u64, u64, bool)>> = RefCell::new(HashSet::new());
 }
 
+fn forall_loadable_range_parts(
+    proposition: &Proposition,
+) -> Option<(Vec<Proposition>, &Proposition)> {
+    let Proposition::ForAll {
+        sort: Sort::CInt32,
+        body,
+        ..
+    } = proposition
+    else {
+        return None;
+    };
+    let mut premises = Vec::new();
+    let mut conclusion = body.as_ref();
+    while let Proposition::Implies(premise, rest) = conclusion {
+        collect_proposition_conjuncts(premise, &mut premises);
+        conclusion = rest.as_ref();
+    }
+    matches!(conclusion, Proposition::CMemoryLoadable { .. }).then_some((premises, conclusion))
+}
+
 const CONTEXT_INCONSISTENCY_MEMO_LIMIT: usize = 200_000;
 
 pub(crate) fn clear_context_inconsistency_memos() {
@@ -649,6 +669,7 @@ impl PureFactContext {
                     .derive_proposition_using(body, for_simp)
                     .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
                 body_derivation
+                    .or_else(|| self.derive_forall_loadable_range(proposition))
                     .or_else(|| self.derive_finite_forall(proposition, for_simp))
                     .or_else(|| {
                         self.atomic_derivation_premises(proposition, for_simp).map(
@@ -663,6 +684,12 @@ impl PureFactContext {
                         )
                     })
             }
+            Proposition::Exists {
+                var, sort, body, ..
+            } => self
+                .derive_exists_from_witness(*var, sort, body)
+                .or_else(|| self.derive_exists_from_fact(*var, sort, body))
+                .or_else(|| self.derive_exists_loadable_range(*var, sort, body)),
             _ => self.atomic_derivation_premises(proposition, for_simp).map(
                 |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
                     premises,
@@ -2609,6 +2636,204 @@ impl PureFactContext {
             .map(|instance| self.derive_proposition_using(instance, for_simp))
             .collect::<Option<Vec<_>>>()
             .map(|instances| PropositionDerivationRule::FiniteForAll { instances })
+    }
+
+    /// Select one exact existential fact, rename its witness binder to the
+    /// goal binder, and derive the goal body from the witness body's
+    /// conjuncts. The selected fact is retained by the resulting rule; the
+    /// witness conjuncts are local assumptions of its child proof.
+    fn derive_exists_from_fact(
+        &self,
+        var: Variable,
+        sort: &Sort,
+        body: &Proposition,
+    ) -> Option<PropositionDerivationRule> {
+        let candidates = self
+            .prop_facts
+            .iter()
+            .filter_map(|source| {
+                let Proposition::Exists {
+                    var: source_var,
+                    sort: source_sort,
+                    body: source_body,
+                    ..
+                } = source
+                else {
+                    return None;
+                };
+                if source_sort != sort {
+                    return None;
+                }
+                let renamed = crate::kernel::api::substitute_quantified_body_capture_free(
+                    source_body,
+                    *source_var,
+                    var,
+                    sort,
+                )?;
+                Some((source.clone(), renamed))
+            })
+            .collect::<Vec<_>>();
+        for (source, renamed_source_body) in candidates {
+            let mut witness_assumptions = self.clone();
+            let mut conjuncts = Vec::new();
+            collect_proposition_conjuncts(&renamed_source_body, &mut conjuncts);
+            for conjunct in conjuncts {
+                witness_assumptions = witness_assumptions.assume_proposition(conjunct);
+            }
+            let derivation = witness_assumptions.derive_proposition_using(body, false);
+            if let Some(derivation) = derivation {
+                return Some(PropositionDerivationRule::ExistsFromFact {
+                    source,
+                    body: Box::new(derivation),
+                });
+            }
+        }
+        None
+    }
+
+    fn derive_exists_from_witness(
+        &self,
+        var: Variable,
+        sort: &Sort,
+        body: &Proposition,
+    ) -> Option<PropositionDerivationRule> {
+        if sort != &Sort::CInt32 {
+            return None;
+        }
+        let mut variables = BTreeSet::new();
+        for facts in self.memory_loadable_facts.values() {
+            for fact in facts {
+                collect_proposition_bitvector_variables(fact, &mut variables);
+            }
+        }
+        variables.remove(&var);
+        for variable in variables {
+            let witness = Bitvector32Term::Variable(variable);
+            let instantiated = substitute_bitvector_variable_in_proposition(body, var, &witness);
+            let derivation = self.derive_proposition_using(&instantiated, false);
+            if let Some(derivation) = derivation {
+                return Some(PropositionDerivationRule::ExistsFromWitness {
+                    witness,
+                    body: Box::new(derivation),
+                });
+            }
+        }
+        None
+    }
+
+    /// Select one exact wider loadability fact that covers every one-byte
+    /// cell described by an int32 universal's guarded range. The range
+    /// arithmetic is delegated to the existing bounded loadability checker;
+    /// this rule only adds the universal introduction and records the source
+    /// range used by it.
+    fn derive_forall_loadable_range(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivationRule> {
+        let (premises, conclusion) = forall_loadable_range_parts(proposition)?;
+        let Proposition::CMemoryLoadable { base, bytes, .. } = conclusion else {
+            return None;
+        };
+        if bytes.as_const() != Some(1) {
+            return None;
+        }
+        for source in self.memory_loadable_candidates_for_base(base) {
+            let mut candidate = PureFactContext::new().assume_proposition(source.clone());
+            for premise in &premises {
+                candidate = candidate.assume_proposition(premise.clone());
+            }
+            let covered = crate::kernel::api::loadable_covered_by_fact(&candidate, conclusion);
+            if covered {
+                return Some(PropositionDerivationRule::ForAllLoadableRange {
+                    source: source.clone(),
+                });
+            }
+        }
+        None
+    }
+
+    pub(super) fn checks_forall_loadable_range(
+        &self,
+        proposition: &Proposition,
+        source: &Proposition,
+    ) -> bool {
+        let Some((premises, conclusion)) = forall_loadable_range_parts(proposition) else {
+            return false;
+        };
+        let Proposition::CMemoryLoadable { bytes, .. } = conclusion else {
+            return false;
+        };
+        if bytes.as_const() != Some(1) || !self.proves_exact(source) {
+            return false;
+        }
+        let mut candidate = PureFactContext::new().assume_proposition(source.clone());
+        for premise in premises {
+            candidate = candidate.assume_proposition(premise);
+        }
+        crate::kernel::api::loadable_covered_by_fact(&candidate, conclusion)
+    }
+
+    fn derive_exists_loadable_range(
+        &self,
+        var: Variable,
+        sort: &Sort,
+        body: &Proposition,
+    ) -> Option<PropositionDerivationRule> {
+        if sort != &Sort::CInt32 {
+            return None;
+        }
+        let witness = Bitvector32Term::Constant(0);
+        let instantiated = substitute_bitvector_variable_in_proposition(body, var, &witness);
+        if !matches!(instantiated, Proposition::CMemoryLoadable { .. }) {
+            return None;
+        }
+        let mut candidate = self.clone();
+        candidate.clear_proposition_facts();
+        for source in self.memory_loadable_candidates_for_base(match &instantiated {
+            Proposition::CMemoryLoadable { base, .. } => base,
+            _ => unreachable!(),
+        }) {
+            candidate.insert_proposition_fact(source.clone());
+            if crate::kernel::api::loadable_covered_by_fact(&candidate, &instantiated) {
+                return Some(PropositionDerivationRule::ExistsLoadableRange {
+                    source: source.clone(),
+                    witness,
+                });
+            }
+            candidate.remove_proposition_fact(source);
+        }
+        None
+    }
+
+    pub(super) fn checks_exists_loadable_range(
+        &self,
+        proposition: &Proposition,
+        source: &Proposition,
+        witness: &Bitvector32Term,
+    ) -> bool {
+        let Proposition::Exists {
+            var,
+            sort: Sort::CInt32,
+            body,
+            ..
+        } = proposition
+        else {
+            return false;
+        };
+        if witness != &Bitvector32Term::Constant(0)
+            || !self.proves_exact(source)
+            || !matches!(source, Proposition::CMemoryLoadable { .. })
+        {
+            return false;
+        }
+        let instantiated = substitute_bitvector_variable_in_proposition(body, *var, witness);
+        if !matches!(instantiated, Proposition::CMemoryLoadable { .. }) {
+            return false;
+        }
+        let mut candidate = self.clone();
+        candidate.clear_proposition_facts();
+        candidate.insert_proposition_fact(source.clone());
+        crate::kernel::api::loadable_covered_by_fact(&candidate, &instantiated)
     }
 
     fn derive_by_finite_context_split(

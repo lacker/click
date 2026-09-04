@@ -361,6 +361,14 @@ predicate docs_use_cstr(bytes: uint8[]) {
     cstr(bytes)
 }
 
+predicate docs_use_cstr_readable_len(bytes: uint8[], len: int32) {
+    cstr_readable_len(bytes, len)
+}
+
+predicate docs_use_cstr_readable(bytes: uint8[]) {
+    cstr_readable(bytes)
+}
+
 predicate docs_use_cstr_bounded(bytes: uint8[], max: int32) {
     cstr_bounded(bytes, max)
 }

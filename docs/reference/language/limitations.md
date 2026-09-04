@@ -177,10 +177,12 @@ predicate for memory-reading preconditions, and unfold it in proof scripts when
 the body is needed.
 
 Plain `cstr(p)` introduces an exact spec length, but it does not by itself
-produce a structural `loadable` fact. To use byte-level consequences from
-`cstr_len` or bounded string facts, the surrounding contract still needs enough
-memory-loadability information, such as `loadable(p[0..len + 1])` for an exact
-known spec length or `loadable(p[0..max])` for a bounded scan.
+produce a structural `loadable` fact. `cstr_readable(p)` is the corresponding
+dynamic-loadability relation: it carries an existential length together with
+`loadable(p[0..len + 1])` and the prefix/terminator conditions. Unfold it when a
+proof needs that witness. `loadable` still covers read safety only; it does not
+grant `views` or `owns`, so a later dynamic array read may need a separate
+permission/resource fact.
 
 ## Guarded memory reads need range forms
 

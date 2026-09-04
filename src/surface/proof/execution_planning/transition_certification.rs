@@ -794,6 +794,11 @@ fn certified_transitions_from_execution(
                             || exactly_available_fact(proposition, pure_facts).is_some()
                             || directly_matching_separation_fact(proposition, pure_facts).is_some()
                             || directly_covering_loadability_fact(proposition, pure_facts).is_some()
+                            || prerequisite_assumptions
+                                .derive_proposition(proposition)
+                                .is_some_and(|derivation| {
+                                    derivation.check(&prerequisite_assumptions)
+                                })
                             || matches!(normalize_proposition(proposition), SimpProposition::True)
                             || (matches!(
                                 proposition,

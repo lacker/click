@@ -2421,6 +2421,75 @@ impl PropositionDerivation {
                 proof.conclusion == **body
                     && proof.check(&available.without_free_bitvector_variable(*var))
             }
+            PropositionDerivationRule::ExistsFromFact { source, body } => {
+                let Proposition::Exists {
+                    var,
+                    sort,
+                    body: expected_body,
+                    ..
+                } = &self.conclusion
+                else {
+                    return false;
+                };
+                let Proposition::Exists {
+                    var: source_var,
+                    sort: source_sort,
+                    body: source_body,
+                    ..
+                } = source
+                else {
+                    return false;
+                };
+                if sort != source_sort
+                    || !available.proves_exact(source)
+                    || body.conclusion != **expected_body
+                {
+                    return false;
+                }
+                let Some(renamed_source_body) =
+                    crate::kernel::api::substitute_quantified_body_capture_free(
+                        source_body,
+                        *source_var,
+                        *var,
+                        sort,
+                    )
+                else {
+                    return false;
+                };
+                let mut witness_available = available.clone();
+                let mut conjuncts = Vec::new();
+                collect_proposition_conjuncts(&renamed_source_body, &mut conjuncts);
+                for conjunct in conjuncts {
+                    witness_available = witness_available.assume_proposition(conjunct);
+                }
+                body.check(&witness_available)
+            }
+            PropositionDerivationRule::ExistsFromWitness { witness, body } => {
+                let Proposition::Exists {
+                    var,
+                    body: expected_body,
+                    ..
+                } = &self.conclusion
+                else {
+                    return false;
+                };
+                let mut witness_variables = BTreeSet::new();
+                collect_bitvector_variables(witness, &mut witness_variables);
+                if witness_variables.contains(var) {
+                    return false;
+                }
+                let instantiated =
+                    substitute_bitvector_variable_in_proposition(expected_body, *var, witness);
+                body.conclusion == instantiated && body.check(available)
+            }
+            PropositionDerivationRule::ForAllLoadableRange { source } => {
+                available.proves_exact(source)
+                    && available.checks_forall_loadable_range(&self.conclusion, source)
+            }
+            PropositionDerivationRule::ExistsLoadableRange { source, witness } => {
+                available.proves_exact(source)
+                    && available.checks_exists_loadable_range(&self.conclusion, source, witness)
+            }
             PropositionDerivationRule::FiniteForAll { instances } => {
                 let expected = available.finite_forall_instantiations(&self.conclusion);
                 !expected.is_empty()
@@ -2503,6 +2572,16 @@ impl PropositionDerivation {
                 })
             }
         }
+    }
+}
+
+fn collect_proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>) {
+    match proposition {
+        Proposition::And(left, right) => {
+            collect_proposition_conjuncts(left, into);
+            collect_proposition_conjuncts(right, into);
+        }
+        other => into.push(other.clone()),
     }
 }
 

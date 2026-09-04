@@ -297,6 +297,26 @@ predicate cstr(bytes: uint8[]) {
     }
 }
 
+predicate cstr_readable_len(bytes: uint8[], len: int32) {
+    0 <= len and
+        loadable(bytes[0..len + 1]) and
+        forall (k: int32) {
+            0 <= k and k < len implies bytes[k] != '\0'
+        } and
+        bytes[len] == '\0'
+}
+
+predicate cstr_readable(bytes: uint8[]) {
+    exists (len: int32) {
+        0 <= len and
+            loadable(bytes[0..len + 1]) and
+            forall (k: int32) {
+                0 <= k and k < len implies bytes[k] != '\0'
+            } and
+            bytes[len] == '\0'
+    }
+}
+
 predicate cstr_bounded(bytes: uint8[], max: int32) {
     bytes_contains(bytes, 0, max, '\0')
 }
@@ -369,8 +389,13 @@ extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
 }
 
 extern int32 strlen(uint8 bytes[]) {
-    requires loadable(bytes[0..1]);
-    requires bytes[0] == '\0';
+    requires cstr_readable(bytes);
     immutable;
-    ensures result == 0;
+    ensures 0 <= result;
+    ensures loadable(bytes[0..result + 1]);
+    ensures forall (k: int32) {
+        0 <= k and k < result implies bytes[k] != '\0'
+    };
+    ensures cstr_readable_len(bytes, result);
+    ensures old(bytes[0]) == '\0' implies result == 0;
 }

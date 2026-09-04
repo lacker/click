@@ -1986,6 +1986,14 @@ id = "stdlib.predicate.cstr"
 path = "reference/library/index.md#cstr"
 
 [[item]]
+id = "stdlib.predicate.cstr_readable_len"
+path = "reference/library/index.md#cstr_readable_len"
+
+[[item]]
+id = "stdlib.predicate.cstr_readable"
+path = "reference/library/index.md#cstr_readable"
+
+[[item]]
 id = "stdlib.predicate.cstr_bounded"
 path = "reference/library/index.md#cstr_bounded"
 

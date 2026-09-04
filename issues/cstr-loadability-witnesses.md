@@ -1,40 +1,33 @@
-# Make C-string witnesses carry dynamic loadability
+# Complete dynamic C-string reads and witness uniqueness
 
-Found while adding the standard-library `strlen` contract in commit
-`7d91fb1a`.
+The first dynamic-loadability slice is now landed. `cstr_readable_len` carries
+the nonnegative length, prefix/terminator conditions, and
+`loadable(bytes[0..len + 1])`; `cstr_readable` packages that relation behind an
+existential witness. The checked `strlen` contract uses the relation, and the
+prover can transport wider ranges into guarded universal and existential
+loadability propositions. The focused regressions are
+`mdtests/cstr_dynamic_loadability.md`, `mdtests/forall_loadable_range.md`, and
+`mdtests/exists_loadable_range.md`.
 
-The prelude currently defines `cstr(bytes)` as an existential over
-`cstr_len(bytes, len)`. That proposition describes the prefix and terminator
-contents, but it does not carry a `loadable(bytes[0..len + 1])` fact. A
-variable-length `strlen` contract therefore has no sound way to establish the
-range that the external function may read. `choose` can expose some pure
-existential witnesses, but the current contract elaborator cannot use a hidden
-witness as the endpoint of a later memory segment; contract-level `let` and
-witness bindings are also rejected in `loadable` segments.
-
-The current catalog consequently supports only a fixed-footprint empty-string
-case for `strlen`. This is a verifier and specification gap, not a reason to
-assume that every pointer satisfying a content predicate is readable.
-
-The first bounded slice is now landed: `cstr_len(bytes, len)` carries
-`loadable(bytes[0..len + 1])`, and `cstr_len_is_loadable` exposes that fact as a
-separate checked theorem. `mdtests/cstr_loadable_witness.md` exercises the
-projection. The general existential `cstr(bytes)`/`strlen` call still needs
-checked witness selection and dependent range lowering.
+The remaining gap is the next step after `strlen`: a caller that uses the
+returned symbolic length for an actual C array read still needs a matching
+`views`/`owns` resource. `loadable` is intentionally not permission, so the
+current `strlen` slice proves dynamic read safety for the external call and
+its result relation but does not manufacture a dynamic permission range. The
+contract also does not yet expose a checked uniqueness theorem for the
+terminator length.
 
 ## Violated invariant
 
 Every memory-reading external contract must require enough loadability for all
 of its possible reads, including a range whose endpoint is discovered through
 an existential string-length witness. A C-string abstraction must not turn a
-pure content fact about an arbitrary pointer into an implicit memory-safety
-guarantee.
+pure content fact about an arbitrary pointer into an implicit memory-safety or
+permission guarantee.
 
 ## Intended regression
 
-Add an mdtest with an ordinary C function that calls `strlen` on a non-empty,
-variable-length byte string and then reads the discovered terminator, for
-example:
+Extend the ordinary C example so it reads the discovered terminator:
 
 ```c
 int32 read_terminator(uint8 bytes[]) {
@@ -44,25 +37,18 @@ int32 read_terminator(uint8 bytes[]) {
 }
 ```
 
-Its sidecar should provide a readable C-string precondition, prove the call,
-and use the returned length to justify the final read. A paired negative
-fixture must show that a content-only string fact, or a string whose
-terminator range is not loadable, cannot justify the call or the read.
+Its sidecar should provide a readable C-string precondition plus an explicitly
+framed permission/resource, then use the returned length to justify the final
+read. A paired negative fixture must show that `cstr` or `loadable` alone does
+not authorize a resource-sensitive access.
 
 ## Acceptance criteria
 
-- Define a sound witness-carrying string relation, either by extending
-  `cstr_len`/`cstr` or by adding a distinct readable-string predicate. The
-  relation must include the dynamic loadability range and the prefix/terminator
-  conditions; no unrestricted axiom may derive loadability from contents alone.
-- Extend existential witness handling so `choose`/equivalent proof steps can
-  expose the length and instantiate dependent `loadable(bytes[0..len + 1])`
-  facts in the proof state and checked certificate.
-- Specify the general external `strlen` contract using that relation, with a
-  postcondition tying `result` to the unique terminator length. Prove the
-  terminator-length uniqueness theorem from the string conditions rather than
-  assuming it as an opaque arithmetic fact.
-- Keep memory safety and permission distinct: `loadable` must cover reads,
-  while `views`/`owns` continue to govern memory resources and mutation.
-- Add positive and negative mdtests, update the language/library
-  documentation, and run `scripts/check.sh`.
+- Add checked support for deriving a dynamic `views`/`owns` range from an
+  explicitly framed allocation or resource and the selected string witness;
+  do not infer permission from `loadable`.
+- Specify and prove a terminator-length uniqueness theorem from the readable
+  string conditions rather than assuming it as an opaque arithmetic fact.
+- Add positive and negative mdtests for the post-`strlen` symbolic read and
+  permission distinction, update the language/library documentation, and run
+  `scripts/check.sh`.

@@ -561,6 +561,46 @@ impl PropositionDerivation {
             | PropositionDerivationRule::ForAllBody(proof) => {
                 proof.collect_context_premises(premises);
             }
+            PropositionDerivationRule::ExistsFromFact { source, body } => {
+                premises.insert(source.clone());
+                let mut body_premises = BTreeSet::new();
+                body.collect_context_premises(&mut body_premises);
+                if let Proposition::Exists {
+                    var: source_var,
+                    sort,
+                    body: source_body,
+                    ..
+                } = source
+                {
+                    if let Some(renamed) =
+                        crate::kernel::api::substitute_quantified_body_capture_free(
+                            source_body,
+                            *source_var,
+                            match &self.conclusion {
+                                Proposition::Exists { var, .. } => *var,
+                                _ => *source_var,
+                            },
+                            sort,
+                        )
+                    {
+                        let mut conjuncts = BTreeSet::new();
+                        collect_local_assumptions(&renamed, &mut conjuncts);
+                        for conjunct in conjuncts {
+                            body_premises.remove(&conjunct);
+                        }
+                    }
+                }
+                premises.extend(body_premises);
+            }
+            PropositionDerivationRule::ExistsFromWitness { body, .. } => {
+                body.collect_context_premises(premises);
+            }
+            PropositionDerivationRule::ForAllLoadableRange { source } => {
+                premises.insert(source.clone());
+            }
+            PropositionDerivationRule::ExistsLoadableRange { source, .. } => {
+                premises.insert(source.clone());
+            }
             PropositionDerivationRule::Implies { antecedent, body } => {
                 let mut body_premises = BTreeSet::new();
                 body.collect_context_premises(&mut body_premises);

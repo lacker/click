@@ -452,6 +452,10 @@ sequence:
   predicates and `choose` after explicit predicate unfolding.
 - `mdtests/cstr_stdlib.md`: first C-string predicates over `uint8[]`, including
   exact spec length, bounded terminator, and plain existential string facts.
+- `mdtests/cstr_dynamic_loadability.md`: a dynamically loadable C-string
+  witness used to verify the variable-length `strlen` contract.
+- `mdtests/forall_loadable_range.md` and `mdtests/exists_loadable_range.md`:
+  generic guarded universal and existential range-loadability derivations.
 
 ## Sorting and permutation
 
