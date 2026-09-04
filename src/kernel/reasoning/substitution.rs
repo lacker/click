@@ -1182,7 +1182,8 @@ fn collect_pointer_offset_bound_variables(
             collect_pointer_offset_bound_variables(left, variables);
             collect_pointer_offset_bound_variables(right, variables);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => {
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
             collect_bitvector_bound_variables(value, variables);
         }
     }
@@ -2885,6 +2886,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_pointer_offset(
         PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
             substitute_bitvector_variable(value, from, to),
             *byte_width,
+        ),
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => PointerOffsetTerm::scale_int64(
+            substitute_bitvector_variable(value, from, to),
+            *byte_width,
+            *unsigned,
         ),
     }
 }

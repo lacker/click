@@ -961,7 +961,10 @@ fn hash_memory_blind_pointer_offset<H: std::hash::Hasher>(
             hash_memory_blind_pointer_offset(left, hasher);
             hash_memory_blind_pointer_offset(right, hasher);
         }
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
             hash_memory_blind_bitvector(value, hasher);
             std::hash::Hash::hash(byte_width, hasher);
         }
@@ -1156,7 +1159,8 @@ fn collect_pointer_offset_memory_load_keys(
             collect_pointer_offset_memory_load_keys(left, keys);
             collect_pointer_offset_memory_load_keys(right, keys);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => {
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
             collect_bitvector_memory_load_keys(value, keys)
         }
     }
@@ -1548,7 +1552,8 @@ impl PureFactContext {
                 PointerOffsetTerm::Add(left, right) => {
                     pointer_offset_memory_load_nodes(left) + pointer_offset_memory_load_nodes(right)
                 }
-                PointerOffsetTerm::Int32Scaled { value, .. } => memory_load_nodes(value),
+                PointerOffsetTerm::Int32Scaled { value, .. }
+                | PointerOffsetTerm::Int64Scaled { value, .. } => memory_load_nodes(value),
             }
         }
         // (constants-first, load count, term order): a total, deterministic
@@ -1653,6 +1658,15 @@ impl PureFactContext {
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 PointerOffsetTerm::scale_int32(self.canonical_bitvector(value), *byte_width)
             }
+            PointerOffsetTerm::Int64Scaled {
+                value,
+                byte_width,
+                unsigned,
+            } => PointerOffsetTerm::scale_int64(
+                self.canonical_bitvector(value),
+                *byte_width,
+                *unsigned,
+            ),
         }
     }
 
@@ -2953,7 +2967,10 @@ fn pointer_in_range_for_memory_resolution(
 /// One hop, no recursion: a value-dependent range endpoint like
 /// `owner->len` is separated from its constant by exactly the recorded
 /// resource fact, never by a rewrite chain.
-fn exact_signed_constant(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<i64> {
+pub(in crate::kernel) fn exact_signed_constant(
+    term: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<i64> {
     if let Some(value) = signed_bitvector_constant(term) {
         return Some(value);
     }
@@ -2964,15 +2981,27 @@ fn exact_signed_constant(term: &Bitvector32Term, assumptions: &PureFactContext) 
             if !*value {
                 return None;
             }
-            let ConditionTerm::Bitvector32Equal(left, right) = condition else {
-                return None;
+            let constant = |candidate: &Bitvector32Term| {
+                signed_bitvector_constant(candidate).or_else(|| {
+                    candidate.int64_as_const().or_else(|| {
+                        candidate
+                            .uint64_as_const()
+                            .and_then(|value| i64::try_from(value).ok())
+                    })
+                })
             };
-            if left.as_ref() == term {
-                signed_bitvector_constant(right)
-            } else if right.as_ref() == term {
-                signed_bitvector_constant(left)
-            } else {
-                None
+            match condition {
+                ConditionTerm::Bitvector32Equal(left, right)
+                | ConditionTerm::Bitvector64Equal(left, right) => {
+                    if left.as_ref() == term {
+                        constant(right)
+                    } else if right.as_ref() == term {
+                        constant(left)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             }
         })
 }

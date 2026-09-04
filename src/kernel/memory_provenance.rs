@@ -2925,6 +2925,15 @@ pub(super) fn canonicalize_pointer_loads(pointer: &Pointer) -> Pointer {
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 PointerOffsetTerm::scale_int32(canonicalize_atomic_loads_deep(value), *byte_width)
             }
+            PointerOffsetTerm::Int64Scaled {
+                value,
+                byte_width,
+                unsigned,
+            } => PointerOffsetTerm::scale_int64(
+                canonicalize_atomic_loads_deep(value),
+                *byte_width,
+                *unsigned,
+            ),
         }
     }
     Pointer {
@@ -3124,7 +3133,8 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             PointerOffsetTerm::Add(left, right) => {
                 offset_has_memory(left) || offset_has_memory(right)
             }
-            PointerOffsetTerm::Int32Scaled { value, .. } => bitvector_has_memory(value),
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => bitvector_has_memory(value),
             PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
         }
     }
@@ -3216,7 +3226,10 @@ fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Ve
             collect_pointer_offset_memories(left, memories);
             collect_pointer_offset_memories(right, memories);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => collect_bitvector_memories(value, memories),
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
+            collect_bitvector_memories(value, memories)
+        }
     }
 }
 
@@ -3450,6 +3463,15 @@ fn transport_framed_atomic_pointer_offset(
         PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
             *byte_width,
+        ),
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => PointerOffsetTerm::scale_int64(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+            *byte_width,
+            *unsigned,
         ),
     })
 }
@@ -3850,6 +3872,17 @@ pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
                         results.push(PointerOffsetTerm::scale_int32(
                             normalize_exact_memory_loads_in_bitvector(&value, assumptions),
                             byte_width,
+                        ));
+                    }
+                    PointerOffsetTerm::Int64Scaled {
+                        value,
+                        byte_width,
+                        unsigned,
+                    } => {
+                        results.push(PointerOffsetTerm::scale_int64(
+                            normalize_exact_memory_loads_in_bitvector(&value, assumptions),
+                            byte_width,
+                            unsigned,
                         ));
                     }
                 }

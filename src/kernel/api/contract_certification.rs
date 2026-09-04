@@ -141,7 +141,10 @@ fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
             pointer_offset_bytes(left)?,
             pointer_offset_bytes(right)?,
         )),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
             let width = u32::try_from(*byte_width).ok()?;
             if width == 1 {
                 Some(value.as_ref().clone())
@@ -699,7 +702,8 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                 collect_shallow_offset_variables(left, variables);
                 collect_shallow_offset_variables(right, variables);
             }
-            PointerOffsetTerm::Int32Scaled { value, .. } => {
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => {
                 collect_shallow_term_variables(value, variables);
             }
         }

@@ -73,6 +73,11 @@ pub(crate) enum SnapshotBlindPointerOffsetKey {
         value: SnapshotBlindBitvectorKey,
         byte_width: i64,
     },
+    Int64Scaled {
+        value: SnapshotBlindBitvectorKey,
+        byte_width: i64,
+        unsigned: bool,
+    },
     Exact(PointerOffsetTerm),
 }
 
@@ -145,7 +150,9 @@ impl SnapshotBlindPointerOffsetKey {
     fn forgets_a_snapshot(&self) -> bool {
         match self {
             Self::Add(left, right) => left.forgets_a_snapshot() || right.forgets_a_snapshot(),
-            Self::Int32Scaled { value, .. } => value.forgets_a_snapshot(),
+            Self::Int32Scaled { value, .. } | Self::Int64Scaled { value, .. } => {
+                value.forgets_a_snapshot()
+            }
             Self::Exact(_) => false,
         }
     }
@@ -348,6 +355,15 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
                 byte_width: *byte_width,
             }
         }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => SnapshotBlindPointerOffsetKey::Int64Scaled {
+            value: snapshot_blind_bitvector_key(value),
+            byte_width: *byte_width,
+            unsigned: *unsigned,
+        },
         offset => SnapshotBlindPointerOffsetKey::Exact(offset.clone()),
     }
 }
@@ -390,14 +406,38 @@ enum AlphaBitvectorBinaryOp {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    Int64Add,
+    Int64Subtract,
+    Int64Multiply,
+    Int64Divide,
+    Int64Remainder,
+    Int64ShiftLeft,
+    Int64ArithmeticShiftRight,
+    Int64BitwiseAnd,
+    Int64BitwiseOr,
+    Int64BitwiseXor,
+    UInt64Add,
+    UInt64Subtract,
+    UInt64Multiply,
+    UInt64Divide,
+    UInt64Remainder,
+    UInt64ShiftLeft,
+    UInt64LogicalShiftRight,
+    UInt64BitwiseAnd,
+    UInt64BitwiseOr,
+    UInt64BitwiseXor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum AlphaBitvectorKey {
     Constant(u32),
+    Int64Constant(i64),
+    UInt64Constant(u64),
     Variable(AlphaVariableKey),
     Binary(AlphaBitvectorBinaryOp, Box<Self>, Box<Self>),
     BitwiseNot(Box<Self>),
+    Int64BitwiseNot(Box<Self>),
+    UInt64BitwiseNot(Box<Self>),
     If {
         condition: Box<AlphaConditionKey>,
         then_term: Box<Self>,
@@ -414,6 +454,11 @@ enum AlphaBitvectorKey {
         arguments: Vec<Self>,
     },
     Load(Box<AlphaPointerKey>),
+    Int64From32(Box<Self>),
+    UInt64From32(Box<Self>),
+    Int64FromUInt32(Box<Self>),
+    UInt64FromInt32(Box<Self>),
+    UInt64FromInt64(Box<Self>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -424,6 +469,11 @@ enum AlphaPointerOffsetKey {
     Int32Scaled {
         value: Box<AlphaBitvectorKey>,
         byte_width: i64,
+    },
+    Int64Scaled {
+        value: Box<AlphaBitvectorKey>,
+        byte_width: i64,
+        unsigned: bool,
     },
 }
 
@@ -497,6 +547,15 @@ fn alpha_pointer_offset_key(
                 byte_width: *byte_width,
             }
         }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => AlphaPointerOffsetKey::Int64Scaled {
+            value: Box::new(alpha_bitvector_key(value, bindings, next_binder)?),
+            byte_width: *byte_width,
+            unsigned: *unsigned,
+        },
     })
 }
 
@@ -538,6 +597,8 @@ fn alpha_bitvector_key(
         };
     Some(match term {
         Bitvector32Term::Constant(value) => AlphaBitvectorKey::Constant(*value),
+        Bitvector32Term::Int64Constant(value) => AlphaBitvectorKey::Int64Constant(*value),
+        Bitvector32Term::UInt64Constant(value) => AlphaBitvectorKey::UInt64Constant(*value),
         Bitvector32Term::Variable(variable) => {
             match crate::kernel::is_load_variable(variable)
                 .then(|| crate::kernel::registered_load_for_variable(variable))
@@ -588,7 +649,75 @@ fn alpha_bitvector_key(
         Bitvector32Term::BitwiseXor(left, right) => {
             binary(AlphaBitvectorBinaryOp::BitwiseXor, left, right)?
         }
+        Bitvector32Term::Int64Add(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64Add, left, right)?
+        }
+        Bitvector32Term::Int64Subtract(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64Subtract, left, right)?
+        }
+        Bitvector32Term::Int64Multiply(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64Multiply, left, right)?
+        }
+        Bitvector32Term::Int64Divide(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64Divide, left, right)?
+        }
+        Bitvector32Term::Int64Remainder(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64Remainder, left, right)?
+        }
+        Bitvector32Term::Int64ShiftLeft(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64ShiftLeft, left, right)?
+        }
+        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => binary(
+            AlphaBitvectorBinaryOp::Int64ArithmeticShiftRight,
+            left,
+            right,
+        )?,
+        Bitvector32Term::Int64BitwiseAnd(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64BitwiseAnd, left, right)?
+        }
+        Bitvector32Term::Int64BitwiseOr(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64BitwiseOr, left, right)?
+        }
+        Bitvector32Term::Int64BitwiseXor(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Int64BitwiseXor, left, right)?
+        }
+        Bitvector32Term::UInt64Add(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64Add, left, right)?
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64Subtract, left, right)?
+        }
+        Bitvector32Term::UInt64Multiply(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64Multiply, left, right)?
+        }
+        Bitvector32Term::UInt64Divide(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64Divide, left, right)?
+        }
+        Bitvector32Term::UInt64Remainder(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64Remainder, left, right)?
+        }
+        Bitvector32Term::UInt64ShiftLeft(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64ShiftLeft, left, right)?
+        }
+        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64LogicalShiftRight, left, right)?
+        }
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64BitwiseAnd, left, right)?
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64BitwiseOr, left, right)?
+        }
+        Bitvector32Term::UInt64BitwiseXor(left, right) => {
+            binary(AlphaBitvectorBinaryOp::UInt64BitwiseXor, left, right)?
+        }
         Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Int64BitwiseNot(body) => AlphaBitvectorKey::Int64BitwiseNot(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::UInt64BitwiseNot(body) => AlphaBitvectorKey::UInt64BitwiseNot(Box::new(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
         Bitvector32Term::If {
@@ -653,7 +782,21 @@ fn alpha_bitvector_key(
         Bitvector32Term::MemoryLoad(_, pointer) => {
             AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
         }
-        _ => return None,
+        Bitvector32Term::Int64From32(value) => AlphaBitvectorKey::Int64From32(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
+        Bitvector32Term::UInt64From32(value) => AlphaBitvectorKey::UInt64From32(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Int64FromUInt32(value) => AlphaBitvectorKey::Int64FromUInt32(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
+        Bitvector32Term::UInt64FromInt32(value) => AlphaBitvectorKey::UInt64FromInt32(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
+        Bitvector32Term::UInt64FromInt64(value) => AlphaBitvectorKey::UInt64FromInt64(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
     })
 }
 

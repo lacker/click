@@ -455,8 +455,18 @@ pub(super) fn execute_c_heap_allocate_paths(
     let Some(
         target_type @ (CType::Int32Pointer
         | CType::UInt8Pointer
+        | CType::Int16Pointer
+        | CType::UInt16Pointer
+        | CType::UInt32Pointer
+        | CType::Int64Pointer
+        | CType::UInt64Pointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer),
+        | CType::UInt8PointerPointer
+        | CType::Int16PointerPointer
+        | CType::UInt16PointerPointer
+        | CType::UInt32PointerPointer
+        | CType::Int64PointerPointer
+        | CType::UInt64PointerPointer),
     ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
@@ -497,7 +507,7 @@ pub(super) fn execute_c_heap_allocate_paths(
             facts,
             obligations,
         } = size_path;
-        let CExpressionOutcome::Value(CValue::Int32(size)) = outcome else {
+        let CExpressionOutcome::Value(value) = outcome else {
             let outcome = match outcome {
                 CExpressionOutcome::UndefinedBehavior(error) => {
                     CStatementOutcome::UndefinedBehavior(error)
@@ -516,28 +526,31 @@ pub(super) fn execute_c_heap_allocate_paths(
         };
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
+        let Some(size) = allocation_size_value(value, &effective_assumptions) else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            });
+            continue;
+        };
         let (bytes, valid_size) = if element_count_expression.is_some() {
-            let positive = effective_assumptions.decide(&ConditionTerm::signed_greater_than(
-                size.clone(),
-                Bitvector32Term::Constant(0),
-            )) == Some(true);
-            let fits = effective_assumptions.decide(&ConditionTerm::signed_less_equal(
-                size.clone(),
-                Bitvector32Term::Constant(i32::MAX as u32 / element_width),
-            )) == Some(true);
+            let positive = allocation_size_is_positive(&size, &effective_assumptions);
+            let fits =
+                allocation_size_fits_element_width(&size, element_width, &effective_assumptions);
             (
-                Bitvector32Term::multiply(size, Bitvector32Term::Constant(element_width)),
+                Bitvector32Term::multiply(
+                    size.term.clone(),
+                    Bitvector32Term::Constant(element_width),
+                ),
                 positive && fits,
             )
         } else {
             // Heap blocks are byte-addressed even when the receiving pointer
             // has a wider logical element type. Typed accesses still carry
             // their own width and must fit in the resulting byte extent.
-            let valid = effective_assumptions.decide(&ConditionTerm::signed_greater_than(
-                size.clone(),
-                Bitvector32Term::Constant(0),
-            )) == Some(true);
-            (size, valid)
+            let valid = allocation_size_is_positive(&size, &effective_assumptions);
+            (size.term, valid)
         };
         if !valid_size {
             paths.push(CStatementExecutionPath {
@@ -635,6 +648,121 @@ fn heap_range_element_count(
     (element_count, element_width)
 }
 
+#[derive(Clone, Debug)]
+struct AllocationSize {
+    term: Bitvector32Term,
+    unsigned: bool,
+}
+
+/// C heap blocks currently use the target's checked 32-bit address extent.
+/// Preserve symbolic 32-bit sizes, and accept a 64-bit `size_t`/`long` size
+/// when its concrete value fits that representation. A symbolic 64-bit size
+/// cannot be safely narrowed into a memory block extent yet.
+fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option<AllocationSize> {
+    match value {
+        CValue::Int16(term) | CValue::UInt8(term) | CValue::UInt16(term) => Some(AllocationSize {
+            term,
+            unsigned: false,
+        }),
+        CValue::Int32(term) => Some(AllocationSize {
+            term,
+            unsigned: false,
+        }),
+        CValue::UInt32(term) => Some(AllocationSize {
+            term,
+            unsigned: true,
+        }),
+        CValue::Int64(term) => exact_signed_size_value(&term, assumptions).and_then(|value| {
+            u32::try_from(value).ok().map(|value| AllocationSize {
+                term: Bitvector32Term::Constant(value),
+                unsigned: false,
+            })
+        }),
+        CValue::UInt64(term) => exact_unsigned_size_value(&term, assumptions).and_then(|value| {
+            u32::try_from(value).ok().map(|value| AllocationSize {
+                term: Bitvector32Term::Constant(value),
+                unsigned: false,
+            })
+        }),
+        CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+fn exact_signed_size_value(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<i64> {
+    if let Some(value) = term.int64_as_const() {
+        return Some(value);
+    }
+    if let Some(value) = crate::kernel::assumptions::exact_signed_constant(term, assumptions) {
+        return Some(value);
+    }
+    match term {
+        Bitvector32Term::Int64Add(left, right) => Some(
+            exact_signed_size_value(left, assumptions)?
+                .checked_add(exact_signed_size_value(right, assumptions)?)?,
+        ),
+        Bitvector32Term::Int64Subtract(left, right) => Some(
+            exact_signed_size_value(left, assumptions)?
+                .checked_sub(exact_signed_size_value(right, assumptions)?)?,
+        ),
+        Bitvector32Term::Int64Multiply(left, right) => Some(
+            exact_signed_size_value(left, assumptions)?
+                .checked_mul(exact_signed_size_value(right, assumptions)?)?,
+        ),
+        _ => None,
+    }
+}
+
+fn exact_unsigned_size_value(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<u64> {
+    if let Some(value) = term.uint64_as_const() {
+        return Some(value);
+    }
+    if let Some(value) = crate::kernel::assumptions::exact_signed_constant(term, assumptions) {
+        return u64::try_from(value).ok();
+    }
+    match term {
+        Bitvector32Term::UInt64Add(left, right) => Some(
+            exact_unsigned_size_value(left, assumptions)?
+                .wrapping_add(exact_unsigned_size_value(right, assumptions)?),
+        ),
+        Bitvector32Term::UInt64Subtract(left, right) => Some(
+            exact_unsigned_size_value(left, assumptions)?
+                .wrapping_sub(exact_unsigned_size_value(right, assumptions)?),
+        ),
+        Bitvector32Term::UInt64Multiply(left, right) => Some(
+            exact_unsigned_size_value(left, assumptions)?
+                .wrapping_mul(exact_unsigned_size_value(right, assumptions)?),
+        ),
+        _ => None,
+    }
+}
+
+fn allocation_size_is_positive(size: &AllocationSize, assumptions: &PureFactContext) -> bool {
+    let condition = if size.unsigned {
+        ConditionTerm::unsigned_greater_than(size.term.clone(), Bitvector32Term::Constant(0))
+    } else {
+        ConditionTerm::signed_greater_than(size.term.clone(), Bitvector32Term::Constant(0))
+    };
+    assumptions.decide(&condition) == Some(true)
+}
+
+fn allocation_size_fits_element_width(
+    size: &AllocationSize,
+    element_width: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    let maximum = if size.unsigned {
+        u32::MAX / element_width
+    } else {
+        i32::MAX as u32 / element_width
+    };
+    let condition = if size.unsigned {
+        ConditionTerm::unsigned_less_equal(size.term.clone(), Bitvector32Term::Constant(maximum))
+    } else {
+        ConditionTerm::signed_less_equal(size.term.clone(), Bitvector32Term::Constant(maximum))
+    };
+    assumptions.decide(&condition) == Some(true)
+}
+
 pub(crate) fn execute_c_realloc_assign_paths(
     state: &CState,
     target: &str,
@@ -655,8 +783,18 @@ pub(crate) fn execute_c_realloc_assign_paths(
     let Some(
         target_type @ (CType::Int32Pointer
         | CType::UInt8Pointer
+        | CType::Int16Pointer
+        | CType::UInt16Pointer
+        | CType::UInt32Pointer
+        | CType::Int64Pointer
+        | CType::UInt64Pointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer),
+        | CType::UInt8PointerPointer
+        | CType::Int16PointerPointer
+        | CType::UInt16PointerPointer
+        | CType::UInt32PointerPointer
+        | CType::Int64PointerPointer
+        | CType::UInt64PointerPointer),
     ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
@@ -764,7 +902,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 facts: size_facts,
                 obligations: size_obligations,
             } = new_size_path;
-            let CExpressionOutcome::Value(CValue::Int32(new_bytes)) = new_size_outcome else {
+            let CExpressionOutcome::Value(new_size_value) = new_size_outcome else {
                 let outcome = match new_size_outcome {
                     CExpressionOutcome::UndefinedBehavior(error) => {
                         CStatementOutcome::UndefinedBehavior(error)
@@ -794,6 +932,19 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             };
+            let size_assumptions = assumptions_with_path_context(
+                &effective_assumptions,
+                &size_facts,
+                &size_obligations,
+            );
+            let Some(new_bytes) = allocation_size_value(new_size_value, &size_assumptions) else {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts: size_facts,
+                    obligations: size_obligations,
+                });
+                continue;
+            };
             let all_facts = merge_facts(&facts, &size_facts, assumptions);
             let Some(all_facts) = all_facts else {
                 continue;
@@ -805,11 +956,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             };
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &all_facts, &all_obligations);
-            if effective_assumptions.decide(&ConditionTerm::signed_greater_than(
-                new_bytes.clone(),
-                Bitvector32Term::Constant(0),
-            )) != Some(true)
-            {
+            if !allocation_size_is_positive(&new_bytes, &effective_assumptions) {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: all_facts,
@@ -830,8 +977,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let zeroed_prefix = match zeroed_source {
                 None => None,
                 Some(old_prefix) => {
-                    let (Some(old_prefix), Some(new_bytes)) =
-                        (old_prefix.as_const(), new_bytes.as_const())
+                    let (Some(old_prefix), Some(new_size)) =
+                        (old_prefix.as_const(), new_bytes.term.as_const())
                     else {
                         paths.push(CStatementExecutionPath {
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -840,7 +987,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                         });
                         continue;
                     };
-                    Some(Bitvector32Term::Constant(old_prefix.min(new_bytes)))
+                    Some(Bitvector32Term::Constant(old_prefix.min(new_size)))
                 }
             };
 
@@ -924,17 +1071,33 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 let Some(end) = offset.checked_add(value.byte_width()) else {
                     continue;
                 };
-                let fits = effective_assumptions.decide(&ConditionTerm::signed_less_equal(
-                    Bitvector32Term::Constant(end),
-                    new_bytes.clone(),
-                ));
+                let fits_condition = if new_bytes.unsigned {
+                    ConditionTerm::unsigned_less_equal(
+                        Bitvector32Term::Constant(end),
+                        new_bytes.term.clone(),
+                    )
+                } else {
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(end),
+                        new_bytes.term.clone(),
+                    )
+                };
+                let truncated_condition = if new_bytes.unsigned {
+                    ConditionTerm::unsigned_less_than(
+                        new_bytes.term.clone(),
+                        Bitvector32Term::Constant(end),
+                    )
+                } else {
+                    ConditionTerm::signed_less_than(
+                        new_bytes.term.clone(),
+                        Bitvector32Term::Constant(end),
+                    )
+                };
+                let fits = effective_assumptions.decide(&fits_condition);
                 if fits == Some(true) {
                     copied_cells.push((offset, value));
                 } else if fits == Some(false)
-                    || effective_assumptions.decide(&ConditionTerm::signed_less_than(
-                        new_bytes.clone(),
-                        Bitvector32Term::Constant(end),
-                    )) == Some(true)
+                    || effective_assumptions.decide(&truncated_condition) == Some(true)
                 {
                     // The initialized cell lies in the truncated tail and is
                     // intentionally not copied.
@@ -963,7 +1126,11 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let pending_memory = state
                 .memory
                 .clone()
-                .with_pending_heap_allocation(pending_pointer.clone(), new_bytes.clone(), false)
+                .with_pending_heap_allocation(
+                    pending_pointer.clone(),
+                    new_bytes.term.clone(),
+                    false,
+                )
                 .with_pending_heap_reallocation(
                     pending_pointer.clone(),
                     old_pointer.clone(),
@@ -2273,10 +2440,20 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         CType::Int64 | CType::UInt64 => 8,
         CType::UInt8 => 1,
         CType::UInt32 => 4,
-        CType::Int32Pointer
+        CType::Int16Pointer
+        | CType::UInt16Pointer
+        | CType::Int32Pointer
         | CType::UInt8Pointer
+        | CType::UInt32Pointer
+        | CType::Int64Pointer
+        | CType::UInt64Pointer
+        | CType::Int16PointerPointer
+        | CType::UInt16PointerPointer
         | CType::Int32PointerPointer
         | CType::UInt8PointerPointer
+        | CType::UInt32PointerPointer
+        | CType::Int64PointerPointer
+        | CType::UInt64PointerPointer
         | CType::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
             let pointer = CMemory::local_pointer(name);
@@ -2294,6 +2471,56 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
             state
                 .locals
                 .set_array_object(name.to_string(), CType::UInt8, length);
+            return state;
+        }
+        CType::Int16Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(2));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Int16, length);
+            return state;
+        }
+        CType::UInt16Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(2));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::UInt16, length);
+            return state;
+        }
+        CType::UInt32Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(4));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::UInt32, length);
+            return state;
+        }
+        CType::Int64Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(8));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Int64, length);
+            return state;
+        }
+        CType::UInt64Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.saturating_mul(8));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::UInt64, length);
             return state;
         }
     };

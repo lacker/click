@@ -164,6 +164,15 @@ pub enum PointerOffsetTerm {
         value: Box<Bitvector32Term>,
         byte_width: i64,
     },
+    /// A pointer displacement formed from a signed or unsigned 64-bit
+    /// element index.  The term arena intentionally remains shared with the
+    /// existing 32-bit form, but its numeric interpretation must not be
+    /// truncated to `i32` while forming an address.
+    Int64Scaled {
+        value: Box<Bitvector32Term>,
+        byte_width: i64,
+        unsigned: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -340,13 +349,28 @@ pub enum CType {
     UInt32,
     Int64,
     UInt64,
+    Int16Pointer,
+    UInt16Pointer,
     Int32Pointer,
     UInt8Pointer,
+    UInt32Pointer,
+    Int64Pointer,
+    UInt64Pointer,
+    Int16PointerPointer,
+    UInt16PointerPointer,
     Int32PointerPointer,
     UInt8PointerPointer,
+    UInt32PointerPointer,
+    Int64PointerPointer,
+    UInt64PointerPointer,
     FunctionPointer(u64),
     Int32Array(u32),
     UInt8Array(u32),
+    Int16Array(u32),
+    UInt16Array(u32),
+    UInt32Array(u32),
+    Int64Array(u32),
+    UInt64Array(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

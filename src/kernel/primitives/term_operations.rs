@@ -965,6 +965,18 @@ impl PointerOffsetTerm {
                 let value = value.as_const()? as i32 as i64;
                 value.checked_mul(*byte_width)
             }
+            Self::Int64Scaled {
+                value,
+                byte_width,
+                unsigned,
+            } => {
+                let value = if *unsigned {
+                    i64::try_from(value.uint64_as_const()?).ok()?
+                } else {
+                    value.int64_as_const()?
+                };
+                value.checked_mul(*byte_width)
+            }
         }
     }
 
@@ -983,6 +995,28 @@ impl PointerOffsetTerm {
             None => Self::Int32Scaled {
                 value: Box::new(value),
                 byte_width,
+            },
+        }
+    }
+
+    pub(crate) fn scale_int64(value: Bitvector32Term, byte_width: i64, unsigned: bool) -> Self {
+        let constant = if unsigned {
+            value.uint64_as_const().and_then(|value| {
+                i64::try_from(value)
+                    .ok()
+                    .and_then(|value| value.checked_mul(byte_width))
+            })
+        } else {
+            value
+                .int64_as_const()
+                .and_then(|value| value.checked_mul(byte_width))
+        };
+        match constant {
+            Some(value) => Self::Constant(value),
+            None => Self::Int64Scaled {
+                value: Box::new(value),
+                byte_width,
+                unsigned,
             },
         }
     }
@@ -1304,7 +1338,24 @@ impl CType {
                 CType::UInt16 => 9,
                 CType::Int64 => 10,
                 CType::UInt64 => 11,
-                CType::FunctionPointer(_) | CType::Int32Array(_) | CType::UInt8Array(_) => {
+                CType::Int16Pointer => 12,
+                CType::UInt16Pointer => 13,
+                CType::UInt32Pointer => 14,
+                CType::Int64Pointer => 15,
+                CType::UInt64Pointer => 16,
+                CType::Int16PointerPointer
+                | CType::UInt16PointerPointer
+                | CType::UInt32PointerPointer
+                | CType::Int64PointerPointer
+                | CType::UInt64PointerPointer
+                | CType::FunctionPointer(_)
+                | CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int16Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_) => {
                     return None;
                 }
             })
@@ -1332,21 +1383,36 @@ impl CType {
 
     pub(crate) fn pointer_to(self) -> Option<Self> {
         match self {
+            Self::Int16 => Some(Self::Int16Pointer),
             Self::Int32 => Some(Self::Int32Pointer),
             Self::UInt8 => Some(Self::UInt8Pointer),
-            Self::UInt32 => None,
+            Self::UInt16 => Some(Self::UInt16Pointer),
+            Self::UInt32 => Some(Self::UInt32Pointer),
+            Self::Int64 => Some(Self::Int64Pointer),
+            Self::UInt64 => Some(Self::UInt64Pointer),
+            Self::Int16Pointer => Some(Self::Int16PointerPointer),
+            Self::UInt16Pointer => Some(Self::UInt16PointerPointer),
             Self::Int32Pointer => Some(Self::Int32PointerPointer),
             Self::UInt8Pointer => Some(Self::UInt8PointerPointer),
+            Self::UInt32Pointer => Some(Self::UInt32PointerPointer),
+            Self::Int64Pointer => Some(Self::Int64PointerPointer),
+            Self::UInt64Pointer => Some(Self::UInt64PointerPointer),
             Self::Void
+            | Self::Int16PointerPointer
+            | Self::UInt16PointerPointer
             | Self::Int32PointerPointer
             | Self::UInt8PointerPointer
+            | Self::UInt32PointerPointer
+            | Self::Int64PointerPointer
+            | Self::UInt64PointerPointer
             | Self::FunctionPointer(_)
-            | Self::Int16
-            | Self::UInt16
-            | Self::Int64
-            | Self::UInt64
             | Self::Int32Array(_)
-            | Self::UInt8Array(_) => None,
+            | Self::UInt8Array(_)
+            | Self::Int16Array(_)
+            | Self::UInt16Array(_)
+            | Self::UInt32Array(_)
+            | Self::Int64Array(_)
+            | Self::UInt64Array(_) => None,
         }
     }
 
@@ -1383,22 +1449,45 @@ impl CType {
             Self::UInt32 => 4,
             Self::Int64 => 8,
             Self::UInt64 => 8,
+            Self::Int16Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt16Pointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt32Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int64Pointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt64Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int16PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt16PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt32PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::Int64PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt64PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
             Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
+            Self::Int16Array(length) | Self::UInt16Array(length) => length.saturating_mul(2),
+            Self::UInt32Array(length) => length.saturating_mul(4),
+            Self::Int64Array(length) | Self::UInt64Array(length) => length.saturating_mul(8),
         }
     }
 
     pub fn pointee_type(self) -> Option<Self> {
         match self {
+            Self::Int16Pointer => Some(Self::Int16),
             Self::Int32Pointer => Some(Self::Int32),
             Self::UInt8Pointer => Some(Self::UInt8),
+            Self::UInt16Pointer => Some(Self::UInt16),
+            Self::UInt32Pointer => Some(Self::UInt32),
+            Self::Int64Pointer => Some(Self::Int64),
+            Self::UInt64Pointer => Some(Self::UInt64),
+            Self::Int16PointerPointer => Some(Self::Int16Pointer),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
+            Self::UInt16PointerPointer => Some(Self::UInt16Pointer),
+            Self::UInt32PointerPointer => Some(Self::UInt32Pointer),
+            Self::Int64PointerPointer => Some(Self::Int64Pointer),
+            Self::UInt64PointerPointer => Some(Self::UInt64Pointer),
             _ => None,
         }
     }
@@ -1564,6 +1653,26 @@ impl Pointer {
             offset: PointerOffsetTerm::add(
                 self.offset.clone(),
                 PointerOffsetTerm::scale_int32(elements, i64::from(byte_width)),
+            ),
+        }
+    }
+
+    pub(in crate::kernel) fn offset_by_typed_elements(
+        &self,
+        elements: Bitvector32Term,
+        byte_width: u32,
+        unsigned: bool,
+        wide: bool,
+    ) -> Self {
+        Self {
+            block: self.block.clone(),
+            offset: PointerOffsetTerm::add(
+                self.offset.clone(),
+                if wide {
+                    PointerOffsetTerm::scale_int64(elements, i64::from(byte_width), unsigned)
+                } else {
+                    PointerOffsetTerm::scale_int32(elements, i64::from(byte_width))
+                },
             ),
         }
     }

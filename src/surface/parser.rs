@@ -1206,15 +1206,20 @@ impl Parser {
             self.position += 1;
             c_type = match c_type {
                 C0Type::Void => return Err(self.error("`void *` is not supported yet")),
-                C0Type::Int16 | C0Type::UInt16 => {
-                    return Err(
-                        self.error("pointers to 16-bit integer values are not supported yet")
-                    );
-                }
+                C0Type::Int16 => C0Type::Int16Pointer,
+                C0Type::UInt16 => C0Type::UInt16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
+                C0Type::UInt32 => C0Type::UInt32Pointer,
+                C0Type::Int64 => C0Type::Int64Pointer,
+                C0Type::UInt64 => C0Type::UInt64Pointer,
+                C0Type::Int16Pointer => C0Type::Int16PointerPointer,
+                C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
+                C0Type::Int64Pointer => C0Type::Int64PointerPointer,
+                C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
                 _ => return Err(self.error("pointer depth beyond `**` is not supported")),
             };
         }
@@ -1302,10 +1307,20 @@ impl Parser {
                     }
                     self.expect(Token::RBracket)?;
                     parameter_type = match parameter_type {
+                        C0Type::Int16 => C0Type::Int16Pointer,
                         C0Type::Int32 => C0Type::Int32Pointer,
                         C0Type::UInt8 => C0Type::UInt8Pointer,
+                        C0Type::UInt16 => C0Type::UInt16Pointer,
+                        C0Type::UInt32 => C0Type::UInt32Pointer,
+                        C0Type::Int64 => C0Type::Int64Pointer,
+                        C0Type::UInt64 => C0Type::UInt64Pointer,
+                        C0Type::Int16Pointer => C0Type::Int16PointerPointer,
+                        C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                         C0Type::Int32Pointer => C0Type::Int32PointerPointer,
                         C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                        C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
+                        C0Type::Int64Pointer => C0Type::Int64PointerPointer,
+                        C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
                         _ => return Err(self.error("only modeled array parameters are supported")),
                     };
                 }
@@ -1395,10 +1410,20 @@ impl Parser {
             });
         }
         let (pointer_type, element_width) = match parsed_type.c_type {
+            C0Type::Int16 => (C0Type::Int16Pointer, 2),
             C0Type::Int32 => (C0Type::Int32Pointer, 4),
             C0Type::UInt8 => (C0Type::UInt8Pointer, 1),
+            C0Type::UInt16 => (C0Type::UInt16Pointer, 2),
+            C0Type::UInt32 => (C0Type::UInt32Pointer, 4),
+            C0Type::Int64 => (C0Type::Int64Pointer, 8),
+            C0Type::UInt64 => (C0Type::UInt64Pointer, 8),
+            C0Type::Int16Pointer => (C0Type::Int16PointerPointer, 8),
+            C0Type::UInt16Pointer => (C0Type::UInt16PointerPointer, 8),
             C0Type::Int32Pointer => (C0Type::Int32PointerPointer, 8),
             C0Type::UInt8Pointer => (C0Type::UInt8PointerPointer, 8),
+            C0Type::UInt32Pointer => (C0Type::UInt32PointerPointer, 8),
+            C0Type::Int64Pointer => (C0Type::Int64PointerPointer, 8),
+            C0Type::UInt64Pointer => (C0Type::UInt64PointerPointer, 8),
             _ => return Err(self.error("only scalar array parameters are supported")),
         };
 

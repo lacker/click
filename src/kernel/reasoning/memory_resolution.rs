@@ -532,6 +532,12 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
             element_index_from_offset(right, element_width),
         )
     {
+        if let (Some(left), Some(right)) = (
+            crate::kernel::assumptions::exact_signed_constant(&left, assumptions),
+            crate::kernel::assumptions::exact_signed_constant(&right, assumptions),
+        ) {
+            return Some(left == right);
+        }
         if bitvector_terms_proven_equal_for_memory_resolution(&left, &right, assumptions) {
             return Some(true);
         }
@@ -591,6 +597,12 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
 ) -> bool {
     if left == right {
         return true;
+    }
+    if let (Some(left), Some(right)) = (
+        crate::kernel::assumptions::exact_signed_constant(left, assumptions),
+        crate::kernel::assumptions::exact_signed_constant(right, assumptions),
+    ) {
+        return left == right;
     }
     if resolution_interrupted() {
         return false;

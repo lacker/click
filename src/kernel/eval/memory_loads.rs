@@ -396,6 +396,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             CType::Int32 => int32(Bitvector32Term::Constant(0)),
             CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
             CType::UInt16 => uint16(Bitvector32Term::Constant(0)),
+            CType::UInt32 => CValue::UInt32(Bitvector32Term::Constant(0)),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
+            CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
             _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {
@@ -789,6 +792,11 @@ pub(crate) fn canonical_offset_term(offset: &PointerOffsetTerm) -> PointerOffset
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             PointerOffsetTerm::scale_int32(canonical_term(value), *byte_width)
         }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => PointerOffsetTerm::scale_int64(canonical_term(value), *byte_width, *unsigned),
     }
 }
 
@@ -1451,6 +1459,15 @@ fn substitute_load_variables_in_offset(
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             PointerOffsetTerm::scale_int32(substitute_load_variables(value, facts), *byte_width)
         }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => PointerOffsetTerm::scale_int64(
+            substitute_load_variables(value, facts),
+            *byte_width,
+            *unsigned,
+        ),
     }
 }
 
@@ -1606,7 +1623,8 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
         PointerOffsetTerm::Add(left, right) => {
             offset_mentions_a_memory_load(left) || offset_mentions_a_memory_load(right)
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => term_mentions_a_memory_load(value),
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => term_mentions_a_memory_load(value),
     }
 }
 
@@ -1764,16 +1782,32 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::UInt32 => Some(memory.symbolic_uint32_load(pointer)),
         CType::Int64 => Some(memory.symbolic_int64_load(pointer)),
         CType::UInt64 => Some(memory.symbolic_uint64_load(pointer)),
-        CType::Int32Pointer
+        CType::Int16Pointer
+        | CType::UInt16Pointer
+        | CType::Int32Pointer
         | CType::UInt8Pointer
+        | CType::UInt32Pointer
+        | CType::Int64Pointer
+        | CType::UInt64Pointer
+        | CType::Int16PointerPointer
+        | CType::UInt16PointerPointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer => Some(memory.symbolic_pointer_load(
+        | CType::UInt8PointerPointer
+        | CType::UInt32PointerPointer
+        | CType::Int64PointerPointer
+        | CType::UInt64PointerPointer => Some(memory.symbolic_pointer_load(
             pointer,
             value_type.pointee_type()?.byte_width(),
             value_type,
         )),
         CType::FunctionPointer(_) => None,
-        CType::Int32Array(_) | CType::UInt8Array(_) => None,
+        CType::Int32Array(_)
+        | CType::UInt8Array(_)
+        | CType::Int16Array(_)
+        | CType::UInt16Array(_)
+        | CType::UInt32Array(_)
+        | CType::Int64Array(_)
+        | CType::UInt64Array(_) => None,
     }
 }
 

@@ -629,7 +629,14 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         // to load an aggregate value.
         CExpression::TypedLoad {
             pointer,
-            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            value_type:
+                CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int16Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_),
         } => evaluate_c_expression_paths(state, pointer, assumptions, budget)?,
         CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
@@ -1111,6 +1118,11 @@ pub(in crate::kernel) fn c_expression_pointee_type(
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Array(_) => Some(CType::Int32),
             CType::UInt8Array(_) => Some(CType::UInt8),
+            CType::Int16Array(_) => Some(CType::Int16),
+            CType::UInt16Array(_) => Some(CType::UInt16),
+            CType::UInt32Array(_) => Some(CType::UInt32),
+            CType::Int64Array(_) => Some(CType::Int64),
+            CType::UInt64Array(_) => Some(CType::UInt64),
             value_type => value_type.pointee_type(),
         },
         CExpression::Add(left, right) => c_expression_pointee_type(state, left)

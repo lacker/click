@@ -970,7 +970,10 @@ impl PureFactContext {
         };
         match offset {
             PointerOffsetTerm::Constant(_) => true,
-            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            PointerOffsetTerm::Int32Scaled { value, byte_width }
+            | PointerOffsetTerm::Int64Scaled {
+                value, byte_width, ..
+            } => {
                 if !byte_path || *byte_width <= 1 {
                     return true;
                 }

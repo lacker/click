@@ -775,6 +775,15 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                     PointerOffsetTerm::scale_int32(rewrite_term(value, from, to), *byte_width)
                 }
+                PointerOffsetTerm::Int64Scaled {
+                    value,
+                    byte_width,
+                    unsigned,
+                } => PointerOffsetTerm::scale_int64(
+                    rewrite_term(value, from, to),
+                    *byte_width,
+                    *unsigned,
+                ),
                 PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
             }
         }
@@ -1012,6 +1021,15 @@ fn rewrite_atomic_proposition_by_exact_equality(
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 PointerOffsetTerm::scale_int32(rewrite_term(value, from, to), *byte_width)
             }
+            PointerOffsetTerm::Int64Scaled {
+                value,
+                byte_width,
+                unsigned,
+            } => PointerOffsetTerm::scale_int64(
+                rewrite_term(value, from, to),
+                *byte_width,
+                *unsigned,
+            ),
             PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
         }
     }

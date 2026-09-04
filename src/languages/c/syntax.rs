@@ -378,16 +378,31 @@ pub enum C0Type {
     UInt32,
     Int64,
     UInt64,
+    Int16Pointer,
+    UInt16Pointer,
     Int32Pointer,
     UInt8Pointer,
+    UInt32Pointer,
+    Int64Pointer,
+    UInt64Pointer,
+    Int16PointerPointer,
+    UInt16PointerPointer,
     Int32PointerPointer,
     UInt8PointerPointer,
+    UInt32PointerPointer,
+    Int64PointerPointer,
+    UInt64PointerPointer,
     /// A callback signature identified by a stable, structural signature key.
     /// The key is shared with the kernel type and is deliberately opaque to
     /// ordinary C expressions: function pointers are callable, not objects.
     FunctionPointer(u64),
     Int32Array(u32),
     UInt8Array(u32),
+    Int16Array(u32),
+    UInt16Array(u32),
+    UInt32Array(u32),
+    Int64Array(u32),
+    UInt64Array(u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -410,13 +425,30 @@ impl CAbi {
             (
                 Self::Lp64,
                 C0Type::Int32Pointer
+                | C0Type::Int16Pointer
+                | C0Type::UInt16Pointer
                 | C0Type::UInt8Pointer
+                | C0Type::UInt32Pointer
+                | C0Type::Int64Pointer
+                | C0Type::UInt64Pointer
+                | C0Type::Int16PointerPointer
+                | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
-                | C0Type::UInt8PointerPointer,
+                | C0Type::UInt8PointerPointer
+                | C0Type::UInt32PointerPointer
+                | C0Type::Int64PointerPointer
+                | C0Type::UInt64PointerPointer,
             ) => (8, 8),
             (Self::Lp64, C0Type::FunctionPointer(_)) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
             (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
+            (Self::Lp64, C0Type::Int16Array(length) | C0Type::UInt16Array(length)) => {
+                (length.saturating_mul(2), 2)
+            }
+            (Self::Lp64, C0Type::UInt32Array(length)) => (length.saturating_mul(4), 4),
+            (Self::Lp64, C0Type::Int64Array(length) | C0Type::UInt64Array(length)) => {
+                (length.saturating_mul(8), 8)
+            }
         }
     }
 }
@@ -916,19 +948,39 @@ impl C0Type {
         matches!(
             self,
             Self::Int32Pointer
+                | Self::Int16Pointer
+                | Self::UInt16Pointer
                 | Self::UInt8Pointer
+                | Self::UInt32Pointer
+                | Self::Int64Pointer
+                | Self::UInt64Pointer
+                | Self::Int16PointerPointer
+                | Self::UInt16PointerPointer
                 | Self::Int32PointerPointer
                 | Self::UInt8PointerPointer
+                | Self::UInt32PointerPointer
+                | Self::Int64PointerPointer
+                | Self::UInt64PointerPointer
                 | Self::FunctionPointer(_)
         )
     }
 
     pub fn pointee_type(self) -> Option<Self> {
         match self {
+            Self::Int16Pointer | Self::Int16Array(_) => Some(Self::Int16),
             Self::Int32Pointer | Self::Int32Array(_) => Some(Self::Int32),
             Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
+            Self::UInt16Pointer | Self::UInt16Array(_) => Some(Self::UInt16),
+            Self::UInt32Pointer | Self::UInt32Array(_) => Some(Self::UInt32),
+            Self::Int64Pointer | Self::Int64Array(_) => Some(Self::Int64),
+            Self::UInt64Pointer | Self::UInt64Array(_) => Some(Self::UInt64),
+            Self::Int16PointerPointer => Some(Self::Int16Pointer),
+            Self::UInt16PointerPointer => Some(Self::UInt16Pointer),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
+            Self::UInt32PointerPointer => Some(Self::UInt32Pointer),
+            Self::Int64PointerPointer => Some(Self::Int64Pointer),
+            Self::UInt64PointerPointer => Some(Self::UInt64Pointer),
             Self::Void
             | Self::Int16
             | Self::Int32
@@ -952,12 +1004,27 @@ impl C0Type {
             Self::Int64 => crate::kernel::CType::Int64,
             Self::UInt64 => crate::kernel::CType::UInt64,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
+            Self::Int16Pointer => crate::kernel::CType::Int16Pointer,
+            Self::UInt16Pointer => crate::kernel::CType::UInt16Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
+            Self::UInt32Pointer => crate::kernel::CType::UInt32Pointer,
+            Self::Int64Pointer => crate::kernel::CType::Int64Pointer,
+            Self::UInt64Pointer => crate::kernel::CType::UInt64Pointer,
+            Self::Int16PointerPointer => crate::kernel::CType::Int16PointerPointer,
+            Self::UInt16PointerPointer => crate::kernel::CType::UInt16PointerPointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
             Self::UInt8PointerPointer => crate::kernel::CType::UInt8PointerPointer,
+            Self::UInt32PointerPointer => crate::kernel::CType::UInt32PointerPointer,
+            Self::Int64PointerPointer => crate::kernel::CType::Int64PointerPointer,
+            Self::UInt64PointerPointer => crate::kernel::CType::UInt64PointerPointer,
             Self::FunctionPointer(signature) => crate::kernel::CType::FunctionPointer(signature),
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
+            Self::Int16Array(length) => crate::kernel::CType::Int16Array(length),
+            Self::UInt16Array(length) => crate::kernel::CType::UInt16Array(length),
+            Self::UInt32Array(length) => crate::kernel::CType::UInt32Array(length),
+            Self::Int64Array(length) => crate::kernel::CType::Int64Array(length),
+            Self::UInt64Array(length) => crate::kernel::CType::UInt64Array(length),
         }
     }
 }
@@ -3211,32 +3278,39 @@ impl Parser {
         while self.peek() == Some(&Token::Star) {
             self.position += 1;
             c_type = match c_type {
-                C0Type::Int16 | C0Type::UInt16 => {
-                    return Err(self.error_at_previous(
-                        "pointers to 16-bit integer values are not supported yet",
-                    ));
-                }
+                C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
-                C0Type::UInt32 => {
-                    return Err(
-                        self.error_at_previous("pointers to uint32 values are not supported yet")
-                    );
-                }
-                C0Type::Int64 | C0Type::UInt64 => {
-                    return Err(self.error_at_previous(
-                        "pointers to 64-bit integer values are not supported yet",
-                    ));
-                }
+                C0Type::UInt16 => C0Type::UInt16Pointer,
+                C0Type::UInt32 => C0Type::UInt32Pointer,
+                C0Type::Int64 => C0Type::Int64Pointer,
+                C0Type::UInt64 => C0Type::UInt64Pointer,
+                C0Type::Int16Pointer => C0Type::Int16PointerPointer,
+                C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
+                C0Type::Int64Pointer => C0Type::Int64PointerPointer,
+                C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
                 C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
-                C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
+                C0Type::Int16PointerPointer
+                | C0Type::UInt16PointerPointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+                | C0Type::UInt32PointerPointer
+                | C0Type::Int64PointerPointer
+                | C0Type::UInt64PointerPointer => {
                     return Err(
                         self.error_at_previous("pointer depth beyond `**` is not supported")
                     );
                 }
-                C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
+                C0Type::Int32Array(_)
+                | C0Type::UInt8Array(_)
+                | C0Type::Int16Array(_)
+                | C0Type::UInt16Array(_)
+                | C0Type::UInt32Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_) => {
                     return Err(self.error_at_previous("pointer-to-array types are not supported"));
                 }
                 C0Type::FunctionPointer(_) => {
@@ -3431,10 +3505,20 @@ impl Parser {
             return Ok(c_type);
         }
         let pointer_type = match c_type {
+            C0Type::Int16 => C0Type::Int16Pointer,
+            C0Type::UInt16 => C0Type::UInt16Pointer,
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
+            C0Type::UInt32 => C0Type::UInt32Pointer,
+            C0Type::Int64 => C0Type::Int64Pointer,
+            C0Type::UInt64 => C0Type::UInt64Pointer,
+            C0Type::Int16Pointer => C0Type::Int16PointerPointer,
+            C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
             C0Type::Int32Pointer => C0Type::Int32PointerPointer,
             C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+            C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
+            C0Type::Int64Pointer => C0Type::Int64PointerPointer,
+            C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
             _ => {
                 return Err(
                     self.error_here("only scalar and pointer array parameters are supported")
@@ -3481,8 +3565,13 @@ impl Parser {
             )
         } else {
             match parsed_type.c_type {
+                C0Type::Int16 => (C0Type::Int16Array, 2u32, "int16".to_string(), false),
+                C0Type::UInt16 => (C0Type::UInt16Array, 2u32, "uint16".to_string(), false),
                 C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32".to_string(), false),
                 C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8".to_string(), false),
+                C0Type::UInt32 => (C0Type::UInt32Array, 4u32, "uint32".to_string(), false),
+                C0Type::Int64 => (C0Type::Int64Array, 8u32, "int64".to_string(), false),
+                C0Type::UInt64 => (C0Type::UInt64Array, 8u32, "uint64".to_string(), false),
                 _ => return Err(self.error_here("only scalar local arrays are supported")),
             }
         };
@@ -3881,6 +3970,11 @@ impl Parser {
         let (length, element_type) = match c_type {
             C0Type::Int32Array(length) => (length, C0Type::Int32),
             C0Type::UInt8Array(length) => (length, C0Type::UInt8),
+            C0Type::Int16Array(length) => (length, C0Type::Int16),
+            C0Type::UInt16Array(length) => (length, C0Type::UInt16),
+            C0Type::UInt32Array(length) => (length, C0Type::UInt32),
+            C0Type::Int64Array(length) => (length, C0Type::Int64),
+            C0Type::UInt64Array(length) => (length, C0Type::UInt64),
             _ => unreachable!("array initializer called for a scalar type"),
         };
         let mut values = Vec::new();
@@ -4693,20 +4787,52 @@ impl Parser {
                                 ..
                             }
                     ),
-                    Some(C0Type::Int32PointerPointer) => matches!(
-                        element_size,
-                        C0Expression::Int32Literal(8)
-                            | C0Expression::SizeOfType {
-                                c_type: C0Type::Int32Pointer,
+                    Some(
+                        C0Type::Int16Pointer
+                        | C0Type::UInt16Pointer
+                        | C0Type::Int32Pointer
+                        | C0Type::UInt32Pointer
+                        | C0Type::Int64Pointer
+                        | C0Type::UInt64Pointer,
+                    ) => {
+                        let target_element = self
+                            .variable_types
+                            .get(&target)
+                            .copied()
+                            .and_then(C0Type::pointee_type)
+                            .expect("data pointer target has a pointee type");
+                        matches!(
+                            element_size,
+                            C0Expression::Int32Literal(bytes)
+                                if *bytes == target_element.abi_size_bytes()
+                        ) || matches!(
+                            element_size,
+                            C0Expression::SizeOfType {
+                                c_type,
                                 struct_name: None,
                                 ..
-                            }
-                    ),
-                    Some(C0Type::UInt8PointerPointer) => matches!(
+                            } if *c_type == target_element
+                        )
+                    }
+                    Some(
+                        C0Type::Int16PointerPointer
+                        | C0Type::UInt16PointerPointer
+                        | C0Type::Int32PointerPointer
+                        | C0Type::UInt8PointerPointer
+                        | C0Type::UInt32PointerPointer
+                        | C0Type::Int64PointerPointer
+                        | C0Type::UInt64PointerPointer,
+                    ) => matches!(
                         element_size,
                         C0Expression::Int32Literal(8)
                             | C0Expression::SizeOfType {
-                                c_type: C0Type::UInt8Pointer,
+                                c_type: C0Type::Int16Pointer
+                                    | C0Type::UInt16Pointer
+                                    | C0Type::Int32Pointer
+                                    | C0Type::UInt8Pointer
+                                    | C0Type::UInt32Pointer
+                                    | C0Type::Int64Pointer
+                                    | C0Type::UInt64Pointer,
                                 struct_name: None,
                                 ..
                             }

@@ -2326,10 +2326,20 @@ pub(super) fn havoc_loop_modified_locals(
             // A pointer local reassigned in the body (`p = p + 1`) must not
             // keep its entry value across the abstract iteration, exactly as
             // the join abstraction treats it; an invariant must relate it.
-            CType::Int32Pointer
+            CType::Int16Pointer
+            | CType::UInt16Pointer
+            | CType::Int32Pointer
             | CType::UInt8Pointer
+            | CType::UInt32Pointer
+            | CType::Int64Pointer
+            | CType::UInt64Pointer
+            | CType::Int16PointerPointer
+            | CType::UInt16PointerPointer
             | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer => {
+            | CType::UInt8PointerPointer
+            | CType::UInt32PointerPointer
+            | CType::Int64PointerPointer
+            | CType::UInt64PointerPointer => {
                 CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
             }
             CType::FunctionPointer(_) => {
@@ -2337,7 +2347,13 @@ pub(super) fn havoc_loop_modified_locals(
             }
             // Array objects are never assigned by name (C forbids it), and
             // they bind as array objects rather than scalar objects above.
-            CType::Int32Array(_) | CType::UInt8Array(_) => continue,
+            CType::Int32Array(_)
+            | CType::UInt8Array(_)
+            | CType::Int16Array(_)
+            | CType::UInt16Array(_)
+            | CType::UInt32Array(_)
+            | CType::Int64Array(_)
+            | CType::UInt64Array(_) => continue,
         };
         sync_stack_local(&mut state, &name, &value);
         state.locals.set_typed(name, value, c_type);

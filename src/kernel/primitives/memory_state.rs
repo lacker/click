@@ -146,7 +146,10 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         tasks.push(HavocIdentityTask::Text(","));
                         tasks.push(HavocIdentityTask::PointerOffset(*left));
                     }
-                    PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                    PointerOffsetTerm::Int32Scaled { value, byte_width }
+                    | PointerOffsetTerm::Int64Scaled {
+                        value, byte_width, ..
+                    } => {
                         identity.push_str("os(");
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::PointerOffset(
@@ -782,6 +785,26 @@ impl CLocalEnvironment {
         self.set_array_object(name, CType::UInt8, length);
     }
 
+    pub fn set_int16_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::Int16, length);
+    }
+
+    pub fn set_uint16_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::UInt16, length);
+    }
+
+    pub fn set_uint32_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::UInt32, length);
+    }
+
+    pub fn set_int64_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::Int64, length);
+    }
+
+    pub fn set_uint64_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::UInt64, length);
+    }
+
     pub(in crate::kernel) fn set_array_object(
         &mut self,
         name: impl Into<String>,
@@ -1013,7 +1036,8 @@ fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> boo
             }
             PointerOffsetTerm::Constant(_)
             | PointerOffsetTerm::Variable(_)
-            | PointerOffsetTerm::Int32Scaled { .. } => false,
+            | PointerOffsetTerm::Int32Scaled { .. }
+            | PointerOffsetTerm::Int64Scaled { .. } => false,
         }
     }
 

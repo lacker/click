@@ -915,7 +915,8 @@ fn collect_pointer_offset_bitvector_atoms(
             collect_pointer_offset_bitvector_atoms(left, atoms);
             collect_pointer_offset_bitvector_atoms(right, atoms);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => collect_bitvector_atoms(value, atoms),
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => collect_bitvector_atoms(value, atoms),
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
     }
 }

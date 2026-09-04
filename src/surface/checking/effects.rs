@@ -1056,6 +1056,9 @@ fn element_index_from_pointer_offset(
         {
             Some(value.as_ref().clone())
         }
+        PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } if *byte_width == i64::from(element_width) => Some(value.as_ref().clone()),
         PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
             element_index_from_pointer_offset(right, element_width)
         }

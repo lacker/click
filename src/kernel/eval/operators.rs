@@ -218,10 +218,18 @@ pub(in crate::kernel) fn apply_c_add(
         }
         (
             CValue::Pointer(pointer),
-            offset @ (CValue::Int16(_) | CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt16(_)),
+            offset @ (CValue::Int16(_)
+            | CValue::Int32(_)
+            | CValue::UInt8(_)
+            | CValue::UInt16(_)
+            | CValue::UInt32(_)
+            | CValue::Int64(_)
+            | CValue::UInt64(_)),
         ) => {
             let mut facts = facts;
-            let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
+            let Some((offset, unsigned, wide)) =
+                pointer_index_term(offset, &mut facts, assumptions)
+            else {
                 return Vec::new();
             };
             let Some(byte_width) = left_step_width else {
@@ -239,17 +247,27 @@ pub(in crate::kernel) fn apply_c_add(
                 pointer,
                 offset,
                 byte_width,
+                unsigned,
+                wide,
                 facts,
                 obligations,
                 assumptions,
             )
         }
         (
-            offset @ (CValue::Int16(_) | CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt16(_)),
+            offset @ (CValue::Int16(_)
+            | CValue::Int32(_)
+            | CValue::UInt8(_)
+            | CValue::UInt16(_)
+            | CValue::UInt32(_)
+            | CValue::Int64(_)
+            | CValue::UInt64(_)),
             CValue::Pointer(pointer),
         ) => {
             let mut facts = facts;
-            let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
+            let Some((offset, unsigned, wide)) =
+                pointer_index_term(offset, &mut facts, assumptions)
+            else {
                 return Vec::new();
             };
             let Some(byte_width) = right_step_width else {
@@ -267,6 +285,8 @@ pub(in crate::kernel) fn apply_c_add(
                 pointer,
                 offset,
                 byte_width,
+                unsigned,
+                wide,
                 facts,
                 obligations,
                 assumptions,
@@ -1240,6 +1260,8 @@ pub(in crate::kernel) fn apply_c_subtract(
                 pointer,
                 Bitvector32Term::subtract(Bitvector32Term::Constant(0), right),
                 byte_width,
+                false,
+                false,
                 facts,
                 obligations,
                 assumptions,
@@ -1284,18 +1306,40 @@ struct PointerFormationGuard {
     value: bool,
 }
 
+fn pointer_index_term(
+    value: CValue,
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+) -> Option<(Bitvector32Term, bool, bool)> {
+    match value {
+        value @ (CValue::Int16(_) | CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt16(_)) => {
+            Some((
+                promote_c_int32_path_value(value, facts, assumptions)?,
+                false,
+                false,
+            ))
+        }
+        CValue::UInt32(value) => Some((Bitvector32Term::uint64_from_32(value), true, true)),
+        CValue::Int64(value) => Some((value, false, true)),
+        CValue::UInt64(value) => Some((value, true, true)),
+        CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
 fn pointer_offset_by_elements_paths(
     state: &CState,
     pointer: CPointerValue,
     offset: Bitvector32Term,
     byte_width: u32,
+    unsigned: bool,
+    wide: bool,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let pointer_type = pointer.c_type();
     let pointer = pointer.into_pointer();
-    let result = pointer.offset_by_elements(offset.clone(), byte_width);
+    let result = pointer.offset_by_typed_elements(offset.clone(), byte_width, unsigned, wide);
     let mut guards = Vec::new();
 
     // Pointer offsets are exact i64 terms, but the source index is a signed

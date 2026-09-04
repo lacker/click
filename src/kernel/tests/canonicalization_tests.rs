@@ -120,7 +120,8 @@ fn collect_offset_load_variables_from_offset(
             collect_offset_load_variables_from_offset(left, load_variables);
             collect_offset_load_variables_from_offset(right, load_variables);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => {
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
             assert_scaled_index_free_of_raw_loads(value, load_variables);
         }
     }

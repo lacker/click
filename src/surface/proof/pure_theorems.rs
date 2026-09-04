@@ -295,6 +295,30 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt64 => CValue::UInt64(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Int16Pointer | C0Type::Int16Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            2,
+                        ),
+                    },
+                    CType::Int16Pointer,
+                ),
+                C0Type::UInt16Pointer | C0Type::UInt16Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            2,
+                        ),
+                    },
+                    CType::UInt16Pointer,
+                ),
                 C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
@@ -319,7 +343,49 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::UInt8Pointer,
                 ),
-                C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
+                C0Type::UInt32Pointer | C0Type::UInt32Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            4,
+                        ),
+                    },
+                    CType::UInt32Pointer,
+                ),
+                C0Type::Int64Pointer | C0Type::Int64Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            8,
+                        ),
+                    },
+                    CType::Int64Pointer,
+                ),
+                C0Type::UInt64Pointer | C0Type::UInt64Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            8,
+                        ),
+                    },
+                    CType::UInt64Pointer,
+                ),
+                C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+                | C0Type::Int16PointerPointer
+                | C0Type::UInt16PointerPointer
+                | C0Type::UInt32PointerPointer
+                | C0Type::Int64PointerPointer
+                | C0Type::UInt64PointerPointer => {
                     let element_width = parameter
                         .c_type()
                         .pointee_type()

@@ -240,6 +240,9 @@ pub(in crate::kernel) fn element_index_from_offset(
         {
             Some(value.as_ref().clone())
         }
+        PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } if *byte_width == i64::from(element_width) => Some(value.as_ref().clone()),
         PointerOffsetTerm::Constant(offset) if offset % i64::from(element_width) == 0 => {
             let index = offset / i64::from(element_width);
             (i32::MIN as i64..=i32::MAX as i64)
@@ -262,7 +265,8 @@ pub(in crate::kernel) fn common_pointer_offset_element_width(
 ) -> Option<u32> {
     fn offset_element_width(offset: &PointerOffsetTerm) -> Option<u32> {
         match offset {
-            PointerOffsetTerm::Int32Scaled { byte_width, .. } => {
+            PointerOffsetTerm::Int32Scaled { byte_width, .. }
+            | PointerOffsetTerm::Int64Scaled { byte_width, .. } => {
                 u32::try_from(*byte_width).ok().filter(|width| *width > 0)
             }
             PointerOffsetTerm::Add(left, right) => {
@@ -354,7 +358,10 @@ pub(in crate::kernel) fn byte_offset_from_pointer_offset(
             byte_offset_from_pointer_offset(left)?,
             byte_offset_from_pointer_offset(right)?,
         )),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
             let width = u32::try_from(*byte_width).ok()?;
             match width {
                 0 => Some(Bitvector32Term::Constant(0)),

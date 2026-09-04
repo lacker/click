@@ -685,15 +685,26 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
     match parameter.c_type() {
         C0Type::Void => 0,
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
-        C0Type::Int16 | C0Type::UInt16 => 2,
+        C0Type::Int16 | C0Type::UInt16 | C0Type::Int16Array(_) | C0Type::UInt16Array(_) => 2,
         C0Type::Int32
         | C0Type::UInt8
         | C0Type::UInt32
-        | C0Type::Int64
-        | C0Type::UInt64
         | C0Type::Int32Pointer
-        | C0Type::Int32Array(_) => 4,
-        C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => 8,
+        | C0Type::UInt32Pointer
+        | C0Type::Int32Array(_)
+        | C0Type::UInt32Array(_) => 4,
+        C0Type::Int64 | C0Type::UInt64 | C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
+        C0Type::Int16Pointer
+        | C0Type::UInt16Pointer
+        | C0Type::Int64Pointer
+        | C0Type::UInt64Pointer
+        | C0Type::Int16PointerPointer
+        | C0Type::UInt16PointerPointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::UInt32PointerPointer
+        | C0Type::Int64PointerPointer
+        | C0Type::UInt64PointerPointer => 8,
         C0Type::FunctionPointer(_) => 8,
     }
 }
@@ -917,12 +928,28 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt32 => "load_uint32",
                 CType::Int64 => "load_int64",
                 CType::UInt64 => "load_uint64",
+                CType::Int16Pointer => "load_int16_pointer",
+                CType::UInt16Pointer => "load_uint16_pointer",
                 CType::Int32Pointer => "load_int32_pointer",
                 CType::UInt8Pointer => "load_uint8_pointer",
+                CType::UInt32Pointer => "load_uint32_pointer",
+                CType::Int64Pointer => "load_int64_pointer",
+                CType::UInt64Pointer => "load_uint64_pointer",
+                CType::Int16PointerPointer => "load_int16_pointer_pointer",
+                CType::UInt16PointerPointer => "load_uint16_pointer_pointer",
                 CType::Int32PointerPointer => "load_int32_pointer_pointer",
                 CType::UInt8PointerPointer => "load_uint8_pointer_pointer",
+                CType::UInt32PointerPointer => "load_uint32_pointer_pointer",
+                CType::Int64PointerPointer => "load_int64_pointer_pointer",
+                CType::UInt64PointerPointer => "load_uint64_pointer_pointer",
                 CType::FunctionPointer(_) => "load_function_pointer",
-                CType::Int32Array(_) | CType::UInt8Array(_) => {
+                CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int16Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_) => {
                     return format!("*{}", describe_c_expression(pointer));
                 }
             };
@@ -1417,6 +1444,14 @@ pub(super) fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             format!("{} * {byte_width}", describe_bitvector(value))
+        }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => {
+            let signedness = if *unsigned { "uint64" } else { "int64" };
+            format!("{signedness}({}) * {byte_width}", describe_bitvector(value))
         }
     }
 }

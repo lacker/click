@@ -1019,7 +1019,8 @@ pub(in crate::kernel) fn collect_pointer_offset_bitvector_variables(
             collect_pointer_offset_bitvector_variables(left, variables);
             collect_pointer_offset_bitvector_variables(right, variables);
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => {
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
             collect_bitvector_variables(value, variables);
         }
     }

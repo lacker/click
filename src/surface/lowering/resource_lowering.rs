@@ -49,10 +49,20 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.c_type().to_kernel_type(),
                 ));
             }
-            C0Type::Int32Pointer
+            C0Type::Int16Pointer
+            | C0Type::UInt16Pointer
+            | C0Type::Int32Pointer
             | C0Type::UInt8Pointer
+            | C0Type::UInt32Pointer
+            | C0Type::Int64Pointer
+            | C0Type::UInt64Pointer
+            | C0Type::Int16PointerPointer
+            | C0Type::UInt16PointerPointer
             | C0Type::Int32PointerPointer
-            | C0Type::UInt8PointerPointer => {
+            | C0Type::UInt8PointerPointer
+            | C0Type::UInt32PointerPointer
+            | C0Type::Int64PointerPointer
+            | C0Type::UInt64PointerPointer => {
                 let c_type = parameter.c_type();
                 let kernel_c_type = parameter.to_kernel_parameter().c_type();
                 // Struct array parameters are lowered to byte pointers in the
@@ -118,7 +128,13 @@ pub(in crate::surface) fn initial_call_state(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
-            C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
+            C0Type::Int32Array(_)
+            | C0Type::UInt8Array(_)
+            | C0Type::Int16Array(_)
+            | C0Type::UInt16Array(_)
+            | C0Type::UInt32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_) => {
                 return Err(ClickError::new(format!(
                     "array parameter `{}` should have lowered to a pointer",
                     parameter.name()
@@ -1355,6 +1371,11 @@ fn contract_expression_element_type(
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Array(_) => Some(CType::Int32),
             CType::UInt8Array(_) => Some(CType::UInt8),
+            CType::Int16Array(_) => Some(CType::Int16),
+            CType::UInt16Array(_) => Some(CType::UInt16),
+            CType::UInt32Array(_) => Some(CType::UInt32),
+            CType::Int64Array(_) => Some(CType::Int64),
+            CType::UInt64Array(_) => Some(CType::UInt64),
             value_type => value_type.pointee_type(),
         },
         _ => None,
@@ -1382,6 +1403,9 @@ pub(in crate::surface) fn contract_expression_element_width(
                                 .map(CType::byte_width),
                             C0Type::Int32Array(_) => Some(4),
                             C0Type::UInt8Array(_) => Some(1),
+                            C0Type::Int16Array(_) | C0Type::UInt16Array(_) => Some(2),
+                            C0Type::UInt32Array(_) => Some(4),
+                            C0Type::Int64Array(_) | C0Type::UInt64Array(_) => Some(8),
                             _ => None,
                         })
                 }
@@ -1393,6 +1417,9 @@ pub(in crate::surface) fn contract_expression_element_width(
             c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
             CType::Int32Array(_) => Some(4),
             CType::UInt8Array(_) => Some(1),
+            CType::Int16Array(_) | CType::UInt16Array(_) => Some(2),
+            CType::UInt32Array(_) => Some(4),
+            CType::Int64Array(_) | CType::UInt64Array(_) => Some(8),
             _ => None,
         },
         _ => None,

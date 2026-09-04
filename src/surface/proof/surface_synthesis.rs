@@ -735,7 +735,8 @@ pub(super) fn synthesize_surface_pointer_offset(
         }
         PointerOffsetTerm::Constant(_)
         | PointerOffsetTerm::Variable(_)
-        | PointerOffsetTerm::Int32Scaled { .. } => None,
+        | PointerOffsetTerm::Int32Scaled { .. }
+        | PointerOffsetTerm::Int64Scaled { .. } => None,
     }
 }
 
@@ -976,11 +977,12 @@ fn synthesize_surface_bitvector(
                             let CExpression::Value(CValue::Pointer(base)) = argument else {
                                 return None;
                             };
-                            kernel_pointer.element_index_from_base(base)?;
-                            parameter
-                                .c_type()
-                                .pointee_type()
-                                .map(C0Type::to_kernel_type)
+                            let element_type = parameter.c_type().pointee_type()?;
+                            kernel_pointer.element_index_from_base_with_width(
+                                base,
+                                element_type.to_kernel_type().byte_width(),
+                            )?;
+                            Some(element_type.to_kernel_type())
                         });
                 let pointer = synthesize_surface_pointer(
                     kernel_pointer,
@@ -1199,7 +1201,9 @@ fn synthesize_parameter_field_indexed_int32_load(
         Some((field, index))
     };
     let (field, index) = match &pointer.offset {
-        base @ PointerOffsetTerm::Int32Scaled { .. } => pointer_field_and_index(base, None)?,
+        base @ (PointerOffsetTerm::Int32Scaled { .. } | PointerOffsetTerm::Int64Scaled { .. }) => {
+            pointer_field_and_index(base, None)?
+        }
         PointerOffsetTerm::Add(left, right) => pointer_field_and_index(left, Some(right))
             .or_else(|| pointer_field_and_index(right, Some(left)))?,
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => return None,
@@ -1387,7 +1391,8 @@ fn synthesize_local_indexed_int32_load(
         let CValue::Pointer(base) = value else {
             return None;
         };
-        let index = pointer.element_index_from_base(base)?;
+        let element_width = base.c_type().pointee_type()?.byte_width();
+        let index = pointer.element_index_from_base_with_width(base, element_width)?;
         if index == Bitvector32Term::Constant(0) {
             return None;
         }
@@ -1482,7 +1487,12 @@ fn synthesize_surface_pointer(
             let CExpression::Value(CValue::Pointer(base)) = argument else {
                 return None;
             };
-            let index = pointer.element_index_from_base(base)?;
+            let element_width = parameter
+                .c_type()
+                .pointee_type()?
+                .to_kernel_type()
+                .byte_width();
+            let index = pointer.element_index_from_base_with_width(base, element_width)?;
             let base = CExpression::Variable(parameter.name().to_string());
             if index == Bitvector32Term::Constant(0) {
                 return Some(base);
@@ -1506,7 +1516,8 @@ fn synthesize_surface_pointer(
         let CValue::Pointer(base) = value else {
             return None;
         };
-        let index = pointer.element_index_from_base(base)?;
+        let element_width = base.c_type().pointee_type()?.byte_width();
+        let index = pointer.element_index_from_base_with_width(base, element_width)?;
         let base = CExpression::Variable(name.to_string());
         if index == Bitvector32Term::Constant(0) {
             return Some(base);

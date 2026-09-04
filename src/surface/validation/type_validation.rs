@@ -341,10 +341,20 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt32 => "uint32".to_string(),
         C0Type::Int64 => "int64".to_string(),
         C0Type::UInt64 => "uint64".to_string(),
+        C0Type::Int16Pointer | C0Type::Int16Array(_) => "int16*".to_string(),
+        C0Type::UInt16Pointer | C0Type::UInt16Array(_) => "uint16*".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
+        C0Type::UInt32Pointer | C0Type::UInt32Array(_) => "uint32*".to_string(),
+        C0Type::Int64Pointer | C0Type::Int64Array(_) => "int64*".to_string(),
+        C0Type::UInt64Pointer | C0Type::UInt64Array(_) => "uint64*".to_string(),
+        C0Type::Int16PointerPointer => "int16**".to_string(),
+        C0Type::UInt16PointerPointer => "uint16**".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
         C0Type::UInt8PointerPointer => "uint8**".to_string(),
+        C0Type::UInt32PointerPointer => "uint32**".to_string(),
+        C0Type::Int64PointerPointer => "int64**".to_string(),
+        C0Type::UInt64PointerPointer => "uint64**".to_string(),
         C0Type::FunctionPointer(signature) => format!("function-pointer({signature})"),
     }
 }
@@ -354,7 +364,17 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
         (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
-        | (C0Type::UInt8Pointer, C0Type::UInt8Array(_)) => true,
+        | (C0Type::UInt8Pointer, C0Type::UInt8Array(_))
+        | (C0Type::Int16Array(_), C0Type::Int16Pointer)
+        | (C0Type::Int16Pointer, C0Type::Int16Array(_))
+        | (C0Type::UInt16Array(_), C0Type::UInt16Pointer)
+        | (C0Type::UInt16Pointer, C0Type::UInt16Array(_))
+        | (C0Type::UInt32Array(_), C0Type::UInt32Pointer)
+        | (C0Type::UInt32Pointer, C0Type::UInt32Array(_))
+        | (C0Type::Int64Array(_), C0Type::Int64Pointer)
+        | (C0Type::Int64Pointer, C0Type::Int64Array(_))
+        | (C0Type::UInt64Array(_), C0Type::UInt64Pointer)
+        | (C0Type::UInt64Pointer, C0Type::UInt64Array(_)) => true,
         (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
         _ => actual == expected,
     }
@@ -367,12 +387,27 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
     {
         return matches!(
             actual,
-            C0Type::Int32Pointer
+            C0Type::Int16Pointer
+                | C0Type::UInt16Pointer
+                | C0Type::Int32Pointer
                 | C0Type::UInt8Pointer
+                | C0Type::UInt32Pointer
+                | C0Type::Int64Pointer
+                | C0Type::UInt64Pointer
+                | C0Type::Int16PointerPointer
+                | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
                 | C0Type::UInt8PointerPointer
+                | C0Type::UInt32PointerPointer
+                | C0Type::Int64PointerPointer
+                | C0Type::UInt64PointerPointer
                 | C0Type::Int32Array(_)
                 | C0Type::UInt8Array(_)
+                | C0Type::Int16Array(_)
+                | C0Type::UInt16Array(_)
+                | C0Type::UInt32Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_)
         );
     }
     click_types_compatible(actual, expected)
@@ -566,6 +601,21 @@ fn infer_c_expression_type(
             CType::Void | CType::Int32Array(_) | CType::UInt8Array(_) => None,
             CType::Int64 => Some(C0Type::Int64),
             CType::UInt64 => Some(C0Type::UInt64),
+            CType::Int16Pointer => Some(C0Type::Int16Pointer),
+            CType::UInt16Pointer => Some(C0Type::UInt16Pointer),
+            CType::UInt32Pointer => Some(C0Type::UInt32Pointer),
+            CType::Int64Pointer => Some(C0Type::Int64Pointer),
+            CType::UInt64Pointer => Some(C0Type::UInt64Pointer),
+            CType::Int16PointerPointer => Some(C0Type::Int16PointerPointer),
+            CType::UInt16PointerPointer => Some(C0Type::UInt16PointerPointer),
+            CType::UInt32PointerPointer => Some(C0Type::UInt32PointerPointer),
+            CType::Int64PointerPointer => Some(C0Type::Int64PointerPointer),
+            CType::UInt64PointerPointer => Some(C0Type::UInt64PointerPointer),
+            CType::Int16Array(_)
+            | CType::UInt16Array(_)
+            | CType::UInt32Array(_)
+            | CType::Int64Array(_)
+            | CType::UInt64Array(_) => None,
         },
         CExpression::Conditional {
             condition,
@@ -633,11 +683,26 @@ fn infer_c_expression_type(
             CType::UInt64 => C0Type::UInt64,
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
+            CType::Int16Pointer => C0Type::Int16Pointer,
+            CType::UInt16Pointer => C0Type::UInt16Pointer,
+            CType::UInt32Pointer => C0Type::UInt32Pointer,
+            CType::Int64Pointer => C0Type::Int64Pointer,
+            CType::UInt64Pointer => C0Type::UInt64Pointer,
+            CType::Int16PointerPointer => C0Type::Int16PointerPointer,
+            CType::UInt16PointerPointer => C0Type::UInt16PointerPointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
             CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
+            CType::UInt32PointerPointer => C0Type::UInt32PointerPointer,
+            CType::Int64PointerPointer => C0Type::Int64PointerPointer,
+            CType::UInt64PointerPointer => C0Type::UInt64PointerPointer,
             CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
             CType::Int32Array(length) => C0Type::Int32Array(*length),
             CType::UInt8Array(length) => C0Type::UInt8Array(*length),
+            CType::Int16Array(length) => C0Type::Int16Array(*length),
+            CType::UInt16Array(length) => C0Type::UInt16Array(*length),
+            CType::UInt32Array(length) => C0Type::UInt32Array(*length),
+            CType::Int64Array(length) => C0Type::Int64Array(*length),
+            CType::UInt64Array(length) => C0Type::UInt64Array(*length),
         }),
         CExpression::Index(base, _) => {
             infer_c_expression_type(base, variables).and_then(pointer_element_type)
@@ -789,11 +854,26 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
     matches!(
         c_type,
         C0Type::Int32Pointer
+            | C0Type::Int16Pointer
             | C0Type::UInt8Pointer
+            | C0Type::UInt16Pointer
+            | C0Type::UInt32Pointer
+            | C0Type::Int64Pointer
+            | C0Type::UInt64Pointer
+            | C0Type::Int16PointerPointer
+            | C0Type::UInt16PointerPointer
             | C0Type::Int32PointerPointer
             | C0Type::UInt8PointerPointer
+            | C0Type::UInt32PointerPointer
+            | C0Type::Int64PointerPointer
+            | C0Type::UInt64PointerPointer
             | C0Type::Int32Array(_)
             | C0Type::UInt8Array(_)
+            | C0Type::Int16Array(_)
+            | C0Type::UInt16Array(_)
+            | C0Type::UInt32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_)
     )
 }
 

@@ -560,16 +560,32 @@ fn abstract_c_state_for_join_across_with_policy(
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
                 CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
                 CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
-                CType::Int32Pointer
+                CType::Int16Pointer
+                | CType::UInt16Pointer
+                | CType::Int32Pointer
                 | CType::UInt8Pointer
+                | CType::UInt32Pointer
+                | CType::Int64Pointer
+                | CType::UInt64Pointer
+                | CType::Int16PointerPointer
+                | CType::UInt16PointerPointer
                 | CType::Int32PointerPointer
-                | CType::UInt8PointerPointer => {
+                | CType::UInt8PointerPointer
+                | CType::UInt32PointerPointer
+                | CType::Int64PointerPointer
+                | CType::UInt64PointerPointer => {
                     CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
                 }
                 CType::FunctionPointer(_) => {
                     CValue::typed_pointer(Pointer::symbolic_function(variables.next()), *c_type)
                 }
-                CType::Int32Array(_) | CType::UInt8Array(_) => {
+                CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int16Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
                 }
             }
@@ -5224,7 +5240,8 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
                 offset_depth_exceeds(left, remaining - 1)
                     || offset_depth_exceeds(right, remaining - 1)
             }
-            PointerOffsetTerm::Int32Scaled { value, .. } => {
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => {
                 term_depth_exceeds(value, remaining - 1)
             }
         }

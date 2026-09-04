@@ -2603,6 +2603,9 @@ pub(in crate::kernel) fn memory_range_covers(
     ) {
         return false;
     }
+    if memory_range_covers_with_exact_index(available, required, assumptions) {
+        return true;
+    }
     if crate::instrumentation::measure_operation(
         "kernel",
         "memory range coverage",
@@ -2805,6 +2808,36 @@ fn memory_ranges_proven_overlapping(
             right_start,
             left.end().clone(),
         )) == Some(true)
+}
+
+fn memory_range_covers_with_exact_index(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    let index = required
+        .base()
+        .element_index_from_base_with_width(available.base(), available.element_width());
+    let Some(base_delta) = index
+        .and_then(|index| crate::kernel::assumptions::exact_signed_constant(&index, assumptions))
+    else {
+        return false;
+    };
+    let (Some(available_start), Some(available_end), Some(required_start), Some(required_end)) = (
+        available.start().as_const().map(|value| value as i64),
+        available.end().as_const().map(|value| value as i64),
+        required.start().as_const().map(|value| value as i64),
+        required.end().as_const().map(|value| value as i64),
+    ) else {
+        return false;
+    };
+    let Some(required_start) = base_delta.checked_add(required_start) else {
+        return false;
+    };
+    let Some(required_end) = base_delta.checked_add(required_end) else {
+        return false;
+    };
+    available_start <= required_start && required_end <= available_end
 }
 
 impl CResource {

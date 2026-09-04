@@ -426,7 +426,7 @@ impl PureFactContext {
             {
                 return true;
             }
-            if let Some(index_constant) = signed_bitvector_constant(&index) {
+            if let Some(index_constant) = super::exact_signed_constant(&index, self) {
                 if let Some(element_count) = signed_bitvector_constant(&element_count) {
                     return 0 <= index_constant && index_constant < element_count;
                 }
@@ -1761,15 +1761,30 @@ impl PureFactContext {
                 };
             let access_length = Bitvector32Term::Constant(logical_access_length);
             let access_end = Bitvector32Term::add(index.clone(), access_length);
-            let within_range = if byte_width == element_width {
-                // A one-element access occupies the half-open interval
-                // [index, index + 1), so its endpoint is expressed by the
-                // strict element-membership check below. Wider accesses
-                // need their successor endpoint to be at most `end`.
-                proves_order(start, &index, false) && proves_order(&index, end, true)
-            } else {
-                proves_order(start, &index, false) && proves_order(&access_end, end, false)
+            let exact_within_range = match (
+                super::exact_signed_constant(&index, self),
+                super::exact_signed_constant(start, self),
+                super::exact_signed_constant(end, self),
+            ) {
+                (Some(index), Some(start), Some(end)) => {
+                    let access_length = i64::from(logical_access_length);
+                    start <= index
+                        && index
+                            .checked_add(access_length)
+                            .is_some_and(|access_end| access_end <= end)
+                }
+                _ => false,
             };
+            let within_range = exact_within_range
+                || if byte_width == element_width {
+                    // A one-element access occupies the half-open interval
+                    // [index, index + 1), so its endpoint is expressed by the
+                    // strict element-membership check below. Wider accesses
+                    // need their successor endpoint to be at most `end`.
+                    proves_order(start, &index, false) && proves_order(&index, end, true)
+                } else {
+                    proves_order(start, &index, false) && proves_order(&access_end, end, false)
+                };
             if within_range {
                 return true;
             }
@@ -2050,7 +2065,7 @@ impl PureFactContext {
             return false;
         };
         if let (Some(index), Some(start), Some(end)) = (
-            signed_bitvector_constant(&index),
+            super::exact_signed_constant(&index, self),
             signed_bitvector_constant(&range.start),
             signed_bitvector_constant(&range.end),
         ) {
