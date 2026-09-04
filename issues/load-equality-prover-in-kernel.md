@@ -16,13 +16,13 @@ align, and the framed-load prover's own decisions scan facts again, so the
 decision re-enters itself with a branching factor of the number of facts.
 
 The recursion is cut by `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`
-(`src/kernel/assumptions.rs`), which the slice 7 census found met
+(`src/kernel/assumptions.rs`), which the 2026-09-03 census found met
 345,653 times over the examples and 315,061 over the mdtests, marking the
 enclosing decisions truncated so the memo layers cannot cache them. It is
 the one bound in `issues/simplify-kernel.md` that no counter-free
 replacement inside the kernel removes, because it does not bound a walk
 over a well-founded structure; it caps a search. Measured on owned-vector
-(2026-09-03, `click profile`, chunk E of slice 7 as the baseline):
+(2026-09-03, `click profile`, master `5baf00cf` as the baseline):
 
 | variant | wall | framed-load walks |
 |---|---|---|
