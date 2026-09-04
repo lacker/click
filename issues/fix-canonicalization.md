@@ -54,19 +54,24 @@ class, retrieve an exact equality path, or index facts under a class identity.
 That identity is scoped to the particular fact context. It is evidence-backed
 reasoning, not global term identity.
 
-### 3. Contextual rewriting or lowering
+### 3. Explicit contextual restatement
 
-Some producers want to express a value in a vocabulary that will remain useful
-later. The motivating case is a verified call's mutable memory footprint: a
-postcondition may spell an endpoint as `new_len`, while an entry-state equality
-relates it to `old_len + 1`, and another equality may reduce `old_len` to a
-constant. Rewriting the footprint can make later syntactic frame matching
-work.
+Some proofs need to view a value in vocabulary different from its canonical
+syntax. The motivating case is a verified call's mutable memory footprint: the
+list of `(base pointer, start, end, element width)` ranges that its contract
+says the call may change. A contract may spell an endpoint as `new_len`, while
+an entry-state equality relates it to `old_len + 1`, and another equality may
+reduce `old_len` to a constant. A later frame or disjointness proof may be
+written in either of those other vocabularies.
 
-That transformation consumes proved equalities. It should therefore be named
-as contextual lowering and either carry explicit rewrite evidence or remain a
-narrow, clearly justified kernel operation over exact named facts. It must not
-be presented as the canonical form of `new_len`.
+The footprint itself keeps its assumption-free canonical syntax. A proof that
+needs another spelling explicitly derives an equivalent range or effect-summary
+view using named equalities. This is the ordinary distinction between
+definitional equality, which canonical comparison handles automatically, and
+propositional equality, which requires a rewrite or transport step. A smart
+tactic may plan and emit that step automatically, but the kernel only checks
+the requested destination and its evidence. The alternate spelling does not
+replace the stored footprint or become the canonical form of `new_len`.
 
 ## Current behavior
 
@@ -90,13 +95,13 @@ the true canonical form. Structural load canonicalization, load-variable
 substitution (including every condition family and pointer offsets), and
 top-level offset canonicalization now use explicit worklists. Chains in which
 one materialized cell stores a load of the next cell are followed iteratively
-as well. The whole-term memo tables
-are retained for ordinary shallow terms because expansion performance depends
-on them, but an iterative structural preflight makes deep terms bypass those
-caches: their derived `Hash`/`Eq` operations would otherwise recursively walk
-the same structures before the iterative body ran. This numeric threshold is
-only a cache policy and cannot change a proof or canonical result. Narrow
-caches for memory-DAG and load identities remain unchanged.
+as well. The whole-term memo tables are retained for ordinary shallow terms
+because expansion performance depends on them, but an iterative structural
+preflight makes deep terms bypass those caches: their derived `Hash`/`Eq`
+operations would otherwise recursively walk the same structures before the
+iterative body ran. This numeric threshold is only a cache policy and cannot
+change a proof or canonical result. Narrow caches for memory-DAG and load
+identities remain unchanged.
 
 Multi-size regressions exercise conditional terms at depths 1, 8, 32, 96,
 and 256. The two canonicalization passes visit respectively
@@ -186,6 +191,50 @@ not assume that the general simplifier can simply be deleted; it requires that
 canonical identity and contextual footprint lowering stop depending on its
 search-capable behavior.
 
+### Stage 4 boundary decision
+
+The replacement does not choose a preferred contextual representative when a
+verified call is created. The evaluated mutable footprint is put into
+assumption-free canonical form and remains the call-memory derivation's and
+`CMemoryEffectSummary`'s authoritative stored footprint. This gives the call
+one stable representation independent of the entry facts that happened to be
+available.
+
+When a later proof needs, for example, `data[0..old_len + 1]` while the stored
+summary says `data[0..new_len]`, it requests an equivalent view for that proof.
+The request names the source range, destination range, and exact evidence for
+any changed base offset, start, and end. The checker preserves the pointer
+block and element width, checks each equality or constructor-congruence step,
+and derives the alternate view without mutating the original summary. Different
+proofs may therefore use different convenient spellings without changing term
+or footprint identity.
+
+The smart layer is expected to perform the routine automation: notice a range
+vocabulary mismatch, find a short path in the indexed ground-equality graph,
+and emit the explicit restatement. `click expand` must expose that operation,
+and the same operation must be writable directly in the low-level proof form.
+Repeated uses may reuse a previously derived view or a planner cache; that is
+not a reason for the kernel to select and store a speculative representative.
+
+Load-variable congruence follows the same boundary but is a separate checked
+operation. Given the load variable for `load(memory_epoch, data[i])` and an
+explicit proof that `i == 0`, an address-congruence step may derive equality
+with the load variable for `load(memory_epoch, data[0])`. It preserves the
+memory epoch and pointer block and checks the offset equality. It does not call
+general contextual term lowering to manufacture another equality-graph node.
+
+The checked rewrite language is deliberately small:
+
+- exact named equality premises, with symmetry and transitivity;
+- congruence under the term and pointer-offset constructors traversed by the
+  certificate; and
+- deterministic, local constructor reduction such as constant addition.
+
+It does not include general condition proving, theorem search, fold reasoning,
+ambient fact scans, or equality-class representative selection. If a smart
+tactic uses richer reasoning to find a rewrite, it must compile that reasoning
+to the ordinary explicit proof steps the kernel already checks.
+
 ### Stage 2 deterministic-work characterization
 
 Test-only counters measure actual contextual simplifier calls, full-fact
@@ -272,33 +321,33 @@ the semantic layers and caller requirements are separated.
    already-canonical keys and return a class answer or an evidence path. They
    never mutate the canonical syntax of a term merely because a new premise is
    assumed.
-3. **Vocabulary changes are explicit.** A producer that needs a range or
-   pointer expressed through proved equalities requests a targeted contextual
-   rewrite. Planning selects the equality path outside the authoritative
-   kernel where selection is nontrivial; the kernel checks named edges and the
-   local structural/congruence steps.
-4. **Index normalization is named by purpose.** Order-endpoint bucketing may
+3. **Canonical footprints are the stored default.** A verified call stores its
+   evaluated mutable ranges in assumption-free canonical syntax in both the
+   memory derivation and `CMemoryEffectSummary`. Entry assumptions never choose
+   a replacement spelling for that stored identity.
+4. **Vocabulary changes are explicit derived views.** A particular frame,
+   disjointness, or load-address proof may restate a canonical range or pointer
+   through exact proved equalities. Planning selects the destination and path
+   outside the authoritative kernel; the kernel checks the named edges and
+   local structural/congruence steps and retains the original representation.
+5. **Index normalization is named by purpose.** Order-endpoint bucketing may
    normalize associative addition or resolved loads, but it is not called the
    global canonical form unless it satisfies that form's exact contract.
    Bucket-key incompleteness may cost performance but must not change the
    logical inconsistency answer.
 
-The implementation need not force all consumers to store large proof trees.
-It does require an explicit answer to where rewrite authority lives and how a
-recorded range remains related to its source expression. A compact typed path
-or constructor-local equality certificate may suffice.
+The implementation need not attach a large proof tree to every future range
+query. The checked proof event must retain how its derived view follows from
+the stored source. A compact typed path or constructor-local equality
+certificate may suffice, and an already-derived view may be reused.
 
 ## Intended regressions
 
-Before replacing the implementation, construct a focused regression that
-requires more alternating simplification/equality layers than the current
-three rounds. Demonstrate that applying the present contextual operation twice
-can make further progress, or otherwise characterize precisely why the current
-composition happens to be idempotent despite lacking such a proof. The
-regression should exercise the actual memory-range or pointer caller rather
-than only a private helper.
-
-Then retain the following permanent coverage:
+Stage 2 constructed a focused case with more alternating
+simplification/equality layers than the nominal three rounds. It established
+that the inner generated-term worklist closes that case in one phase, while
+also exposing the cubic direct-fact scan and the absence of a useful contract
+for the general operation. The permanent replacement coverage is:
 
 - canonicalizing the output of `canonical_term` again returns the exact same
   term for constants, arithmetic trees, conditionals, folds, nested pointer
@@ -307,8 +356,16 @@ Then retain the following permanent coverage:
   canonical form at depths beyond the former 64-level preflight;
 - adding an ordinary proved equality to a `PureFactContext` does not change the
   assumption-free canonical forms of either side;
-- using that equality for a contextual range rewrite requires and retains the
-  exact evidence, and tampering with an edge or term is rejected;
+- a verified call stores the same canonical source footprint in its call-havoc
+  derivation and `CMemoryEffectSummary`, regardless of unrelated entry facts;
+- restating that footprint for a particular proof requires and retains the
+  exact endpoint evidence, leaves the stored footprint unchanged, and rejects
+  a changed block, element width, edge, source, or destination;
+- smart expansion automatically emits the restatement needed by the motivating
+  verified-call/frame proof, while an equivalent explicit proof checks without
+  invoking contextual search;
+- load-variable congruence across proved-equal offsets uses its narrow checked
+  address step and rejects a changed memory epoch or pointer block;
 - same-load-count proved aliases are either handled by the equality index or
   by explicit rewriting, not by input-dependent "canonical" spelling;
 - deep order endpoints are bucketed without a six-level logical cutoff, and a
@@ -317,25 +374,40 @@ Then retain the following permanent coverage:
   term, equality path, and emitted certificate. Adding unrelated facts does
   not change a direct canonicalization curve.
 
-## Design decisions
+## Resolved and remaining design decisions
 
-Resolve these from caller evidence rather than by choosing a data structure
-first:
+Stage 4 has resolved the semantic choices:
 
-- Can verified-call and resource footprints stay in their original canonical
-  syntax while later matching uses an explicit equality path, or must they be
-  rewritten at creation to remain stable after the equality leaves scope?
-- If creation-time rewriting is required, which component chooses the target
-  vocabulary and what compact evidence remains attached to the result?
+- Verified-call footprints remain in their original assumption-free canonical
+  syntax; a contextual spelling is an equivalent derived view, not replacement
+  identity.
+- The smart planner chooses a destination when automation is requested. The
+  kernel never chooses a “best” member of an equality class.
+- The expanded or directly written proof names the destination and exact
+  endpoint/address evidence. The kernel checks that evidence locally.
+- Footprint restatement and load-address congruence are distinct operations;
+  neither is implemented by a general contextual-lowering helper.
+
+Implementation still has narrow representation questions to settle from the
+existing proof-object conventions:
+
+- Should a footprint restatement derive a second `CMemoryEffectSummary`, or a
+  typed range-view fact consumed directly by frame and disjointness rules?
+- Which existing equality-path and congruence certificate types can represent
+  base-offset, start, and end equality without introducing a parallel proof
+  language?
+- Where should an expanded restatement live in the verified-call proof event so
+  `verify`, `expand`, `profile`, and `audit` check the identical operation?
 - Is an exact ground-equality component index sufficient, or do the observed
-  callers require congruence closure through rewritten subterms?
+  smart-planning cases require target-directed congruence through rewritten
+  subterms? This affects the planner, not the kernel's acceptance boundary.
 - Can order inconsistency use several cheap sound bucket keys and reserve
   pairwise theory checks for a narrowly identified bucket, avoiding any need
   for one context-dependent extracted representative?
-- Should contextual equality classes use a persistent union/find-like index,
-  a proof-producing e-graph in the surface planner, or the current adjacency
-  index with targeted path queries? Any choice must account for branching,
-  provenance, deterministic work, and deep structural keys.
+- Should the smart planner use the current adjacency index with targeted path
+  queries, or does evidence eventually justify a proof-producing e-graph?
+  Stage 4 starts with targeted paths; any alternative must preserve branching,
+  provenance, deterministic work, and deep structural-key constraints.
 - Which currently documented statements about "canonical at creation" refer
   to the assumption-free representation, and which accidentally promise
   context-dependent rewriting?
@@ -353,8 +425,11 @@ first:
 - Canonicalization performs no ambient fact lookup, equality-class selection,
   theorem application, condition decision, or proof search.
 - Context-dependent transformations are renamed and separated from canonical
-  identity. They use only exact named/indexed evidence, or are planned outside
-  the kernel and checked from an explicit certificate.
+  identity. A stored call footprint stays canonical; alternate range and load
+  views are planned outside the kernel and checked from explicit evidence.
+- The kernel does not automatically choose a footprint vocabulary from ambient
+  assumptions. Smart automation emits the same explicit restatement available
+  to a directly written proof, and expansion displays it.
 - `CONTEXTUAL_LOWERING_ROUNDS` and the alternating fixed-round loop are deleted.
   They are not replaced by an unbounded `while changed` loop without a
   well-founded measure and relevant-input scaling proof.
@@ -406,10 +481,17 @@ useful on its own.
    regressions cover depths beyond the former cutoff. The cutoff turned out to
    be redundant in the current equality flow, not a known observable proof
    failure; removing it still closes a brittle logical boundary.
-4. **Separate contextual footprint lowering.** Prefer target-directed explicit
-   equality evidence. Preserve the verified-call and resource regressions that
-   motivated creation-time lowering. Delete the three-round loop only once all
-   callers use the replacement.
+4. **Replace contextual lowering with explicit restatement.** First preserve
+   the evaluated canonical footprint unchanged in call memory and
+   `CMemoryEffectSummary`. Add a small checked operation that derives a
+   proof-local range/effect view from a named source, destination, and equality
+   evidence for the base offset and bounds. Teach smart execution/frame
+   planning to emit and reuse that operation automatically, and make expansion
+   display it. Separately replace `load_variable_congruence_neighbor` with an
+   explicit checked address-congruence step. Preserve the motivating
+   verified-call, frame, and resource regressions, then delete the heuristic
+   representative walk and `CONTEXTUAL_LOWERING_ROUNDS` once both callers have
+   migrated.
 5. **Repair order-endpoint indexing.** Replace the depth-six key construction
    with complete, purpose-named normalization or a bucket strategy whose misses
    cannot affect the logical answer. Retain the consistent-context scaling
