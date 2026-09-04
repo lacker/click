@@ -9,6 +9,11 @@ the exact node sequence is unchanged. Linux rbtree does not store keys itself,
 so its generic correctness property is preservation of node identity and
 in-order order while links and colors change.
 
+The fixed synthetic C scaffold for this work lives in
+[`examples/modeled-binary-tree`](../examples/modeled-binary-tree/README.md).
+Its sidecar currently imports the unchanged implementation without claiming
+the missing model-based proofs.
+
 ## Violated invariant
 
 Contracts for a mutable recursive structure must be able to relate its finite
