@@ -4120,6 +4120,25 @@ pub fn prove_int32_successor_le_implies_lt(
     ))
 }
 
+/// A signed int32 value strictly below another value's successor is no
+/// greater than that value. This remains valid when the successor wraps:
+/// then the strict premise is unsatisfiable.
+pub fn prove_int32_lt_successor_implies_le(
+    value: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let successor = Bitvector32Term::add(upper.clone(), Bitvector32Term::Constant(1));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), successor),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(value, upper), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Two signed int32 values are equal when the first is no greater than the
 /// second and is not strictly less than it.
 pub fn prove_int32_le_antisymmetric(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
@@ -4243,6 +4262,22 @@ pub fn prove_int32_lt_implies_le(left: Bitvector32Term, right: Bitvector32Term) 
         true,
     );
     let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(left, right), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Strict signed int32 order implies disequality.
+pub fn prove_int32_lt_implies_neq(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        false,
+    );
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),

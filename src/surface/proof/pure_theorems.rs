@@ -581,6 +581,7 @@ fn verify_theorem_ensure(
             | "int32_le_antisymmetric"
             | "int32_positive_is_nonnegative"
             | "int32_lt_implies_le"
+            | "int32_lt_implies_neq"
             | "int32_not_lt_implies_ge"
             | "int32_strictly_positive_is_nonnegative"
             | "int32_increment_below_max_is_defined"
@@ -596,6 +597,7 @@ fn verify_theorem_ensure(
             | "int32_positive_predecessor_strictly_decreases"
             | "int32_nonnegative_predecessor_upper_bound"
             | "int32_successor_le_implies_lt"
+            | "int32_lt_successor_implies_le"
     ) {
         return verify_kernel_standard_theorem_axiom(
             theorem,
@@ -863,6 +865,7 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_increment_strict_greater_lower_bound"
         | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
+        "int32_lt_successor_implies_le" => (2, 1),
         "int32_nonnegative_predecessor_upper_bound"
         | "int32_nonnegative_add_within_max_is_defined"
         | "int32_nonnegative_subtract_within_value_is_defined"
@@ -875,7 +878,7 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_ge_and_not_gt_implies_eq" => (2, 2),
         "int32_ge_implies_reversed_le" => (2, 1),
         "int32_le_implies_reversed_ge" => (2, 1),
-        "int32_lt_implies_le" | "int32_not_lt_implies_ge" => (2, 1),
+        "int32_lt_implies_le" | "int32_lt_implies_neq" | "int32_not_lt_implies_ge" => (2, 1),
         "int32_positive_is_nonnegative"
         | "int32_strictly_positive_is_nonnegative"
         | "int32_increment_below_max_is_defined"
@@ -942,6 +945,9 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_successor_le_implies_lt" => {
             prove_int32_successor_le_implies_lt(value, int32_parameter(1)?)
         }
+        "int32_lt_successor_implies_le" => {
+            prove_int32_lt_successor_implies_le(value, int32_parameter(1)?)
+        }
         "int32_le_antisymmetric" => prove_int32_le_antisymmetric(value, int32_parameter(1)?),
         "int32_le_and_not_lt_implies_eq" => {
             prove_int32_le_and_not_lt_implies_eq(value, int32_parameter(1)?)
@@ -954,6 +960,7 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
         "int32_lt_implies_le" => prove_int32_lt_implies_le(value, int32_parameter(1)?),
+        "int32_lt_implies_neq" => prove_int32_lt_implies_neq(value, int32_parameter(1)?),
         "int32_not_lt_implies_ge" => prove_int32_not_lt_implies_ge(value, int32_parameter(1)?),
         "int32_strictly_positive_is_nonnegative" => {
             prove_int32_strictly_positive_is_nonnegative(value)

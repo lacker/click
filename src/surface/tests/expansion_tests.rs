@@ -10318,9 +10318,14 @@ fn assert_bound_universal_fixture_has_no_outcome_fallbacks(filename: &str, funct
         .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
-    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    // Expansion verifies the original smart proof while retaining its event
+    // stream; collect that one pass rather than verifying the same source
+    // once solely for the fallback census and again for expansion.
+    let (expanded, events) = crate::instrumentation::collect(|| {
+        expand_c0_claim_source(click_source, &c_sources, function, CProofClaim::Grouped)
+    });
+    let expanded =
+        expanded.unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
     let fallback_events = events
         .iter()
         .filter(|event| {
@@ -10338,8 +10343,16 @@ fn assert_bound_universal_fixture_has_no_outcome_fallbacks(filename: &str, funct
         path.display()
     );
 
-    let expanded = expand_c0_claim_source(click_source, &c_sources, function, CProofClaim::Grouped)
-        .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+    assert!(
+        expanded.contains("if k < (j - 1)"),
+        "expanded proof from `{}` omitted the checked upper-bound split",
+        path.display()
+    );
+    assert!(
+        expanded.contains("int32_lt_successor_implies_le"),
+        "expanded proof from `{}` omitted the split's explicit bound theorem",
+        path.display()
+    );
     verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
         panic!(
             "expanded proof from `{}` failed independent verification: {error:?}",

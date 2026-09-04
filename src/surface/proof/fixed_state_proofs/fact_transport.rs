@@ -69,6 +69,32 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
                 assumptions.assume_proposition(fact.proposition().clone())
             })
             .assume_proposition(source.clone());
+        let chain_facts = available
+            .iter()
+            .cloned()
+            .chain(std::iter::once(source.clone()))
+            .collect::<Vec<_>>();
+        let chain_assumptions = chain_facts
+            .iter()
+            .filter(|fact| {
+                matches!(
+                    fact,
+                    Proposition::ConditionIs(_, _)
+                        | Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
+                )
+            })
+            .fold(transport_assumptions.clone(), |assumptions, fact| {
+                assumptions.assume_proposition(fact.clone())
+            });
+        if super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
+            target,
+            &chain_facts,
+            &chain_assumptions,
+        ) {
+            return true;
+        }
         certified_fact_transport_reaches(source, target, state.memory(), &transport_assumptions)
     };
 
@@ -364,7 +390,15 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         // load variables denote one unchanged cell.
         let chain_assumptions = chain_facts
             .iter()
-            .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+            .filter(|fact| {
+                matches!(
+                    fact,
+                    Proposition::ConditionIs(_, _)
+                        | Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
+                )
+            })
             .fold(transport_assumptions.clone(), |assumptions, fact| {
                 assumptions.assume_proposition(fact.clone())
             });

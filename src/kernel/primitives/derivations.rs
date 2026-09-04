@@ -625,28 +625,6 @@ impl PropositionDerivation {
                     instance.collect_context_premises(premises);
                 }
             }
-            PropositionDerivationRule::UpperBoundSplit {
-                bound,
-                variable,
-                pivot,
-                below,
-                at,
-            } => {
-                premises.insert(Proposition::ConditionIs(bound.clone(), true));
-                let variable = Bitvector32Term::Variable(*variable);
-                for (proof, local) in [
-                    (
-                        below,
-                        ConditionTerm::signed_less_than(variable.clone(), pivot.clone()),
-                    ),
-                    (at, ConditionTerm::equal(variable, pivot.clone())),
-                ] {
-                    let mut case_premises = BTreeSet::new();
-                    proof.collect_context_premises(&mut case_premises);
-                    case_premises.remove(&Proposition::ConditionIs(local, true));
-                    premises.extend(case_premises);
-                }
-            }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 premises.insert(disjunction.clone());
                 let mut case_propositions = Vec::new();

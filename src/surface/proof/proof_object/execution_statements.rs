@@ -187,19 +187,68 @@ impl<'a> Proof<'a> {
         .map_err(|message| self.step_error(format!("loop state join: {message}")))
     }
 
+    /// Reports whether the legacy invariant checker can already discharge a
+    /// prefix without Surface planning. Region `simp` uses this only to avoid
+    /// reproving successful invariants; a miss selects the next named
+    /// invariant for an explicit checked `have`.
+    pub(in crate::surface::proof) fn legacy_loop_invariant_prefix_holds(
+        &self,
+        loop_entry_state: &CState,
+        invariant_checks: &[CLoopInvariantCheck],
+    ) -> Result<bool, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("loop invariant preflight requires an execution proof"));
+        }
+        self.require_execution_frontier("loop invariant preflight")?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("loop invariant preflight lost its execution state"))?;
+        let mut closer_facts = self.facts().to_vec();
+        closer_facts.extend(
+            execution
+                .core
+                .effect_facts
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        closer_facts.extend(crate::kernel::certified_store_equations(
+            &execution.core.effect_facts,
+        ));
+        match c_loop_invariants_hold_at_back_edge_using(
+            &execution.core.state,
+            loop_entry_state,
+            invariant_checks,
+            &assumptions_from_propositions(&closer_facts),
+        ) {
+            Ok(()) => Ok(true),
+            Err(_) => {
+                if let Some(context) = crate::instrumentation::exceeded_verification_limit_context()
+                {
+                    Err(self.step_error(format!(
+                        "verification limit expired during loop invariant preflight inside {context}"
+                    )))
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+
     /// Checks the complete loop-invariant bundle at this back edge and
     /// retains `close_invariants` when the source path has not already
     /// supplied it.
     ///
     /// The legacy source driver may arrive with the surface closer already
     /// reflected in cursor metadata. That metadata is not authority for the
-    /// invariant judgment: this operation always performs the kernel check
-    /// against the Proof-owned state and facts before accepting the path.
+    /// invariant judgment: this operation accepts only invariants already
+    /// established by checked proof steps in the current facts, and sends the
+    /// remainder through the kernel's legacy invariant checker.
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         loop_entry_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
+        invariant_surfaces: &[ClickProposition],
         composite_resource_definitions: &[CCompositeResourceDefinition],
         do_while: bool,
     ) -> Result<Self, ClickError> {
@@ -244,10 +293,26 @@ impl<'a> Proof<'a> {
                 return Ok(self.clone());
             }
         }
+        if invariant_surfaces.len() != invariant_checks.len() {
+            return Err(self.step_error(
+                "explicit invariant evidence does not align with the invariant bundle",
+            ));
+        }
+        let mut unchecked_invariants = Vec::new();
+        for (check, surface) in invariant_checks.iter().zip(invariant_surfaces) {
+            let explicitly_proved = execution
+                .presentation
+                .surface_propositions
+                .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                .is_some();
+            if !explicitly_proved {
+                unchecked_invariants.push(check.clone());
+            }
+        }
         c_loop_invariants_hold_at_back_edge_using(
             &execution.core.state,
             loop_entry_state,
-            invariant_checks,
+            &unchecked_invariants,
             &assumptions_from_propositions(&closer_facts),
         )
         .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;

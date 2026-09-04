@@ -36,6 +36,9 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     loop {
         invariant i >= 0 and i <= 3;
         invariant forall (k: int32) {
+            0 <= k and k < 3 implies src[k] == old(src[k])
+        };
+        invariant forall (k: int32) {
             0 <= k and k < i implies dst[k] == old(src[k])
         };
         mutable dst[0..3] by frame;
@@ -44,7 +47,6 @@ int32 copy3(int32 dst[3], int32 src[3]) {
         preserve by {
             step();
             step();
-            have i == at(statement(3).entry, i) + 1 by simp;
             simp();
         }
     }

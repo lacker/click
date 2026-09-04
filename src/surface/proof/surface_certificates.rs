@@ -1482,6 +1482,60 @@ pub(super) fn plan_explicit_forall_instantiation(
     None
 }
 
+pub(super) fn plan_explicit_forall_instantiation_transport(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    extra_arguments: &[(Bitvector32Term, ContractExpression)],
+    conclusion_gate: &dyn Fn(&Proposition) -> bool,
+) -> Option<Vec<ProofTactic>> {
+    for (index, (kernel, surface)) in premise_pairs.iter().enumerate() {
+        let Proposition::ForAll { sort, .. } = kernel else {
+            continue;
+        };
+        if *sort != Sort::CInt32 {
+            continue;
+        }
+        let discharge_kernels = premise_pairs
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, (kernel, _))| kernel.clone())
+            .collect::<Vec<_>>();
+        let using_surfaces = premise_pairs
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, (_, surface))| surface.clone())
+            .collect::<Vec<_>>();
+        let mut arguments = extra_arguments.to_vec();
+        arguments.extend(
+            crate::kernel::forall_instantiation_candidate_values(kernel, goal)
+                .into_iter()
+                .filter_map(|value| {
+                    contract_expression_for_instantiation_value(&value)
+                        .map(|argument| (value, argument))
+                }),
+        );
+        for (value, argument) in arguments {
+            if let Some(tactics) = plan_explicit_universal_conclusion_discharge(
+                kernel,
+                surface,
+                value,
+                &argument,
+                goal,
+                surface_goal,
+                &discharge_kernels,
+                &using_surfaces,
+                Some(conclusion_gate),
+            ) {
+                return Some(tactics);
+            }
+        }
+    }
+    None
+}
+
 /// Plans an explicit certificate for a universal goal: introduce the binder
 /// (and implication antecedent), then specialize one listed universal premise
 /// at the introduced binder. Instantiation adds the specialized fact; an
@@ -3704,12 +3758,16 @@ fn plan_explicit_not_strict_implies_greater_equal(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right),
-        true,
-    ) = goal
-    else {
-        return None;
+    let (goal_left, goal_right, reversed_less_equal) = match goal {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+            true,
+        ) => (left, right, false),
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(lower, greater),
+            true,
+        ) => (greater, lower, true),
+        _ => return None,
     };
     for (kernel, surface) in premise_pairs {
         let matches = match kernel {
@@ -3733,16 +3791,30 @@ fn plan_explicit_not_strict_implies_greater_equal(
             continue;
         };
         let (surface_left, surface_right) = surface_strict_parts(inner)?;
-        return Some(vec![
-            ProofTactic::ApplyTheoremUsing {
+        let greater_equal = ClickProposition::Comparison {
+            left: surface_left.clone(),
+            operator: ComparisonOperator::GreaterEqual,
+            right: surface_right.clone(),
+        };
+        let mut tactics = vec![ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_not_lt_implies_ge".to_string(),
+                arguments: vec![surface_left.clone(), surface_right.clone()],
+            },
+            premises: vec![surface.clone()],
+        }];
+        if reversed_less_equal {
+            tactics.push(ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
-                    name: "int32_not_lt_implies_ge".to_string(),
+                    name: "int32_ge_implies_reversed_le".to_string(),
                     arguments: vec![surface_left, surface_right],
                 },
-                premises: vec![surface.clone()],
-            },
-            ProofTactic::Assumption,
-        ]);
+                premises: vec![greater_equal],
+            });
+        } else {
+            tactics.push(ProofTactic::Assumption);
+        }
+        return Some(tactics);
     }
     None
 }

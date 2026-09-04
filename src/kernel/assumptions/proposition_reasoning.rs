@@ -712,9 +712,6 @@ impl PureFactContext {
         if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
         }
-        if let Some(rule) = self.derive_by_upper_bound_split(proposition, for_simp) {
-            return Some(proposition_derivation(proposition, rule));
-        }
         self.derive_by_disjunction_cases(proposition, for_simp)
             .map(|rule| proposition_derivation(proposition, rule))
     }
@@ -2844,121 +2841,6 @@ impl PureFactContext {
             premises: self.clone(),
             instances,
         })
-    }
-
-    /// Case analysis on an assumed upper bound over a goal variable.
-    ///
-    /// A loop back edge asks the closer to re-prove `forall k < b + 1, P(k)`
-    /// from an invariant that says `forall k < b, P(k)`. The gap is one index:
-    /// `k` is either below `b` — where the invariant applies directly — or
-    /// equal to `b`, where the body's own effect discharges it. Neither half
-    /// needs a new theory; the split does.
-    ///
-    /// It is stated as a *goal-side* split rather than as a rule that extends
-    /// a quantified fact's bound, which is what makes it cheap here: the
-    /// earlier attempt on `claude/forall-extension-wip` had to re-prove the
-    /// final index against a fact written at another snapshot and drowned in
-    /// form drift, while each half of this split is derived in the
-    /// ordinary way against whatever facts are actually present.
-    ///
-    /// Sound at both bound shapes, including the wrapping edge: `k <= b`
-    /// obviously splits, and `k < b + 1` either splits the same way or — when
-    /// `b` is `INT_MAX` and `b + 1` wraps — is unsatisfiable, so the split's
-    /// disjunction follows vacuously.
-    fn derive_by_upper_bound_split(
-        &self,
-        proposition: &Proposition,
-        for_simp: bool,
-    ) -> Option<PropositionDerivationRule> {
-        // Each half re-enters the whole search with one more fact, and the
-        // bound that licensed the split survives into both halves, so this
-        // recurses without a guard. One split is all the corpus needs — two
-        // nested loops still close at this limit — and raising it to 2 cost
-        // `bubble_sort3_two_pass_sorted` 20 s for nothing.
-        const UPPER_BOUND_SPLIT_DEPTH_LIMIT: usize = 1;
-        thread_local! {
-            static UPPER_BOUND_SPLIT_DEPTH: Cell<usize> = const { Cell::new(0) };
-        }
-        if UPPER_BOUND_SPLIT_DEPTH.with(Cell::get) >= UPPER_BOUND_SPLIT_DEPTH_LIMIT {
-            return None;
-        }
-        // Splitting a connective duplicates the work its own rule already
-        // does on the way down; by the time the split can help, the guards
-        // have been assumed and only the leaf is left.
-        if matches!(
-            proposition,
-            Proposition::And(_, _)
-                | Proposition::Or(_, _)
-                | Proposition::Implies(_, _)
-                | Proposition::ForAll { .. }
-                | Proposition::Exists { .. }
-        ) {
-            return None;
-        }
-        let mut goal_variables = BTreeSet::new();
-        collect_proposition_bitvector_variables(proposition, &mut goal_variables);
-        if goal_variables.is_empty() {
-            return None;
-        }
-        let candidates = self
-            .condition_facts
-            .iter()
-            .filter(|(_, value)| **value)
-            .filter_map(|(condition, _)| {
-                let (variable, pivot) = upper_bound_split_candidate(condition)?;
-                if !goal_variables.contains(&variable) {
-                    return None;
-                }
-                let mut pivot_variables = BTreeSet::new();
-                collect_bitvector_variables(pivot, &mut pivot_variables);
-                if pivot_variables.contains(&variable) {
-                    return None;
-                }
-                // Nothing to split once the context already knows which side
-                // of the pivot the variable is on — and this is what stops the
-                // halves, which each learn exactly that, from re-splitting.
-                if self
-                    .decide(&ConditionTerm::signed_less_than(
-                        Bitvector32Term::Variable(variable),
-                        pivot.clone(),
-                    ))
-                    .is_some()
-                {
-                    return None;
-                }
-                Some((condition.clone(), variable, pivot.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (bound, variable, pivot) in candidates {
-            let term = Bitvector32Term::Variable(variable);
-            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() + 1));
-            let halves = [
-                ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
-                ConditionTerm::equal(term.clone(), pivot.clone()),
-            ]
-            .into_iter()
-            .map(|case| {
-                self.clone()
-                    .assume_condition(case, true)
-                    .derive_proposition_using(proposition, for_simp)
-            })
-            .collect::<Option<Vec<_>>>();
-            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() - 1));
-            let Some(halves) = halves else {
-                continue;
-            };
-            let [below, at]: [PropositionDerivation; 2] = halves
-                .try_into()
-                .expect("the split derives exactly two halves");
-            return Some(PropositionDerivationRule::UpperBoundSplit {
-                bound,
-                variable,
-                pivot,
-                below: Box::new(below),
-                at: Box::new(at),
-            });
-        }
-        None
     }
 
     fn derive_by_disjunction_cases(

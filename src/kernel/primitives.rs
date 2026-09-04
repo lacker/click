@@ -2453,16 +2453,6 @@ pub(super) enum PropositionDerivationRule {
         disjunction: Proposition,
         cases: Vec<PropositionDerivation>,
     },
-    /// Case analysis on an assumed upper bound: `variable <= pivot` splits
-    /// into `variable < pivot` and `variable == pivot`. `bound` is the exact
-    /// assumed condition that licenses the split.
-    UpperBoundSplit {
-        bound: ConditionTerm,
-        variable: Variable,
-        pivot: Bitvector32Term,
-        below: Box<PropositionDerivation>,
-        at: Box<PropositionDerivation>,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

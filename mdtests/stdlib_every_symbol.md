@@ -81,6 +81,14 @@ theorem docs_use_int32_successor_le_implies_lt(lower: int32, value: int32) {
     }
 }
 
+theorem docs_use_int32_lt_successor_implies_le(value: int32, upper: int32) {
+    requires value < upper + 1;
+
+    ensures value <= upper by {
+        apply(int32_lt_successor_implies_le(value, upper));
+    }
+}
+
 theorem docs_use_int32_positive_is_nonnegative(value: int32) {
     requires 1 <= value;
 
@@ -94,6 +102,14 @@ theorem docs_use_int32_lt_implies_le(left: int32, right: int32) {
 
     ensures left <= right by {
         apply(int32_lt_implies_le(left, right));
+    }
+}
+
+theorem docs_use_int32_lt_implies_neq(left: int32, right: int32) {
+    requires left < right;
+
+    ensures left != right by {
+        apply(int32_lt_implies_neq(left, right));
     }
 }
 

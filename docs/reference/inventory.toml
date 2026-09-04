@@ -1846,12 +1846,20 @@ id = "stdlib.theorem.int32_successor_le_implies_lt"
 path = "reference/library/index.md#int32_successor_le_implies_lt"
 
 [[item]]
+id = "stdlib.theorem.int32_lt_successor_implies_le"
+path = "reference/library/index.md#int32_lt_successor_implies_le"
+
+[[item]]
 id = "stdlib.theorem.int32_positive_is_nonnegative"
 path = "reference/library/index.md#int32_positive_is_nonnegative"
 
 [[item]]
 id = "stdlib.theorem.int32_lt_implies_le"
 path = "reference/library/index.md#int32_lt_implies_le"
+
+[[item]]
+id = "stdlib.theorem.int32_lt_implies_neq"
+path = "reference/library/index.md#int32_lt_implies_neq"
 
 [[item]]
 id = "stdlib.theorem.int32_not_lt_implies_ge"

@@ -3,6 +3,173 @@
 use super::*;
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
+fn kernel_upper_bound_split_candidate(
+    proposition: &Proposition,
+) -> Option<(Variable, Bitvector32Term)> {
+    let Proposition::ConditionIs(condition, true) = proposition else {
+        return None;
+    };
+    let (left, right, plus_one) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
+        _ => return None,
+    };
+    let Bitvector32Term::Variable(variable) = left.as_ref() else {
+        return None;
+    };
+    if !plus_one {
+        return Some((*variable, right.as_ref().clone()));
+    }
+    let Bitvector32Term::Add(pivot, one) = right.as_ref() else {
+        return None;
+    };
+    (**one == Bitvector32Term::Constant(1)).then(|| (*variable, pivot.as_ref().clone()))
+}
+
+fn surface_upper_bound_split_condition(proposition: &ClickProposition) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_upper_bound_split_condition(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessEqual,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::LessThan,
+            right: right.clone(),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::Add(pivot, one),
+        } if **one == ContractExpression::CFragment(CExpression::Value(int32(1))) => {
+            Some(ClickProposition::Comparison {
+                left: left.clone(),
+                operator: ComparisonOperator::LessThan,
+                right: pivot.as_ref().clone(),
+            })
+        }
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::Subtract(
+                Box::new(right.clone()),
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+            ),
+        }),
+        _ => None,
+    }
+}
+
+fn surface_upper_bound_direct_condition(
+    proposition: &ClickProposition,
+) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_upper_bound_direct_condition(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessEqual,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::LessEqual,
+            right: right.clone(),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::LessThan,
+            right: right.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn surface_split_equality(proposition: &ClickProposition) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_split_equality(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::Equal,
+            right: right.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn surface_split_nonstrict_bound(proposition: &ClickProposition) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_split_nonstrict_bound(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::LessEqual,
+            right: right.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn surface_split_disequality(proposition: &ClickProposition) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_split_disequality(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::LessThan,
+            right,
+        } => Some(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: ComparisonOperator::NotEqual,
+            right: right.clone(),
+        }),
+        _ => None,
+    }
+}
+
 impl<'a> Proof<'a> {
     /// A small shared search combinator for structural proposition closure.
     /// Every candidate is accepted only through `apply_step`; `intro` is the
@@ -62,14 +229,32 @@ impl<'a> Proof<'a> {
         &self,
         exclude_exact_goal: bool,
     ) -> Result<Option<Self>, ClickError> {
+        self.try_simp_closure_after_direct_with_surfaces(exclude_exact_goal, &[])
+    }
+
+    pub(super) fn try_simp_closure_with_surfaces(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        if let Some(proof) = self.try_direct_logical_closure()? {
+            return Ok(Some(proof));
+        }
+        self.try_simp_closure_after_direct_with_surfaces(false, introduced_surfaces)
+    }
+
+    fn try_simp_closure_after_direct_with_surfaces(
+        &self,
+        exclude_exact_goal: bool,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
         if let Some(surface_goal) = self.surface_goal()
             && let Some(proof) = self.try_selected_unchanged_load_forall_goal(surface_goal, &[])
         {
             return Ok(Some(proof));
         }
         let atomic = (|| {
-            let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) =
-                self.selected_simp_derivation(exclude_exact_goal)?;
+            let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) = self
+                .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)?;
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
@@ -94,7 +279,7 @@ impl<'a> Proof<'a> {
             return Ok(Some(atomic));
         }
         let anchored_pairs = self
-            .selected_simp_derivation(exclude_exact_goal)
+            .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)
             .map(|(_, _, pairs, _)| pairs)
             .unwrap_or_default();
         if let Some(anchored) = self
@@ -113,7 +298,9 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
-        if let Some(instantiated) = self.try_indexed_forall_instantiation() {
+        if let Some(instantiated) =
+            self.try_indexed_forall_instantiation_with_surfaces(introduced_surfaces)
+        {
             return Ok(Some(instantiated));
         }
         // The atomic helpers still classify their internal candidate misses
@@ -126,7 +313,305 @@ impl<'a> Proof<'a> {
         if let Some(enumerated) = self.try_finite_forall_enumeration(&surface_goal)? {
             return Ok(Some(enumerated));
         }
-        self.try_structural_simp_closure(&surface_goal)
+        if let Some(split) = self.try_upper_bound_split_closure(introduced_surfaces)? {
+            return Ok(Some(split));
+        }
+        self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces)
+    }
+
+    /// Splits one atomic goal at the final index licensed by an available
+    /// upper bound. Selection happens over recorded Surface facts, and the
+    /// result is an ordinary checked proof `if`: the then arm learns
+    /// `variable < pivot`, while the else arm derives equality from the same
+    /// bound and the exact negated branch fact through normal theorem search.
+    ///
+    /// Once either polarity of the proposed condition is available, the
+    /// candidate is no longer a split. That structural fact is what makes
+    /// recursive closure terminate inside both arms; no search-depth guard or
+    /// hidden kernel recursion participates.
+    fn try_upper_bound_split_closure(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(goal) = self.goal() else {
+            return Ok(None);
+        };
+        if matches!(
+            goal,
+            Proposition::And(_, _)
+                | Proposition::Or(_, _)
+                | Proposition::Implies(_, _)
+                | Proposition::ForAll { .. }
+                | Proposition::Exists { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut goal_variables = crate::kernel::proposition_variables(goal);
+        if let Some(surface_goal) = self.surface_goal() {
+            let mut surface_names = BTreeSet::new();
+            collect_current_proposition_variables(surface_goal, &mut surface_names);
+            for name in surface_names {
+                let expression = ContractExpression::CFragment(CExpression::Variable(name));
+                let probe = ClickProposition::Comparison {
+                    left: expression.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: expression,
+                };
+                if let Ok(kernel) =
+                    self.lower_surface_proposition(&probe, "upper-bound goal variable")
+                {
+                    goal_variables.extend(crate::kernel::proposition_variables(&kernel));
+                }
+            }
+        }
+        if goal_variables.is_empty() {
+            return Ok(None);
+        }
+
+        let frontier_anchor: Option<ProgramPointRef>;
+        let (surface_facts, premise_anchor) = match self.context.as_ref() {
+            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
+            ProofContext::FixedState(context) => (
+                context.surface_propositions,
+                context.premise_anchor.as_ref(),
+            ),
+            ProofContext::Execution(_) => {
+                if let Some(data) = self.focused_outcome_data() {
+                    (&data.surface_propositions, data.premise_anchor.as_ref())
+                } else {
+                    let Some(execution) = self.execution() else {
+                        return Ok(None);
+                    };
+                    frontier_anchor = frontier_premise_anchor(execution);
+                    (
+                        &execution.presentation.surface_propositions,
+                        frontier_anchor.as_ref(),
+                    )
+                }
+            }
+        };
+
+        // An introduced implication guard is the nearest and smallest source
+        // of the bound in the quantified-extension shape. Prefer those named
+        // facts so ordinary closure does not clone and probe the ambient fact
+        // set at every atomic leaf. Fall back to ambient facts only when no
+        // introduced bound can concern this goal.
+        let mut bound_sources = introduced_surfaces
+            .iter()
+            .filter_map(|surface| {
+                let bound = self
+                    .lower_surface_proposition(surface, "introduced upper bound")
+                    .ok()?;
+                let (variable, _) = kernel_upper_bound_split_candidate(&bound)?;
+                goal_variables
+                    .contains(&variable)
+                    .then(|| (bound, Some(surface.clone())))
+            })
+            .collect::<Vec<_>>();
+        if bound_sources.is_empty() {
+            bound_sources.extend(self.facts().to_vec().into_iter().filter_map(|bound| {
+                let (variable, _) = kernel_upper_bound_split_candidate(&bound)?;
+                goal_variables.contains(&variable).then_some((bound, None))
+            }));
+        }
+        let candidates = bound_sources
+            .into_iter()
+            .filter_map(|(bound, introduced_surface)| {
+                let (variable, pivot) = kernel_upper_bound_split_candidate(&bound)?;
+                let pivot_probe = Proposition::Equal(
+                    Term::Bitvector32(pivot.clone()),
+                    Term::Bitvector32(pivot.clone()),
+                );
+                if crate::kernel::proposition_variables(&pivot_probe).contains(&variable) {
+                    return None;
+                }
+                let bound_surface = introduced_surface.or_else(|| {
+                    self.available_surface_fact(surface_facts, premise_anchor, &bound)
+                })?;
+                let split_kernel = Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(Bitvector32Term::Variable(variable)),
+                        Box::new(pivot),
+                    ),
+                    true,
+                );
+                let direct = surface_upper_bound_direct_condition(&bound_surface)?;
+                let direct_surface = std::iter::once(direct.clone())
+                    .chain(
+                        self.premise_fixed_state_view()
+                            .into_iter()
+                            .flat_map(|view| {
+                                view.recorded_snapshots.keys().rev().filter_map(|selector| {
+                                    surface_at_snapshot(&direct, selector).ok()
+                                })
+                            }),
+                    )
+                    .find(|surface| {
+                        self.lower_surface_proposition(surface, "upper-bound premise")
+                            .is_ok_and(|lowered| lowered == bound)
+                    })?;
+                let mut surface_candidates = vec![
+                    surface_upper_bound_split_condition(&bound_surface)?,
+                    direct.clone(),
+                ];
+                if let Some(view) = self.premise_fixed_state_view() {
+                    surface_candidates.extend(
+                        view.recorded_snapshots
+                            .keys()
+                            .rev()
+                            .filter_map(|selector| surface_at_snapshot(&direct, selector).ok()),
+                    );
+                }
+                let split_surface = surface_candidates.into_iter().find(|surface| {
+                    self.lower_surface_proposition(surface, "upper-bound split condition")
+                        .is_ok_and(|lowered| lowered == split_kernel)
+                })?;
+                let split_negation = ClickProposition::Not(Box::new(split_surface.clone()));
+                if introduced_surfaces
+                    .iter()
+                    .any(|surface| surface == &split_surface || surface == &split_negation)
+                    || condition_polarity_forms(&split_kernel)
+                        .iter()
+                        .any(|form| self.facts().contains(form))
+                {
+                    return None;
+                }
+                Some((split_surface, direct_surface))
+            })
+            .collect::<Vec<_>>();
+        for (condition, direct_bound) in candidates {
+            let (split_proof, split, ids) = self.split_focused_if(condition.clone())?;
+            let marker = split_proof.checkpoint();
+            let mut then_surfaces = introduced_surfaces.to_vec();
+            then_surfaces.push(condition.clone());
+            let then_branch = split_proof.focus_branch(ids[0])?;
+            let disequality = surface_split_disequality(&condition)
+                .expect("an upper-bound split condition is a strict comparison");
+            let disequality_scope = then_branch.begin_have(disequality.clone())?;
+            let disequality_done = disequality_scope
+                .try_simp_closure_with_surfaces(&then_surfaces)?
+                .or_else(|| {
+                    let (left, right) = surface_strict_parts(&condition)?;
+                    disequality_scope
+                        .apply_step(ProofStep::ApplyTheoremUsing {
+                            application: TheoremApplication {
+                                name: "int32_lt_implies_neq".to_string(),
+                                arguments: vec![left, right],
+                            },
+                            premises: vec![condition.clone()],
+                        })
+                        .ok()
+                });
+            let Some(disequality_done) = disequality_done else {
+                continue;
+            };
+            let then_branch = disequality_done.join()?;
+            then_surfaces.push(disequality);
+            let Some(then_done) = then_branch.try_simp_closure_with_surfaces(&then_surfaces)?
+            else {
+                continue;
+            };
+            let negated = ClickProposition::Not(Box::new(condition.clone()));
+            let mut else_surfaces = introduced_surfaces.to_vec();
+            else_surfaces.push(negated.clone());
+            let equality = surface_split_equality(&condition)
+                .expect("an upper-bound split condition is a strict comparison");
+            let nonstrict = surface_split_nonstrict_bound(&condition)
+                .expect("an upper-bound split condition is a strict comparison");
+            let else_branch = then_done.focus_branch(ids[1])?;
+            let equality_scope = else_branch.begin_have(equality.clone())?;
+            let nonstrict_scope = equality_scope.begin_have(nonstrict.clone())?;
+            let nonstrict_done = nonstrict_scope
+                .try_simp_closure_with_surfaces(&else_surfaces)?
+                .or_else(|| {
+                    match nonstrict_scope.apply_step(ProofStep::ApplyTheoremUsing {
+                        application: TheoremApplication {
+                            name: "int32_lt_successor_implies_le".to_string(),
+                            arguments: surface_nonstrict_parts(&nonstrict)
+                                .map(|(left, right)| vec![left, right])?,
+                        },
+                        premises: vec![direct_bound.clone()],
+                    }) {
+                        Ok(proof) => Some(proof),
+                        Err(_) => None,
+                    }
+                });
+            let Some(nonstrict_done) = nonstrict_done else {
+                continue;
+            };
+            let equality_scope = equality_scope.join_nested(nonstrict_done)?;
+            else_surfaces.push(nonstrict);
+            let Some(equality_done) =
+                equality_scope.try_simp_closure_with_surfaces(&else_surfaces)?
+            else {
+                continue;
+            };
+            let else_branch = equality_done.join()?;
+            else_surfaces.push(equality.clone());
+            let rewritten_surface_goal =
+                surface_strict_parts(&condition).and_then(|(left, right)| {
+                    let ContractExpression::CFragment(CExpression::Variable(name)) = left else {
+                        return None;
+                    };
+                    substitute_click_proposition(
+                        else_branch.surface_goal()?,
+                        &std::iter::once((name, right)).collect(),
+                    )
+                    .ok()
+                });
+            let transported_else = else_branch
+                .surface_goal()
+                .and_then(old_reflexive_transport_source)
+                .and_then(|source| {
+                    else_branch
+                        .try_planned_execution_proposition_fact_transport(
+                            &source,
+                            else_branch.surface_goal()?,
+                        )
+                        .ok()
+                        .flatten()
+                })
+                .filter(Proof::focused_discharged);
+            let rewritten_else = match else_branch.apply_step(ProofStep::Rewrite(equality.clone()))
+            {
+                Ok(rewritten) if rewritten.focused_discharged() => Some(rewritten),
+                Ok(rewritten) => {
+                    let transported = rewritten_surface_goal
+                        .as_ref()
+                        .and_then(old_reflexive_transport_source)
+                        .and_then(|source| {
+                            rewritten
+                                .try_planned_execution_proposition_fact_transport(
+                                    &source,
+                                    rewritten_surface_goal.as_ref()?,
+                                )
+                                .ok()
+                                .flatten()
+                        })
+                        .filter(Proof::focused_discharged);
+                    if transported.is_some() {
+                        transported
+                    } else {
+                        rewritten.try_simp_closure_with_surfaces(&else_surfaces)?
+                    }
+                }
+                Err(_) => None,
+            };
+            let else_done = if transported_else.is_some() {
+                transported_else
+            } else if rewritten_else.is_some() {
+                rewritten_else
+            } else {
+                else_branch.try_simp_closure_with_surfaces(&else_surfaces)?
+            };
+            let Some(else_done) = else_done else {
+                continue;
+            };
+            return else_done
+                .join_focused_if(&marker, split, ids, condition)
+                .map(Some);
+        }
+        Ok(None)
     }
 
     /// Proves a two-edge non-strict outcome bound at the return entry or its
@@ -332,9 +817,10 @@ impl<'a> Proof<'a> {
     /// Refines the Proof-owned Surface goal through audited scopes and steps.
     /// The caller cannot supply a second description of the judgment: this
     /// syntax is the view paired with the kernel goal in `PropositionObligation`.
-    pub(super) fn try_structural_simp_closure(
+    fn try_structural_simp_closure_with_surfaces(
         &self,
         surface_goal: &ClickProposition,
+        introduced_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
         let Some(goal) = self.goal() else {
             return Ok(None);
@@ -345,7 +831,9 @@ impl<'a> Proof<'a> {
                     return Ok(Some(enumerated));
                 }
                 match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
-                    Some(introduced) => introduced.try_simp_closure(),
+                    Some(introduced) => {
+                        introduced.try_simp_closure_with_surfaces(introduced_surfaces)
+                    }
                     None => Ok(None),
                 }
             }
@@ -380,6 +868,8 @@ impl<'a> Proof<'a> {
                         return Ok(Some(introduced));
                     }
                 }
+                let mut available_surfaces = introduced_surfaces.to_vec();
+                available_surfaces.extend(conjuncts.iter().cloned());
                 if !conjuncts.is_empty()
                     && let Some(surface_goal) = introduced.surface_goal()
                     && let Some(source) = old_reflexive_transport_source(surface_goal)
@@ -396,7 +886,12 @@ impl<'a> Proof<'a> {
                         Err(_) => check_verification_deadline()?,
                     }
                 }
-                introduced.try_simp_closure()
+                if let Some(split) =
+                    introduced.try_upper_bound_split_closure(&available_surfaces)?
+                {
+                    return Ok(Some(split));
+                }
+                introduced.try_simp_closure_with_surfaces(&available_surfaces)
             }
             (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
                 let Some(left) =
@@ -404,7 +899,7 @@ impl<'a> Proof<'a> {
                 else {
                     return Ok(None);
                 };
-                let Some(left) = left.try_simp_closure()? else {
+                let Some(left) = left.try_simp_closure_with_surfaces(introduced_surfaces)? else {
                     return Ok(None);
                 };
                 let Some(proof) = attempt::candidate_outcome(left.join())? else {
@@ -415,7 +910,7 @@ impl<'a> Proof<'a> {
                 else {
                     return Ok(None);
                 };
-                let Some(right) = right.try_simp_closure()? else {
+                let Some(right) = right.try_simp_closure_with_surfaces(introduced_surfaces)? else {
                     return Ok(None);
                 };
                 let Some(joined) = attempt::candidate_outcome(right.join())? else {
@@ -433,7 +928,7 @@ impl<'a> Proof<'a> {
                 match attempt::candidate_outcome(
                     self.apply_step(ProofStep::UnfoldPredicate(name.clone())),
                 )? {
-                    Some(unfolded) => unfolded.try_simp_closure(),
+                    Some(unfolded) => unfolded.try_simp_closure_with_surfaces(introduced_surfaces),
                     None => Ok(None),
                 }
             }
@@ -448,7 +943,9 @@ impl<'a> Proof<'a> {
                         else {
                             return Ok(None);
                         };
-                        let Some(scope) = scope.try_simp_closure()? else {
+                        let Some(scope) =
+                            scope.try_simp_closure_with_surfaces(introduced_surfaces)?
+                        else {
                             return Ok(None);
                         };
                         let Some(joined) = attempt::candidate_outcome(scope.join())? else {
@@ -640,6 +1137,19 @@ impl<'a> Proof<'a> {
         Vec<(Proposition, ClickProposition)>,
         bool,
     )> {
+        self.selected_simp_derivation_with_surfaces(exclude_exact_goal, &[])
+    }
+
+    fn selected_simp_derivation_with_surfaces(
+        &self,
+        exclude_exact_goal: bool,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Option<(
+        Proposition,
+        PropositionDerivation,
+        Vec<(Proposition, ClickProposition)>,
+        bool,
+    )> {
         let frontier_anchor: Option<ProgramPointRef>;
         let (surface_facts, theorem_application_closes_goal, premise_anchor) =
             match self.context.as_ref() {
@@ -695,6 +1205,14 @@ impl<'a> Proof<'a> {
         let resolve_premise = |premise: &Proposition, anchor: Option<&ProgramPointRef>| {
             if let Some(surface) = self.available_surface_fact(surface_facts, anchor, premise) {
                 return Some((premise.clone(), surface));
+            }
+            if let Some(surface) = introduced_surfaces.iter().find(|surface| {
+                self.lower_surface_proposition(surface, "introduced simp premise")
+                    .is_ok_and(|lowered| {
+                        lowered == *premise || condition_polarity_equivalent(&lowered, premise)
+                    })
+            }) {
+                return Some((premise.clone(), surface.clone()));
             }
             condition_polarity_forms(premise)
                 .into_iter()
@@ -769,7 +1287,11 @@ impl<'a> Proof<'a> {
             let lowered = self
                 .lower_surface_proposition_direct(candidate, "typed simp premise form")
                 .ok()?;
-            (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel)).then_some(())
+            (lowered == *kernel
+                || condition_polarity_equivalent(&lowered, kernel)
+                || quantified_equivalent_available_fact(kernel, std::slice::from_ref(&lowered))
+                    .is_some())
+            .then_some(())
         };
         if let Some(surface) = surface_facts.surfaces(kernel).find(|surface| {
             (proposition_contains_at_expression(surface)
@@ -926,6 +1448,69 @@ impl<'a> Proof<'a> {
                     }
                 }
             }
+            let predicate_environment = match self.context.as_ref() {
+                ProofContext::Pure(context) => context.predicate_environment,
+                ProofContext::FixedState(context) => context.predicate_environment,
+                ProofContext::Execution(context) => context.predicate_environment,
+            };
+            let click_function_environment = match self.context.as_ref() {
+                ProofContext::Pure(context) => context.click_function_environment,
+                ProofContext::FixedState(context) => context.click_function_environment,
+                ProofContext::Execution(context) => context.click_function_environment,
+            };
+            for name in self.focused_branch_unfolds().iter() {
+                for opaque in surface_facts.kernels_written_by_predicate(name) {
+                    for opaque_surface in surface_facts.surfaces(opaque) {
+                        let ClickProposition::PredicateCall {
+                            name: surface_name,
+                            arguments,
+                        } = opaque_surface
+                        else {
+                            continue;
+                        };
+                        let Some(definition) = predicate_environment.get(surface_name) else {
+                            continue;
+                        };
+                        let Ok(body_surface) =
+                            instantiate_click_predicate_definition(definition, arguments)
+                        else {
+                            continue;
+                        };
+                        let unfolds_to_selected = unfold_predicates_in_proposition(
+                            predicate_environment,
+                            click_function_environment,
+                            std::slice::from_ref(name),
+                            opaque,
+                            self.facts().assumptions(),
+                        )
+                        .is_ok_and(|unfolded| {
+                            unfolded == *kernel
+                                || quantified_equivalent_available_fact(
+                                    kernel,
+                                    std::slice::from_ref(&unfolded),
+                                )
+                                .is_some()
+                        });
+                        if unfolds_to_selected {
+                            if matches_kernel(&body_surface).is_some() {
+                                return Some(body_surface);
+                            }
+                            if let Some(view) = self.premise_fixed_state_view()
+                                && let Some(anchored) = view
+                                    .recorded_snapshots
+                                    .keys()
+                                    .rev()
+                                    .filter_map(|selector| {
+                                        surface_at_snapshot(&body_surface, selector).ok()
+                                    })
+                                    .find(|surface| matches_kernel(surface).is_some())
+                            {
+                                return Some(anchored);
+                            }
+                        }
+                    }
+                }
+            }
         }
         // Branch-condition facts are checked execution outputs, but their
         // arm-local Surface map entry need not survive at the shared outcome.
@@ -941,7 +1526,7 @@ impl<'a> Proof<'a> {
                 context.state,
                 context.recorded_snapshots,
             )),
-            ProofContext::Execution(_) => self.outcome_fixed_state_view().map(|view| {
+            ProofContext::Execution(_) => self.premise_fixed_state_view().map(|view| {
                 (
                     view.parameters,
                     view.arguments,
@@ -951,8 +1536,24 @@ impl<'a> Proof<'a> {
             }),
         };
         let (parameters, arguments, state, recorded_snapshots) = synthesis_context?;
-        if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
-            && matches_kernel(&surface).is_some()
+        let bound_variable_names = self
+            .proposition_obligation()
+            .into_iter()
+            .flat_map(|goal| goal.surface_bindings.iter())
+            .filter_map(|(name, binding)| match binding {
+                ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Variable(variable),
+                ))) => Some((*variable, name.clone())),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
+            kernel,
+            parameters,
+            arguments,
+            state,
+            &bound_variable_names,
+        ) && matches_kernel(&surface).is_some()
         {
             return Some(surface);
         }
@@ -1136,9 +1737,12 @@ impl<'a> Proof<'a> {
                 for oriented in
                     std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
                 {
-                    if let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) {
-                        selected = Some((index, rewritten));
-                        break;
+                    match proof.apply_step(ProofStep::Rewrite(oriented)) {
+                        Ok(rewritten) => {
+                            selected = Some((index, rewritten));
+                            break;
+                        }
+                        Err(_) => {}
                     }
                 }
                 if selected.is_some() {
@@ -1525,7 +2129,7 @@ impl<'a> Proof<'a> {
             let step = explicit_linear_step(tactic)?;
             proof = proof.apply_step(step).ok()?;
         }
-        proof.is_complete().then_some(proof)
+        proof.focused_discharged().then_some(proof)
     }
 
     /// Specializes one checkable universal premise selected by the atomic
@@ -1537,7 +2141,37 @@ impl<'a> Proof<'a> {
         goal: &Proposition,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        let tactics = plan_explicit_forall_instantiation(goal, premise_pairs)?;
+        let tactics = plan_explicit_forall_instantiation(goal, premise_pairs).or_else(|| {
+            let surface_goal = self.surface_goal()?;
+            let extra_arguments = self
+                .proposition_obligation()
+                .into_iter()
+                .flat_map(|goal| goal.surface_bindings.iter())
+                .filter_map(|(name, binding)| match binding {
+                    ContractExpression::CFragment(CExpression::Value(CValue::Int32(value))) => {
+                        Some((
+                            value.clone(),
+                            ContractExpression::CFragment(CExpression::Variable(name.clone())),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            plan_explicit_forall_instantiation_transport(
+                goal,
+                surface_goal,
+                premise_pairs,
+                &extra_arguments,
+                &|conclusion| {
+                    self.facts()
+                        .assumptions()
+                        .clone()
+                        .assume_proposition(conclusion.clone())
+                        .derive_simp_atomic_proposition(goal)
+                        .is_some()
+                },
+            )
+        })?;
         self.try_planned_explicit_steps(&tactics)
     }
 
@@ -1545,11 +2179,24 @@ impl<'a> Proof<'a> {
     /// the atomic decision cannot name an instantiated premise. Candidate
     /// discovery is read-only; a specialization is retained only after the
     /// ordinary `InstantiateUsing` operation advances and closes this Proof.
+    #[cfg(test)]
     pub(super) fn try_indexed_forall_instantiation(&self) -> Option<Self> {
+        self.try_indexed_forall_instantiation_with_surfaces(&[])
+    }
+
+    fn try_indexed_forall_instantiation_with_surfaces(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Option<Self> {
         let goal = self.goal()?;
-        let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
-            .then(|| self.outcome_fixed_state_view())
+        let execution_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
+            .then(|| self.premise_fixed_state_view())
             .flatten();
+        let surface_facts = match self.context.as_ref() {
+            ProofContext::Pure(context) => &context.theorem_context.surface_requirements,
+            ProofContext::FixedState(context) => context.surface_propositions,
+            ProofContext::Execution(_) => &execution_view.as_ref()?.surface_propositions,
+        };
         let bound_variable_names = match self.proposition_obligation() {
             Some(goal) => goal
                 .surface_bindings
@@ -1564,6 +2211,20 @@ impl<'a> Proof<'a> {
             _ => BTreeMap::new(),
         };
         let surface_form = |fact: &Proposition| {
+            if let Some(surface) = introduced_surfaces.iter().find(|surface| {
+                self.lower_surface_proposition(surface, "introduced forall premise")
+                    .is_ok_and(|lowered| {
+                        lowered == *fact
+                            || condition_polarity_equivalent(&lowered, fact)
+                            || quantified_equivalent_available_fact(
+                                fact,
+                                std::slice::from_ref(&lowered),
+                            )
+                            .is_some()
+                    })
+            }) {
+                return Some(surface.clone());
+            }
             let recorded = match self.context.as_ref() {
                 ProofContext::Pure(context) => context
                     .theorem_context
@@ -1574,7 +2235,7 @@ impl<'a> Proof<'a> {
                 ProofContext::FixedState(context) => {
                     context.surface_propositions.surfaces(fact).next().cloned()
                 }
-                ProofContext::Execution(_) => outcome_view
+                ProofContext::Execution(_) => execution_view
                     .as_ref()?
                     .surface_propositions
                     .surfaces(fact)
@@ -1593,7 +2254,7 @@ impl<'a> Proof<'a> {
                     )
                 }
                 ProofContext::Execution(_) => {
-                    let view = outcome_view.as_ref()?;
+                    let view = execution_view.as_ref()?;
                     synthesize_surface_proposition_with_bound_variable_names(
                         fact,
                         view.parameters,
@@ -1605,15 +2266,33 @@ impl<'a> Proof<'a> {
             };
             recorded.or(synthesized)
         };
+        let mut quantified_candidates = introduced_surfaces
+            .iter()
+            .filter_map(|surface| {
+                let quantified = surface_facts.available_kernel_matching(surface, |kernel| {
+                    matches!(kernel, Proposition::ForAll { .. })
+                        && self.facts().quantified_fact_available(kernel)
+                })?;
+                Some((quantified.clone(), Some(surface.clone())))
+            })
+            .collect::<Vec<_>>();
         for quantified in self.facts().predicate_unfolded_universal_facts() {
+            if !quantified_candidates
+                .iter()
+                .any(|(candidate, _)| candidate == quantified)
+            {
+                quantified_candidates.push((quantified.clone(), None));
+            }
+        }
+        for (quantified, introduced_surface) in quantified_candidates {
             // Reject shape-incompatible universals before Surface lookup or
             // synthesis. Candidate extraction is structural and bounded by
             // this one indexed fact and the focused branch goal; the expensive
             // form work is reserved for a specialization that can
             // actually mention the goal's concrete argument.
             let candidate_values =
-                crate::kernel::forall_guided_instantiation_candidate_values(quantified, goal);
-            let Proposition::ForAll { var, body, .. } = quantified else {
+                crate::kernel::forall_guided_instantiation_candidate_values(&quantified, goal);
+            let Proposition::ForAll { var, body, .. } = &quantified else {
                 unreachable!("the predicate-unfolded universal index contains only universals")
             };
             if candidate_values.is_empty() {
@@ -1623,17 +2302,17 @@ impl<'a> Proof<'a> {
                 ProofContext::Pure(context) => context
                     .theorem_context
                     .surface_requirements
-                    .surfaces(quantified)
+                    .surfaces(&quantified)
                     .cloned()
                     .collect::<Vec<_>>(),
                 ProofContext::FixedState(context) => context
                     .surface_propositions
-                    .surfaces(quantified)
+                    .surfaces(&quantified)
                     .cloned()
                     .collect::<Vec<_>>(),
-                ProofContext::Execution(_) => outcome_view?
+                ProofContext::Execution(_) => execution_view?
                     .surface_propositions
-                    .surfaces(quantified)
+                    .surfaces(&quantified)
                     .cloned()
                     .collect::<Vec<_>>(),
             };
@@ -1642,7 +2321,7 @@ impl<'a> Proof<'a> {
                 ProofContext::FixedState(context) => context.predicate_environment,
                 ProofContext::Execution(context) => context.predicate_environment,
             };
-            let mut surfaces = Vec::new();
+            let mut surfaces = introduced_surface.into_iter().collect::<Vec<_>>();
             for recorded in recorded_surfaces {
                 let candidate = match recorded {
                     ClickProposition::PredicateCall {
@@ -1662,15 +2341,15 @@ impl<'a> Proof<'a> {
             let synthesized = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
                 ProofContext::FixedState(context) => synthesize_surface_proposition(
-                    quantified,
+                    &quantified,
                     context.parameters,
                     context.arguments,
                     context.state,
                 ),
                 ProofContext::Execution(_) => {
-                    let view = outcome_view?;
+                    let view = execution_view?;
                     synthesize_surface_proposition(
-                        quantified,
+                        &quantified,
                         view.parameters,
                         view.arguments,
                         view.state,
@@ -1706,7 +2385,7 @@ impl<'a> Proof<'a> {
                                 .surfaces(opaque)
                                 .cloned()
                                 .collect::<Vec<_>>(),
-                            ProofContext::Execution(_) => outcome_view?
+                            ProofContext::Execution(_) => execution_view?
                                 .surface_propositions
                                 .surfaces(opaque)
                                 .cloned()
@@ -1735,7 +2414,7 @@ impl<'a> Proof<'a> {
                                 opaque,
                                 self.facts().assumptions(),
                             )
-                            .is_ok_and(|kernel| kernel == *quantified)
+                            .is_ok_and(|kernel| kernel == quantified)
                                 && !surfaces.contains(&body_surface)
                             {
                                 surfaces.push(body_surface);
@@ -1857,6 +2536,19 @@ impl<'a> Proof<'a> {
                         if premise == conclusion {
                             continue;
                         }
+                        if matches!(premise, Proposition::ForAll { .. })
+                            && quantified_equivalent_available_fact(
+                                &premise,
+                                std::slice::from_ref(&quantified),
+                            )
+                            .is_some()
+                        {
+                            // `InstantiateUsing` has already checked this
+                            // universal and published its selected conclusion.
+                            // Do not feed the quantified source back into the
+                            // following transport as an unrelated premise.
+                            continue;
+                        }
                         let Some(form) = surface_form(&premise) else {
                             transport_written = false;
                             break;
@@ -1906,7 +2598,9 @@ impl<'a> Proof<'a> {
                         transport_surfaces,
                         "indexed universal conclusion transport",
                     ) {
-                        Ok(transported) if transported.is_complete() => return Some(transported),
+                        Ok(transported) if transported.focused_discharged() => {
+                            return Some(transported);
+                        }
                         Ok(_) | Err(_) => {}
                     }
                 }
@@ -2454,7 +3148,7 @@ impl<'a> Proof<'a> {
         // authoritative source scripts; the plan is provenance input, not an
         // independently interpreted semantic certificate.
         let proof = self.try_planned_linear_script(&tactics).ok().flatten()?;
-        proof.is_complete().then_some(proof)
+        proof.focused_discharged().then_some(proof)
     }
 
     /// Runs one branch arm of the linear script driver on the focused branch sibling

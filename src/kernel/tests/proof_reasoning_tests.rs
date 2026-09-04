@@ -1068,6 +1068,44 @@ fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_lt_successor_implies_le_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_032));
+    let upper = Bitvector32Term::Variable(Variable(90_033));
+    let theorem = prove_int32_lt_successor_implies_le(value.clone(), upper.clone());
+    let successor = Bitvector32Term::add(upper.clone(), Bitvector32Term::Constant(1));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), successor),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(value, upper), true);
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
+fn int32_lt_implies_neq_axiom_has_the_exact_implication() {
+    let left = Bitvector32Term::Variable(Variable(90_034));
+    let right = Bitvector32Term::Variable(Variable(90_035));
+    let theorem = prove_int32_lt_implies_neq(left.clone(), right.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        false,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_le_and_not_lt_implies_eq_axiom_has_the_exact_implications() {
     let left = Bitvector32Term::Variable(Variable(90_032));
     let right = Bitvector32Term::Variable(Variable(90_033));

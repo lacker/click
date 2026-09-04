@@ -81,6 +81,13 @@ unbounded quantifier walk. The indexed walk has a multi-size deterministic-work
 regression, and the unindexed fallback has a regression beyond the former
 depth limit.
 
+Upper-bound splitting now also lives in the surface smart closer. It selects a
+recorded bound and emits an ordinary checked proof `if`, with explicit theorem
+applications deriving the terminal equality arm. The kernel split rule, its
+whole-context derivation payload, and `UPPER_BOUND_SPLIT_DEPTH_LIMIT` are
+deleted. The two bound-universal bubble fixtures verify both the smart proof
+and its independently parsed expansion, including the emitted branch.
+
 The arithmetic interval depth was removed from this structural-cleanup queue
 after reviewing the abstraction around it. `arithmetic()` is a nominally simple
 tactic whose kernel operation reconstructs an affine and interval derivation
@@ -128,13 +135,7 @@ change an answer.
 
 ### Search and tiering
 
-1. **The upper-bound split**, `UPPER_BOUND_SPLIT_DEPTH_LIMIT = 1` in
-   `derive_by_upper_bound_split`. Fired 11 / 46. It chooses an ambient upper
-   bound, splits `k < b` versus `k == b`, and re-enters the whole prover in both
-   branches. A surface smart closer should select the bound and emit a checked
-   proof `if k < b`; the other arm obtains equality from the recorded bound and
-   `not(k < b)`. The kernel already checks complementary proof-`if` branches.
-2. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
+1. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
    `src/kernel/reasoning/order_reasoning.rs`, used by proposition reasoning and
    its derivation checker. Fired 8 / 840; an earlier census found it deciding
    0 / 20 goals. A surface planner may emit nested proof `if x == value`
@@ -142,7 +143,7 @@ change an answer.
    in the listed cases. The certificate must name only the range evidence and
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
-3. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
+2. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
    framed-load fallback from `memory_loads_proven_equal`. It hit 345,653 /
    315,061 times in its census. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover every
@@ -150,7 +151,7 @@ change an answer.
    effect/DAG route, and a typed certificate records the route and per-edge
    framing evidence for linear checking. The existing surface `transport`
    checker still calls global load equality and is not yet that boundary.
-4. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
+3. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
    `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
@@ -209,8 +210,8 @@ comparison now use only that narrower predicate for distinctness.
    comparison are complete. The canonicalization family is owned by
    `issues/fix-canonicalization.md`; the arithmetic depth cut is separately
    deferred to the smart-tactic migration in `issues/arithmetic.md`.
-4. Move upper-bound split selection to a surface planner that emits checked
-   proof branches.
+4. **Complete:** move upper-bound split selection to a surface planner that
+   emits checked proof branches; delete the kernel rule and depth limit.
 5. Move finite context splitting to explicit surface branches/certificates and
    remove the whole-context derivation payload.
 6. Complete the separately measured load-equality certificate migration.

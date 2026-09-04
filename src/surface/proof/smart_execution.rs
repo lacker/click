@@ -115,10 +115,11 @@ impl<'a> Proof<'a> {
         candidates: impl IntoIterator<Item = ClickProposition>,
     ) -> Result<Self, ClickError> {
         let result_aware = matches!(self.context.as_ref(), ProofContext::FixedState(_))
-            || self.focused_outcome_data().is_some();
+            || self.focused_outcome_data().is_some()
+            || self.execution_proposition_fixed_state_view().is_some();
         if !result_aware {
             return Err(self.step_error(
-                "fact-transport search requires a fixed-state proof or a focused outcome goal",
+                "fact-transport search requires a fixed-state proof, focused outcome goal, or execution proposition scope",
             ));
         }
         self.search_fact_transport_from_candidates(
@@ -127,6 +128,65 @@ impl<'a> Proof<'a> {
             candidates,
             "post-execution fact transport",
         )
+    }
+
+    /// Plans one explicit transport for a proposition scope borrowing an
+    /// execution frontier. This is the same checked premise planner used by
+    /// source-level `transport`; the returned descendant records the ordinary
+    /// `TransportUsing` step, so smart structural closures do not rely on an
+    /// implicit frame decision.
+    pub(super) fn try_planned_execution_proposition_fact_transport(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        if self.execution_proposition_fixed_state_view().is_none() {
+            return Ok(None);
+        }
+        let Some(execution) = self.execution() else {
+            return Ok(None);
+        };
+        let source_kernel = self.lower_surface_proposition_direct(
+            source,
+            "smart execution-proposition transport source",
+        )?;
+        let target_kernel = self.lower_surface_proposition_direct(
+            target,
+            "smart execution-proposition transport target",
+        )?;
+        let transition_facts = super::cursor_execution::fact_transport_transition_facts(
+            &execution.core.effect_facts,
+            &source_kernel,
+        );
+        let premises = match plan_explicit_fact_transport(
+            source,
+            &source_kernel,
+            &target_kernel,
+            &self.facts().to_vec(),
+            &transition_facts,
+            context.parsed_function.parameters(),
+            context.arguments,
+            execution.view(context),
+            &execution.core.state,
+            context.predicate_environment,
+            context.click_function_environment,
+        ) {
+            Ok(premises) => premises,
+            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        match self.apply_step(ProofStep::TransportUsing {
+            source: source.clone(),
+            target: target.clone(),
+            premises,
+        }) {
+            Ok(proof) => Ok(Some(proof)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Tries the bounded source-local form of mid-execution fact transport on

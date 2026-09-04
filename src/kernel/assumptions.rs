@@ -2309,31 +2309,6 @@ impl PropositionDerivation {
                 derivations_match_propositions(instances, &expected)
                     && instances.iter().all(|proof| proof.check(available))
             }
-            PropositionDerivationRule::UpperBoundSplit {
-                bound,
-                variable,
-                pivot,
-                below,
-                at,
-            } => {
-                if available.condition_facts.get(bound) != Some(&true)
-                    || upper_bound_split_candidate(bound) != Some((*variable, pivot))
-                {
-                    return false;
-                }
-                let term = Bitvector32Term::Variable(*variable);
-                below.conclusion == self.conclusion
-                    && at.conclusion == self.conclusion
-                    && below.check(&available.clone().assume_condition(
-                        ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
-                        true,
-                    ))
-                    && at.check(
-                        &available
-                            .clone()
-                            .assume_condition(ConditionTerm::equal(term, pivot.clone()), true),
-                    )
-            }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 if !available.prop_facts.contains(disjunction) {
                     return false;
@@ -2362,27 +2337,6 @@ fn collect_proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Propo
         }
         other => into.push(other.clone()),
     }
-}
-
-/// The `(variable, pivot)` an assumed condition licenses splitting on, when it
-/// says `variable <= pivot` in either form. Shared by the search and the
-/// check so the two cannot drift.
-fn upper_bound_split_candidate(condition: &ConditionTerm) -> Option<(Variable, &Bitvector32Term)> {
-    let (left, right, plus_one) = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
-        _ => return None,
-    };
-    let Bitvector32Term::Variable(variable) = left.as_ref() else {
-        return None;
-    };
-    if !plus_one {
-        return Some((*variable, right.as_ref()));
-    }
-    let Bitvector32Term::Add(pivot, one) = right.as_ref() else {
-        return None;
-    };
-    (**one == Bitvector32Term::Constant(1)).then_some((*variable, pivot.as_ref()))
 }
 
 fn derivations_match_propositions(

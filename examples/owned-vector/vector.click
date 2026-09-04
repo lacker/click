@@ -110,7 +110,7 @@ int32 vector_copy(
         preserve by {
             step();
             step();
-            close_invariants();
+            simp();
         }
     }
     have i == length by {
