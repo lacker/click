@@ -62,6 +62,20 @@ identically. Load-variable substitution stops at binder scopes (`RangeFold`
 bodies), where a load may mention bound variables; the first stage still
 applies there.
 
+### Contextual lowering is a different operation
+
+Some creation sites also rewrite a term through equalities recorded in a
+`PureFactContext`. Those helpers are named `lower_*_under_assumptions` or
+`lower_*_via_recorded_equalities`. Their output can change when the proof
+context changes, and their current bounded implementation does not promise a
+fixed point. They select useful proof-state vocabulary; they do not determine
+term identity and must not be used as the canonical form.
+
+Likewise, theory-aware normalization used only to group candidates in an index
+is named as a bucket key. A bucket key may conservatively miss a useful join;
+it is not canonical identity unless it satisfies the complete, assumption-free
+contract above.
+
 ## Load variables are the canonical form of a load
 
 A load variable is the canonical form of the load it represents, not an

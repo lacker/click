@@ -88,13 +88,13 @@ load case.
 
 ### Context-dependent footprint lowering
 
-`PureFactContext::canonical_bitvector` in `src/kernel/assumptions.rs` was added
-as a prototype for canonicalizing memory footprints at creation. It currently
-runs three alternating rounds:
+`PureFactContext::lower_bitvector_under_assumptions` in
+`src/kernel/assumptions.rs` was added as a prototype for lowering memory
+footprints at creation. It currently runs three alternating rounds:
 
 1. `simplify_bitvector_under_assumptions` recursively simplifies the term,
    including constant equalities and constructor reductions.
-2. `canonical_bitvector_from_direct_equalities` walks recorded equality edges,
+2. `lower_bitvector_via_recorded_equalities` walks recorded equality edges,
    simplifies class members, and chooses a preferred term.
 
 The preference puts constants first and then minimizes the number of embedded
@@ -123,7 +123,7 @@ There are broader boundary and scaling concerns hidden inside the first step:
   `condition_facts` while following equality links. Repeating that work through
   a term or equality component can depend on unrelated ambient state rather
   than only the selected equality evidence.
-- `canonical_bitvector_from_direct_equalities` generates simplified terms
+- `lower_bitvector_via_recorded_equalities` generates simplified terms
   while walking one equality component and may thereby reach another
   component. Its visited set prevents revisiting an exact term, but the claim
   that work is capped at twice the original recorded class size is not an
@@ -132,10 +132,11 @@ There are broader boundary and scaling concerns hidden inside the first step:
 The direct callers are narrow and should be audited before changing the
 representation:
 
-- `canonical_memory_range`, used when verified-call mutable ranges and
-  resource ranges are recorded;
-- `canonical_pointer` and `canonical_pointer_offset`, used by load-variable
-  congruence handling; and
+- `lower_memory_range_under_assumptions`, used when verified-call mutable
+  ranges and resource ranges are recorded;
+- `lower_pointer_under_assumptions` and
+  `lower_pointer_offset_under_assumptions`, used by load-variable congruence
+  handling; and
 - any test or downstream matcher that depends on the original-spelling rule
   for same-load-count representatives.
 
@@ -146,12 +147,12 @@ search-capable behavior.
 
 ### Context-dependent order-endpoint keys
 
-`canonical_order_endpoint` in
+`order_endpoint_bucket_key` in
 `src/kernel/assumptions/proposition_reasoning.rs` builds a theory-aware key for
 context-inconsistency bucketing. It resolves memory loads, folds and sorts
 addition, and recursively canonicalizes addends, but stops at
-`CANONICAL_ORDER_ENDPOINT_DEPTH = 6`. The result is useful as an index key, yet
-it is neither the global assumption-free canonical form nor complete at a
+`ORDER_ENDPOINT_BUCKET_KEY_DEPTH = 6`. The result is useful as an index key,
+yet it is neither the global assumption-free canonical form nor complete at a
 fixed context.
 
 This issue also owns that cutoff and terminology. The replacement may be a
@@ -285,10 +286,10 @@ first:
 - Context-dependent transformations are renamed and separated from canonical
   identity. They use only exact named/indexed evidence, or are planned outside
   the kernel and checked from an explicit certificate.
-- `CANONICALIZATION_ROUNDS` and the alternating fixed-round loop are deleted.
+- `CONTEXTUAL_LOWERING_ROUNDS` and the alternating fixed-round loop are deleted.
   They are not replaced by an unbounded `while changed` loop without a
   well-founded measure and relevant-input scaling proof.
-- `CANONICAL_ORDER_ENDPOINT_DEPTH` is deleted, and endpoint indexing remains
+- `ORDER_ENDPOINT_BUCKET_KEY_DEPTH` is deleted, and endpoint indexing remains
   logically complete and near-linear on consistent contexts.
 - Equality justified by a premise retains provenance and never becomes
   assumption-free definitional equality.
@@ -318,9 +319,10 @@ Each stage should be a coherent green commit. If a later stage exposes a
 larger representation migration, the earlier stage must remain truthful and
 useful on its own.
 
-1. **Lock down terminology and the real invariant.** Add broad idempotence and
-   assumption-independence tests for `canonical_term`. Rename private helpers
-   whose behavior is contextual or key-specific, without changing semantics.
+1. **Lock down terminology and the real invariant (complete).** Broad
+   idempotence and assumption-independence tests cover `canonical_term`.
+   Private helpers whose behavior is contextual or key-specific are named as
+   lowering and bucket-key operations, without changing semantics.
 2. **Reproduce and inventory.** Add the layered contextual-lowering
    reproduction, record every direct caller and required output property, and
    measure work across term depth, equality-path length, and unrelated facts.
@@ -346,4 +348,3 @@ useful on its own.
 7. Update `docs/internals/canonicalization.md`, the glossary, and any comments
    that conflate canonical identity with contextual equality, then run the full
    repository gate.
-

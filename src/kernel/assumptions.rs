@@ -1459,14 +1459,14 @@ impl PureFactContext {
         seen
     }
 
-    /// The canonical representative of `term`'s recorded-equality class:
-    /// constants first, then the member mentioning the fewest memory loads,
-    /// ties broken by term order. One bounded walk over the indexed equality
-    /// graph — no recursive proving, no fuel. This is the ground-equality
-    /// half of canonicalize-at-creation: a term created while its defining
-    /// equalities (a callee's ensures, a store's effect) are in scope can be
-    /// lowered to snapshot-free vocabulary before it is ever recorded.
-    pub(in crate::kernel) fn canonical_bitvector_from_direct_equalities(
+    /// Chooses a preferred lowering of `term` from its recorded-equality
+    /// class: constants first, then the member mentioning the fewest memory
+    /// loads, ties broken by term order. One bounded walk over the indexed
+    /// equality graph — no recursive proving, no fuel. Unlike
+    /// `canonical_term`, this operation depends on the facts in `self` and
+    /// the chosen representative is justified by those facts rather than by
+    /// definitional equality.
+    pub(in crate::kernel) fn lower_bitvector_via_recorded_equalities(
         &self,
         term: &Bitvector32Term,
     ) -> Bitvector32Term {
@@ -1605,65 +1605,79 @@ impl PureFactContext {
         }
     }
 
-    /// Lowers a memory range to canonical vocabulary through recorded ground
-    /// equalities and constant simplification — bounded lookups only, no
-    /// search. Applied where ranges are created and recorded (the
-    /// verified-call mutable footprint, resource segment evaluation) so
-    /// downstream frame queries compare canonical forms syntactically.
-    pub(in crate::kernel) fn canonical_memory_range(&self, range: &CMemoryRange) -> CMemoryRange {
+    /// Lowers a memory range through recorded ground equalities and constant
+    /// simplification — bounded lookups only, no search. Applied where ranges
+    /// are created and recorded (the verified-call mutable footprint,
+    /// resource segment evaluation) so downstream frame queries can compare
+    /// the selected contextual vocabulary syntactically.
+    pub(in crate::kernel) fn lower_memory_range_under_assumptions(
+        &self,
+        range: &CMemoryRange,
+    ) -> CMemoryRange {
         let base = Pointer {
             block: range.base().block.clone(),
-            offset: self.canonical_pointer_offset(&range.base().offset),
+            offset: self.lower_pointer_offset_under_assumptions(&range.base().offset),
         };
         range.with_bounds(
             base,
-            self.canonical_bitvector(range.start()),
-            self.canonical_bitvector(range.end()),
+            self.lower_bitvector_under_assumptions(range.start()),
+            self.lower_bitvector_under_assumptions(range.end()),
         )
     }
 
-    pub(in crate::kernel) fn canonical_pointer(&self, pointer: &Pointer) -> Pointer {
+    pub(in crate::kernel) fn lower_pointer_under_assumptions(&self, pointer: &Pointer) -> Pointer {
         Pointer {
             block: pointer.block.clone(),
-            offset: self.canonical_pointer_offset(&pointer.offset),
+            offset: self.lower_pointer_offset_under_assumptions(&pointer.offset),
         }
     }
 
-    pub(in crate::kernel) fn canonical_bitvector(&self, term: &Bitvector32Term) -> Bitvector32Term {
+    /// Alternates simplification and recorded-equality selection to lower a
+    /// term using the facts in this context. This is not canonicalization:
+    /// changing `self` can change the result, and the bounded rounds do not
+    /// promise a fixed point.
+    pub(in crate::kernel) fn lower_bitvector_under_assumptions(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Bitvector32Term {
         // A few alternating rounds of structural simplification and
         // equality-class selection: simplification rewrites inside a class
         // member (`new_len` -> `old_len + 1` -> `1`), class selection swaps
         // whole terms. The round count is a small constant, so this stays a
         // bounded lookup rather than congruence-closure search.
-        const CANONICALIZATION_ROUNDS: usize = 3;
+        const CONTEXTUAL_LOWERING_ROUNDS: usize = 3;
         let mut term = term.clone();
-        for _ in 0..CANONICALIZATION_ROUNDS {
+        for _ in 0..CONTEXTUAL_LOWERING_ROUNDS {
             let simplified = self.simplify_bitvector_under_assumptions(&term);
-            let canonical = self.canonical_bitvector_from_direct_equalities(&simplified);
-            if canonical == term {
+            let lowered = self.lower_bitvector_via_recorded_equalities(&simplified);
+            if lowered == term {
                 break;
             }
-            term = canonical;
+            term = lowered;
         }
         term
     }
 
-    fn canonical_pointer_offset(&self, offset: &PointerOffsetTerm) -> PointerOffsetTerm {
+    fn lower_pointer_offset_under_assumptions(
+        &self,
+        offset: &PointerOffsetTerm,
+    ) -> PointerOffsetTerm {
         match offset {
             PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
             PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-                self.canonical_pointer_offset(left),
-                self.canonical_pointer_offset(right),
+                self.lower_pointer_offset_under_assumptions(left),
+                self.lower_pointer_offset_under_assumptions(right),
             ),
-            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-                PointerOffsetTerm::scale_int32(self.canonical_bitvector(value), *byte_width)
-            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
+                self.lower_bitvector_under_assumptions(value),
+                *byte_width,
+            ),
             PointerOffsetTerm::Int64Scaled {
                 value,
                 byte_width,
                 unsigned,
             } => PointerOffsetTerm::scale_int64(
-                self.canonical_bitvector(value),
+                self.lower_bitvector_under_assumptions(value),
                 *byte_width,
                 *unsigned,
             ),
@@ -1685,7 +1699,7 @@ impl PureFactContext {
             return None;
         };
         let (memory, pointer) = crate::kernel::eval::registered_load_for_variable(variable)?;
-        let lowered = self.canonical_pointer(&pointer);
+        let lowered = self.lower_pointer_under_assumptions(&pointer);
         if lowered == pointer {
             return None;
         }

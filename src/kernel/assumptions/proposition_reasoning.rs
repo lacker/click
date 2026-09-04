@@ -1176,7 +1176,7 @@ impl PureFactContext {
             let mut paths = Vec::new();
             for variable in variables {
                 let source = Bitvector32Term::Variable(variable);
-                let target = self.canonical_bitvector_from_direct_equalities(&source);
+                let target = self.lower_bitvector_via_recorded_equalities(&source);
                 if target == source {
                     continue;
                 }
@@ -4182,16 +4182,17 @@ impl PureFactContext {
             "context inconsistency: order equality classes",
         );
 
-        const CANONICAL_ORDER_ENDPOINT_DEPTH: usize = 6;
+        const ORDER_ENDPOINT_BUCKET_KEY_DEPTH: usize = 6;
 
-        /// Depth-bounded canonical form of one order endpoint: loads
+        /// Depth-bounded bucket key for one order endpoint: loads
         /// resolve to their determined values, constants fold, addends sort,
         /// an unresolved load keeps its canonical memory, and a sum that
         /// collapses to one addend becomes that addend. Everything here is
         /// justified by a kernel equality (resolution, bitvector addition,
-        /// canonical-form equality for loads), so terms sharing a canonical form are
-        /// provably equal.
-        fn canonical_order_endpoint(
+        /// canonical-form equality for loads), so terms sharing a key are
+        /// provably equal. The converse is not promised: the depth bound can
+        /// put equal endpoints in different buckets.
+        fn order_endpoint_bucket_key(
             assumptions: &PureFactContext,
             term: &Bitvector32Term,
             depth: usize,
@@ -4203,7 +4204,7 @@ impl PureFactContext {
             match term {
                 Bitvector32Term::MemoryLoad(_, _) => {
                     if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
-                        return canonical_order_endpoint(assumptions, &resolved, depth - 1);
+                        return order_endpoint_bucket_key(assumptions, &resolved, depth - 1);
                     }
                     equality_graph_term_key(term)
                 }
@@ -4211,7 +4212,7 @@ impl PureFactContext {
                     if crate::kernel::is_load_variable(variable) =>
                 {
                     if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
-                        return canonical_order_endpoint(assumptions, &resolved, depth - 1);
+                        return order_endpoint_bucket_key(assumptions, &resolved, depth - 1);
                     }
                     term.clone()
                 }
@@ -4221,8 +4222,8 @@ impl PureFactContext {
                     collect_bitvector_add_terms(term, &mut raw, &mut constant);
                     let mut addends = Vec::new();
                     for addend in raw {
-                        let canonical = canonical_order_endpoint(assumptions, &addend, depth - 1);
-                        collect_bitvector_add_terms(&canonical, &mut addends, &mut constant);
+                        let key = order_endpoint_bucket_key(assumptions, &addend, depth - 1);
+                        collect_bitvector_add_terms(&key, &mut addends, &mut constant);
                     }
                     addends.sort();
                     let mut written = if constant == 0 && !addends.is_empty() {
@@ -4244,12 +4245,12 @@ impl PureFactContext {
                     else_term,
                 } => Bitvector32Term::If {
                     condition: condition.clone(),
-                    then_term: Box::new(canonical_order_endpoint(
+                    then_term: Box::new(order_endpoint_bucket_key(
                         assumptions,
                         then_term,
                         depth - 1,
                     )),
-                    else_term: Box::new(canonical_order_endpoint(
+                    else_term: Box::new(order_endpoint_bucket_key(
                         assumptions,
                         else_term,
                         depth - 1,
@@ -4409,25 +4410,25 @@ impl PureFactContext {
                     continue;
                 }
                 crate::instrumentation::record_deterministic_work(1);
-                let canonical =
-                    canonical_order_endpoint(self, term, CANONICAL_ORDER_ENDPOINT_DEPTH);
+                let bucket_key =
+                    order_endpoint_bucket_key(self, term, ORDER_ENDPOINT_BUCKET_KEY_DEPTH);
                 let graph_component = key_component(
                     equality_graph_term_key(term),
                     equality_index,
                     &mut class_of_key,
                     &mut next_class,
                 );
-                let canonical_component = key_component(
-                    canonical,
+                let bucket_component = key_component(
+                    bucket_key,
                     equality_index,
                     &mut class_of_key,
                     &mut next_class,
                 );
-                merged.union(graph_component, canonical_component);
-                registered.insert(term.clone(), canonical_component);
+                merged.union(graph_component, bucket_component);
+                registered.insert(term.clone(), bucket_component);
                 if order_endpoint_is_theory_sensitive(term, equality_index) {
                     let mut keys = BTreeSet::new();
-                    residue_bucket_keys(self, term, CANONICAL_ORDER_ENDPOINT_DEPTH, &mut keys);
+                    residue_bucket_keys(self, term, ORDER_ENDPOINT_BUCKET_KEY_DEPTH, &mut keys);
                     sensitive_keys.insert(term.clone(), keys);
                 }
             }

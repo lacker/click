@@ -1042,7 +1042,7 @@ fn propositions_equal_modulo_proven_snapshots(
 /// condition terms and pointer offsets, never descending into embedded
 /// memory snapshots. The full resolver walks whole snapshots and is far too
 /// expensive for per-candidate comparison paths.
-fn resolve_canonical_bitvector_shallow(bits: &Bitvector32Term) -> Bitvector32Term {
+fn expand_load_variables_shallow(bits: &Bitvector32Term) -> Bitvector32Term {
     match bits {
         Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable) => {
             match crate::kernel::registered_load_for_variable(variable) {
@@ -1051,30 +1051,30 @@ fn resolve_canonical_bitvector_shallow(bits: &Bitvector32Term) -> Bitvector32Ter
             }
         }
         Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
-            Box::new(resolve_canonical_bitvector_shallow(left)),
-            Box::new(resolve_canonical_bitvector_shallow(right)),
+            Box::new(expand_load_variables_shallow(left)),
+            Box::new(expand_load_variables_shallow(right)),
         ),
         Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
-            Box::new(resolve_canonical_bitvector_shallow(left)),
-            Box::new(resolve_canonical_bitvector_shallow(right)),
+            Box::new(expand_load_variables_shallow(left)),
+            Box::new(expand_load_variables_shallow(right)),
         ),
         Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
-            Box::new(resolve_canonical_bitvector_shallow(left)),
-            Box::new(resolve_canonical_bitvector_shallow(right)),
+            Box::new(expand_load_variables_shallow(left)),
+            Box::new(expand_load_variables_shallow(right)),
         ),
         _ => bits.clone(),
     }
 }
 
-fn resolve_canonical_offset_shallow(value: &PointerOffsetTerm) -> PointerOffsetTerm {
+fn expand_offset_load_variables_shallow(value: &PointerOffsetTerm) -> PointerOffsetTerm {
     match value {
         PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::Int32Scaled {
-            value: Box::new(resolve_canonical_bitvector_shallow(value)),
+            value: Box::new(expand_load_variables_shallow(value)),
             byte_width: *byte_width,
         },
         PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::Add(
-            Box::new(resolve_canonical_offset_shallow(left)),
-            Box::new(resolve_canonical_offset_shallow(right)),
+            Box::new(expand_offset_load_variables_shallow(left)),
+            Box::new(expand_offset_load_variables_shallow(right)),
         ),
         _ => value.clone(),
     }
@@ -2209,31 +2209,31 @@ fn separations_equal_modulo_proven_snapshots(
         left.base().block == right.base().block
             && assumptions.conditions_equal_modulo_proven_snapshots(
                 &ConditionTerm::PointerOffsetEqual(
-                    Box::new(resolve_canonical_offset_shallow(&left.base().offset)),
+                    Box::new(expand_offset_load_variables_shallow(&left.base().offset)),
                     Box::new(PointerOffsetTerm::Constant(0)),
                 ),
                 &ConditionTerm::PointerOffsetEqual(
-                    Box::new(resolve_canonical_offset_shallow(&right.base().offset)),
+                    Box::new(expand_offset_load_variables_shallow(&right.base().offset)),
                     Box::new(PointerOffsetTerm::Constant(0)),
                 ),
             )
             && assumptions.conditions_equal_modulo_proven_snapshots(
                 &ConditionTerm::Bitvector32Equal(
-                    Box::new(resolve_canonical_bitvector_shallow(left.start())),
+                    Box::new(expand_load_variables_shallow(left.start())),
                     Box::new(Bitvector32Term::Constant(0)),
                 ),
                 &ConditionTerm::Bitvector32Equal(
-                    Box::new(resolve_canonical_bitvector_shallow(right.start())),
+                    Box::new(expand_load_variables_shallow(right.start())),
                     Box::new(Bitvector32Term::Constant(0)),
                 ),
             )
             && assumptions.conditions_equal_modulo_proven_snapshots(
                 &ConditionTerm::Bitvector32Equal(
-                    Box::new(resolve_canonical_bitvector_shallow(left.end())),
+                    Box::new(expand_load_variables_shallow(left.end())),
                     Box::new(Bitvector32Term::Constant(0)),
                 ),
                 &ConditionTerm::Bitvector32Equal(
-                    Box::new(resolve_canonical_bitvector_shallow(right.end())),
+                    Box::new(expand_load_variables_shallow(right.end())),
                     Box::new(Bitvector32Term::Constant(0)),
                 ),
             )

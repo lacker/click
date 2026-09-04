@@ -323,6 +323,171 @@ fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
 
 // --- canonical form: determinism and idempotence --------------------------
 
+fn unresolved_canonicalization_test_load() -> Bitvector32Term {
+    let memory = CMemory::new().with_block("canonical-shapes", 8);
+    Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(memory),
+        Box::new(Pointer {
+            block: "canonical-shapes".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+    )
+}
+
+#[test]
+fn canonical_term_is_idempotent_for_every_term_shape() {
+    macro_rules! binary {
+        ($variant:ident, $left:expr, $right:expr) => {
+            Bitvector32Term::$variant(Box::new($left), Box::new($right))
+        };
+    }
+    macro_rules! unary {
+        ($variant:ident, $value:expr) => {
+            Bitvector32Term::$variant(Box::new($value))
+        };
+    }
+
+    let load = unresolved_canonicalization_test_load();
+    let u32_value = Bitvector32Term::Constant(3);
+    let i64_value = Bitvector32Term::Int64Constant(3);
+    let u64_value = Bitvector32Term::UInt64Constant(3);
+    let terms = vec![
+        Bitvector32Term::Constant(3),
+        Bitvector32Term::Int64Constant(3),
+        Bitvector32Term::UInt64Constant(3),
+        Bitvector32Term::Variable(Variable(30_001)),
+        binary!(Add, load.clone(), u32_value.clone()),
+        binary!(Subtract, load.clone(), u32_value.clone()),
+        binary!(Multiply, load.clone(), u32_value.clone()),
+        binary!(Divide, load.clone(), u32_value.clone()),
+        binary!(UnsignedDivide, load.clone(), u32_value.clone()),
+        binary!(Remainder, load.clone(), u32_value.clone()),
+        binary!(UnsignedRemainder, load.clone(), u32_value.clone()),
+        binary!(ShiftLeft, load.clone(), u32_value.clone()),
+        binary!(ArithmeticShiftRight, load.clone(), u32_value.clone()),
+        binary!(LogicalShiftRight, load.clone(), u32_value.clone()),
+        binary!(BitwiseAnd, load.clone(), u32_value.clone()),
+        binary!(BitwiseOr, load.clone(), u32_value.clone()),
+        binary!(BitwiseXor, load.clone(), u32_value.clone()),
+        unary!(BitwiseNot, load.clone()),
+        Bitvector32Term::If {
+            condition: Box::new(ConditionTerm::Bitvector32Equal(
+                Box::new(load.clone()),
+                Box::new(u32_value.clone()),
+            )),
+            then_term: Box::new(load.clone()),
+            else_term: Box::new(u32_value.clone()),
+        },
+        Bitvector32Term::RangeFold {
+            start: Box::new(load.clone()),
+            end: Box::new(u32_value.clone()),
+            initial: Box::new(load.clone()),
+            accumulator: Variable(30_002),
+            item: Variable(30_003),
+            body: Box::new(load.clone()),
+        },
+        Bitvector32Term::PureFunctionApplication {
+            name: "canonical_shapes".to_string(),
+            arguments: vec![load.clone(), u32_value.clone()],
+        },
+        load.clone(),
+        unary!(Int64From32, load.clone()),
+        unary!(UInt64From32, load.clone()),
+        unary!(Int64FromUInt32, load.clone()),
+        unary!(UInt64FromInt32, load.clone()),
+        unary!(UInt64FromInt64, load.clone()),
+        unary!(Int64BitwiseNot, load.clone()),
+        unary!(UInt64BitwiseNot, load.clone()),
+        binary!(Int64Add, load.clone(), i64_value.clone()),
+        binary!(Int64Subtract, load.clone(), i64_value.clone()),
+        binary!(Int64Multiply, load.clone(), i64_value.clone()),
+        binary!(Int64Divide, load.clone(), i64_value.clone()),
+        binary!(Int64Remainder, load.clone(), i64_value.clone()),
+        binary!(Int64ShiftLeft, load.clone(), i64_value.clone()),
+        binary!(Int64ArithmeticShiftRight, load.clone(), i64_value.clone()),
+        binary!(Int64BitwiseAnd, load.clone(), i64_value.clone()),
+        binary!(Int64BitwiseOr, load.clone(), i64_value.clone()),
+        binary!(Int64BitwiseXor, load.clone(), i64_value.clone()),
+        binary!(UInt64Add, load.clone(), u64_value.clone()),
+        binary!(UInt64Subtract, load.clone(), u64_value.clone()),
+        binary!(UInt64Multiply, load.clone(), u64_value.clone()),
+        binary!(UInt64Divide, load.clone(), u64_value.clone()),
+        binary!(UInt64Remainder, load.clone(), u64_value.clone()),
+        binary!(UInt64ShiftLeft, load.clone(), u64_value.clone()),
+        binary!(UInt64LogicalShiftRight, load.clone(), u64_value.clone()),
+        binary!(UInt64BitwiseAnd, load.clone(), u64_value.clone()),
+        binary!(UInt64BitwiseOr, load.clone(), u64_value.clone()),
+        binary!(UInt64BitwiseXor, load, u64_value),
+    ];
+
+    for term in terms {
+        let once = crate::kernel::eval::canonical_term(&term);
+        assert_eq!(
+            crate::kernel::eval::canonical_term(&once),
+            once,
+            "canonicalization was not idempotent for {term:?}",
+        );
+    }
+}
+
+#[test]
+fn canonical_term_is_idempotent_at_multiple_term_depths() {
+    for target_depth in [1, 8, 32, 96] {
+        let mut term = unresolved_canonicalization_test_load();
+        for depth in 0..target_depth {
+            term = Bitvector32Term::Add(
+                Box::new(Bitvector32Term::If {
+                    condition: Box::new(ConditionTerm::Bitvector32Equal(
+                        Box::new(term),
+                        Box::new(Bitvector32Term::Constant(depth)),
+                    )),
+                    then_term: Box::new(unresolved_canonicalization_test_load()),
+                    else_term: Box::new(Bitvector32Term::Constant(depth + 1)),
+                }),
+                Box::new(Bitvector32Term::Constant(depth + 2)),
+            );
+        }
+
+        let once = crate::kernel::eval::canonical_term(&term);
+        assert_eq!(
+            crate::kernel::eval::canonical_term(&once),
+            once,
+            "canonicalization was not idempotent at depth {target_depth}",
+        );
+    }
+}
+
+#[test]
+fn canonical_term_is_independent_of_contextual_equalities() {
+    let term = Bitvector32Term::Variable(Variable(30_004));
+    let canonical = crate::kernel::eval::canonical_term(&term);
+    let equal_to_one = PureFactContext::new().assume_condition(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(term.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    let equal_to_two = PureFactContext::new().assume_condition(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(term.clone()),
+            Box::new(Bitvector32Term::Constant(2)),
+        ),
+        true,
+    );
+
+    assert_eq!(
+        equal_to_one.lower_bitvector_under_assumptions(&term),
+        Bitvector32Term::Constant(1),
+    );
+    assert_eq!(
+        equal_to_two.lower_bitvector_under_assumptions(&term),
+        Bitvector32Term::Constant(2),
+    );
+    assert_eq!(crate::kernel::eval::canonical_term(&term), canonical);
+    assert_eq!(canonical, term);
+}
+
 #[test]
 fn canonical_term_resolves_equal_loads_to_one_form() {
     let pointer = Pointer {
