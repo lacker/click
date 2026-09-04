@@ -298,8 +298,6 @@ impl PureFactContext {
                 return Some(value);
             }
             for (condition, value) in self.condition_facts.iter() {
-                #[cfg(test)]
-                DIRECT_CONSTANT_EQUALITY_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
                 let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
                 else {
                     continue;
@@ -357,36 +355,18 @@ impl PureFactContext {
         right: &Bitvector32Term,
     ) -> bool {
         let equality_index = self.bitvector_equality_index();
-        // Walked from both ends: a load variable's congruence edge points
-        // only toward the lowered address, so the meeting vertex may be
-        // reachable from one side alone.
-        let mut left_class = BTreeSet::new();
-        let mut stack = vec![equality_graph_term_key(left)];
-        while let Some(term) = stack.pop() {
-            if !left_class.insert(term.clone()) {
-                continue;
-            }
-            if let Some(neighbors) = equality_index.get(&term) {
-                stack.extend(neighbors.keys().cloned());
-            }
-            if let Some(congruent) = self.load_variable_congruence_neighbor(&term) {
-                stack.push(congruent);
-            }
-        }
+        let target = equality_graph_term_key(right);
         let mut seen = BTreeSet::new();
-        let mut stack = vec![equality_graph_term_key(right)];
+        let mut stack = vec![equality_graph_term_key(left)];
         while let Some(term) = stack.pop() {
             if !seen.insert(term.clone()) {
                 continue;
             }
-            if left_class.contains(&term) {
+            if term == target {
                 return true;
             }
             if let Some(neighbors) = equality_index.get(&term) {
                 stack.extend(neighbors.keys().cloned());
-            }
-            if let Some(congruent) = self.load_variable_congruence_neighbor(&term) {
-                stack.push(congruent);
             }
         }
 
@@ -443,6 +423,103 @@ impl PureFactContext {
             }
         }
         None
+    }
+
+    fn pointer_offset_congruence_evidence(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> Option<PointerOffsetCongruenceEvidence> {
+        if left == right {
+            return Some(PointerOffsetCongruenceEvidence::Exact);
+        }
+        match (left, right) {
+            (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+                if let Some((first, second)) = self
+                    .pointer_offset_congruence_evidence(left_a, right_a)
+                    .zip(self.pointer_offset_congruence_evidence(left_b, right_b))
+                {
+                    return Some(PointerOffsetCongruenceEvidence::Add {
+                        first: Box::new(first),
+                        second: Box::new(second),
+                        swapped: false,
+                    });
+                }
+                let (first, second) = self
+                    .pointer_offset_congruence_evidence(left_a, right_b)
+                    .zip(self.pointer_offset_congruence_evidence(left_b, right_a))?;
+                Some(PointerOffsetCongruenceEvidence::Add {
+                    first: Box::new(first),
+                    second: Box::new(second),
+                    swapped: true,
+                })
+            }
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) if left_width == right_width => Some(PointerOffsetCongruenceEvidence::Int32Scaled {
+                byte_width: *left_width,
+                path: self.exact_bitvector_equality_path_evidence(left, right)?,
+            }),
+            (
+                PointerOffsetTerm::Int64Scaled {
+                    value: left,
+                    byte_width: left_width,
+                    unsigned: left_unsigned,
+                },
+                PointerOffsetTerm::Int64Scaled {
+                    value: right,
+                    byte_width: right_width,
+                    unsigned: right_unsigned,
+                },
+            ) if left_width == right_width && left_unsigned == right_unsigned => {
+                Some(PointerOffsetCongruenceEvidence::Int64Scaled {
+                    byte_width: *left_width,
+                    unsigned: *left_unsigned,
+                    path: self.exact_bitvector_equality_path_evidence(left, right)?,
+                })
+            }
+            _ => {
+                let byte_width = common_pointer_offset_element_width(left, right)?;
+                let (left_index, right_index) = (
+                    element_index_from_offset(left, byte_width)?,
+                    element_index_from_offset(right, byte_width)?,
+                );
+                Some(PointerOffsetCongruenceEvidence::ElementIndex {
+                    byte_width,
+                    path: self.exact_bitvector_equality_path_evidence(&left_index, &right_index)?,
+                })
+            }
+        }
+    }
+
+    pub(in crate::kernel) fn load_address_congruence_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<LoadAddressCongruenceEvidence> {
+        let (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) = (left, right)
+        else {
+            return None;
+        };
+        let (left_memory, left_pointer) = crate::kernel::eval::registered_load_for_variable(left)?;
+        let (right_memory, right_pointer) =
+            crate::kernel::eval::registered_load_for_variable(right)?;
+        if left_memory != right_memory || left_pointer.block != right_pointer.block {
+            return None;
+        }
+        Some(LoadAddressCongruenceEvidence {
+            offset: self
+                .pointer_offset_congruence_evidence(&left_pointer.offset, &right_pointer.offset)?,
+            left_pointer,
+            right_pointer,
+        })
     }
 
     pub(in crate::kernel) fn simplify_condition_under_assumptions(
@@ -605,8 +682,6 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Bitvector32Term {
-        #[cfg(test)]
-        CONTEXTUAL_SIMPLIFIER_TERM_VISITS.with(|visits| visits.set(visits.get() + 1));
         if let Some(value) = self.bitvector_constant_from_direct_equalities(term) {
             return Bitvector32Term::Constant(value);
         }

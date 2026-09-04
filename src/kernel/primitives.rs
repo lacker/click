@@ -2326,6 +2326,41 @@ pub struct BitvectorEqualityDerivationStep {
     pub(super) premise: Proposition,
 }
 
+/// Target-directed evidence that two pointer offsets are equal by structural
+/// congruence and exact ground-int32 equality premises.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PointerOffsetCongruenceEvidence {
+    Exact,
+    Add {
+        first: Box<PointerOffsetCongruenceEvidence>,
+        second: Box<PointerOffsetCongruenceEvidence>,
+        swapped: bool,
+    },
+    Int32Scaled {
+        byte_width: i64,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+    Int64Scaled {
+        byte_width: i64,
+        unsigned: bool,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+    ElementIndex {
+        byte_width: u32,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+}
+
+/// Evidence that two load variables name one cell because their
+/// registered origins have the same memory epoch and block and congruent
+/// offsets. The original variables remain distinct context-free names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LoadAddressCongruenceEvidence {
+    pub(super) left_pointer: Pointer,
+    pub(super) right_pointer: Pointer,
+    pub(super) offset: PointerOffsetCongruenceEvidence,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PropositionDerivationRule {
     ContextFree,
@@ -2459,9 +2494,9 @@ pub(super) struct ForallInt32InstantiationEvidence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
+    LoadAddressCongruence(LoadAddressCongruenceEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
-    BitvectorEqualityRewritePaths(Vec<Vec<BitvectorEqualityDerivationStep>>),
     ForallInt32Instantiation(Box<ForallInt32InstantiationEvidence>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Int32IncrementUpperBound(SignedOrderDerivationStep),

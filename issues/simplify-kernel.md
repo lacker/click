@@ -90,12 +90,14 @@ procedure iterative. That migration, including `ARITHMETIC_INTERVAL_DEPTH`, is
 tracked in `issues/arithmetic.md` and is deliberately deferred here.
 
 The three canonicalization-related cuts were also found to share a deeper
-abstraction problem. Assumption-free, idempotent `canonical_term` is currently
-conflated with context-dependent footprint lowering and theory-aware endpoint
-keying. Their limits, separation, caller audit, and possible use of an e-graph
-for context-local equality indexing are now owned by
-`issues/fix-canonicalization.md`; replacing the fixed rounds with an unbounded
-loop is explicitly not the intended fix.
+abstraction problem. `issues/fix-canonicalization.md` now separates
+assumption-free, idempotent `canonical_term` from contextual proof vocabulary:
+verified calls retain canonical footprints, exact `frame using` operations
+carry proof-local endpoint evidence, and target-directed load-address
+congruence replaces the former implicit representative walk. The alternating
+round limit and the deep-term canonicalization preflight are gone. Only the
+theory-aware order-endpoint key remains in that issue; replacing its cutoff
+with an unbounded search is explicitly not the intended fix.
 
 ## Current inventory
 
@@ -108,10 +110,10 @@ These are not surface-search migrations. Replace each cut with work bounded by
 the complete named structure, plus an exact cycle check or an iterative walk as
 needed.
 
-The alternating contextual-lowering rounds, order-endpoint key depth, and
-deep-term canonicalization preflight are tracked together in
-`issues/fix-canonicalization.md` rather than as three independent mechanical
-walk conversions.
+The order-endpoint key depth remains tracked in
+`issues/fix-canonicalization.md`. Its former sibling cuts—the alternating
+contextual-lowering rounds and deep-term canonicalization preflight—are
+complete.
 
 There are no remaining structural or fixed-point cuts owned directly by this
 issue. Nested quantified-binder comparison is complete and lives in the

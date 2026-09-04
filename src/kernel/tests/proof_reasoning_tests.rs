@@ -1974,7 +1974,7 @@ fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
 }
 
 #[test]
-fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
+fn arithmetic_normalization_does_not_select_contextual_representatives() {
     let left = Bitvector32Term::Variable(Variable(218));
     let right = Bitvector32Term::Variable(Variable(219));
     let one = Bitvector32Term::Constant(1);
@@ -1993,21 +1993,10 @@ fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
         .assume_proposition(left_is_one.clone())
         .assume_proposition(right_is_one.clone());
 
-    let derivation = assumptions
-        .derive_simp_proposition(&goal)
-        .expect("the two selected equalities should normalize the arithmetic goal");
-    let paths = derivation
-        .bitvector_equality_rewrite_paths()
-        .expect("the atomic decision should retain both rewrite paths");
-    assert_eq!(paths.len(), 2);
-    assert_eq!(paths[0][0].source(), &left);
-    assert_eq!(paths[0][0].target(), &one);
-    assert_eq!(paths[0][0].premise(), &left_is_one);
-    assert_eq!(paths[1][0].source(), &right);
-    assert_eq!(paths[1][0].target(), &one);
-    assert_eq!(paths[1][0].premise(), &right_is_one);
-    assert!(derivation.check(&assumptions));
-    assert!(!derivation.check(&PureFactContext::new().assume_proposition(left_is_one)));
+    assert!(
+        assumptions.derive_simp_proposition(&goal).is_none(),
+        "the kernel must not choose equality-class representatives to make an arithmetic goal normalize"
+    );
 }
 
 #[test]

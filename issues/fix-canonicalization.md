@@ -113,11 +113,11 @@ covered at depths 64, 128, and 256. Two depth-128 terms whose only difference
 is irrelevant snapshot history also have identical canonical forms and prove
 equal through the public proposition path.
 
-### Context-dependent footprint lowering
+### Former context-dependent footprint lowering (removed in stage 4)
 
 `PureFactContext::lower_bitvector_under_assumptions` in
 `src/kernel/assumptions.rs` was added as a prototype for lowering memory
-footprints at creation. It currently runs three alternating rounds:
+footprints at creation. Before stage 4 it ran three alternating rounds:
 
 1. `simplify_bitvector_under_assumptions` recursively simplifies the term,
    including constant equalities and constructor reductions.
@@ -166,7 +166,7 @@ There are broader boundary and scaling concerns hidden inside the first step:
   cap the generated closure at twice the original recorded class size. The
   former comment claiming that bound was incorrect.
 
-The direct callers are narrow:
+The production uses were narrow, but the original inventory missed a third:
 
 - `lower_memory_range_under_assumptions` is called only from the verified-call
   rule, after a contract mutable segment has been evaluated and its facts have
@@ -183,8 +183,15 @@ The direct callers are narrow:
   `bitvector_terms_equal_from_facts`' equality-graph walk. It must preserve the
   memory snapshot and base block, and may connect load variables only when the
   address equality is justified by the facts in the current context.
-- `lower_bitvector_under_assumptions` has no other production caller. Direct
-  uses outside those two paths are characterization tests.
+- atomic proposition derivation used
+  `lower_bitvector_via_recorded_equalities` directly to choose substitutions
+  that made a larger arithmetic proposition normalize. This was the same
+  representative-selection policy hiding behind another kernel proof path.
+
+Stage 4 removed all of these helpers and the characterization-only counters.
+Arithmetic and load-address goals now close through target-directed equality
+paths and explicit surface rewrites; verified calls never invoke contextual
+lowering while creating their footprint.
 
 `simplify_bitvector_under_assumptions` has many other callers. This issue does
 not assume that the general simplifier can simply be deleted; it requires that
@@ -235,12 +242,30 @@ ambient fact scans, or equality-class representative selection. If a smart
 tactic uses richer reasoning to find a rewrite, it must compile that reasoning
 to the ordinary explicit proof steps the kernel already checks.
 
+The implementation uses the existing proof-object vocabulary rather than a
+second effect-summary proposition. A `frame using` operation is the typed
+consumer of a proof-local range view: its target is the selected function
+effect, its source ranges remain the canonical `CMemoryEffectSummary` ranges,
+and its listed equality/bound premises are checked as retained
+`PropositionDerivation`s. Smart `frame()` selects those premises and leading
+`have` steps; expansion prints the same `frame() using { ... }` operation that
+can be written directly. The stored summary and the call-havoc derivation are
+not mutated or duplicated.
+
+Load-address congruence has its own retained atomic evidence. It checks two
+registered load variables against their exact origins, requires one memory
+epoch and pointer block, and recursively checks structural offset congruence
+plus exact ground-equality paths. Smart expansion turns those paths into
+ordinary `rewrite` operations followed by `normalize`; the equality graph no
+longer manufactures a contextual load-variable neighbor.
+
 ### Stage 2 deterministic-work characterization
 
-Test-only counters measure actual contextual simplifier calls, full-fact
-visits made by direct constant-equality lookup, equality-worklist vertices,
-and outer rounds. The regression uses raw terms so eager constructors cannot
-erase the intended shape. Current results are deterministic:
+Before stage 4 removed the implementation, test-only counters measured actual
+contextual simplifier calls, full-fact visits made by direct constant-equality
+lookup, equality-worklist vertices, and outer rounds. The regression used raw
+terms so eager constructors could not erase the intended shape. The recorded
+results were deterministic:
 
 | input axis | sizes | simplifier visits | equality vertices | direct fact visits |
 | --- | --- | --- | --- | --- |
@@ -388,19 +413,20 @@ Stage 4 has resolved the semantic choices:
 - Footprint restatement and load-address congruence are distinct operations;
   neither is implemented by a general contextual-lowering helper.
 
-Implementation still has narrow representation questions to settle from the
-existing proof-object conventions:
+Stage 4 resolved its representation questions:
 
-- Should a footprint restatement derive a second `CMemoryEffectSummary`, or a
-  typed range-view fact consumed directly by frame and disjointness rules?
-- Which existing equality-path and congruence certificate types can represent
-  base-offset, start, and end equality without introducing a parallel proof
-  language?
-- Where should an expanded restatement live in the verified-call proof event so
-  `verify`, `expand`, `profile`, and `audit` check the identical operation?
-- Is an exact ground-equality component index sufficient, or do the observed
-  smart-planning cases require target-directed congruence through rewritten
-  subterms? This affects the planner, not the kernel's acceptance boundary.
+- A footprint restatement is consumed directly by the exact `frame using`
+  operation; it does not derive a second `CMemoryEffectSummary`.
+- Existing equality propositions, retained `PropositionDerivation`s, and
+  leading `have` steps cover range bases and bounds. There is no parallel
+  endpoint proof language.
+- The restatement lives in the function-effect proof, where expansion already
+  prints `frame using` and its exact premises. The verified-call statement
+  event continues to record only the canonical source summary.
+- Exact ground-equality paths plus target-directed structural congruence cover
+  the observed cases. The former generated-term representative walk is gone.
+
+The remaining choices belong to stage 5 or the optional later experiment:
 - Can order inconsistency use several cheap sound bucket keys and reserve
   pairwise theory checks for a narrowly identified bucket, avoiding any need
   for one context-dependent extracted representative?
@@ -481,17 +507,17 @@ useful on its own.
    regressions cover depths beyond the former cutoff. The cutoff turned out to
    be redundant in the current equality flow, not a known observable proof
    failure; removing it still closes a brittle logical boundary.
-4. **Replace contextual lowering with explicit restatement.** First preserve
-   the evaluated canonical footprint unchanged in call memory and
-   `CMemoryEffectSummary`. Add a small checked operation that derives a
-   proof-local range/effect view from a named source, destination, and equality
-   evidence for the base offset and bounds. Teach smart execution/frame
-   planning to emit and reuse that operation automatically, and make expansion
-   display it. Separately replace `load_variable_congruence_neighbor` with an
-   explicit checked address-congruence step. Preserve the motivating
-   verified-call, frame, and resource regressions, then delete the heuristic
-   representative walk and `CONTEXTUAL_LOWERING_ROUNDS` once both callers have
-   migrated.
+4. **Replace contextual lowering with explicit restatement (complete).** The
+   evaluated canonical footprint remains unchanged in call memory and
+   `CMemoryEffectSummary`; exact `frame using` consumes proof-local range views
+   from named equality/bound premises, and smart frame planning emits that
+   operation automatically. Load-variable equality uses retained,
+   target-directed address-congruence evidence and expands to exact rewrites.
+   The heuristic representative walk, its generated-term arithmetic use,
+   `load_variable_congruence_neighbor`, and `CONTEXTUAL_LOWERING_ROUNDS` are
+   deleted. Regressions cover the verified-call vocabulary mismatch,
+   independently checked expansion, and rejection across different load
+   epochs and blocks.
 5. **Repair order-endpoint indexing.** Replace the depth-six key construction
    with complete, purpose-named normalization or a bucket strategy whose misses
    cannot affect the logical answer. Retain the consistent-context scaling

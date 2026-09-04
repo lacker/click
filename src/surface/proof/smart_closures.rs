@@ -1025,7 +1025,16 @@ impl<'a> Proof<'a> {
             let goal = proof.goal()?.clone();
             let allows_chain = matches!(goal, Proposition::ConditionIs(_, _));
             let mut refinement = None;
+            let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
             for equality in proof.facts().bitvector_equalities_mentioning(&goal) {
+                let equality_has_literal_endpoint = matches!(
+                    &equality,
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(left, right),
+                        true
+                    ) if matches!(left.as_ref(), Bitvector32Term::Constant(_))
+                        || matches!(right.as_ref(), Bitvector32Term::Constant(_))
+                );
                 if used.contains(&equality) {
                     continue;
                 }
@@ -1058,7 +1067,21 @@ impl<'a> Proof<'a> {
                     {
                         return Some(closed);
                     }
-                    if allows_chain && refinement.is_none() && rewritten.goal() != Some(&goal) {
+                    // Do not turn a value already present in the goal into a
+                    // fresh symbolic variable merely because the reverse
+                    // orientation of an equality happens to match first.
+                    // Equal-sized variable-to-variable rewrites remain
+                    // available for ordinary equality chains.
+                    let does_not_expand_a_literal = !equality_has_literal_endpoint
+                        || rewritten.goal().is_some_and(|rewritten_goal| {
+                            crate::kernel::proposition_variables(rewritten_goal).len()
+                                <= goal_variable_count
+                        });
+                    if allows_chain
+                        && refinement.is_none()
+                        && rewritten.goal() != Some(&goal)
+                        && does_not_expand_a_literal
+                    {
                         refinement = Some((equality.clone(), rewritten));
                     }
                 }
@@ -1075,6 +1098,25 @@ impl<'a> Proof<'a> {
     pub(super) fn try_selected_equality_rewrite_chain(
         &self,
         premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        self.try_selected_equality_rewrite_chain_with_scope(premise_pairs, false)
+    }
+
+    /// The explicit-premise counterpart of
+    /// [`Self::try_selected_equality_rewrite_chain`]. After each checked
+    /// rewrite it may normalize without context or run a typed atomic plan
+    /// against the same named premises, but it cannot consult ambient facts.
+    fn try_restricted_equality_rewrite_chain(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        self.try_selected_equality_rewrite_chain_with_scope(premise_pairs, true)
+    }
+
+    fn try_selected_equality_rewrite_chain_with_scope(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+        restricted: bool,
     ) -> Option<Self> {
         let mut proof = self.clone();
         let mut remaining = premise_pairs
@@ -1105,17 +1147,54 @@ impl<'a> Proof<'a> {
             }
             let (index, rewritten) = selected?;
             remaining.remove(index);
-            if let Some(closed) = rewritten
-                .try_direct_logical_closure()
-                .ok()
-                .flatten()
-                .or_else(|| rewritten.try_typed_atomic_simp_closure())
-            {
+            let closed = if restricted {
+                rewritten.try_typed_atomic_simp_from_selected_premises(premise_pairs)
+            } else {
+                rewritten
+                    .try_direct_logical_closure()
+                    .ok()
+                    .flatten()
+                    .or_else(|| rewritten.try_typed_atomic_simp_closure())
+            };
+            if let Some(closed) = closed {
                 return Some(closed);
             }
             proof = rewritten;
         }
         None
+    }
+
+    fn try_typed_atomic_simp_from_selected_premises(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        let goal = self.goal()?.clone();
+        if premise_pairs
+            .iter()
+            .any(|(kernel, _)| selected_premise_contains_goal(kernel, &goal))
+        {
+            return self
+                .apply_step(ProofStep::Assumption)
+                .ok()
+                .filter(Proof::is_complete);
+        }
+        let restricted = premise_pairs
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        match plan_simp_certificate(&goal, &assumptions_from_propositions(&restricted))? {
+            SimpEvidence::Normalize => self
+                .apply_step(ProofStep::Normalize)
+                .ok()
+                .filter(Proof::is_complete),
+            SimpEvidence::Derivation(derivation) => self.check_typed_atomic_simp_candidate(
+                &goal,
+                &derivation,
+                premise_pairs,
+                !matches!(self.context.as_ref(), ProofContext::Execution(_)),
+            ),
+            SimpEvidence::Assumption => None,
+        }
     }
 
     /// Weakens a constant bound. A goal `value >= c` (or `value <= c`)
@@ -2038,25 +2117,27 @@ impl<'a> Proof<'a> {
             .iter()
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
-        let plan = plan_simp_certificate(goal, &assumptions_from_propositions(&restricted))?;
-        let SimpEvidence::Derivation(derivation) = &plan else {
-            return None;
-        };
         let theorem_application_closes_goal =
             !matches!(self.context.as_ref(), ProofContext::Execution(_));
-        proof
-            .check_typed_atomic_simp_candidate(
-                goal,
-                derivation,
-                &premise_pairs,
-                theorem_application_closes_goal,
-            )
-            .or_else(|| proof.try_selected_equality_rewrite_chain(&premise_pairs))
+        plan_simp_certificate(goal, &assumptions_from_propositions(&restricted))
+            .and_then(|plan| {
+                let SimpEvidence::Derivation(derivation) = &plan else {
+                    return None;
+                };
+                proof.check_typed_atomic_simp_candidate(
+                    goal,
+                    derivation,
+                    &premise_pairs,
+                    theorem_application_closes_goal,
+                )
+            })
+            .or_else(|| proof.try_restricted_equality_rewrite_chain(&premise_pairs))
             .or_else(|| proof.try_outcome_anchored_order_transitivity(&premise_pairs))
             .or_else(|| proof.try_outcome_anchored_increment_order(&premise_pairs))
-            // With the listed premises materialized, the goal may close
-            // directly: a discharged implication's consequent is available.
-            .or_else(|| proof.try_direct_logical_closure().ok().flatten())
+            // An exact selected premise or context-free normalization may
+            // close directly. An arbitrary ambient `assumption` must remain
+            // invisible through this explicitly restricted boundary.
+            .or_else(|| proof.try_typed_atomic_simp_from_selected_premises(&premise_pairs))
     }
 
     pub(super) fn check_typed_atomic_simp_candidate(
@@ -2077,8 +2158,8 @@ impl<'a> Proof<'a> {
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))
             .or_else(|| {
                 let recorded =
-                    recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs)?;
-                plan_recorded_bitvector_equality_rewrite_paths(goal, derivation, &recorded)
+                    recorded_load_address_congruence_path_pairs(derivation, &premise_pairs)?;
+                plan_recorded_load_address_congruence(goal, derivation, &recorded)
             })
             .or_else(|| {
                 plan_explicit_loadability_transport(goal, self.surface_goal()?, premise_pairs)
@@ -2719,4 +2800,21 @@ fn swapped_bitvector_equality(fact: &Proposition) -> Option<Proposition> {
         ConditionTerm::Bitvector32Equal(right.clone(), left.clone()),
         *value,
     ))
+}
+
+/// Whether a goal is explicitly named by a restricted premise, either as
+/// the premise itself or as one of its conjunction leaves. Checked fact
+/// indexing makes those leaves available to `assumption`; this predicate
+/// keeps that closure tied to the user's finite `using` list.
+fn selected_premise_contains_goal(premise: &Proposition, goal: &Proposition) -> bool {
+    if premise == goal || condition_polarity_equivalent(premise, goal) {
+        return true;
+    }
+    match premise {
+        Proposition::And(left, right) => {
+            selected_premise_contains_goal(left, goal)
+                || selected_premise_contains_goal(right, goal)
+        }
+        _ => false,
+    }
 }

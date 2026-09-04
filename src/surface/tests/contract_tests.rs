@@ -2527,6 +2527,88 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
 }
 
 #[test]
+fn call_footprint_alias_is_reproved_by_explicit_frame_premise() {
+    let callee_c = r#"
+        void touch_prefix(int32 data[], int32 length_cell[], int32 length) {
+            data[0] = 9;
+        }
+    "#;
+    let caller_c = r#"
+        int32 call_touch_prefix(int32 data[], int32 length_cell[], int32 length) {
+            touch_prefix(data, length_cell, length);
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "touch_prefix.c";
+        verifying "call_touch_prefix.c";
+
+        void touch_prefix(int32 data[], int32 length_cell[], int32 length) {
+            requires 1 <= length;
+            requires length_cell[0] == length;
+            consumes data[0..length];
+            views length_cell[0..1];
+            mutable data[0..length_cell[0]];
+        } by {
+            execute();
+            frame();
+        }
+
+        int32 call_touch_prefix(int32 data[], int32 length_cell[], int32 length) {
+            requires 1 <= length;
+            requires length_cell[0] == length;
+            consumes data[0..length];
+            views length_cell[0..1];
+            mutable data[0..length];
+            ensures result == 0;
+        } by {
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [
+        ("touch_prefix.c", callee_c),
+        ("call_touch_prefix.c", caller_c),
+    ];
+
+    let verified = verify_c0_sources(click_source, &sources)
+        .expect("the call footprint should be restated from its exact endpoint equality");
+    let theorem = verified
+        .iter()
+        .find(|theorem| {
+            theorem.function_block.signature().name() == "call_touch_prefix"
+                && theorem.effect_clause().is_some()
+        })
+        .expect("the caller contract theorem should be present");
+    let expanded = theorem
+        .expanded_proof_tactics()
+        .expect("the caller proof should retain a simple expansion");
+    let Some(ProofTactic::FrameUsing { premises, .. }) = expanded
+        .iter()
+        .find(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. }))
+    else {
+        panic!("the call footprint should end in an explicit frame operation: {expanded:#?}");
+    };
+    assert!(
+        premises.iter().any(|premise| {
+            format!("{premise:?}").contains("length_cell")
+                && format!("{premise:?}").contains("length")
+        }),
+        "the explicit frame must retain the endpoint equality: {expanded:#?}"
+    );
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "call_touch_prefix",
+        CProofClaim::Grouped,
+    )
+    .expect("the caller proof should expand");
+    verify_c0_sources(&expanded_source, &sources)
+        .expect("the explicit footprint restatement should independently reverify");
+}
+
+#[test]
 fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
     let c_source = r#"
             int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {

@@ -20,11 +20,16 @@ enum AllocationContinuity {
     Inconsistent,
 }
 
-fn lower_memory_range_under_assumptions(
-    range: CMemoryRange,
-    assumptions: &PureFactContext,
-) -> CMemoryRange {
-    assumptions.lower_memory_range_under_assumptions(&range)
+fn canonical_memory_range(range: CMemoryRange) -> CMemoryRange {
+    let base = Pointer {
+        block: range.base().block.clone(),
+        offset: crate::kernel::eval::canonical_offset_term(&range.base().offset),
+    };
+    range.with_bounds(
+        base,
+        crate::kernel::eval::canonical_term(range.start()),
+        crate::kernel::eval::canonical_term(range.end()),
+    )
 }
 
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
@@ -875,21 +880,17 @@ fn execute_verified_function_rule(
                     }
                     effective_assumptions =
                         assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
-                    // Lower the recorded footprint while its defining
-                    // equalities (earlier callees' ensures, path facts) are
-                    // in scope: every later frame query against this range
-                    // then matches entry-vocabulary facts syntactically
-                    // instead of re-proving the lowering per query. See the
-                    // creation-time lowering design in
-                    // issues/indexed-resource-algebra-avoids-pairwise-context-work.md.
-                    mutable_ranges.push(lower_memory_range_under_assumptions(
+                    // The call derivation and its effect summary share one
+                    // assumption-free canonical footprint. Proof-specific
+                    // vocabulary belongs in an explicit derived view, not in
+                    // the stored identity of the call.
+                    mutable_ranges.push(canonical_memory_range(
                         CMemoryRange::new_with_element_width(
                             segment.base,
                             segment.start,
                             segment.end,
                             element_width,
                         ),
-                        &effective_assumptions,
                     ))
                 }
                 Err(message) => {

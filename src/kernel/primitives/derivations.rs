@@ -80,18 +80,17 @@ impl PropositionDerivation {
         }
     }
 
-    /// Return the exact equality paths selected to rewrite variables in a
-    /// larger atomic proposition before context-free normalization.
-    pub fn bitvector_equality_rewrite_paths(
-        &self,
-    ) -> Option<&[Vec<BitvectorEqualityDerivationStep>]> {
-        match &self.rule {
-            PropositionDerivationRule::ContextualAtomic {
-                evidence: AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths),
-                ..
-            } => Some(paths),
-            _ => None,
-        }
+    /// Return the exact equality paths used to establish that two registered
+    /// load variables address one cell in one memory epoch.
+    pub fn load_address_congruence_paths(&self) -> Option<Vec<&[BitvectorEqualityDerivationStep]>> {
+        let PropositionDerivationRule::ContextualAtomic {
+            evidence: AtomicPropositionDerivationEvidence::LoadAddressCongruence(evidence),
+            ..
+        } = &self.rule
+        else {
+            return None;
+        };
+        Some(evidence.offset.equality_paths())
     }
 
     /// Return the exact universal specialization selected by the atomic
@@ -664,6 +663,143 @@ impl PropositionDerivation {
                 }
             }
         }
+    }
+}
+
+impl PointerOffsetCongruenceEvidence {
+    fn equality_paths(&self) -> Vec<&[BitvectorEqualityDerivationStep]> {
+        match self {
+            Self::Exact => Vec::new(),
+            Self::Add { first, second, .. } => {
+                let mut paths = first.equality_paths();
+                paths.extend(second.equality_paths());
+                paths
+            }
+            Self::Int32Scaled { path, .. }
+            | Self::Int64Scaled { path, .. }
+            | Self::ElementIndex { path, .. } => vec![path],
+        }
+    }
+
+    fn checks(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        match self {
+            Self::Exact => left == right,
+            Self::Add {
+                first,
+                second,
+                swapped,
+            } => {
+                let (
+                    PointerOffsetTerm::Add(left_a, left_b),
+                    PointerOffsetTerm::Add(right_a, right_b),
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                let (right_first, right_second) = if *swapped {
+                    (right_b.as_ref(), right_a.as_ref())
+                } else {
+                    (right_a.as_ref(), right_b.as_ref())
+                };
+                first.checks(left_a, right_first, assumptions)
+                    && second.checks(left_b, right_second, assumptions)
+            }
+            Self::Int32Scaled { byte_width, path } => {
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: right_width,
+                    },
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                left_width == byte_width
+                    && right_width == byte_width
+                    && assumptions.checks_exact_bitvector_equality_path(path, left, right)
+            }
+            Self::Int64Scaled {
+                byte_width,
+                unsigned,
+                path,
+            } => {
+                let (
+                    PointerOffsetTerm::Int64Scaled {
+                        value: left,
+                        byte_width: left_width,
+                        unsigned: left_unsigned,
+                    },
+                    PointerOffsetTerm::Int64Scaled {
+                        value: right,
+                        byte_width: right_width,
+                        unsigned: right_unsigned,
+                    },
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                left_width == byte_width
+                    && right_width == byte_width
+                    && left_unsigned == unsigned
+                    && right_unsigned == unsigned
+                    && assumptions.checks_exact_bitvector_equality_path(path, left, right)
+            }
+            Self::ElementIndex { byte_width, path } => {
+                if crate::kernel::reasoning::common_pointer_offset_element_width(left, right)
+                    != Some(*byte_width)
+                {
+                    return false;
+                }
+                let (Some(left), Some(right)) = (
+                    crate::kernel::reasoning::element_index_from_offset(left, *byte_width),
+                    crate::kernel::reasoning::element_index_from_offset(right, *byte_width),
+                ) else {
+                    return false;
+                };
+                assumptions.checks_exact_bitvector_equality_path(path, &left, &right)
+            }
+        }
+    }
+}
+
+impl LoadAddressCongruenceEvidence {
+    pub(in crate::kernel) fn checks(
+        &self,
+        proposition: &Proposition,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            proposition
+        else {
+            return false;
+        };
+        let (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            return false;
+        };
+        let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
+            crate::kernel::eval::registered_load_for_variable(left),
+            crate::kernel::eval::registered_load_for_variable(right),
+        ) else {
+            return false;
+        };
+        left_memory == right_memory
+            && left_pointer == self.left_pointer
+            && right_pointer == self.right_pointer
+            && left_pointer.block == right_pointer.block
+            && self
+                .offset
+                .checks(&left_pointer.offset, &right_pointer.offset, assumptions)
     }
 }
 

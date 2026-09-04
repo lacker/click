@@ -1151,6 +1151,12 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let load_address_congruence_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => self
+                .load_address_congruence_evidence(left, right)
+                .map(AtomicPropositionDerivationEvidence::LoadAddressCongruence),
+            _ => None,
+        };
         let signed_order_evidence = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 condition_as_order_fact(condition, *value)
@@ -1166,29 +1172,6 @@ impl PureFactContext {
                 .exact_bitvector_equality_path_evidence(left, right)
                 .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
             _ => None,
-        };
-        let equality_rewrite_paths_evidence = {
-            let mut variables = BTreeSet::new();
-            collect_proposition_bitvector_variables(proposition, &mut variables);
-            let mut rewritten = proposition.clone();
-            let mut paths = Vec::new();
-            for variable in variables {
-                let source = Bitvector32Term::Variable(variable);
-                let target = self.lower_bitvector_via_recorded_equalities(&source);
-                if target == source {
-                    continue;
-                }
-                let Some(path) = self.exact_bitvector_equality_path_evidence(&source, &target)
-                else {
-                    continue;
-                };
-                rewritten =
-                    substitute_bitvector_variable_in_proposition(&rewritten, variable, &target);
-                paths.push(path);
-            }
-            (!paths.is_empty() && solve_builtin_prop(&rewritten)).then_some(
-                AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths),
-            )
         };
         let le_and_not_lt_equality_evidence = match proposition {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
@@ -1657,6 +1640,7 @@ impl PureFactContext {
                 AtomicPropositionDerivationEvidence::ForallInt32Instantiation(Box::new(evidence))
             });
         let result = memory_evidence
+            .or(load_address_congruence_evidence)
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
             .or(ge_and_not_gt_equality_evidence)
@@ -1687,7 +1671,6 @@ impl PureFactContext {
             .or(one_le_predecessor_strictly_decreases_evidence)
             .or(equal_one_predecessor_is_zero_evidence)
             .or(forall_instantiation_evidence)
-            .or(equality_rewrite_paths_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1733,6 +1716,9 @@ impl PureFactContext {
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
             return evidence.checks(proposition, self);
         }
+        if let AtomicPropositionDerivationEvidence::LoadAddressCongruence(evidence) = evidence {
+            return evidence.checks(proposition, self);
+        }
         if let AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag(evidence) = evidence {
             let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
                 proposition
@@ -1748,27 +1734,6 @@ impl PureFactContext {
                 return false;
             };
             return self.checks_exact_bitvector_equality_path(path, left, right);
-        }
-        if let AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths) = evidence
-        {
-            let mut rewritten = proposition.clone();
-            for path in paths {
-                let (Some(first), Some(last)) = (path.first(), path.last()) else {
-                    return false;
-                };
-                let Bitvector32Term::Variable(variable) = first.source else {
-                    return false;
-                };
-                if !self.checks_exact_bitvector_equality_path(path, &first.source, &last.target) {
-                    return false;
-                }
-                rewritten = substitute_bitvector_variable_in_proposition(
-                    &rewritten,
-                    variable,
-                    &last.target,
-                );
-            }
-            return solve_builtin_prop(&rewritten);
         }
         if let AtomicPropositionDerivationEvidence::ForallInt32Instantiation(selected) = evidence {
             let Proposition::ForAll {
@@ -2508,7 +2473,7 @@ impl PureFactContext {
             })
     }
 
-    fn checks_exact_bitvector_equality_path(
+    pub(in crate::kernel) fn checks_exact_bitvector_equality_path(
         &self,
         path: &[BitvectorEqualityDerivationStep],
         left: &Bitvector32Term,

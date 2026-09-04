@@ -70,14 +70,23 @@ resource-range endpoint, or a nested pointer offset canonicalize identically.
 Load-variable substitution stops at binder scopes (`RangeFold` bodies), where
 a load may mention bound variables; the first stage still applies there.
 
-### Contextual lowering is a different operation
+### Contextual vocabulary is an explicit proof operation
 
-Some creation sites also rewrite a term through equalities recorded in a
-`PureFactContext`. Those helpers are named `lower_*_under_assumptions` or
-`lower_*_via_recorded_equalities`. Their output can change when the proof
-context changes, and their current bounded implementation does not promise a
-fixed point. They select useful proof-state vocabulary; they do not determine
-term identity and must not be used as the canonical form.
+Creation sites do not rewrite a term to a preferred member of an equality
+class. In particular, a verified call records its mutable ranges in
+assumption-free canonical form in both the call-memory derivation and its
+`CMemoryEffectSummary`. If a caller's effect or frame proof uses another
+spelling for a bound, smart frame planning selects the exact equality premises
+outside the kernel and emits an ordinary `frame using` certificate. The exact
+frame checker consumes that proof-local range view without replacing the
+stored summary.
+
+The same rule applies to loads at propositionally equal addresses. Their load
+variables remain distinct context-free forms. A target-directed congruence
+derivation checks that both registered origins have the same memory epoch and
+pointer block, and retains exact ground-equality paths for the differing
+offset leaves. Smart proof expansion renders those paths as ordinary
+`rewrite` steps followed by `normalize`.
 
 Likewise, theory-aware normalization used only to group candidates in an index
 is named as a bucket key. A bucket key may conservatively miss a useful join;
@@ -101,11 +110,12 @@ Two consequences:
   facts. The defining fact is the only bridge from the variable back to
   memory content, and it is an ambient truth, not a premise a proof must
   re-derive.
-- **A consumer never expands a load variable back into its load.**
-  Expanding reinflates terms with snapshots, makes comparison cost depend
-  on snapshot size, and reintroduces exactly the instability the variable
-  exists to remove. The registry that detects id collisions is bookkeeping;
-  registry membership alone is never proof that two terms are equal.
+- **Comparison never expands a load variable back into its load.** Doing so
+  would reinflate terms with snapshots and make identity depend on snapshot
+  size. A target-directed checked rewrite may inspect the two registered
+  origins to establish address congruence, but it preserves the epoch and
+  block and retains every equality premise. Registry membership alone is
+  never proof that two terms are equal.
 
 Load variables are ordinary kernel variables distinguished only by a
 reserved id range, not by type. Their ids are opaque hashes; an expanded proof

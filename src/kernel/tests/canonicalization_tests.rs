@@ -534,161 +534,16 @@ fn canonical_term_is_independent_of_contextual_equalities() {
         true,
     );
 
-    assert_eq!(
-        equal_to_one.lower_bitvector_under_assumptions(&term),
-        Bitvector32Term::Constant(1),
-    );
-    assert_eq!(
-        equal_to_two.lower_bitvector_under_assumptions(&term),
-        Bitvector32Term::Constant(2),
-    );
-    assert_eq!(crate::kernel::eval::canonical_term(&term), canonical);
-    assert_eq!(canonical, term);
-}
-
-fn layered_contextual_equalities(
-    layers: usize,
-) -> (PureFactContext, Bitvector32Term, Bitvector32Term) {
-    let variable = |index| Bitvector32Term::Variable(Variable(31_000 + index as u64));
-    let mut assumptions = PureFactContext::new();
-    for index in 0..layers {
-        // Construct this raw rather than through `Bitvector32Term::add`: the
-        // point is that selecting the equality exposes a simplification which
-        // exposes the next equality component.
-        let next = Bitvector32Term::Add(
-            Box::new(variable(index + 1)),
-            Box::new(Bitvector32Term::Constant(0)),
-        );
-        assumptions = assumptions.assume_condition(
-            ConditionTerm::Bitvector32Equal(Box::new(variable(index)), Box::new(next)),
-            true,
-        );
-    }
-    let result = Bitvector32Term::Constant(7);
-    assumptions = assumptions.assume_condition(
-        ConditionTerm::Bitvector32Equal(Box::new(variable(layers)), Box::new(result.clone())),
-        true,
-    );
-    (assumptions, variable(0), result)
-}
-
-#[test]
-fn contextual_memory_range_lowering_closes_more_than_three_layers_in_one_phase() {
-    let (assumptions, endpoint, expected) = layered_contextual_equalities(8);
-    let range = CMemoryRange::new(
-        Pointer {
-            block: "layered-contextual-range".into(),
-            offset: PointerOffsetTerm::Constant(0),
-        },
-        Bitvector32Term::Constant(0),
-        endpoint.clone(),
-    );
-
-    // The equality worklist does not merely select one class member. Every
-    // member it visits is simplified and the result is put back on the same
-    // worklist, so one phase already computes the alternating closure for
-    // this adversarial eight-layer chain.
-    let one_phase = assumptions.lower_bitvector_via_recorded_equalities(
-        &assumptions.simplify_bitvector_under_assumptions(&endpoint),
-    );
-    assert_eq!(one_phase, expected);
-
-    let once = assumptions.lower_memory_range_under_assumptions(&range);
-    assert_eq!(once.end(), &expected);
-    assert_eq!(
-        assumptions.lower_memory_range_under_assumptions(&once),
-        once,
-        "the actual memory-range caller must be idempotent for the layered closure",
-    );
-}
-
-fn raw_addition_depth(depth: usize) -> Bitvector32Term {
-    (0..depth).fold(
-        Bitvector32Term::Variable(Variable(32_000)),
-        |term, index| {
-            Bitvector32Term::Add(
-                Box::new(term),
-                Box::new(Bitvector32Term::Constant(index as u32 + 1)),
-            )
-        },
-    )
-}
-
-fn direct_equality_path(length: usize) -> (PureFactContext, Bitvector32Term) {
-    let variable = |index| Bitvector32Term::Variable(Variable(33_000 + index as u64));
-    let mut assumptions = PureFactContext::new();
-    for index in 0..length {
-        assumptions = assumptions.assume_condition(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(variable(index)),
-                Box::new(variable(index + 1)),
-            ),
-            true,
-        );
-    }
-    (assumptions, variable(0))
-}
-
-fn unrelated_condition_context(count: usize) -> PureFactContext {
-    (0..count).fold(PureFactContext::new(), |assumptions, index| {
-        assumptions.assume_condition(
-            ConditionTerm::Variable(Variable(34_000 + index as u64)),
+    let equals = |value| {
+        Proposition::ConditionIs(
+            ConditionTerm::equal(term.clone(), Bitvector32Term::Constant(value)),
             true,
         )
-    })
-}
-
-#[test]
-fn contextual_lowering_work_is_characterized_across_each_input_axis() {
-    let mut depth_work = Vec::new();
-    for depth in [8, 16, 32] {
-        PureFactContext::reset_contextual_lowering_work();
-        let term = raw_addition_depth(depth);
-        let _ = PureFactContext::new().lower_bitvector_under_assumptions(&term);
-        let work = PureFactContext::contextual_lowering_work();
-        assert!(work.simplifier_term_visits >= depth);
-        assert!(work.simplifier_term_visits <= 8 * depth + 16);
-        assert_eq!(work.rounds, 1);
-        depth_work.push((depth, work));
-    }
-
-    let mut equality_work = Vec::new();
-    for path_length in [4, 8, 16] {
-        let (assumptions, term) = direct_equality_path(path_length);
-        PureFactContext::reset_contextual_lowering_work();
-        assert_eq!(
-            assumptions.lower_bitvector_under_assumptions(&term),
-            term,
-            "same-cost aliases retain their original vocabulary",
-        );
-        let work = PureFactContext::contextual_lowering_work();
-        assert!(work.equality_vertex_visits > 0);
-        assert!(work.equality_vertex_visits <= path_length + 1);
-        // This deliberately loose ceiling permits the indexed implementation
-        // planned by stage 4 while catching work worse than the currently
-        // observed cubic repeated-scan behavior.
-        assert!(work.direct_equality_fact_visits > 0);
-        assert!(work.direct_equality_fact_visits <= 2 * path_length.pow(3) + 128);
-        assert_eq!(work.rounds, 1);
-        equality_work.push((path_length, work));
-    }
-
-    let term = raw_addition_depth(8);
-    let mut unrelated_work = Vec::new();
-    for unrelated_facts in [8, 16, 32] {
-        let assumptions = unrelated_condition_context(unrelated_facts);
-        PureFactContext::reset_contextual_lowering_work();
-        let _ = assumptions.lower_bitvector_under_assumptions(&term);
-        let work = PureFactContext::contextual_lowering_work();
-        assert!(work.direct_equality_fact_visits > 0);
-        assert!(work.direct_equality_fact_visits <= work.simplifier_term_visits * unrelated_facts);
-        assert_eq!(work.rounds, 1);
-        unrelated_work.push((unrelated_facts, work));
-    }
-
-    eprintln!("contextual lowering term-depth work: {depth_work:?}");
-    eprintln!("contextual lowering equality-path work: {equality_work:?}");
-    eprintln!("contextual lowering unrelated-fact work: {unrelated_work:?}");
+    };
+    assert!(equal_to_one.derive_proposition(&equals(1)).is_some());
+    assert!(equal_to_two.derive_proposition(&equals(2)).is_some());
+    assert_eq!(crate::kernel::eval::canonical_term(&term), canonical);
+    assert_eq!(canonical, term);
 }
 
 #[test]
@@ -909,8 +764,9 @@ fn pointer_offset_add_coalesces_nested_constant_displacements() {
 #[test]
 fn load_variables_are_congruent_through_ground_index_equalities() {
     // `data[index]` with `index == 0` in scope is the cell `data[0]`: the
-    // two load variables are content-addressed by different addresses, so
-    // comparison joins them by congruence rather than by a shared load variable.
+    // two load variables are content-addressed by different addresses. They
+    // remain distinct in the ordinary equality graph; an explicit atomic
+    // derivation retains the address-equality path.
     let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("data", 8));
     let index = Bitvector32Term::Variable(Variable(7));
     let indexed = Bitvector32Term::MemoryLoad(
@@ -924,7 +780,7 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
         }),
     );
     let first = Bitvector32Term::MemoryLoad(
-        memory,
+        memory.clone(),
         Box::new(Pointer {
             block: "data".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -948,13 +804,18 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
         true,
     );
     assert!(
-        with_index_fact
+        !with_index_fact
             .bitvector_terms_equal_from_facts(&indexed_load_variable, &first_load_variable)
     );
-    assert!(
-        with_index_fact
-            .bitvector_terms_equal_from_facts(&first_load_variable, &indexed_load_variable)
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(indexed_load_variable.clone(), first_load_variable.clone()),
+        true,
     );
+    let derivation = with_index_fact
+        .derive_proposition(&goal)
+        .expect("the explicit load-address congruence should derive the equality");
+    assert!(derivation.load_address_congruence_paths().is_some());
+    assert!(derivation.check(&with_index_fact));
     // A different constant index selects a different cell.
     let other = PureFactContext::new().assume_condition(
         ConditionTerm::equal(
@@ -963,7 +824,54 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
         ),
         true,
     );
-    assert!(!other.bitvector_terms_equal_from_facts(&indexed_load_variable, &first_load_variable));
+    assert!(other.derive_proposition(&goal).is_none());
+
+    let other_epoch =
+        crate::kernel::intern_c_memory(memory.as_ref().clone().with_call_memory_havoc(
+            Variable(8),
+            &[CMemoryRange::new(
+                Pointer {
+                    block: "data".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+            &PureFactContext::new(),
+        ));
+    let other_epoch_load = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
+        other_epoch,
+        Box::new(Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+    ));
+    let other_epoch_goal = Proposition::ConditionIs(
+        ConditionTerm::equal(indexed_load_variable.clone(), other_epoch_load),
+        true,
+    );
+    assert!(
+        with_index_fact
+            .derive_proposition(&other_epoch_goal)
+            .is_none()
+    );
+
+    let other_block_load = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
+        memory,
+        Box::new(Pointer {
+            block: "other-data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+    ));
+    let other_block_goal = Proposition::ConditionIs(
+        ConditionTerm::equal(indexed_load_variable, other_block_load),
+        true,
+    );
+    assert!(
+        with_index_fact
+            .derive_proposition(&other_block_goal)
+            .is_none()
+    );
 }
 
 #[test]
