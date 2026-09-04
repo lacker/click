@@ -4160,9 +4160,10 @@ impl PureFactContext {
         }
 
         /// Whether deep pairwise comparison can tell this endpoint anything
-        /// the canonical classes cannot: it contains a load, conditional, or
-        /// fold (whose equalities can depend on assumptions), or it is a sum
-        /// with an addend the equality graph can rewrite inside the add rule.
+        /// the indexed equality classes cannot: it contains a load,
+        /// conditional, or fold (whose equalities can depend on assumptions),
+        /// or it is a sum with an addend the equality graph can rewrite inside
+        /// the add rule.
         fn order_endpoint_is_theory_sensitive(
             term: &Bitvector32Term,
             equality_index: &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>,
@@ -4386,7 +4387,7 @@ impl PureFactContext {
         }
 
         // Deep pairwise comparison is reserved for endpoint pairs where an
-        // assumptions-dependent theory rule could exceed the canonical
+        // assumptions-dependent theory rule could exceed the indexed equality
         // classes, and candidates come from bucket indexes rather than a scan
         // of every other fact. Every comparison still uses the unchanged
         // `terms_equal` authority.

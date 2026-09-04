@@ -2042,9 +2042,9 @@ fn bridged_with_origins<S: LoadVariableBridgeSide>(
     {
         return true;
     }
-    // One implicit hop only: rename the premise's canonical endpoints onto
-    // fact endpoints naming the same cell, then ask the plain fact-edge
-    // closure.
+    // One implicit hop only: restate the premise's load-variable endpoints as
+    // fact endpoints naming the same cell, with `OriginsUnchanged` providing
+    // the contextual evidence, then ask the plain fact-edge closure.
     let endpoints: Vec<S> = facts
         .iter()
         .filter_map(S::equality_sides)

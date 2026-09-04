@@ -3,9 +3,10 @@
 Click needs one logically grounded model for when two terms denote one
 value. This page is that model: which differences between terms are
 definitional, which need a proved equality, and how the kernel records its
-choice. The contract is enforced: terms are canonical at creation (the
-`*_creates_only_canonical_terms` tests count violations over the example
-projects and require zero). Vocabulary follows the
+choice. The persistent proof boundary is enforced: the
+`*_creates_only_canonical_terms` tests count non-canonical condition facts
+entering `PureFactContext` over the example projects and require zero.
+Vocabulary follows the
 [glossary](../reference/glossary.md):
 *term*, *kernel variable*, *load variable*, *snapshot*, *fact*.
 
@@ -97,6 +98,14 @@ candidates but may not omit a pair accepted by the checked theory. They remain
 context-local indexing, not canonical identity, because they consult proved
 facts and do not satisfy the assumption-free contract above.
 
+Context-local ground equality is currently an adjacency index over canonical
+keys, with target-directed paths retaining the propositions that justify each
+edge. The completed callers do not require equality saturation or extraction
+of a preferred e-class member, so Click deliberately has no general e-graph.
+Such a structure would be an alternative proof-producing contextual index,
+not a replacement for canonical form, and should be reconsidered only if a
+measured caller cannot be served by the targeted index.
+
 ## Load variables are the canonical form of a load
 
 A load variable is the canonical form of the load it represents, not an
@@ -133,8 +142,8 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   `offsets_have_same_canonical_form` answer exactly by canonical-form
   equality (with a load-free fast path, since load-free terms are fixed
   points). Regressions live in `src/kernel/tests/canonicalization_tests.rs`.
-- **Comparison-side keying is canonical throughout the availability
-  boundary**: the explicit-equality graph keys its vertices by
+- **Comparison-side keys use the assumption-free canonical form throughout
+  the availability boundary**: the explicit-equality graph keys its vertices by
   `canonical_term` (`equality_graph_term_key`), affine cancellation keys
   its atoms by `canonical_term` (`collect_affine_bitvector_terms`), the
   signed-order-bounds index is keyed under each fact's own endpoint term
@@ -175,17 +184,26 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
 
 ## Canonical at creation
 
-Every term is canonical when it is created — by symbolic execution, by
-lowering, and by contract evaluation: a memory load evaluates to its load
-variable where it is born, with its defining fact beside it, so every
-fact, offset, and range built from it is canonical and no consumer depends
-on bridging between canonical and non-canonical terms. Comparison-time
-canonicalization (`canonical_term`) remains as the definition of the form,
-and the reasoning that views a load variable as the load it represents
+“Canonical at creation” names a persistent-boundary invariant, not every
+transient syntax tree a planner may allocate. Every ordinary condition fact
+entering `PureFactContext` already equals its assumption-free
+`canonical_condition` form; load-variable defining equations and certified
+store equations deliberately retain the load syntax that states what they
+define. The project regressions instrument this exact boundary while symbolic
+execution, contract and spec lowering, resource projection, and call
+application run. Persistent offsets, ranges, and call footprints likewise
+canonicalize their load-bearing terms at their construction sites.
+
+A memory load therefore becomes its load variable where a persistent fact or
+identity is born, with its defining fact beside it. No consumer depends on an
+implicit contextual rewrite between stored forms. Comparison-time
+canonicalization (`canonical_term`) remains the definition of the form, and
+the reasoning that views a load variable as the load it represents
 (`viewed_as_memory_load`, `registered_load_for_variable`) is how consumers
 keyed on load shape — substitution, quantifier triggers, frame checks,
 loadability witnesses, and the quantified-fact index — see through the
-variable.
+variable. None of these creation paths chooses a member of a proved equality
+class.
 
 A load variable is identified by its cell and the cell's *epoch*: the
 snapshot the epoch walk (`cell_epoch_for_load_variable`) reaches from

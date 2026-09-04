@@ -42,8 +42,9 @@ the surface's smart tactics, whose results are certificates the kernel
 then checks. Global load equality across snapshots should be decided from
 recorded evidence only: exact facts, DAG edges crossed by cheap predicates,
 and a snapshot-equality fact a tactic established and recorded. Matching a
-fact against a goal modulo snapshots should then be a canonicalization by
-recorded evidence followed by a lookup, with no recursion.
+fact against a goal modulo snapshots should then be an indexed, evidence-backed
+transport or restatement followed by a lookup, with no recursion. It is
+contextual reasoning, not canonicalization.
 
 ## Intended regression
 

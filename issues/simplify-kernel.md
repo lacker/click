@@ -97,7 +97,7 @@ procedure iterative. That migration, including `ARITHMETIC_INTERVAL_DEPTH`, is
 tracked in `issues/arithmetic.md` and is deliberately deferred here.
 
 The three canonicalization-related cuts were also found to share a deeper
-abstraction problem. `issues/fix-canonicalization.md` now separates
+abstraction problem. The completed canonicalization migration separates
 assumption-free, idempotent `canonical_term` from contextual proof vocabulary:
 verified calls retain canonical footprints, exact `frame using` operations
 carry proof-local endpoint evidence, and target-directed load-address
@@ -118,14 +118,14 @@ These are not surface-search migrations. Replace each cut with work bounded by
 the complete named structure, plus an exact cycle check or an iterative walk as
 needed.
 
-The canonicalization issue's order-endpoint key depth is complete, along with
-its former sibling cuts: the alternating contextual-lowering rounds and
-deep-term canonicalization preflight.
+Removal of the order-endpoint key depth is complete, along with its former
+sibling cuts: the alternating contextual-lowering rounds and deep-term
+canonicalization preflight.
 
 There are no remaining structural or fixed-point cuts owned directly by this
 issue. Nested quantified-binder comparison is complete and lives in the
-surface generation path. The canonicalization family and arithmetic interval
-work remain in their separately owned issues as described above.
+surface generation path. The canonicalization family is complete; arithmetic
+interval work remains separately owned as described above.
 
 `ATOMIC_PREMISE_MINIMIZATION_DEPTH` (`src/kernel/assumptions.rs`) and
 `VERIFICATION_SESSION_DEPTH` (`src/kernel/mod.rs`) are nesting-state flags, not
@@ -207,9 +207,9 @@ comparison now use only that narrower predicate for distinctness.
 3. **Complete:** replace the directly owned structural and fixed-point cuts
    with complete input-sized walks, landing a scaling regression with each
    change. Exact-load traversal, havoc write-set identity, and nested-binder
-   comparison are complete. The canonicalization family is owned by
-   `issues/fix-canonicalization.md`; the arithmetic depth cut is separately
-   deferred to the smart-tactic migration in `issues/arithmetic.md`.
+   comparison and the canonicalization family are complete. The arithmetic
+   depth cut is separately deferred to the smart-tactic migration in
+   `issues/arithmetic.md`.
 4. **Complete:** move upper-bound split selection to a surface planner that
    emits checked proof branches; delete the kernel rule and depth limit.
 5. Move finite context splitting to explicit surface branches/certificates and

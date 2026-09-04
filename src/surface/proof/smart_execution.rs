@@ -518,10 +518,10 @@ impl<'a> Proof<'a> {
 
             // Reuse the established snapshot-surface search for execution
             // proofs, with availability answered by persistent indexes. The
-            // canonical fact above comes from the requirement's shape bucket,
-            // so sibling terms carrying different memory snapshots remain visible without rebuilding
-            // the complete ambient fact vector. The returned form still
-            // has to survive `apply_step` below.
+            // matched fact above comes from the requirement's shape bucket,
+            // so sibling terms carrying different memory snapshots remain
+            // visible without rebuilding the complete ambient fact vector.
+            // The returned form still has to survive `apply_step` below.
             let mut snapshot_surface_error = None;
             if let ProofContext::Execution(context) = self.context.as_ref() {
                 let execution = self
@@ -575,7 +575,7 @@ impl<'a> Proof<'a> {
             let surface = candidates
                 .into_iter()
                 // SurfacePropositionMap treats the most recently recorded
-                // form as canonical. Prefer it here too; earlier entries
+                // form as preferred. Prefer it here too; earlier entries
                 // can be mechanically valid but over-anchor constants as
                 // `at(selector, constant)` and produce needlessly unstable
                 // certificates.
