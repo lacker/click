@@ -1,5 +1,45 @@
 use super::*;
 
+#[test]
+fn c0_collects_scalar_file_scope_globals() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 counter = 3;
+        uint16 zero;
+        int32 read_counter() {
+            return counter;
+        }
+        int32 increment_counter() {
+            counter = counter + 1;
+            return counter;
+        }
+        "#,
+    )
+    .expect("scalar globals should parse");
+
+    assert_eq!(functions[0].globals().len(), 2);
+    let global = &functions[0].globals()["counter"];
+    assert!(global.is_defined());
+    assert_eq!(global.c_type(), syntax::C0Type::Int32);
+    assert_eq!(
+        functions[1].to_kernel_function().global_variables()[0].initial_value(),
+        &crate::kernel::int32(3)
+    );
+    assert_eq!(
+        functions[0].to_kernel_function().global_variables()[1].initial_value(),
+        &crate::kernel::uint16(0)
+    );
+}
+
+#[test]
+fn c0_headers_accept_extern_scalar_globals_only() {
+    syntax::validate_header("extern int32 counter;")
+        .expect("headers should accept extern scalar globals");
+    let error = syntax::validate_header("int32 counter;")
+        .expect_err("headers must keep definitions in source files");
+    assert!(error.message().contains("only with `extern`"));
+}
+
 fn memory_range(
     base: crate::kernel::Pointer,
     start: impl Into<crate::kernel::Bitvector32Term>,

@@ -42,6 +42,7 @@ pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use eval::terms_have_same_canonical_form;
 #[cfg(test)]
 pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
+pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};
 pub(crate) use memory_provenance::c_memory_load_is_unchanged;

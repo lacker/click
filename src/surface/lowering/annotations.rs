@@ -241,6 +241,13 @@ pub(in crate::surface) fn annotated_function(
         function = function.with_return_aggregate_layout(layout);
     }
     let function = function
+        .with_global_variables(
+            parsed_function
+                .globals()
+                .values()
+                .filter_map(syntax::C0Global::to_kernel_global)
+                .collect(),
+        )
         .with_resource_summary(resource_requires, resource_ensures)
         .with_resource_constructors(resource_constructors)
         .with_composite_resource_definitions(composite_resource_definitions(
@@ -550,7 +557,10 @@ pub(in crate::surface) fn function_contract_summary(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<FunctionContractSummary, ClickError> {
-    let entry_state = CState::new();
+    let entry_state = crate::kernel::initialize_c_function_globals(
+        &CState::new(),
+        &parsed_function.to_kernel_function(),
+    );
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         function_effects: &[],
@@ -1799,6 +1809,18 @@ impl AnnotationLowerer<'_> {
             CExpression::Value(value) => Ok(SpecExpression::Value(value.clone())),
             CExpression::Variable(name) => match environment.values.get(name) {
                 Some(value) => Ok(value.clone()),
+                None if self.entry_state.global_object_type(name).is_some() => {
+                    Ok(SpecExpression::MemoryLoad {
+                        memory: environment.current_memory.clone(),
+                        pointer: Box::new(SpecExpression::CExpression(CExpression::AddressOf(
+                            Box::new(CExpression::Variable(name.clone())),
+                        ))),
+                        value_type: self
+                            .entry_state
+                            .global_object_type(name)
+                            .expect("checked global object type"),
+                    })
+                }
                 None if matches!(environment.current_memory, SpecMemory::Fixed(_)) => {
                     if name == "result" {
                         Err("`result` is not available inside `old(...)`".to_string())

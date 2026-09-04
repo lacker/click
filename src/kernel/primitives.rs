@@ -722,6 +722,16 @@ pub struct CParameter {
     pub(super) aggregate_layout: Option<CAggregateLayout>,
 }
 
+/// A linked file-scope scalar. Globals use one stable memory block across all
+/// function frames; the initial value is installed when the first function
+/// entry state is created.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobal {
+    pub(super) name: String,
+    pub(super) c_type: CType,
+    pub(super) initial_value: CValue,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateField {
     pub(super) name: String,
@@ -795,6 +805,7 @@ pub struct CFunction {
     /// Contract-local definitions for opaque Click predicate requirements.
     /// Both sides are instantiated at the exact function entry state.
     pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
+    pub(super) global_variables: Vec<CGlobal>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1156,6 +1167,10 @@ pub(super) enum CLocalBinding {
         slot: Pointer,
     },
     UninitializedObject {
+        c_type: CType,
+        slot: Pointer,
+    },
+    GlobalObject {
         c_type: CType,
         slot: Pointer,
     },

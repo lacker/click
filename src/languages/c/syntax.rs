@@ -123,6 +123,74 @@ pub struct C0Function {
     structs: BTreeMap<String, C0StructLayout>,
     enums: BTreeMap<String, C0EnumDefinition>,
     unions: BTreeMap<String, C0UnionLayout>,
+    globals: BTreeMap<String, C0Global>,
+}
+
+/// A file-scope scalar declaration collected from one C translation unit.
+/// `initializer` is absent for an `extern` declaration and present for the
+/// definition that supplies storage (including an implicit zero initializer).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0Global {
+    name: String,
+    c_type: C0Type,
+    initializer: Option<C0Expression>,
+}
+
+impl C0Global {
+    fn declaration(name: String, c_type: C0Type) -> Self {
+        Self {
+            name,
+            c_type,
+            initializer: None,
+        }
+    }
+
+    fn definition(name: String, c_type: C0Type, initializer: C0Expression) -> Self {
+        Self {
+            name,
+            c_type,
+            initializer: Some(initializer),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.initializer.is_some()
+    }
+
+    pub fn initializer(&self) -> Option<&C0Expression> {
+        self.initializer.as_ref()
+    }
+
+    pub(crate) fn to_kernel_global(&self) -> Option<crate::kernel::CGlobal> {
+        let initializer = self.initializer.as_ref()?;
+        let bits = match initializer {
+            C0Expression::Int32Literal(value) => *value,
+            C0Expression::UInt8Literal(value) => u32::from(*value),
+            C0Expression::UInt32Literal(value) => *value,
+            _ => return None,
+        };
+        let value = match self.c_type {
+            C0Type::Int16 => crate::kernel::int16(bits),
+            C0Type::Int32 => crate::kernel::int32(bits),
+            C0Type::UInt8 => crate::kernel::uint8(bits),
+            C0Type::UInt16 => crate::kernel::uint16(bits),
+            C0Type::UInt32 => crate::kernel::uint32(bits),
+            _ => return None,
+        };
+        Some(crate::kernel::CGlobal::new(
+            self.name.clone(),
+            self.c_type.to_kernel_type(),
+            value,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -474,6 +542,7 @@ impl C0Function {
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             unions: BTreeMap::new(),
+            globals: BTreeMap::new(),
         }
     }
 
@@ -509,6 +578,15 @@ impl C0Function {
         &self.unions
     }
 
+    pub fn globals(&self) -> &BTreeMap<String, C0Global> {
+        &self.globals
+    }
+
+    pub(crate) fn with_globals(mut self, globals: BTreeMap<String, C0Global>) -> Self {
+        self.globals = globals;
+        self
+    }
+
     pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
         self.body.to_kernel_statement()
     }
@@ -535,7 +613,12 @@ impl C0Function {
                 .to_kernel_aggregate_layout();
             function = function.with_return_aggregate_layout(layout);
         }
-        function
+        function.with_global_variables(
+            self.globals
+                .values()
+                .filter_map(C0Global::to_kernel_global)
+                .collect(),
+        )
     }
 }
 
@@ -1143,6 +1226,38 @@ fn validate_function_returns(
     }
 }
 
+fn validate_global_initializer(
+    parser: &Parser,
+    c_type: C0Type,
+    initializer: &C0Expression,
+) -> Result<(), C0SyntaxError> {
+    let bits = match initializer {
+        C0Expression::Int32Literal(value) => u64::from(*value),
+        C0Expression::UInt8Literal(value) => u64::from(*value),
+        C0Expression::UInt32Literal(value) => u64::from(*value),
+        _ => {
+            return Err(
+                parser.error_here("global initializers currently support only integer literals")
+            );
+        }
+    };
+    let valid = match c_type {
+        C0Type::Int16 => bits <= i16::MAX as u64,
+        C0Type::Int32 => bits <= i32::MAX as u64,
+        C0Type::UInt8 => bits <= u8::MAX as u64,
+        C0Type::UInt16 => bits <= u16::MAX as u64,
+        C0Type::UInt32 => true,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(parser.error_here(format!(
+            "integer literal is out of range for global type {c_type:?}"
+        )))
+    }
+}
+
 fn align_up(offset: u32, alignment: u32) -> Option<u32> {
     debug_assert!(alignment.is_power_of_two());
     offset
@@ -1559,6 +1674,8 @@ struct Parser {
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
     defined_functions: BTreeSet<String>,
+    globals: BTreeMap<String, C0Global>,
+    header_mode: bool,
     abi: CAbi,
 }
 
@@ -1621,6 +1738,8 @@ impl Parser {
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
+            globals: BTreeMap::new(),
+            header_mode: false,
             abi,
         })
     }
@@ -1845,6 +1964,7 @@ impl Parser {
     }
 
     fn parse_header(mut self) -> Result<(), C0SyntaxError> {
+        self.header_mode = true;
         self.parse_declarations()?;
         while self.peek().is_some() {
             if self.peek_ident() == Some("extern") {
@@ -1907,6 +2027,7 @@ impl Parser {
             structs: self.structs.clone(),
             enums: self.enums.clone(),
             unions: self.unions.clone(),
+            globals: self.globals.clone(),
         })
     }
 
@@ -1962,6 +2083,12 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
+        if self.globals.contains_key(&header.name) {
+            return Err(self.error_here(format!(
+                "function `{}` conflicts with a global declaration",
+                header.name
+            )));
+        }
         if let Some(previous) = self.function_declarations.get(&header.name) {
             if !function_headers_compatible(previous, header) {
                 return Err(self.error_here(format!(
@@ -1990,10 +2117,129 @@ impl Parser {
                 self.parse_enum_declaration()?;
             } else if self.peek_ident() == Some("union") && self.peek_n(2) == Some(&Token::LBrace) {
                 self.parse_union_declaration()?;
+            } else if self.global_declaration_ahead()? {
+                self.parse_global_declaration()?;
             } else {
                 break;
             }
         }
+        Ok(())
+    }
+
+    fn global_declaration_ahead(&mut self) -> Result<bool, C0SyntaxError> {
+        let saved_position = self.position;
+        if self.peek_ident() == Some("extern") {
+            self.position += 1;
+        }
+        if !self.is_type_start() {
+            self.position = saved_position;
+            return Ok(false);
+        }
+        self.parse_type()?;
+        let is_global =
+            matches!(self.peek(), Some(Token::Ident(_))) && self.peek_n(1) != Some(&Token::LParen);
+        self.position = saved_position;
+        Ok(is_global)
+    }
+
+    fn parse_global_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        let is_extern = if self.peek_ident() == Some("extern") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        let parsed_type = self.parse_type()?;
+        if parsed_type.struct_name.is_some()
+            || parsed_type.enum_name.is_some()
+            || parsed_type.union_name.is_some()
+            || !matches!(
+                parsed_type.c_type,
+                C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+            )
+        {
+            return Err(self.error_here(
+                "file-scope declarations currently support only scalar integer globals",
+            ));
+        }
+        if self.header_mode && !is_extern {
+            return Err(self.error_here(
+                "C headers may declare globals only with `extern`; put the definition in a source file",
+            ));
+        }
+
+        loop {
+            let name = self.expect_ident("global name")?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("file-scope arrays are not supported yet; use a scalar global")
+                );
+            }
+            let initializer = if self.peek() == Some(&Token::Equal) {
+                if is_extern {
+                    return Err(
+                        self.error_here("`extern` global declarations may not have an initializer")
+                    );
+                }
+                self.position += 1;
+                let initializer = self.parse_expression()?;
+                validate_global_initializer(self, parsed_type.c_type, &initializer)?;
+                Some(initializer)
+            } else if is_extern {
+                None
+            } else {
+                Some(C0Expression::Int32Literal(0))
+            };
+            self.register_global_declaration(
+                name.clone(),
+                parsed_type.c_type,
+                initializer
+                    .map(|initializer| {
+                        C0Global::definition(name.clone(), parsed_type.c_type, initializer)
+                    })
+                    .unwrap_or_else(|| C0Global::declaration(name.clone(), parsed_type.c_type)),
+            )?;
+            self.variable_types.insert(name, parsed_type.c_type);
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+            if is_extern && self.peek() == Some(&Token::Equal) {
+                return Err(
+                    self.error_here("`extern` global declarations may not have an initializer")
+                );
+            }
+        }
+        self.expect(Token::Semicolon)
+    }
+
+    fn register_global_declaration(
+        &mut self,
+        name: String,
+        c_type: C0Type,
+        declaration: C0Global,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name) {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function declaration"
+            )));
+        }
+        if let Some(previous) = self.globals.get(&name) {
+            if previous.c_type != c_type {
+                return Err(
+                    self.error_here(format!("conflicting declarations for global `{name}`"))
+                );
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(self.error_here(format!("duplicate definition of global `{name}`")));
+            }
+        }
+        let merged = match (self.globals.get(&name), declaration.is_defined()) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.globals.insert(name, merged);
         Ok(())
     }
 

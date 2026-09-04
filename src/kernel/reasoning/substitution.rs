@@ -2056,6 +2056,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                             slot: slot.clone(),
                         }
                     }
+                    CLocalBinding::GlobalObject { c_type, slot } => CLocalBinding::GlobalObject {
+                        c_type: *c_type,
+                        slot: slot.clone(),
+                    },
                     CLocalBinding::ArrayObject {
                         element_type,
                         length,
@@ -2261,6 +2265,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 body: substitute_bitvector_variable_in_spec_proposition(&unfolding.body, from, to),
             })
             .collect(),
+        global_variables: function.global_variables.clone(),
     }
 }
 
@@ -3591,6 +3596,10 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                             slot: substitute_pointer_variable_in_pointer(slot, from, to),
                         }
                     }
+                    CLocalBinding::GlobalObject { c_type, slot } => CLocalBinding::GlobalObject {
+                        c_type: *c_type,
+                        slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                    },
                     CLocalBinding::ArrayObject {
                         element_type,
                         length,
@@ -4288,6 +4297,7 @@ fn substitute_pointer_variable_in_c_function(
                 body: substitute_pointer_variable_in_spec_proposition(&unfolding.body, from, to),
             })
             .collect(),
+        global_variables: function.global_variables.clone(),
     }
 }
 

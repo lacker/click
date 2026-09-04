@@ -1772,6 +1772,7 @@ pub(super) fn bind_c_function_arguments(
             },
         );
     callee_state.counted_populations = caller_state.counted_populations.clone();
+    callee_state = initialize_c_function_globals(&callee_state, function);
     for (parameter, value) in function.parameters().iter().zip(values) {
         if let Some(layout) = parameter.aggregate_layout() {
             let CValue::Pointer(pointer) = value else {
@@ -1818,6 +1819,27 @@ pub(super) fn bind_c_function_arguments(
         }
     }
     Some(callee_state)
+}
+
+/// Installs the stable global bindings needed by a function's entry and
+/// contract states. Existing memory is preserved so nested calls observe
+/// writes performed by their caller; a missing block is the fresh program
+/// entry case and receives the linked definition's initial value.
+pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
+    let mut state = state.clone();
+    for global in function.global_variables() {
+        let slot = CMemory::global_pointer(global.name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .with_block(slot.block.clone(), global.c_type().byte_width())
+                .store(slot.clone(), global.initial_value().clone());
+        }
+        state
+            .locals
+            .set_global_at(global.name().to_string(), global.c_type(), slot);
+    }
+    state
 }
 
 /// Copy the modeled cells of an address-backed aggregate into a distinct

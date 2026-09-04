@@ -648,6 +648,7 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
                 collect_c_value_bitvector_variables(value, variables)
             }
             CLocalBinding::UninitializedObject { .. } => {}
+            CLocalBinding::GlobalObject { .. } => {}
             CLocalBinding::ArrayObject { .. } => {}
             CLocalBinding::AggregateObject { .. } => {}
         }

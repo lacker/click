@@ -2664,7 +2664,12 @@ impl Parser {
                 surface: ContractSegmentSurface::Object(struct_name.clone()),
             });
         }
-        let (mut surface_base, mut base) = if matches!(
+        let (mut surface_base, mut base) = if self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let expression = self.parse_ensure_primary()?;
+            let base = CExpression::AddressOf(Box::new(expression.to_kernel_expression()));
+            (ContractExpression::CFragment(base.clone()), base)
+        } else if matches!(
             self.peek_ident(),
             Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
         ) && self.peek_next() == Some(&Token::LParen)
@@ -3308,6 +3313,16 @@ impl Parser {
                 pointer,
             ))));
         }
+        if self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let expression = self.parse_contract_unary()?;
+            let Some(expression) = contract_expression_as_c_fragment(&expression) else {
+                return Err(self.error("address-of is only supported on current C expressions"));
+            };
+            return Ok(ContractExpression::CFragment(CExpression::AddressOf(
+                Box::new(expression),
+            )));
+        }
 
         self.parse_contract_postfix()
     }
@@ -3877,6 +3892,12 @@ impl Parser {
         if self.peek() == Some(&Token::Tilde) {
             self.position += 1;
             return Ok(C0Expression::BitwiseNot(Box::new(
+                self.parse_ensure_unary()?,
+            )));
+        }
+        if self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            return Ok(C0Expression::AddressOf(Box::new(
                 self.parse_ensure_unary()?,
             )));
         }

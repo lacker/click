@@ -86,6 +86,10 @@ Likely additions:
 - `char` and string literal support:
   null-terminated byte arrays, read-only static storage, and byte/string
   predicates in the standard library.
+- Remaining static-storage work: `static` locals, other linkage forms,
+  immutable global tables, and string constants. The first scalar global slice
+  now covers file-scope integer definitions, compatible `extern` declarations,
+  one linked definition, shared state across calls, and contract footprints.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded

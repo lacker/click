@@ -513,6 +513,15 @@ impl CLocalEnvironment {
         );
     }
 
+    pub(in crate::kernel) fn set_global_at(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+    ) {
+        self.insert_binding(name.into(), CLocalBinding::GlobalObject { c_type, slot });
+    }
+
     pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
         let name = name.into();
         self.set_uninitialized_at(name.clone(), c_type, CMemory::local_pointer(&name));
@@ -583,6 +592,7 @@ impl CLocalEnvironment {
         match self.bindings.get(name) {
             Some(CLocalBinding::Object { value, .. }) => Some(value),
             Some(CLocalBinding::UninitializedObject { .. })
+            | Some(CLocalBinding::GlobalObject { .. })
             | Some(CLocalBinding::ArrayObject { .. })
             | Some(CLocalBinding::AggregateObject { .. })
             | None => None,
@@ -602,6 +612,7 @@ impl CLocalEnvironment {
             .filter_map(|(name, binding)| match binding {
                 CLocalBinding::Object { value, .. } => Some((name.as_str(), value)),
                 CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::GlobalObject { .. }
                 | CLocalBinding::ArrayObject { .. }
                 | CLocalBinding::AggregateObject { .. } => None,
             })
@@ -618,6 +629,7 @@ impl CLocalEnvironment {
                 }
                 CLocalBinding::Object { .. }
                 | CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::GlobalObject { .. }
                 | CLocalBinding::ArrayObject { .. } => None,
             })
     }
@@ -640,6 +652,7 @@ impl CLocalEnvironment {
                 )),
                 CLocalBinding::Object { .. }
                 | CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::GlobalObject { .. }
                 | CLocalBinding::AggregateObject { .. } => None,
             })
     }
@@ -648,6 +661,7 @@ impl CLocalEnvironment {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::GlobalObject { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
             Some(CLocalBinding::AggregateObject { .. }) => None,
@@ -658,6 +672,7 @@ impl CLocalEnvironment {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::GlobalObject { .. }) => None,
             Some(CLocalBinding::ArrayObject { .. })
             | Some(CLocalBinding::AggregateObject { .. })
             | None => None,
@@ -680,6 +695,10 @@ impl CLocalEnvironment {
         matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
     }
 
+    pub(in crate::kernel) fn is_global_object(&self, name: &str) -> bool {
+        matches!(self.binding(name), Some(CLocalBinding::GlobalObject { .. }))
+    }
+
     pub(in crate::kernel) fn is_aggregate_object(&self, name: &str) -> bool {
         matches!(
             self.binding(name),
@@ -700,6 +719,7 @@ impl CLocalBinding {
         match self {
             Self::Object { slot, .. }
             | Self::UninitializedObject { slot, .. }
+            | Self::GlobalObject { slot, .. }
             | Self::ArrayObject { slot, .. }
             | Self::AggregateObject { slot, .. } => slot,
         }
@@ -1557,6 +1577,13 @@ impl CMemory {
         }
     }
 
+    pub(in crate::kernel) fn global_pointer(name: &str) -> Pointer {
+        Pointer {
+            block: format!("global:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(in crate::kernel) fn frame_local_pointer(frame: u64, name: &str) -> Pointer {
         Pointer {
             block: format!("local:frame:{frame}:{name}").into(),
@@ -1723,6 +1750,13 @@ impl CState {
 
     pub(crate) fn local_object_type(&self, name: &str) -> Option<CType> {
         self.locals.object_type(name)
+    }
+
+    pub(crate) fn global_object_type(&self, name: &str) -> Option<CType> {
+        self.locals
+            .is_global_object(name)
+            .then(|| self.locals.object_type(name))
+            .flatten()
     }
 
     pub fn memory(&self) -> &CMemory {

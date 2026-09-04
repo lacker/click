@@ -706,6 +706,9 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                 | Some(CLocalBinding::UninitializedObject { c_type, .. }) => {
                     CLValueOutcome::LValue(CLValue::local(name.clone(), *c_type))
                 }
+                Some(CLocalBinding::GlobalObject { c_type, slot }) => {
+                    CLValueOutcome::LValue(CLValue::memory(slot.clone(), *c_type))
+                }
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
@@ -1016,7 +1019,9 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
 }
 
 pub(in crate::kernel) fn is_external_memory_pointer(pointer: &Pointer) -> bool {
-    !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
+    !pointer.block.starts_with("local:")
+        && !pointer.block.starts_with("global:")
+        && !pointer.block.starts_with("havoc:")
 }
 
 pub(in crate::kernel) fn c_expression_pointee_type(
@@ -1027,6 +1032,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
         CExpression::Variable(name) => match state.locals.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => c_type.pointee_type(),
+            Some(CLocalBinding::GlobalObject { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             Some(CLocalBinding::AggregateObject { .. }) => Some(CType::UInt8),
             None => None,

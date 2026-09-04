@@ -2054,6 +2054,8 @@ pub(super) fn initial_claim_context(
 > {
     let (mut state, arguments) =
         initial_call_state(function_block.requires(), parsed_function.parameters())?;
+    state =
+        crate::kernel::initialize_c_function_globals(&state, &parsed_function.to_kernel_function());
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();
     for requirement in function_block.requires() {

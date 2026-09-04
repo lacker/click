@@ -2019,6 +2019,77 @@ pub(in crate::surface) fn parse_verified_sources(
         }
     }
 
+    // Each translation unit sees only the declarations available through its
+    // own includes. Link the collected declarations here so every kernel
+    // function receives the same stable global layout, while counting a
+    // definition once per source file rather than once per function.
+    let mut globals_by_source = BTreeMap::<String, BTreeMap<String, syntax::C0Global>>::new();
+    for (source_path, function) in parsed.values() {
+        let source_globals = globals_by_source.entry(source_path.clone()).or_default();
+        for (name, global) in function.globals() {
+            match source_globals.get(name) {
+                Some(previous) if previous.c_type() != global.c_type() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && global.is_defined() => {
+                    if previous != global {
+                        return Err(ClickError::new(format!(
+                            "conflicting definitions for global `{name}` in `{source_path}`"
+                        )));
+                    }
+                }
+                _ => {
+                    let merged = match source_globals.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if global.is_defined() => global.clone(),
+                        Some(previous) => previous.clone(),
+                        None => global.clone(),
+                    };
+                    source_globals.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    let mut globals = BTreeMap::<String, syntax::C0Global>::new();
+    for source_globals in globals_by_source.values() {
+        for (name, global) in source_globals {
+            match globals.get(name) {
+                Some(previous) if previous.c_type() != global.c_type() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_defined() && global.is_defined() => {
+                    return Err(ClickError::new(format!(
+                        "multiple definitions of global `{name}`"
+                    )));
+                }
+                _ => {
+                    let merged = match globals.get(name) {
+                        Some(previous) if previous.is_defined() => previous.clone(),
+                        Some(_) if global.is_defined() => global.clone(),
+                        Some(previous) => previous.clone(),
+                        None => global.clone(),
+                    };
+                    globals.insert(name.clone(), merged);
+                }
+            }
+        }
+    }
+    if let Some((name, _)) = globals.iter().find(|(_, global)| !global.is_defined()) {
+        return Err(ClickError::new(format!(
+            "global `{name}` is declared `extern` but has no definition"
+        )));
+    }
+    parsed = parsed
+        .into_iter()
+        .map(|(name, (source_path, function))| {
+            (name, (source_path, function.with_globals(globals.clone())))
+        })
+        .collect();
+
     for function in file
         .function_blocks()
         .iter()
