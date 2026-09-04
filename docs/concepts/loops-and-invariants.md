@@ -59,8 +59,8 @@ and the loop effect is declared `immutable by frame`; the call must still
 receive a direct contained child. Pointer-valued branch guards are not scalar
 ranking facts, so the ranking checker checks the scalar measure on every path
 without importing those pointer comparisons. Resource-consuming or mutating
-structural calls across a loop back edge remain tracked in
-`issues/recursive-resources.md`.
+structural calls across a loop back edge remain tracked in the hard-bucket
+`issues/recursion.md`.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

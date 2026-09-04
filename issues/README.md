@@ -24,7 +24,7 @@ when evidence exposes one.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 17
+## Functionality gaps: 15
 
 C language coverage:
 
@@ -43,11 +43,13 @@ C language coverage:
 
 Semantics and reasoning:
 
-- [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
-- [Recursive resources in ranked loops](recursive-resources.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 
 Proof language and tooling:
 
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
+
+## Hard bucket: 1
+
+- [Recursion](recursion.md)

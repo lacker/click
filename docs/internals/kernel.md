@@ -196,7 +196,8 @@ comparison prevents a structural guard such as `node->next != 0` from being
 mistaken for an invalid scalar measure. Read-only structural calls inside
 ranked loops are therefore supported when the checked surface proof preserves
 the observed resource at the loop back edge. Resource-consuming or mutating
-transitions across that back edge remain a separate proof boundary.
+transitions across that back edge remain a separate hard-bucket recursion
+boundary.
 
 Termination rules live in their own execution-environment map. Constructing or
 applying `CVerifiedFunctionRule` does not consult that map, so a termination
