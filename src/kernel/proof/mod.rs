@@ -25,6 +25,8 @@ pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,
     snapshot_blind_proposition_key,
 };
+#[cfg(test)]
+pub(crate) use fact_keys::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};
 pub(crate) use facts::ProofFacts;
 pub(crate) use object::{
     ExecutionUpdateError, FrontierSplitError, ProofFocusError, ProofJoinError, ProofObject,

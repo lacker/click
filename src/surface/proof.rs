@@ -40,12 +40,11 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
-#[cfg(test)]
-use crate::kernel::proof::quantified_equivalence_index_key;
 use crate::kernel::proof::{
     CheckedFrameAuthority, ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind,
     FrontierPosition, LoopEffectGoal, PersistentOrderedSet, PersistentSequence,
     PersistentSequenceIter, ProofExecutionContinuation, ProofFacts, SharedVec, old_reference_state,
+    quantified_equivalence_index_key,
 };
 pub(in crate::surface) use crate::kernel::proof::{
     SnapshotBlindPropositionKey, snapshot_blind_proposition_key,

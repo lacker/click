@@ -11,6 +11,23 @@ use crate::kernel::{
 };
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+thread_local! {
+    static ALPHA_PROPOSITION_KEY_VISITS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_alpha_proposition_key_visits() {
+    ALPHA_PROPOSITION_KEY_VISITS.with(|visits| visits.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn alpha_proposition_key_visits() -> usize {
+    ALPHA_PROPOSITION_KEY_VISITS.with(std::cell::Cell::get)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum SnapshotBlindPropositionKey {
     Condition(SnapshotBlindConditionKey, bool),
@@ -865,6 +882,9 @@ fn alpha_proposition_key(
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaPropositionKey> {
+    #[cfg(test)]
+    ALPHA_PROPOSITION_KEY_VISITS.with(|visits| visits.set(visits.get() + 1));
+
     let binary = |left: &Proposition,
                   right: &Proposition,
                   bindings: &mut BTreeMap<Variable, usize>,

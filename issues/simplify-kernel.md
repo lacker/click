@@ -74,7 +74,12 @@ normalization follow complete acyclic chains with exact cycle detection, using
 iterative term reconstruction where nesting can be deep. Call-havoc write-set
 markers now use a complete iterative, length-delimited structural encoding;
 two write sets that first differ below the former depth limit produce distinct
-memory endpoints. Both walks have multi-size deterministic-work regressions.
+memory endpoints. Nested quantified candidate comparison now lives with its
+surface theorem-application caller: its indexed logical fragment uses the
+complete alpha-invariant key, and unindexed proposition shapes use an exact
+unbounded quantifier walk. The indexed walk has a multi-size deterministic-work
+regression, and the unindexed fallback has a regression beyond the former
+depth limit.
 
 The arithmetic interval depth was removed from this structural-cleanup queue
 after reviewing the abstraction around it. `arithmetic()` is a nominally simple
@@ -108,11 +113,10 @@ deep-term canonicalization preflight are tracked together in
 `issues/fix-canonicalization.md` rather than as three independent mechanical
 walk conversions.
 
-1. **Nested quantified-binder comparison**, called with depth eight from
-   surface theorem application but implemented in
-   `src/kernel/proof/fact_reasoning.rs`. It is a generation-side recognizer, not
-   theorem authority. Move it to the surface or make the structural comparison
-   complete; do not leave a literal exception hidden under `src/kernel/`.
+There are no remaining structural or fixed-point cuts owned directly by this
+issue. Nested quantified-binder comparison is complete and lives in the
+surface generation path. The canonicalization family and arithmetic interval
+work remain in their separately owned issues as described above.
 
 `ATOMIC_PREMISE_MINIMIZATION_DEPTH` (`src/kernel/assumptions.rs`) and
 `VERIFICATION_SESSION_DEPTH` (`src/kernel/mod.rs`) are nesting-state flags, not
@@ -197,12 +201,12 @@ comparison now use only that narrower predicate for distinctness.
 1. **Complete:** correct the inventory and operational definition in this issue.
 2. **Complete:** delete the general pointer-distinctness fallback, its exported
    contextual constructor, and route-specific tests.
-3. **In progress:** replace the structural and fixed-point cuts with complete
-   input-sized walks, landing a scaling regression with each change. Exact-load
-   traversal and havoc write-set identity are complete. The canonicalization
-   family is owned by `issues/fix-canonicalization.md`; the nested-binder item
-   remains above. The arithmetic depth cut is separately deferred to the
-   smart-tactic migration in `issues/arithmetic.md`.
+3. **Complete:** replace the directly owned structural and fixed-point cuts
+   with complete input-sized walks, landing a scaling regression with each
+   change. Exact-load traversal, havoc write-set identity, and nested-binder
+   comparison are complete. The canonicalization family is owned by
+   `issues/fix-canonicalization.md`; the arithmetic depth cut is separately
+   deferred to the smart-tactic migration in `issues/arithmetic.md`.
 4. Move upper-bound split selection to a surface planner that emits checked
    proof branches.
 5. Move finite context splitting to explicit surface branches/certificates and

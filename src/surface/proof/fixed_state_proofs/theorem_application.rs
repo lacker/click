@@ -1,5 +1,85 @@
 use super::*;
 
+/// Generation-side comparison for recovering a surface spelling of a nested
+/// quantified fact. A match selects only a candidate: the eventual explicit
+/// proof step lowers and checks that candidate again before it gains
+/// authority.
+///
+/// The indexed logical fragment has a complete alpha-invariant structural
+/// key, including nested proposition and range-fold binders. Proposition
+/// shapes outside that index retain the old exact comparison semantics, but
+/// walk every leading quantifier instead of stopping at an opaque depth.
+fn nested_quantified_candidate_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    // Preserve the old common-case cost: most candidates differ in at most
+    // their outer binder and need only one exact substitution.
+    if quantified_binder_equivalent(left, right) {
+        return true;
+    }
+    match (
+        quantified_equivalence_index_key(left),
+        quantified_equivalence_index_key(right),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => nested_quantified_exact_fallback(left, right),
+        _ => false,
+    }
+}
+
+fn nested_quantified_exact_fallback(left: &Proposition, right: &Proposition) -> bool {
+    let mut left = left.clone();
+    let mut right = right;
+    let mut compared_quantifier = false;
+
+    loop {
+        let next_left = match (&left, right) {
+            (
+                Proposition::ForAll {
+                    var: left_var,
+                    sort: left_sort,
+                    body: left_body,
+                },
+                Proposition::ForAll {
+                    var: right_var,
+                    sort: right_sort,
+                    body: right_body,
+                },
+            ) if left_sort == right_sort => {
+                compared_quantifier = true;
+                right = right_body;
+                substitute_int32_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    Bitvector32Term::Variable(*right_var),
+                )
+            }
+            (
+                Proposition::Exists {
+                    var: left_var,
+                    sort: left_sort,
+                    body: left_body,
+                    ..
+                },
+                Proposition::Exists {
+                    var: right_var,
+                    sort: right_sort,
+                    body: right_body,
+                    ..
+                },
+            ) if left_sort == right_sort => {
+                compared_quantifier = true;
+                right = right_body;
+                substitute_int32_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    Bitvector32Term::Variable(*right_var),
+                )
+            }
+            _ => return compared_quantifier && left == *right,
+        };
+        left = next_left;
+    }
+}
+
 pub(in crate::surface::proof) struct CheckedFixedStateTheoremApplication {
     pub(in crate::surface::proof) facts: ProofFacts,
     pub(in crate::surface::proof) added_facts: Vec<Proposition>,
@@ -397,7 +477,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
                 }
                 if check(&unfolded).is_ok_and(|lowered| {
                     matches_kernel(&lowered)
-                        || nested_quantified_binder_equivalent(&lowered, kernel, 8)
+                        || nested_quantified_candidate_equivalent(&lowered, kernel)
                 }) {
                     return Ok(unfolded);
                 }
@@ -449,7 +529,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
                     }
                     if check(&unfolded).is_ok_and(|lowered| {
                         matches_kernel(&lowered)
-                            || nested_quantified_binder_equivalent(&lowered, kernel, 8)
+                            || nested_quantified_candidate_equivalent(&lowered, kernel)
                     }) {
                         return Ok(unfolded);
                     }
@@ -470,5 +550,102 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
         Err(ClickError::new(format!(
             "synthesized post-execution form did not lower to {kernel:?}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::proof::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};
+
+    fn nested_foralls_with_free(
+        depth: usize,
+        first_variable: u64,
+        free_variable: Option<Variable>,
+    ) -> Proposition {
+        let variables = (0..depth)
+            .map(|index| Variable(first_variable + index as u64))
+            .collect::<Vec<_>>();
+        let mut sum = variables
+            .iter()
+            .fold(Bitvector32Term::Constant(0), |sum, variable| {
+                Bitvector32Term::add(sum, Bitvector32Term::Variable(*variable))
+            });
+        if let Some(variable) = free_variable {
+            sum = Bitvector32Term::add(sum, Bitvector32Term::Variable(variable));
+        }
+        variables.into_iter().rev().fold(
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(sum.clone()), Box::new(sum)),
+                true,
+            ),
+            |body, var| Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            },
+        )
+    }
+
+    fn nested_foralls(depth: usize, first_variable: u64) -> Proposition {
+        nested_foralls_with_free(depth, first_variable, None)
+    }
+
+    fn nested_unindexed_foralls(depth: usize, first_variable: u64) -> Proposition {
+        let variables = (0..depth)
+            .map(|index| Variable(first_variable + index as u64))
+            .collect::<Vec<_>>();
+        let bytes = variables
+            .iter()
+            .fold(Bitvector32Term::Constant(0), |sum, variable| {
+                Bitvector32Term::add(sum, Bitvector32Term::Variable(*variable))
+            });
+        variables.into_iter().rev().fold(
+            Proposition::Predicate {
+                name: "unindexed".to_string(),
+                arguments: vec![Term::Bitvector32(bytes)],
+            },
+            |body, var| Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            },
+        )
+    }
+
+    #[test]
+    fn nested_quantified_candidate_comparison_exceeds_the_old_depth() {
+        let left = nested_foralls(32, 10_000);
+        let renamed = nested_foralls(32, 20_000);
+        assert!(nested_quantified_candidate_equivalent(&left, &renamed));
+    }
+
+    #[test]
+    fn nested_quantified_exact_fallback_exceeds_the_old_depth() {
+        let left = nested_unindexed_foralls(16, 30_000);
+        let renamed = nested_unindexed_foralls(16, 40_000);
+        assert!(nested_quantified_candidate_equivalent(&left, &renamed));
+    }
+
+    #[test]
+    fn nested_quantified_candidate_comparison_visits_linear_structure() {
+        for depth in [8, 16, 32, 64] {
+            let left = nested_foralls(depth, 50_000);
+            let renamed = nested_foralls(depth, 60_000);
+            reset_alpha_proposition_key_visits();
+            assert!(nested_quantified_candidate_equivalent(&left, &renamed));
+            assert_eq!(
+                alpha_proposition_key_visits(),
+                2 * (depth + 1),
+                "one proposition-key node should be visited per input node"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_quantified_candidate_comparison_preserves_free_variables() {
+        let left = nested_foralls_with_free(16, 70_000, Some(Variable(90_000)));
+        let different = nested_foralls_with_free(16, 80_000, Some(Variable(90_001)));
+        assert!(!nested_quantified_candidate_equivalent(&left, &different));
     }
 }

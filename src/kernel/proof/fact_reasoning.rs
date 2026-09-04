@@ -1309,56 +1309,6 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
     }
 }
 
-/// See the doc comment below: a generation-side recognizer only, comparing
-/// bodies up to per-level binder renaming. Terms are canonical at creation,
-/// so two lowerings of one fact are structurally equal.
-pub(crate) fn nested_quantified_binder_equivalent(
-    left: &Proposition,
-    right: &Proposition,
-    depth: usize,
-) -> bool {
-    nested_quantified_binder_equivalent_exact(left, right, depth)
-}
-
-fn nested_quantified_binder_equivalent_exact(
-    left: &Proposition,
-    right: &Proposition,
-    depth: usize,
-) -> bool {
-    if depth == 0 {
-        return false;
-    }
-    if quantified_binder_equivalent(left, right) {
-        return true;
-    }
-    match (left, right) {
-        (
-            Proposition::ForAll {
-                var: left_var,
-                sort: left_sort,
-                body: left_body,
-            },
-            Proposition::ForAll {
-                var: right_var,
-                sort: right_sort,
-                body: right_body,
-            },
-        ) => {
-            left_sort == right_sort
-                && nested_quantified_binder_equivalent_exact(
-                    &substitute_int32_variable_in_proposition(
-                        left_body,
-                        *left_var,
-                        Bitvector32Term::Variable(*right_var),
-                    ),
-                    right_body,
-                    depth - 1,
-                )
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn pure_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
     available.contains(required)
         || exactly_available_fact(required, available).is_some()
