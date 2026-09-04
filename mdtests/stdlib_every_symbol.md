@@ -365,6 +365,23 @@ predicate docs_use_cstr_readable_len(bytes: uint8[], len: int32) {
     cstr_readable_len(bytes, len)
 }
 
+theorem docs_use_cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
+    requires 0 <= left;
+    requires forall (k: int32) {
+        0 <= k and k < left implies bytes[k] != '\0'
+    };
+    requires bytes[left] == '\0';
+    requires 0 <= right;
+    requires forall (k: int32) {
+        0 <= k and k < right implies bytes[k] != '\0'
+    };
+    requires bytes[right] == '\0';
+
+    ensures left == right by {
+        apply(cstr_readable_len_unique(bytes, left, right));
+    }
+}
+
 predicate docs_use_cstr_readable(bytes: uint8[]) {
     cstr_readable(bytes)
 }

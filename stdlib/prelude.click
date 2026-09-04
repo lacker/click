@@ -306,6 +306,60 @@ predicate cstr_readable_len(bytes: uint8[], len: int32) {
         bytes[len] == '\0'
 }
 
+theorem cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
+    requires 0 <= left;
+    requires forall (k: int32) {
+        0 <= k and k < left implies bytes[k] != '\0'
+    };
+    requires bytes[left] == '\0';
+    requires 0 <= right;
+    requires forall (k: int32) {
+        0 <= k and k < right implies bytes[k] != '\0'
+    };
+    requires bytes[right] == '\0';
+
+    ensures left == right by {
+        have left < right or not (left < right) by {
+            if left < right {
+                left();
+            } else {
+                right();
+            }
+        }
+        cases (left < right or not (left < right)) {
+            instantiate(forall (k: int32) {
+                0 <= k and k < right implies bytes[k] != '\0'
+            }, left) using {
+                0 <= left;
+                left < right;
+            }
+            contradiction(bytes[left] == '\0');
+        } {
+            have right < left or not (right < left) by {
+                if right < left {
+                    left();
+                } else {
+                    right();
+                }
+            }
+            cases (right < left or not (right < left)) {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < left implies bytes[k] != '\0'
+                }, right) using {
+                    0 <= right;
+                    right < left;
+                }
+                contradiction(bytes[right] == '\0');
+            } {
+                apply(int32_le_and_not_lt_implies_eq(left, right)) using {
+                    left <= right;
+                    not (left < right);
+                }
+            }
+        }
+    }
+}
+
 predicate cstr_readable(bytes: uint8[]) {
     exists (len: int32) {
         0 <= len and
@@ -396,6 +450,7 @@ extern int32 strlen(uint8 bytes[]) {
     ensures forall (k: int32) {
         0 <= k and k < result implies bytes[k] != '\0'
     };
+    ensures bytes[result] == '\0';
     ensures cstr_readable_len(bytes, result);
     ensures old(bytes[0]) == '\0' implies result == 0;
 }

@@ -9,13 +9,15 @@ loadability propositions. The focused regressions are
 `mdtests/cstr_dynamic_loadability.md`, `mdtests/forall_loadable_range.md`, and
 `mdtests/exists_loadable_range.md`.
 
-The remaining gap is the next step after `strlen`: a caller that uses the
-returned symbolic length for an actual C array read still needs a matching
-`views`/`owns` resource. `loadable` is intentionally not permission, so the
-current `strlen` slice proves dynamic read safety for the external call and
-its result relation but does not manufacture a dynamic permission range. The
-contract also does not yet expose a checked uniqueness theorem for the
-terminator length.
+The post-`strlen` indexed-read slice is now covered by
+`mdtests/cstr_dynamic_indexed_read.md`: the caller supplies an independently
+known witness and matching dynamic `views` range, then uses the checked
+`cstr_readable_len_unique` theorem to connect that witness to the returned
+length. `mdtests/cstr_dynamic_indexed_read_requires_permission.md` preserves
+the distinction between readable contents and permission. A remaining
+ergonomic gap is deriving the dynamic permission range automatically from an
+existential `cstr_readable` witness; callers currently need to expose a
+matching length and frame explicitly.
 
 ## Violated invariant
 
@@ -46,9 +48,11 @@ not authorize a resource-sensitive access.
 
 - Add checked support for deriving a dynamic `views`/`owns` range from an
   explicitly framed allocation or resource and the selected string witness;
-  do not infer permission from `loadable`.
-- Specify and prove a terminator-length uniqueness theorem from the readable
-  string conditions rather than assuming it as an opaque arithmetic fact.
-- Add positive and negative mdtests for the post-`strlen` symbolic read and
-  permission distinction, update the language/library documentation, and run
-  `scripts/check.sh`.
+  do not infer permission from `loadable`. (The current slice requires the
+  caller to provide that frame explicitly.)
+- [x] Specify and prove a terminator-length uniqueness theorem from the
+  readable string conditions rather than assuming it as an opaque arithmetic
+  fact.
+- [x] Add positive and negative mdtests for the post-`strlen` symbolic read
+  and permission distinction, and update the language/library documentation.
+- Run `scripts/check.sh` before closing the remaining framing gap.

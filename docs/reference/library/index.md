@@ -806,6 +806,73 @@ embedded terminator, and the terminator byte is null.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_readable_len)` when a proof needs the predicate body.
 
+### `cstr_readable_len_unique`
+
+```click
+theorem cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
+    requires 0 <= left;
+    requires forall (k: int32) {
+        0 <= k and k < left implies bytes[k] != '\0'
+    };
+    requires bytes[left] == '\0';
+    requires 0 <= right;
+    requires forall (k: int32) {
+        0 <= k and k < right implies bytes[k] != '\0'
+    };
+    requires bytes[right] == '\0';
+
+    ensures left == right by {
+        have left < right or not (left < right) by {
+            if left < right {
+                left();
+            } else {
+                right();
+            }
+        }
+        cases (left < right or not (left < right)) {
+            instantiate(forall (k: int32) {
+                0 <= k and k < right implies bytes[k] != '\0'
+            }, left) using {
+                0 <= left;
+                left < right;
+            }
+            contradiction(bytes[left] == '\0');
+        } {
+            have right < left or not (right < left) by {
+                if right < left {
+                    left();
+                } else {
+                    right();
+                }
+            }
+            cases (right < left or not (right < left)) {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < left implies bytes[k] != '\0'
+                }, right) using {
+                    0 <= right;
+                    right < left;
+                }
+                contradiction(bytes[right] == '\0');
+            } {
+                apply(int32_le_and_not_lt_implies_eq(left, right)) using {
+                    left <= right;
+                    not (left < right);
+                }
+            }
+        }
+    }
+}
+```
+
+**Meaning:** Proves that two nonnegative lengths with the same null-free prefix
+condition and null terminator for one byte array are equal. It is a pure
+content theorem; it does not grant loadability or read/write permission.
+
+**Kind:** theorem. The proof is checked as part of the standard-library
+definition and its requirements and guarantee are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
 ### `cstr_readable`
 
 ```click
@@ -1001,15 +1068,17 @@ extern int32 strlen(uint8 bytes[]) {
     ensures forall (k: int32) {
         0 <= k and k < result implies bytes[k] != '\0'
     };
+    ensures bytes[result] == '\0';
     ensures cstr_readable_len(bytes, result);
     ensures old(bytes[0]) == '\0' implies result == 0;
 }
 ```
 
 **Meaning:** Returns a length for a dynamically loadable, null-terminated byte
-string without mutation. The result satisfies the readable-length relation; the
-separate `old(bytes[0])` consequence retains the concrete empty-string
-guarantee. Uniqueness of symbolic terminator lengths remains future work.
+string without mutation. The result satisfies the readable-length relation and
+points at its null terminator; `cstr_readable_len_unique` can connect it to an
+independently framed witness. The separate `old(bytes[0])` consequence retains
+the concrete empty-string guarantee.
 
 **Kind:** external C contract. The declaration is an explicit verification assumption.
 

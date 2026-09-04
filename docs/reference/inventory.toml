@@ -1994,6 +1994,10 @@ id = "stdlib.predicate.cstr_readable_len"
 path = "reference/library/index.md#cstr_readable_len"
 
 [[item]]
+id = "stdlib.theorem.cstr_readable_len_unique"
+path = "reference/library/index.md#cstr_readable_len_unique"
+
+[[item]]
 id = "stdlib.predicate.cstr_readable"
 path = "reference/library/index.md#cstr_readable"
 

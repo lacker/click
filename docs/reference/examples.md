@@ -454,6 +454,10 @@ sequence:
   exact spec length, bounded terminator, and plain existential string facts.
 - `mdtests/cstr_dynamic_loadability.md`: a dynamically loadable C-string
   witness used to verify the variable-length `strlen` contract.
+- `mdtests/cstr_dynamic_indexed_read.md`: a `strlen` result used for a real
+  indexed terminator read with an explicitly framed dynamic view.
+- `mdtests/cstr_dynamic_indexed_read_requires_permission.md`: the matching
+  failure showing that readable contents alone do not grant read permission.
 - `mdtests/forall_loadable_range.md` and `mdtests/exists_loadable_range.md`:
   generic guarded universal and existential range-loadability derivations.
 

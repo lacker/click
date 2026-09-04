@@ -2036,8 +2036,9 @@ int32 set_cell(int32 p[], int32 value) {
     assert!(
         events.iter().all(|event| !matches!(
             event,
-            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim.starts_with("set_cell.")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the qualified smart frame must apply its selected proof step once through Proof: {events:#?}"
     );
