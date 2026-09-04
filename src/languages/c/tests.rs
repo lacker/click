@@ -5176,10 +5176,10 @@ fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
 }
 
 #[test]
-fn c0_address_of_unmodeled_width_does_not_fall_back_to_int32_pointer() {
+fn c0_address_of_int16_preserves_pointer_type() {
     let function = syntax::parse_function(
         r#"
-        int32* address_short() {
+        int16* address_short() {
             int16 value;
             value = 7;
             return &value;
@@ -5195,18 +5195,15 @@ fn c0_address_of_unmodeled_width_does_not_fall_back_to_int32_pointer() {
         Vec::new(),
         Default::default(),
     )
-    .expect("unsupported address type should produce a runtime-error theorem");
-    assert_eq!(
-        theorem.proposition(),
-        &crate::kernel::Proposition::CFunctionExecutes {
-            state: crate::kernel::CState::new(),
-            function,
-            arguments: Vec::new(),
-            outcome: crate::kernel::CFunctionOutcome::RuntimeError(
-                crate::kernel::CRuntimeError::TypeMismatch
-            ),
-        }
-    );
+    .expect("an int16 address should execute with its typed pointer result");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("an int16 address should return a typed pointer")
+    };
+    assert_eq!(value.c_type(), crate::kernel::CType::Int16Pointer);
 }
 
 #[test]
