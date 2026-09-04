@@ -1188,8 +1188,8 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
 fn c0_struct_layout_preserves_embedded_struct_shape() {
     #[repr(C)]
     struct HostInner {
-        value: i32,
         flag: u8,
+        value: i32,
     }
     #[repr(C)]
     struct HostOuter {
@@ -1201,8 +1201,8 @@ fn c0_struct_layout_preserves_embedded_struct_shape() {
     let function = syntax::parse_function(
         r#"
         struct inner {
-            int32 value;
             uint8 flag;
+            int32 value;
         };
         struct outer {
             uint8 tag;
@@ -4419,6 +4419,143 @@ fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
         pointer.as_ref(),
         crate::kernel::CExpression::PointerOffsetBytes { bytes: 8, .. }
     ));
+}
+
+#[test]
+fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
+    #[repr(C)]
+    struct HostInner {
+        flag: u8,
+        value: i32,
+    }
+
+    #[repr(C)]
+    struct HostOuter {
+        tag: u8,
+        inner: HostInner,
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            uint8 flag;
+            int32 value;
+        };
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+            int32 tail;
+        };
+
+        int32* address_nested(struct outer* packet) {
+            return &packet->inner.value;
+        }
+        "#,
+    )
+    .expect("nested scalar field address should parse");
+
+    assert_eq!(
+        function.structs()["outer"]
+            .field("inner")
+            .unwrap()
+            .offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, inner)
+    );
+    assert_eq!(
+        function.structs()["inner"]
+            .field("value")
+            .unwrap()
+            .offset_bytes() as usize,
+        std::mem::offset_of!(HostInner, value)
+    );
+
+    let syntax::C0Statement::Return(syntax::C0Expression::AddressOf(target)) = function.body()
+    else {
+        panic!("nested field address should remain an address-of lvalue")
+    };
+    let syntax::C0Expression::Field {
+        pointer,
+        field_type,
+        ..
+    } = target.as_ref()
+    else {
+        panic!("nested field address should target the scalar field")
+    };
+    assert_eq!(*field_type, syntax::C0Type::Int32);
+    let syntax::C0Expression::PointerOffsetBytes {
+        pointer: inner_pointer,
+        bytes: inner_offset,
+    } = pointer.as_ref()
+    else {
+        panic!("nested field address should include the inner field offset")
+    };
+    assert_eq!(*inner_offset, std::mem::offset_of!(HostInner, value) as u32);
+    assert!(matches!(
+        inner_pointer.as_ref(),
+        syntax::C0Expression::PointerOffsetBytes { bytes, .. }
+            if *bytes == std::mem::offset_of!(HostOuter, inner) as u32
+    ));
+
+    let crate::kernel::CStatement::Return(crate::kernel::CExpression::AddressOf(target)) =
+        function.body_kernel_statement()
+    else {
+        panic!("nested field address should lower to kernel address-of")
+    };
+    let crate::kernel::CExpression::TypedLoad {
+        pointer,
+        value_type: crate::kernel::CType::Int32,
+    } = target.as_ref()
+    else {
+        panic!("nested field address should preserve the leaf load type")
+    };
+    let crate::kernel::CExpression::PointerOffsetBytes {
+        pointer: inner_pointer,
+        bytes: inner_offset,
+    } = pointer.as_ref()
+    else {
+        panic!("nested field address should include the inner field offset")
+    };
+    assert_eq!(*inner_offset, std::mem::offset_of!(HostInner, value) as u32);
+    assert!(matches!(
+        inner_pointer.as_ref(),
+        crate::kernel::CExpression::PointerOffsetBytes { bytes, .. }
+            if *bytes == std::mem::offset_of!(HostOuter, inner) as u32
+    ));
+}
+
+#[test]
+fn c0_address_of_unmodeled_width_does_not_fall_back_to_int32_pointer() {
+    let function = syntax::parse_function(
+        r#"
+        int32* address_short() {
+            int16 value;
+            value = 7;
+            return &value;
+        }
+        "#,
+    )
+    .expect("address-of an int16 local should parse before execution")
+    .to_kernel_function();
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("unsupported address type should produce a runtime-error theorem");
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state: crate::kernel::CState::new(),
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::RuntimeError(
+                crate::kernel::CRuntimeError::TypeMismatch
+            ),
+        }
+    );
 }
 
 #[test]

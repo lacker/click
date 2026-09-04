@@ -35,6 +35,10 @@ remain rejected. Data-pointer fields in by-value containers are
 shallow-copied: the pointer cell is copied, while the pointee remains shared.
 Broader struct-value shapes remain. Compiler- or ABI-dependent layout rules
 are tracked in [multiple-compilers.md](multiple-compilers.md).
+Modeled scalar leaf-field addresses now use the same typed lvalue path as field
+loads and stores, so `&p->field` and `&p->inner.field` preserve allocation
+provenance and the combined ABI offset. Address-taking of union members and
+pointer forms for unsupported scalar widths remain outside this slice.
 Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
@@ -42,7 +46,8 @@ Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values and broader address-taking as remaining. The first
+lists broader struct values and address-taking beyond modeled scalar leaves as
+remaining. The first
 tagged-union slice is covered by
 `mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
 explicit source-level precondition rather than an inferred rule. The pilot
@@ -97,6 +102,11 @@ Staged mdtests, each with an unchanged C file:
    `mdtests/struct_by_value_embedded_array_copy.md`,
    `mdtests/struct_by_value_embedded_array_multidim_copy.md`, and the flattened
    row-major array-element metadata test.
+10. ~~Addresses of direct and nested scalar leaf fields preserve allocation
+    provenance and their combined ABI offsets, and pointer stores update the
+    selected leaf.~~ Covered by `mdtests/struct_field_address.md` and the C0
+    nested-field lowering regression. Unsupported-width address-taking must
+    not silently fall back to an `int32*`.
 
 ## Acceptance criteria
 
@@ -109,6 +119,10 @@ Staged mdtests, each with an unchanged C file:
   including row-major paths for every fixed-dimensional embedded-struct array.
 - Data-pointer fields in those copies preserve the exact pointer value and
   provenance without copying the pointee or transferring ownership.
+- Address-taking of modeled scalar leaf fields preserves the original
+  allocation block, adds every ABI field offset in the chain, and returns the
+  correct modeled pointer type; unsupported pointer forms are rejected rather
+  than approximated.
 - Unions are either modeled with explicit rules or rejected with a diagnostic
   that names the unsupported construct; no silent approximation. Other
   compiler-dependent layout constructs are owned by `multiple-compilers.md`.

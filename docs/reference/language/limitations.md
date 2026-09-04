@@ -54,8 +54,11 @@ elements.
 Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Function-pointer fields, unions,
 direct aggregate loads, aggregate resource segments, multidimensional inline
-arrays of scalar fields, packed layout, or general field-address expressions
-remain unsupported. Fixed-dimensional arrays of embedded structs are supported
+arrays of scalar fields, packed layout, or address-taking of union members
+remain unsupported. Address-taking of modeled scalar leaf fields, including
+nested embedded-struct leaves, preserves the field's ABI offset and allocation
+provenance; pointer forms for unsupported scalar widths remain unsupported.
+Fixed-dimensional arrays of embedded structs are supported
 through indexed leaf-field access and by-value copies with row-major ABI stride.
 Bitfields and other compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Named enums use

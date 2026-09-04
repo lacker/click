@@ -976,16 +976,20 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
     for lvalue_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
         paths.push(match lvalue_path.outcome {
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
-                Some(pointer) => CExpressionPath {
-                    outcome: CExpressionOutcome::Value(CValue::typed_pointer(
-                        pointer,
-                        lvalue
-                            .value_type()
-                            .pointer_to()
-                            .unwrap_or(CType::Int32Pointer),
-                    )),
-                    facts: lvalue_path.facts,
-                    obligations: lvalue_path.obligations,
+                Some(pointer) => match lvalue.value_type().pointer_to() {
+                    Some(pointer_type) => CExpressionPath {
+                        outcome: CExpressionOutcome::Value(CValue::typed_pointer(
+                            pointer,
+                            pointer_type,
+                        )),
+                        facts: lvalue_path.facts,
+                        obligations: lvalue_path.obligations,
+                    },
+                    None => CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: lvalue_path.facts,
+                        obligations: lvalue_path.obligations,
+                    },
                 },
                 None => CExpressionPath {
                     outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(

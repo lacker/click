@@ -300,9 +300,12 @@ fields follow the same address-first rule: for `{ uint8 tag; struct inner in;
 int32 tail; }` with `inner` sized at 8 bytes, `in` starts at byte offset 4 and
 `tail` starts at byte offset 12. The C0 surface carries `in` as an aggregate
 place while nested member lowering adds the inner field offset before emitting
-the kernel's scalar load or store. Direct aggregate loads and copies remain
-unsupported; resource clauses currently name nested leaf fields rather than
-the aggregate itself. Fixed multidimensional arrays of embedded structs retain
+the kernel's scalar load or store. Taking the address of a modeled scalar leaf
+uses that same typed lvalue path, so the pointer retains the allocation block
+and the combined ABI offset rather than materializing an aggregate value.
+Direct aggregate loads and copies remain unsupported; resource clauses
+currently name nested leaf fields rather than the aggregate itself. Fixed
+multidimensional arrays of embedded structs retain
 their declared shape in C0 metadata; indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride.
 
