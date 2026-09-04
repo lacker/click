@@ -339,6 +339,40 @@ it must not encode a struct offset by pretending that a struct pointer is an
 `int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on
 the supported LP64 host ABI.
 
+## Floating-point semantic boundary
+
+The kernel currently has no floating-point `CType`, `CValue`, symbolic term, or
+memory load/store case. The C0 frontend rejects floating-point declarations,
+and the source expander rejects floating-point environment directives, so this
+absence cannot silently turn a C floating-point operation into integer or
+mathematical-real reasoning.
+
+The future C model is deliberately fixed to the supported LP64 ABI: `float` is
+IEEE-754 binary32 with size and alignment 4, and `double` is IEEE-754 binary64
+with size and alignment 8. `long double`, decimal floating point, compiler
+extended precision, alternate rounding modes, `fenv` access, and traps are
+outside the model. Each operation is evaluated at its declared result type
+using round-to-nearest, ties-to-even; the host's floating-point mode and any
+excess precision must not affect a certificate.
+
+Floating-point terms and values must retain enough representation to
+distinguish finite values, signed zero, infinities, and NaNs. Copying a value
+preserves its representation, while generated NaNs use one documented
+canonical representation. Comparisons follow the C/IEEE rules: signed zeros
+compare equal, every ordered comparison with a NaN is false, and `!=` with a
+NaN is true. IEEE overflow and floating division by zero produce infinity or
+NaN results; those are not integer-style C undefined behavior. Converting to an
+integer is a separate checked operation and is undefined for NaN, infinity, or
+an out-of-range value. Classification predicates and raw representation casts
+are separate modeled interfaces, not permissions to inspect or reinterpret
+kernel internals.
+
+Until that model exists, unsupported floating-point syntax must remain an
+actionable, source-positioned frontend diagnostic. A proof cannot claim a
+floating-point result merely because an implementation language can evaluate
+`f32` or `f64`; the symbolic semantics and certificate checker must agree on
+the exact width, rounding, exceptional values, and conversion rules first.
+
 Named unions are represented on the C0 side as address-backed layouts. Every
 modeled member has offset zero, and a member read lowers to a kernel typed load
 using that member's scalar or pointer type. The kernel still has no runtime

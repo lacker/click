@@ -3418,6 +3418,12 @@ impl Parser {
             "uint32" | "uint32_t" => C0Type::UInt32,
             "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
             "long" => {
+                if self.peek_ident() == Some("double") {
+                    self.position += 1;
+                    return Err(self.error_at_previous(
+                        "unsupported C type `long double`: extended-precision floating-point values are not modeled in C0",
+                    ));
+                }
                 if self.peek_ident() == Some("long") {
                     self.position += 1;
                 }
