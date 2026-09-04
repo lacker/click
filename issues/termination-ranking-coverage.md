@@ -37,7 +37,7 @@ negative edge. Read-only structural-resource recursion inside a ranked loop
 is now covered by `mdtests/c_decreases_resource_recursive_in_loop.md`, with a
 parent-call negative regression beside it. Resource-consuming or mutating
 structural calls inside a ranked loop remain tracked in
-[termination-structural-loop-proof.md](termination-structural-loop-proof.md).
+[recursive-resources.md](recursive-resources.md).
 
 ## Intended regression
 
@@ -68,7 +68,7 @@ non-decreasing must expect `fail: ... does not decrease`.
   structural recursive calls inside ranked loops are supported when the
   parent resource is observed and the loop effect is immutable; resource
   transitions that consume or mutate a child remain tracked in
-  [termination-structural-loop-proof.md](termination-structural-loop-proof.md).
+  [recursive-resources.md](recursive-resources.md).
   Recursive calls whose descent depends on a changing lexicographic caller
   measure also remain outside this slice.
 - The surface plan carries the expression and the kernel re-lowers and checks

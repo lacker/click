@@ -163,7 +163,7 @@ the parent is observed before the loop and the loop effect is `immutable by
 frame`; the recursive call must still receive a direct contained child. See
 `mdtests/c_decreases_resource_recursive_in_loop.md`. Resource-consuming or
 mutating structural calls across a loop back edge remain tracked in
-`issues/termination-structural-loop-proof.md`.
+`issues/recursive-resources.md`.
 Recursive calls whose descent depends on a changing lexicographic caller
 measure remain unsupported.
 

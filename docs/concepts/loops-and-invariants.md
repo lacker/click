@@ -60,7 +60,7 @@ receive a direct contained child. Pointer-valued branch guards are not scalar
 ranking facts, so the ranking checker checks the scalar measure on every path
 without importing those pointer comparisons. Resource-consuming or mutating
 structural calls across a loop back edge remain tracked in
-`issues/termination-structural-loop-proof.md`.
+`issues/recursive-resources.md`.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

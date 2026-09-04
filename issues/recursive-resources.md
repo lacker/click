@@ -1,4 +1,4 @@
-# Support resource transitions for structural recursion inside ranked loops
+# Recursive resources in ranked loops
 
 The read-only slice of structural recursion inside a ranked loop landed on
 2026-09-03. `mdtests/c_decreases_resource_recursive_in_loop.md` proves an
