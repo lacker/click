@@ -2,8 +2,9 @@
 //!
 //! This is deliberately a small source expander, not a general C preprocessor.
 //! It expands supplied project-local headers, a narrow literal-only macro
-//! subset, and rejects all other preprocessor directives so the C0 parser
-//! never silently verifies a different program.
+//! subset, a bounded conditional-compilation subset, and rejects all other
+//! preprocessor directives so the C0 parser never silently verifies a
+//! different program.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -52,19 +53,29 @@ impl ExpandedCSource {
 enum SourceDirective {
     Include(String),
     SystemInclude(String),
-    HeaderGuardStart(String),
     HeaderGuardDefine(String),
     MacroDefinition { name: String, value: String },
-    HeaderGuardEnd,
+    ConditionalStart(Conditional),
+    ConditionalElse,
+    ConditionalEnd,
     PragmaOnce,
+    Unsupported(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Conditional {
+    Literal(bool),
+    Macro(String),
+    Ifdef(String),
+    Ifndef(String),
+    Unsupported(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceAnalysis {
     directives: BTreeMap<usize, SourceDirective>,
-    includes: Vec<String>,
     guarded: bool,
-    pragma_once: bool,
+    header_guard_define_line: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,11 +84,26 @@ enum SignificantLine {
     Directive(SourceDirective),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConditionalTruth {
+    True,
+    False,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ConditionalFrame {
+    parent_active: ConditionalTruth,
+    condition_active: ConditionalTruth,
+    else_seen: bool,
+}
+
 /// Returns the normalized project-local headers directly included by a source.
 /// Unsupported system headers and preprocessor directives are rejected. The
 /// supported literal-only object-like macro definitions are accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
-    Ok(analyze_source(source_path, source)?.includes)
+    let analysis = analyze_source(source_path, source)?;
+    collect_local_include_paths(source_path, &analysis)
 }
 
 /// Expands all project-local quoted includes reachable from `root_path`.
@@ -97,6 +123,7 @@ pub fn expand_includes<'a>(
     let mut stack = Vec::new();
     let mut expanded_once = BTreeSet::new();
     let mut macros = BTreeMap::new();
+    let mut defined_macros = BTreeSet::new();
     let mut expanded = String::new();
     expand_source(
         root_path,
@@ -106,6 +133,7 @@ pub fn expand_includes<'a>(
         &mut dependencies,
         &mut expanded_once,
         &mut macros,
+        &mut defined_macros,
         None,
         &mut expanded,
     )?;
@@ -123,13 +151,16 @@ fn expand_source<'a>(
     dependencies: &mut BTreeSet<String>,
     expanded_once: &mut BTreeSet<String>,
     macros: &mut BTreeMap<String, String>,
+    defined_macros: &mut BTreeSet<String>,
     include_site: Option<(&str, usize)>,
     expanded: &mut String,
 ) -> Result<(), CSourceError> {
     let analysis = analyze_source(source_path, source)?;
-    let expands_once = analysis.guarded || analysis.pragma_once;
-    if expands_once && !expanded_once.insert(source_path.to_string()) {
+    if expanded_once.contains(source_path) {
         return Ok(());
+    }
+    if analysis.guarded {
+        expanded_once.insert(source_path.to_string());
     }
     if let Some(cycle_start) = stack.iter().position(|path| path == source_path) {
         let mut cycle = stack[cycle_start..].to_vec();
@@ -143,19 +174,62 @@ fn expand_source<'a>(
     }
     stack.push(source_path.to_string());
     let mut macro_block_comment = false;
+    let mut conditional_stack = Vec::new();
+    let mut active = ConditionalTruth::True;
     for (index, line) in source.lines().enumerate() {
         let line_number = index + 1;
         let Some(directive) = analysis.directives.get(&line_number) else {
-            expanded.push_str(&expand_macros_in_line(
-                line,
-                macros,
-                &mut macro_block_comment,
-            ));
+            if active != ConditionalTruth::False {
+                expanded.push_str(&expand_macros_in_line(
+                    line,
+                    macros,
+                    &mut macro_block_comment,
+                ));
+            }
             expanded.push('\n');
             continue;
         };
         match directive {
-            SourceDirective::Include(include) => {
+            SourceDirective::ConditionalStart(condition) => {
+                if active != ConditionalTruth::False
+                    && let Conditional::Unsupported(expression) = condition
+                {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        unsupported_condition_message(expression),
+                    ));
+                }
+                let condition_active = if active == ConditionalTruth::False {
+                    ConditionalTruth::False
+                } else {
+                    evaluate_condition(condition, macros, defined_macros)
+                        .map_err(|message| CSourceError::new(source_path, line_number, message))?
+                };
+                conditional_stack.push(ConditionalFrame {
+                    parent_active: active,
+                    condition_active,
+                    else_seen: false,
+                });
+                active = and_truth(active, condition_active);
+                expanded.push('\n');
+            }
+            SourceDirective::ConditionalElse => {
+                let Some(frame) = conditional_stack.last_mut() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                frame.else_seen = true;
+                active = and_truth(frame.parent_active, negate_truth(frame.condition_active));
+                expanded.push('\n');
+            }
+            SourceDirective::ConditionalEnd => {
+                let Some(frame) = conditional_stack.pop() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                active = frame.parent_active;
+                expanded.push('\n');
+            }
+            SourceDirective::Include(include) if active != ConditionalTruth::False => {
                 let included_path = resolve_include_path(source_path, line_number, include)?;
                 let included_source = lookup_source(sources, &included_path).ok_or_else(|| {
                     CSourceError::new(
@@ -176,36 +250,291 @@ fn expand_source<'a>(
                     dependencies,
                     expanded_once,
                     macros,
+                    defined_macros,
                     Some((source_path, line_number)),
                     expanded,
                 )?;
             }
-            SourceDirective::SystemInclude(_) => {}
-            SourceDirective::MacroDefinition { name, value } => {
-                if macros.insert(name.clone(), value.clone()).is_some() {
+            SourceDirective::Include(_) => expanded.push('\n'),
+            SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
+                if header != "stdint.h" {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        format!(
+                            "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                        ),
+                    ));
+                }
+                expanded.push('\n');
+            }
+            SourceDirective::SystemInclude(_) => expanded.push('\n'),
+            SourceDirective::MacroDefinition { name, value }
+                if active != ConditionalTruth::False =>
+            {
+                if !defined_macros.insert(name.clone()) {
                     return Err(CSourceError::new(
                         source_path,
                         line_number,
                         format!("macro `{name}` is redefined"),
                     ));
                 }
+                macros.insert(name.clone(), value.clone());
                 // Keep a line for the removed directive so source positions in
                 // the following C code remain aligned with the original file.
                 expanded.push('\n');
             }
-            SourceDirective::HeaderGuardStart(_)
-            | SourceDirective::HeaderGuardDefine(_)
-            | SourceDirective::HeaderGuardEnd
-            | SourceDirective::PragmaOnce => {}
+            SourceDirective::MacroDefinition { .. } => expanded.push('\n'),
+            SourceDirective::HeaderGuardDefine(name) if active != ConditionalTruth::False => {
+                if analysis.header_guard_define_line != Some(line_number) {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "only whole-header guards are supported; valueless `#define` is not supported here",
+                    ));
+                }
+                if !defined_macros.insert(name.clone()) {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        format!("macro `{name}` is redefined"),
+                    ));
+                }
+                expanded.push('\n');
+            }
+            SourceDirective::HeaderGuardDefine(_) => expanded.push('\n'),
+            SourceDirective::PragmaOnce if active != ConditionalTruth::False => {
+                expanded_once.insert(source_path.to_string());
+                expanded.push('\n');
+            }
+            SourceDirective::PragmaOnce => expanded.push('\n'),
+            SourceDirective::Unsupported(message) if active != ConditionalTruth::False => {
+                return Err(CSourceError::new(source_path, line_number, message));
+            }
+            SourceDirective::Unsupported(_) => expanded.push('\n'),
         }
     }
+    debug_assert!(conditional_stack.is_empty());
     stack.pop();
     Ok(())
 }
 
+fn collect_local_include_paths(
+    source_path: &str,
+    analysis: &SourceAnalysis,
+) -> Result<Vec<String>, CSourceError> {
+    let mut includes = Vec::new();
+    let mut macros = BTreeMap::new();
+    let mut defined_macros = BTreeSet::new();
+    let mut conditional_stack = Vec::new();
+    let mut active = ConditionalTruth::True;
+    let mut may_have_external_macros = false;
+    for (&line_number, directive) in &analysis.directives {
+        match directive {
+            SourceDirective::ConditionalStart(condition) => {
+                if active != ConditionalTruth::False
+                    && let Conditional::Unsupported(expression) = condition
+                {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        unsupported_condition_message(expression),
+                    ));
+                }
+                let condition_active = if active == ConditionalTruth::False {
+                    ConditionalTruth::False
+                } else {
+                    evaluate_condition_for_discovery(
+                        condition,
+                        &macros,
+                        &defined_macros,
+                        may_have_external_macros,
+                    )
+                };
+                conditional_stack.push(ConditionalFrame {
+                    parent_active: active,
+                    condition_active,
+                    else_seen: false,
+                });
+                active = and_truth(active, condition_active);
+            }
+            SourceDirective::ConditionalElse => {
+                let Some(frame) = conditional_stack.last_mut() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                frame.else_seen = true;
+                active = and_truth(frame.parent_active, negate_truth(frame.condition_active));
+            }
+            SourceDirective::ConditionalEnd => {
+                let Some(frame) = conditional_stack.pop() else {
+                    unreachable!("analyze_source validates conditional structure")
+                };
+                active = frame.parent_active;
+            }
+            SourceDirective::Include(include) if active != ConditionalTruth::False => {
+                if active == ConditionalTruth::True {
+                    may_have_external_macros = true;
+                }
+                includes.push(resolve_include_path(source_path, line_number, include)?);
+            }
+            SourceDirective::Include(_) => {}
+            SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
+                if header != "stdint.h" {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        format!(
+                            "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                        ),
+                    ));
+                }
+            }
+            SourceDirective::SystemInclude(_) => {}
+            SourceDirective::MacroDefinition { name, value }
+                if active == ConditionalTruth::True =>
+            {
+                if defined_macros.insert(name.clone()) {
+                    macros.insert(name.clone(), value.clone());
+                } else {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        format!("macro `{name}` is redefined"),
+                    ));
+                }
+            }
+            SourceDirective::MacroDefinition { .. } => {}
+            SourceDirective::HeaderGuardDefine(name) if active == ConditionalTruth::True => {
+                if analysis.header_guard_define_line != Some(line_number) {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "only whole-header guards are supported; valueless `#define` is not supported here",
+                    ));
+                }
+                defined_macros.insert(name.clone());
+            }
+            SourceDirective::HeaderGuardDefine(_) => {}
+            SourceDirective::PragmaOnce => {}
+            SourceDirective::Unsupported(message) if active != ConditionalTruth::False => {
+                return Err(CSourceError::new(source_path, line_number, message));
+            }
+            SourceDirective::Unsupported(_) => {}
+        }
+    }
+    debug_assert!(conditional_stack.is_empty());
+    Ok(includes)
+}
+
+fn evaluate_condition(
+    condition: &Conditional,
+    macros: &BTreeMap<String, String>,
+    defined_macros: &BTreeSet<String>,
+) -> Result<ConditionalTruth, String> {
+    match condition {
+        Conditional::Literal(value) => Ok(if *value {
+            ConditionalTruth::True
+        } else {
+            ConditionalTruth::False
+        }),
+        Conditional::Macro(name) => {
+            let Some(value) = macros.get(name) else {
+                return Err(format!(
+                    "unsupported conditional expression `#if {name}`; expected a previously defined literal macro"
+                ));
+            };
+            macro_condition_truth(value).ok_or_else(|| {
+                format!(
+                    "unsupported conditional expression `#if {name}`; expected `{name}` to be defined as 0 or 1"
+                )
+            })
+        }
+        Conditional::Ifdef(name) => Ok(if defined_macros.contains(name) {
+            ConditionalTruth::True
+        } else {
+            ConditionalTruth::False
+        }),
+        Conditional::Ifndef(name) => Ok(if defined_macros.contains(name) {
+            ConditionalTruth::False
+        } else {
+            ConditionalTruth::True
+        }),
+        Conditional::Unsupported(expression) => Err(unsupported_condition_message(expression)),
+    }
+}
+
+fn unsupported_condition_message(expression: &str) -> String {
+    format!(
+        "unsupported conditional expression `#{expression}`; expected `#if 0`, `#if 1`, `#if NAME`, `#ifdef NAME`, or `#ifndef NAME`"
+    )
+}
+
+fn evaluate_condition_for_discovery(
+    condition: &Conditional,
+    macros: &BTreeMap<String, String>,
+    defined_macros: &BTreeSet<String>,
+    may_have_external_macros: bool,
+) -> ConditionalTruth {
+    match condition {
+        Conditional::Literal(value) => {
+            if *value {
+                ConditionalTruth::True
+            } else {
+                ConditionalTruth::False
+            }
+        }
+        Conditional::Macro(name) => macros
+            .get(name)
+            .and_then(|value| macro_condition_truth(value))
+            .unwrap_or(ConditionalTruth::Unknown),
+        Conditional::Ifdef(name) => {
+            if defined_macros.contains(name) {
+                ConditionalTruth::True
+            } else if may_have_external_macros {
+                ConditionalTruth::Unknown
+            } else {
+                ConditionalTruth::False
+            }
+        }
+        Conditional::Ifndef(name) => {
+            if defined_macros.contains(name) {
+                ConditionalTruth::False
+            } else if may_have_external_macros {
+                ConditionalTruth::Unknown
+            } else {
+                ConditionalTruth::True
+            }
+        }
+        Conditional::Unsupported(_) => ConditionalTruth::Unknown,
+    }
+}
+
+fn macro_condition_truth(value: &str) -> Option<ConditionalTruth> {
+    match value {
+        "0" => Some(ConditionalTruth::False),
+        "1" => Some(ConditionalTruth::True),
+        _ => None,
+    }
+}
+
+fn and_truth(left: ConditionalTruth, right: ConditionalTruth) -> ConditionalTruth {
+    match (left, right) {
+        (ConditionalTruth::False, _) | (_, ConditionalTruth::False) => ConditionalTruth::False,
+        (ConditionalTruth::True, ConditionalTruth::True) => ConditionalTruth::True,
+        _ => ConditionalTruth::Unknown,
+    }
+}
+
+fn negate_truth(value: ConditionalTruth) -> ConditionalTruth {
+    match value {
+        ConditionalTruth::True => ConditionalTruth::False,
+        ConditionalTruth::False => ConditionalTruth::True,
+        ConditionalTruth::Unknown => ConditionalTruth::Unknown,
+    }
+}
+
 fn analyze_source(source_path: &str, source: &str) -> Result<SourceAnalysis, CSourceError> {
     let mut directives = BTreeMap::new();
-    let mut includes = Vec::new();
     let mut significant = Vec::new();
     let mut directive_comments = false;
     let mut content_comments = false;
@@ -215,15 +544,13 @@ fn analyze_source(source_path: &str, source: &str) -> Result<SourceAnalysis, CSo
         let has_code = line_has_non_comment_content(line, &mut content_comments);
         let directive = parse_directive(source_path, line_number, line, &mut directive_comments)?;
         if let Some(directive) = directive {
-            if let SourceDirective::Include(include) = &directive {
-                includes.push(resolve_include_path(source_path, line_number, include)?);
-            }
             significant.push(SignificantLine::Directive(directive.clone()));
             directives.insert(line_number, directive);
         } else if has_code {
             significant.push(SignificantLine::Code);
         }
     }
+    validate_conditional_structure(source_path, &directives)?;
 
     let framing: Vec<&SignificantLine> = significant
         .iter()
@@ -234,42 +561,70 @@ fn analyze_source(source_path: &str, source: &str) -> Result<SourceAnalysis, CSo
             )
         })
         .collect();
-    let guard_starts: Vec<&str> = framing
-        .iter()
-        .filter_map(|line| match line {
-            SignificantLine::Directive(SourceDirective::HeaderGuardStart(name)) => {
-                Some(name.as_str())
+    let (guarded, header_guard_define_line) = header_guard_shape(&framing, &directives);
+
+    Ok(SourceAnalysis {
+        directives,
+        guarded,
+        header_guard_define_line,
+    })
+}
+
+fn validate_conditional_structure(
+    source_path: &str,
+    directives: &BTreeMap<usize, SourceDirective>,
+) -> Result<(), CSourceError> {
+    let mut stack = Vec::new();
+    for (&line_number, directive) in directives {
+        match directive {
+            SourceDirective::ConditionalStart(_) => stack.push((line_number, false)),
+            SourceDirective::ConditionalElse => {
+                let Some((_, else_seen)) = stack.last_mut() else {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "unmatched `#else`; expected an open conditional",
+                    ));
+                };
+                if *else_seen {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "multiple `#else` directives are not supported in one conditional",
+                    ));
+                }
+                *else_seen = true;
             }
-            _ => None,
-        })
-        .collect();
-    let guard_defines: Vec<&str> = framing
-        .iter()
-        .filter_map(|line| match line {
-            SignificantLine::Directive(SourceDirective::HeaderGuardDefine(name)) => {
-                Some(name.as_str())
+            SourceDirective::ConditionalEnd => {
+                if stack.pop().is_none() {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "unmatched `#endif`; expected an open conditional",
+                    ));
+                }
             }
-            _ => None,
-        })
-        .collect();
-    let guard_ends = framing
-        .iter()
-        .filter(|line| {
-            matches!(
-                line,
-                SignificantLine::Directive(SourceDirective::HeaderGuardEnd)
-            )
-        })
-        .count();
-    let has_guard_directive =
-        !guard_starts.is_empty() || !guard_defines.is_empty() || guard_ends > 0;
-    let valid_guard = guard_starts.len() == 1
-        && guard_defines.len() == 1
-        && guard_ends == 1
-        && framing.len() >= 3
+            _ => {}
+        }
+    }
+    if let Some((line_number, _)) = stack.last() {
+        return Err(CSourceError::new(
+            source_path,
+            *line_number,
+            "unterminated conditional; expected `#endif`",
+        ));
+    }
+    Ok(())
+}
+
+fn header_guard_shape(
+    framing: &[&SignificantLine],
+    directives: &BTreeMap<usize, SourceDirective>,
+) -> (bool, Option<usize>) {
+    let valid = framing.len() >= 3
         && matches!(
             framing[0],
-            SignificantLine::Directive(SourceDirective::HeaderGuardStart(_))
+            SignificantLine::Directive(SourceDirective::ConditionalStart(Conditional::Ifndef(_)))
         )
         && matches!(
             framing[1],
@@ -277,40 +632,24 @@ fn analyze_source(source_path: &str, source: &str) -> Result<SourceAnalysis, CSo
         )
         && matches!(
             framing.last(),
-            Some(SignificantLine::Directive(SourceDirective::HeaderGuardEnd))
+            Some(SignificantLine::Directive(SourceDirective::ConditionalEnd))
         )
-        && guard_starts[0] == guard_defines[0];
-    if has_guard_directive && !valid_guard {
-        return Err(CSourceError::new(
-            source_path,
-            first_guard_line(&directives).unwrap_or(1),
-            "only whole-header guards are supported; expected `#ifndef NAME`, `#define NAME`, and a final `#endif`",
-        ));
+        && match (framing[0], framing[1]) {
+            (
+                SignificantLine::Directive(SourceDirective::ConditionalStart(Conditional::Ifndef(
+                    start,
+                ))),
+                SignificantLine::Directive(SourceDirective::HeaderGuardDefine(define)),
+            ) => start == define,
+            _ => false,
+        };
+    if !valid {
+        return (false, None);
     }
-
-    Ok(SourceAnalysis {
-        directives,
-        includes,
-        guarded: valid_guard,
-        pragma_once: significant.iter().any(|line| {
-            matches!(
-                line,
-                SignificantLine::Directive(SourceDirective::PragmaOnce)
-            )
-        }),
-    })
-}
-
-fn first_guard_line(directives: &BTreeMap<usize, SourceDirective>) -> Option<usize> {
-    directives.iter().find_map(|(line, directive)| {
-        matches!(
-            directive,
-            SourceDirective::HeaderGuardStart(_)
-                | SourceDirective::HeaderGuardDefine(_)
-                | SourceDirective::HeaderGuardEnd
-        )
-        .then_some(*line)
-    })
+    let define_line = directives.iter().find_map(|(line, directive)| {
+        matches!(directive, SourceDirective::HeaderGuardDefine(_)).then_some(*line)
+    });
+    (true, define_line)
 }
 
 fn parse_directive<'a>(
@@ -340,13 +679,16 @@ fn parse_directive<'a>(
                 if header == "stdint.h" && trailing_comments_only(&rest[end + 1..]) {
                     return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
                 }
-                return Err(CSourceError::new(
-                    source_path,
-                    line_number,
-                    format!(
-                        "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
-                    ),
-                ));
+                if !trailing_comments_only(&rest[end + 1..]) {
+                    return Err(CSourceError::new(
+                        source_path,
+                        line_number,
+                        "malformed system include; expected only a header name",
+                    ));
+                }
+                return Ok(Some(SourceDirective::Unsupported(format!(
+                    "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                ))));
             }
             return Err(CSourceError::new(
                 source_path,
@@ -376,7 +718,9 @@ fn parse_directive<'a>(
     {
         let (name, trailing) = split_identifier(rest.trim_start());
         if let Some(name) = name.filter(|_| trailing_comments_only(trailing)) {
-            return Ok(Some(SourceDirective::HeaderGuardStart(name)));
+            return Ok(Some(SourceDirective::ConditionalStart(
+                Conditional::Ifndef(name),
+            )));
         }
         return Err(CSourceError::new(
             source_path,
@@ -384,23 +728,54 @@ fn parse_directive<'a>(
             "malformed header guard; expected `#ifndef NAME`",
         ));
     }
+    if let Some(rest) = directive.strip_prefix("ifdef")
+        && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
+    {
+        let (name, trailing) = split_identifier(rest.trim_start());
+        if let Some(name) = name.filter(|_| trailing_comments_only(trailing)) {
+            return Ok(Some(SourceDirective::ConditionalStart(Conditional::Ifdef(
+                name,
+            ))));
+        }
+        return Err(CSourceError::new(
+            source_path,
+            line_number,
+            "malformed conditional; expected `#ifdef NAME`",
+        ));
+    }
+    if let Some(rest) = directive.strip_prefix("if")
+        && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
+    {
+        let rest = rest.trim_start();
+        let condition = if rest.starts_with('0') && trailing_comments_only(&rest[1..]) {
+            Conditional::Literal(false)
+        } else if rest.starts_with('1') && trailing_comments_only(&rest[1..]) {
+            Conditional::Literal(true)
+        } else if let (Some(name), trailing) = split_identifier(rest) {
+            if trailing_comments_only(trailing) {
+                Conditional::Macro(name)
+            } else {
+                Conditional::Unsupported(format!("if {}", rest.trim()))
+            }
+        } else {
+            Conditional::Unsupported(format!("if {}", rest.trim()))
+        };
+        return Ok(Some(SourceDirective::ConditionalStart(condition)));
+    }
     if let Some(rest) = directive.strip_prefix("define")
         && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
     {
         let (name, trailing) = split_identifier(rest.trim_start());
         let Some(name) = name else {
-            return Err(CSourceError::new(
-                source_path,
-                line_number,
-                "malformed macro definition; expected `#define NAME VALUE`",
-            ));
+            return Ok(Some(SourceDirective::Unsupported(
+                "malformed macro definition; expected `#define NAME VALUE`".to_string(),
+            )));
         };
         if trailing.starts_with('(') {
-            return Err(CSourceError::new(
-                source_path,
-                line_number,
-                "function-like macros are not supported; use an object-like literal macro",
-            ));
+            return Ok(Some(SourceDirective::Unsupported(
+                "function-like macros are not supported; use an object-like literal macro"
+                    .to_string(),
+            )));
         }
         if trailing_comments_only(trailing) {
             return Ok(Some(SourceDirective::HeaderGuardDefine(name)));
@@ -408,20 +783,22 @@ fn parse_directive<'a>(
         if let Some(value) = parse_macro_literal(trailing.trim_start()) {
             return Ok(Some(SourceDirective::MacroDefinition { name, value }));
         }
-        return Err(CSourceError::new(
-            source_path,
-            line_number,
-            format!(
-                "unsupported macro definition `#{directive}`; expected one integer or character literal"
-            ),
-        ));
+        return Ok(Some(SourceDirective::Unsupported(format!(
+            "unsupported macro definition `#{directive}`; expected one integer or character literal"
+        ))));
+    }
+    if directive
+        .strip_prefix("else")
+        .is_some_and(trailing_comments_only)
+    {
+        return Ok(Some(SourceDirective::ConditionalElse));
     }
     if directive == "endif"
         || directive
             .strip_prefix("endif")
             .is_some_and(trailing_comments_only)
     {
-        return Ok(Some(SourceDirective::HeaderGuardEnd));
+        return Ok(Some(SourceDirective::ConditionalEnd));
     }
     if directive == "pragma once"
         || directive
@@ -430,11 +807,9 @@ fn parse_directive<'a>(
     {
         return Ok(Some(SourceDirective::PragmaOnce));
     }
-    Err(CSourceError::new(
-        source_path,
-        line_number,
-        format!("unsupported preprocessor directive `#{directive}`"),
-    ))
+    Ok(Some(SourceDirective::Unsupported(format!(
+        "unsupported preprocessor directive `#{directive}`"
+    ))))
 }
 
 fn parse_macro_literal(input: &str) -> Option<String> {
@@ -895,6 +1270,60 @@ mod tests {
     }
 
     #[test]
+    fn bounded_conditionals_select_active_branches_and_ignore_inactive_includes() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                r##"#define FEATURE 1
+#if 0
+#include "missing.h"
+#include <stdio.h>
+#else
+#ifdef FEATURE
+#include "config.h"
+#else
+int32 wrong(void) { return 0; }
+#endif
+#endif
+#if FEATURE
+int32 run(void) { return VALUE; }
+#else
+int32 wrong_again(void) { return 0; }
+#endif
+"##,
+            ),
+            ("config.h", "#define VALUE 4\n"),
+        ]);
+        assert_eq!(
+            local_include_paths("main.c", sources["main.c"]).unwrap(),
+            ["config.h"]
+        );
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        assert!(expanded.source().contains("int32 run(void) { return 4; }"));
+        assert!(!expanded.source().contains("wrong(void)"));
+        assert!(!expanded.source().contains("wrong_again(void)"));
+        assert!(!expanded.source().contains("missing.h"));
+        assert!(!expanded.source().contains("stdio.h"));
+    }
+
+    #[test]
+    fn conditionals_require_balanced_structure_and_supported_active_conditions() {
+        let cases = [
+            ("#else\n", "unmatched `#else`"),
+            ("#if 1\n#else\n#else\n#endif\n", "multiple `#else`"),
+            ("#if 1\n", "unterminated conditional"),
+            (
+                "#if defined(FEATURE)\n#endif\n",
+                "unsupported conditional expression",
+            ),
+        ];
+        for (source, expected) in cases {
+            let error = local_include_paths("main.c", source).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
     fn malformed_header_guards_are_rejected_but_arbitrary_conditionals_remain_unsupported() {
         let mismatched = BTreeMap::from([(
             "bad.h",
@@ -912,7 +1341,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("unsupported preprocessor directive `#if defined(BAD_H)`")
+                .contains("unsupported conditional expression `#if defined(BAD_H)`")
         );
     }
 

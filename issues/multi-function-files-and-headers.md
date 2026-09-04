@@ -24,7 +24,10 @@ already defines the semantics of its supported `int32_t` and `uint8_t` names;
 other system headers remain unsupported. The first macro slice now accepts
 object-like `#define NAME` replacements consisting of one supported integer or
 character literal, expanding them in source order across a translation unit
-and its included headers.
+and its included headers. The conditional-compilation slice now selects active
+branches for `#if 0`, `#if 1`, `#if NAME` when `NAME` is a known 0/1 literal,
+`#ifdef`, `#ifndef`, `#else`, and `#endif`, including nesting, while keeping
+general preprocessor expressions unsupported.
 
 ## Violated invariant
 
@@ -42,7 +45,9 @@ the names Click already knows. A positive macro mdtest shares literal-only
 object-like definitions from a local header across more than one source file.
 Negative mdtests show that an unresolvable include or a multi-token/function-like
 macro produces a positioned diagnostic naming the construct rather than
-"unexpected character".
+"unexpected character". A conditional-compilation mdtest includes unsupported
+code and a missing include in an inactive branch, plus a negative test for a
+general conditional expression.
 
 ## Acceptance criteria
 
@@ -62,9 +67,14 @@ macro produces a positioned diagnostic naming the construct rather than
   uses in comments and quoted literals remain untouched, and redefinitions or
   other macro forms receive source-named diagnostics.
 - Function-like and multi-token macros, system headers other than the modeled
-  `<stdint.h>`, conditional compilation, and other preprocessor directives
-  remain explicitly unsupported until a documented allowlist or preprocessor
-  subset is implemented.
+  `<stdint.h>`, general conditional expressions, and other preprocessor
+  directives remain explicitly unsupported until a documented allowlist or
+  preprocessor subset is implemented.
+- The bounded conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a
+  previously defined 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#else`,
+  and `#endif`, including nested conditionals. Inactive branches are removed
+  before C parsing, and malformed structure or unsupported active conditions
+  receive source-named diagnostics.
 - Shared struct declarations are reused across functions and files, replacing
   the per-file re-declaration in examples.
 - `scripts/check.sh` passes.
