@@ -36,7 +36,6 @@ C language coverage:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)
-- [Make C-string witnesses carry dynamic loadability](cstr-loadability-witnesses.md)
 - [Model floating-point values](floating-point.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model volatile objects](volatile-objects.md)
@@ -50,6 +49,7 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
+- [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 
 ## Hard bucket: 1
 
