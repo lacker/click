@@ -127,6 +127,17 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
     }
 }
 
+/// The built-in allocation authority is byte-addressed independently of the
+/// pointer type used by the C caller. Its public declaration keeps the
+/// historical `int32*` spelling, but allocator contracts may name any
+/// modeled data pointer (including pointer-to-pointer storage).
+pub(in crate::surface) fn c_value_matches_allocation_pointer(value: &CValue) -> bool {
+    matches!(
+        value,
+        CValue::Pointer(pointer) if pointer.c_type().pointee_type().is_some()
+    )
+}
+
 #[cfg(test)]
 pub(in crate::surface) fn offset_pointer_by_int32_elements(
     pointer: Pointer,

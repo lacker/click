@@ -661,7 +661,14 @@ fn lower_resource_clause_with_values(
                 &array_refs_for_parameters(parameters, values, state.memory()),
                 state,
                 result,
-                contract_segment_element_width(parameters, segment),
+                contract_segment_element_width_for_result_type(
+                    parameters,
+                    segment,
+                    result.and_then(|value| match value {
+                        CValue::Pointer(pointer) => Some(pointer.c_type()),
+                        _ => None,
+                    }),
+                ),
             )?;
             Ok(CResourceFact::view_memory(range))
         }
@@ -673,7 +680,14 @@ fn lower_resource_clause_with_values(
                 &array_refs_for_parameters(parameters, values, state.memory()),
                 state,
                 result,
-                contract_segment_element_width(parameters, segment),
+                contract_segment_element_width_for_result_type(
+                    parameters,
+                    segment,
+                    result.and_then(|value| match value {
+                        CValue::Pointer(pointer) => Some(pointer.c_type()),
+                        _ => None,
+                    }),
+                ),
             )?;
             Ok(CResourceFact::own_memory(range))
         }
@@ -709,7 +723,13 @@ fn lower_resource_clause_with_values(
                         "could not lower resource `{name}` argument {index}: {message}"
                     ))
                 })?;
-                if !c_value_matches_click_type(&value, *parameter_type) {
+                let matches_type = if name == CResourceFact::ALLOCATION_RESOURCE_NAME && index == 0
+                {
+                    c_value_matches_allocation_pointer(&value)
+                } else {
+                    c_value_matches_click_type(&value, *parameter_type)
+                };
+                if !matches_type {
                     return Err(ClickError::new(format!(
                         "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
                         parameter_type
@@ -1060,7 +1080,22 @@ pub(in crate::surface) fn contract_segment_element_width(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> u32 {
+    contract_segment_element_width_for_result_type(parameters, segment, None)
+}
+
+pub(in crate::surface) fn contract_segment_element_width_for_result_type(
+    parameters: &[syntax::C0Parameter],
+    segment: &ContractSegment,
+    result_type: Option<CType>,
+) -> u32 {
     if let Some(element_width) = segment.field_element_width() {
+        return element_width;
+    }
+    if matches!(&segment.base, CExpression::Variable(name) if name == "result")
+        && let Some(element_width) = result_type
+            .and_then(CType::pointee_type)
+            .map(CType::byte_width)
+    {
         return element_width;
     }
     contract_expression_element_width(parameters, &segment.base).unwrap_or(4)

@@ -4486,7 +4486,10 @@ fn evaluate_function_declared_resource_spec(
                 }
             }
         };
-        if !parameter_type.accepts(&value) {
+        let accepts_allocation_pointer = name == CResourceFact::ALLOCATION_RESOURCE_NAME
+            && index == 0
+            && matches!(&value, CValue::Pointer(pointer) if pointer.c_type().pointee_type().is_some());
+        if !accepts_allocation_pointer && !parameter_type.accepts(&value) {
             return Ok(Err(CRuntimeError::FunctionContract(format!(
                 "resource `{name}` argument {index} has the wrong type"
             ))));

@@ -2172,6 +2172,7 @@ pub(in crate::surface) fn function_resource_summary(
             Ensure::Resource(resource) => Some(resource_clause_to_resource_spec_with_parameters(
                 resource,
                 parsed_function.parameters(),
+                Some(parsed_function.return_type().to_kernel_type()),
             )),
             _ => None,
         })
@@ -2264,7 +2265,7 @@ pub(in crate::surface) fn append_entry_resource_specs(
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
     specs.push(resource_clause_to_resource_spec_with_parameters(
-        resource, parameters,
+        resource, parameters, None,
     )?);
     Ok(())
 }
@@ -2272,12 +2273,15 @@ pub(in crate::surface) fn append_entry_resource_specs(
 fn resource_clause_to_resource_spec_with_parameters(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
+    result_type: Option<crate::kernel::CType>,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
         ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec_with_parameters(
-                resource, parameters,
+                resource,
+                parameters,
+                result_type,
             )?),
         }),
         ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::ViewMemory(
@@ -2287,7 +2291,11 @@ fn resource_clause_to_resource_spec_with_parameters(
                 segment.end.clone(),
             )
             .with_element_width(
-                crate::surface::lowering::contract_segment_element_width(parameters, segment),
+                crate::surface::lowering::contract_segment_element_width_for_result_type(
+                    parameters,
+                    segment,
+                    result_type,
+                ),
             ),
         )),
         ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::OwnMemory(
@@ -2297,7 +2305,11 @@ fn resource_clause_to_resource_spec_with_parameters(
                 segment.end.clone(),
             )
             .with_element_width(
-                crate::surface::lowering::contract_segment_element_width(parameters, segment),
+                crate::surface::lowering::contract_segment_element_width_for_result_type(
+                    parameters,
+                    segment,
+                    result_type,
+                ),
             ),
         )),
         ResourceClause::Declared {

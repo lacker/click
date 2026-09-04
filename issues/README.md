@@ -35,7 +35,6 @@ C language coverage:
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)
 - [Make C-string witnesses carry dynamic loadability](cstr-loadability-witnesses.md)
-- [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model volatile objects](volatile-objects.md)

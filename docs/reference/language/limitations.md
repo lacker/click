@@ -13,7 +13,7 @@ contract expressions, calls, and the other parenthesized surface forms.
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
 features include broader structs, 64-bit and `size_t` integers, `char`, globals,
-general allocator compatibility, and some operators. The
+unmodeled allocator compatibility, and some operators. The
 supported `switch` slice is intentionally narrow: labels must be direct integer
 or character literals in one compound body, with no `goto` or arbitrary
 constant-expression labels yet.
@@ -23,9 +23,12 @@ C0 supports `sizeof` for the modeled scalar and pointer types, plus
 `int32` backing allocations such as `malloc(count * sizeof(int32))`, with
 ordinary null checking and `free`. The zeroed variants are
 `calloc(count, sizeof(int32))` and matching
-`calloc(count, sizeof(struct T))` for a `struct T*` target. It does not yet
-support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
-conversions, allocator declarations, custom allocators, or `realloc`.
+`calloc(count, sizeof(struct T))` for a `struct T*` target. Compatible
+external allocator declarations may describe a supported data-pointer or
+pointer-array result with `allocation(result, bytes)` and an owned result
+range. Zero sizes, arbitrary byte layouts, `size_t`, general `void *`
+conversions, unrelated custom allocator APIs, and `realloc` remain outside
+this surface description.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed one-dimensional

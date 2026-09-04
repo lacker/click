@@ -152,8 +152,9 @@ Likely additions:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.
 - Broader allocation beyond the modeled struct, scalar-buffer, and pointer-array
-  forms: compatible external allocator declarations and other unsupported
-  allocator APIs remain. The current heap slice includes bounded typed and
+  forms: other unsupported allocator APIs remain. External contracts can now
+  describe compatible typed data-pointer and pointer-array allocators. The
+  current heap slice includes bounded typed and
   arbitrary-byte `realloc`, including preserved zeroed prefixes, plus the
   supported `calloc` forms.
 - Richer initialization predicates when examples need to package partially

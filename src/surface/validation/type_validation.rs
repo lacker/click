@@ -120,7 +120,7 @@ fn validate_resource_subject_expression_types(
                 let actual =
                     infer_contract_expression_type(argument, variables, click_functions, context)?;
                 if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index))
-                    && !click_types_compatible(actual, *expected)
+                    && !resource_types_compatible(name, index, actual, *expected)
                 {
                     return Err(ClickError::new(format!(
                         "resource `{name}` argument {index} expects {}, got {} in {context}",
@@ -342,6 +342,24 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
         _ => actual == expected,
     }
+}
+
+fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected: C0Type) -> bool {
+    if name == CResourceFact::ALLOCATION_RESOURCE_NAME
+        && index == 0
+        && expected == C0Type::Int32Pointer
+    {
+        return matches!(
+            actual,
+            C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+                | C0Type::Int32Array(_)
+                | C0Type::UInt8Array(_)
+        );
+    }
+    click_types_compatible(actual, expected)
 }
 
 fn infer_contract_expression_type(
@@ -856,7 +874,7 @@ pub(super) fn validate_resource_clause(
                     context,
                 )? {
                     let expected = parameter_types[index];
-                    if !click_types_compatible(actual, expected) {
+                    if !resource_types_compatible(name, index, actual, expected) {
                         return Err(ClickError::new(format!(
                             "resource `{name}` argument {index} expects {}, got {} in {context}",
                             describe_c0_type(expected),
