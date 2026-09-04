@@ -11,6 +11,95 @@ fn bitwise_xor_normalizes_swap_identities() {
     assert_eq!(recovered_x, x);
     assert_eq!(recovered_y, y);
 }
+
+#[test]
+fn floating_point_constant_conversions_round_in_integer_space() {
+    let state = CState::new();
+    let cases = [
+        (
+            c_cast(c_uint64_literal(16_777_217), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0x4b80_0000)),
+        ),
+        (
+            c_cast(c_uint64_literal(9_007_199_254_740_993), CType::Float64),
+            CValue::Float64(Bitvector32Term::UInt64Constant(0x4340_0000_0000_0000)),
+        ),
+        (
+            c_cast(c_float64_literal(0x3ff0_0000_1000_0000), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0x3f80_0000)),
+        ),
+        (
+            c_cast(c_float32_literal(0x3fc0_0000), CType::Float64),
+            CValue::Float64(Bitvector32Term::UInt64Constant(0x3ff8_0000_0000_0000)),
+        ),
+        (
+            c_cast(c_int64_literal(-16_777_217), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0xcb80_0000)),
+        ),
+    ];
+
+    for (expression, expected) in cases {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("constant floating conversion should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::Value(expected),
+            }
+        );
+    }
+}
+
+#[test]
+fn floating_point_to_integer_conversion_truncates_and_rejects_invalid_values() {
+    let state = CState::new();
+    let valid = [
+        (
+            c_cast(c_float32_literal(0x4070_0000), CType::Int32),
+            CValue::Int32(Bitvector32Term::Constant(3)),
+        ),
+        (
+            c_cast(c_float64_literal(0xc00e_0000_0000_0000), CType::Int64),
+            CValue::Int64(Bitvector32Term::Int64Constant(-3)),
+        ),
+        (
+            c_cast(c_float64_literal(0x8000_0000_0000_0000), CType::UInt32),
+            CValue::UInt32(Bitvector32Term::Constant(0)),
+        ),
+    ];
+    for (expression, expected) in valid {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("valid floating-to-integer conversion should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::Value(expected),
+            }
+        );
+    }
+
+    for expression in [
+        c_cast(c_float64_literal(0x7ff8_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x7ff0_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x41e0_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x7fef_ffff_ffff_ffff), CType::Int64),
+    ] {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("invalid floating-to-integer conversion should retain a diagnostic");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            }
+        );
+    }
+}
 #[test]
 fn signed_add_overflow_is_native_undefined_behavior() {
     let state = CState::new();

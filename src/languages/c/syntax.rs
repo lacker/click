@@ -6705,10 +6705,11 @@ impl Parser {
                     None,
                     None,
                 ) => parsed_type.c_type,
+                (C0Type::Float32 | C0Type::Float64, None, None) => parsed_type.c_type,
                 _ => {
-                    return Err(
-                        self.error_at_previous("casts support only modeled scalar integer values")
-                    );
+                    return Err(self.error_at_previous(
+                        "casts support only modeled scalar integer or floating-point values",
+                    ));
                 }
             };
             return Ok(C0Expression::Cast {
@@ -6724,6 +6725,17 @@ impl Parser {
         if self.peek() == Some(&Token::Minus) {
             self.position += 1;
             if let Some(Token::Number(number)) = self.peek().cloned() {
+                if is_floating_literal(&number) {
+                    self.position += 1;
+                    let expression = parse_float_literal_expression(&number).map_err(|reason| {
+                        self.error_here(format!(
+                            "invalid floating-point literal `{number}`: {reason}"
+                        ))
+                    })?;
+                    return negate_float_literal(expression).ok_or_else(|| {
+                        self.error_here("unary negation requires a float or double literal")
+                    });
+                }
                 self.position += 1;
                 let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
                     self.error_here(format!("invalid integer literal `{number}`: {reason}"))
@@ -6754,9 +6766,13 @@ impl Parser {
                 };
                 return Ok(C0Expression::Int64Literal(value));
             }
+            let expression = self.parse_unary()?;
+            if let Some(expression) = negate_float_literal(expression.clone()) {
+                return Ok(expression);
+            }
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),
-                Box::new(self.parse_unary()?),
+                Box::new(expression),
             ));
         }
 
@@ -6814,6 +6830,13 @@ impl Parser {
                         }
                     };
                     let arguments = self.parse_call_arguments(Some(&function_name))?;
+                    if let Some(result) =
+                        parse_float_classification_call(&function_name, &arguments)
+                    {
+                        expression = result
+                            .map_err(|reason| self.error_at_position(call_position, reason))?;
+                        continue;
+                    }
                     expression = C0Expression::Call {
                         function_name,
                         arguments,
@@ -7260,9 +7283,18 @@ impl Parser {
         }
         let at = self.error_context();
         match self.next() {
-            Some(Token::Ident(name)) => match self.enum_constants.get(&name) {
-                Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
-                None => Ok(C0Expression::Variable(self.resolve_name(&name))),
+            Some(Token::Ident(name)) => match name.as_str() {
+                // These C library-style constants give the value slice a
+                // source-level way to exercise exceptional IEEE classes
+                // without importing a host-specific math header.
+                "INFINITY" => Ok(C0Expression::Float64Literal(0x7ff0_0000_0000_0000)),
+                "NAN" => Ok(C0Expression::Float64Literal(0x7ff8_0000_0000_0000)),
+                "INFINITYF" => Ok(C0Expression::Float32Literal(0x7f80_0000)),
+                "NANF" => Ok(C0Expression::Float32Literal(0x7fc0_0000)),
+                _ => match self.enum_constants.get(&name) {
+                    Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
+                    None => Ok(C0Expression::Variable(self.resolve_name(&name))),
+                },
             },
             Some(Token::Number(number)) => {
                 if is_floating_literal(&number) {
@@ -7542,6 +7574,66 @@ fn parse_float_literal_expression(literal: &str) -> Result<C0Expression, &'stati
             .ok_or("value is not a finite binary32 literal"),
         "l" | "L" => Err("long double literals are not modeled in C0"),
         _ => Err("unsupported floating-point literal suffix"),
+    }
+}
+
+fn negate_float_literal(expression: C0Expression) -> Option<C0Expression> {
+    match expression {
+        C0Expression::Float32Literal(bits) => {
+            Some(C0Expression::Float32Literal(bits ^ 0x8000_0000))
+        }
+        C0Expression::Float64Literal(bits) => {
+            Some(C0Expression::Float64Literal(bits ^ 0x8000_0000_0000_0000))
+        }
+        _ => None,
+    }
+}
+
+fn parse_float_classification_call(
+    function_name: &str,
+    arguments: &[C0Expression],
+) -> Option<Result<C0Expression, &'static str>> {
+    let classification = match function_name {
+        "isfinite" | "isinf" | "iszero" | "issubnormal" | "isnan" => function_name,
+        _ => return None,
+    };
+    if arguments.len() != 1 {
+        return Some(Err(
+            "floating classification predicates require one argument",
+        ));
+    }
+    let result = match &arguments[0] {
+        C0Expression::Float32Literal(bits) => {
+            classify_float_bits(u64::from(*bits), 8, 23, classification)
+        }
+        C0Expression::Float64Literal(bits) => classify_float_bits(*bits, 11, 52, classification),
+        _ => {
+            return Some(Err(
+                "floating classification predicates currently require a float or double literal",
+            ));
+        }
+    };
+    Some(Ok(C0Expression::Int32Literal(u32::from(result))))
+}
+
+fn classify_float_bits(
+    bits: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    classification: &str,
+) -> bool {
+    let exponent_mask = (1u64 << exponent_bits) - 1;
+    let exponent = (bits >> fraction_bits) & exponent_mask;
+    let fraction = bits & ((1u64 << fraction_bits) - 1);
+    let all_ones = exponent == exponent_mask;
+    let zero_exponent = exponent == 0;
+    match classification {
+        "isfinite" => !all_ones,
+        "isinf" => all_ones && fraction == 0,
+        "iszero" => zero_exponent && fraction == 0,
+        "issubnormal" => zero_exponent && fraction != 0,
+        "isnan" => all_ones && fraction != 0,
+        _ => unreachable!("classification was validated by the caller"),
     }
 }
 

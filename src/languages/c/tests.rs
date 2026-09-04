@@ -1312,7 +1312,11 @@ fn c0_syntax_rejects_non_scalar_casts() {
         "#,
     )
     .expect_err("pointer casts are outside the scalar cast subset");
-    assert!(error.message().contains("scalar integer values"));
+    assert!(
+        error
+            .message()
+            .contains("scalar integer or floating-point values")
+    );
 }
 
 #[test]
@@ -6403,6 +6407,47 @@ fn c0_floating_point_literals_use_declared_binary_formats() {
             .to_string()
             .contains("long double literals are not modeled in C0")
     );
+}
+
+#[test]
+fn c0_floating_point_constants_cover_ties_signs_and_classification() {
+    let functions = syntax::parse_functions(
+        r#"
+        float single_tie() { return 16777217.0f; }
+        double double_tie() { return 9007199254740993.0; }
+        float negative_zero() { return -0.0f; }
+        double negative_infinity() { return -INFINITY; }
+        int finite() { return isfinite(1.0); }
+        int infinity() { return isinf(INFINITY); }
+        int zero() { return iszero(-0.0f); }
+        int subnormal() { return issubnormal(1.401298464324817e-45f); }
+        int nan() { return isnan(NAN); }
+        "#,
+    )
+    .expect("floating constants and literal predicates should parse");
+
+    assert_eq!(
+        functions[0].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float32Literal(0x4b80_0000))
+    );
+    assert_eq!(
+        functions[1].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float64Literal(0x4340_0000_0000_0000,))
+    );
+    assert_eq!(
+        functions[2].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float32Literal(0x8000_0000))
+    );
+    assert_eq!(
+        functions[3].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float64Literal(0xfff0_0000_0000_0000,))
+    );
+    for function in &functions[4..] {
+        assert_eq!(
+            function.body(),
+            &syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(1))
+        );
+    }
 }
 
 #[test]

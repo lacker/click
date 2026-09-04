@@ -356,15 +356,16 @@ the supported LP64 host ABI.
 
 ## Floating-point semantic boundary
 
-The kernel models `float` and `double` as typed opaque payloads in `CType` and
-`CValue`. Slice 1 carries those payloads through parameters, locals, structs,
-arrays, allocation, typed memory loads/stores, and copies at their declared
-widths. It does not consume them as integer or mathematical-real operands:
-arithmetic, comparisons, conditions, and conversions remain unsupported until
+The kernel models `float` and `double` as typed IEEE-754 payloads in `CType`
+and `CValue`. Slices 1 and 2 carry those payloads through parameters, locals,
+structs, arrays, allocation, typed memory loads/stores, and copies at their
+declared widths. Constant casts use integer-space round-to-nearest,
+ties-to-even conversion, and unary negation is a sign-bit operation. Symbolic
+floating arithmetic, comparisons, and conditions remain unsupported until
 later slices. The source expander still rejects floating-point environment
 directives.
 
-The future C model is deliberately fixed to the supported LP64 ABI: `float` is
+The C model is deliberately fixed to the supported LP64 ABI: `float` is
 IEEE-754 binary32 with size and alignment 4, and `double` is IEEE-754 binary64
 with size and alignment 8. `long double`, decimal floating point, compiler
 extended precision, alternate rounding modes, `fenv` access, and traps are
@@ -372,7 +373,7 @@ outside the model. Each operation is evaluated at its declared result type
 using round-to-nearest, ties-to-even; the host's floating-point mode and any
 excess precision must not affect a certificate.
 
-Floating-point terms and values must retain enough representation to
+Floating-point terms and values retain enough representation to
 distinguish finite values, signed zero, infinities, and NaNs. Copying a value
 preserves its representation, while generated NaNs use one documented
 canonical representation. Comparisons follow the C/IEEE rules: signed zeros
@@ -382,7 +383,11 @@ NaN results; those are not integer-style C undefined behavior. Converting to an
 integer is a separate checked operation and is undefined for NaN, infinity, or
 an out-of-range value. Classification predicates and raw representation casts
 are separate modeled interfaces, not permissions to inspect or reinterpret
-kernel internals.
+kernel internals. Literal classification is exposed through the source-level
+`isfinite`, `isinf`, `iszero`, `issubnormal`, and `isnan` builtins. Constant
+float-to-integer conversion is accepted only for finite, representable values;
+other float-to-integer casts remain explicit unsupported/type-error outcomes
+until definedness checks are carried into the symbolic model.
 
 Unsupported floating-point syntax must remain an actionable, source-positioned
 frontend diagnostic. Slice 1 accepts decimal literals only as typed payloads;

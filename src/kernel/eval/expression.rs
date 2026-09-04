@@ -1,5 +1,260 @@
 use super::*;
 
+/// Round a nonnegative integer right shift to nearest, ties to even.
+///
+/// The floating-point conversions in this slice operate on the exact integer
+/// significands of IEEE values. Keeping the rounding here in integer space
+/// makes the result independent of the host floating-point environment.
+fn round_right_to_even(value: u128, shift: u32) -> u128 {
+    if shift == 0 {
+        return value;
+    }
+    if shift >= 128 {
+        return 0;
+    }
+    let truncated = value >> shift;
+    let remainder = value & ((1u128 << shift) - 1);
+    let halfway = 1u128 << (shift - 1);
+    if remainder > halfway || (remainder == halfway && truncated & 1 != 0) {
+        truncated + 1
+    } else {
+        truncated
+    }
+}
+
+fn integer_to_float_bits(
+    negative: bool,
+    magnitude: u128,
+    fraction_bits: u32,
+    exponent_bits: u32,
+    bias: i32,
+    sign_bit: u64,
+) -> u64 {
+    let sign = if negative { sign_bit } else { 0 };
+    if magnitude == 0 {
+        return sign;
+    }
+
+    let precision = fraction_bits + 1;
+    let highest_bit = 127 - magnitude.leading_zeros();
+    let mut exponent = highest_bit as i32;
+    let mut significand = if highest_bit < precision - 1 {
+        magnitude << (precision - 1 - highest_bit)
+    } else {
+        round_right_to_even(magnitude, highest_bit - (precision - 1))
+    };
+
+    if significand == 1u128 << precision {
+        significand >>= 1;
+        exponent += 1;
+    }
+
+    let exponent_limit = (1u32 << exponent_bits) - 1;
+    let encoded_exponent = exponent + bias;
+    if encoded_exponent >= exponent_limit as i32 {
+        return sign | (u64::from(exponent_limit) << fraction_bits);
+    }
+
+    sign | ((encoded_exponent as u64) << fraction_bits)
+        | ((significand as u64) & ((1u64 << fraction_bits) - 1))
+}
+
+fn integer_to_float32_bits(negative: bool, magnitude: u128) -> u32 {
+    integer_to_float_bits(negative, magnitude, 23, 8, 127, 0x8000_0000) as u32
+}
+
+fn integer_to_float64_bits(negative: bool, magnitude: u128) -> u64 {
+    integer_to_float_bits(negative, magnitude, 52, 11, 1023, 0x8000_0000_0000_0000)
+}
+
+fn float32_to_float64_bits(bits: u32) -> u64 {
+    let sign = u64::from(bits & 0x8000_0000) << 32;
+    let exponent = (bits >> 23) & 0xff;
+    let fraction = bits & 0x007f_ffff;
+    if exponent == 0xff {
+        let payload = if fraction == 0 {
+            0
+        } else {
+            u64::from(fraction) << 29
+        };
+        return sign | (0x7ffu64 << 52) | if payload == 0 { 1 } else { payload };
+    }
+    if exponent != 0 {
+        return sign | (u64::from(exponent + 1023 - 127) << 52) | (u64::from(fraction) << 29);
+    }
+    if fraction == 0 {
+        return sign;
+    }
+
+    let highest_bit = 31 - fraction.leading_zeros();
+    let unbiased_exponent = highest_bit as i32 - 149;
+    let encoded_exponent = (unbiased_exponent + 1023) as u64;
+    let significand = fraction ^ (1u32 << highest_bit);
+    sign | (encoded_exponent << 52) | (u64::from(significand) << (52 - highest_bit))
+}
+
+fn float64_to_float32_bits(bits: u64) -> u32 {
+    let sign = (bits >> 32) as u32 & 0x8000_0000;
+    let exponent = ((bits >> 52) & 0x7ff) as u32;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    if exponent == 0x7ff {
+        return sign
+            | if fraction == 0 {
+                0x7f80_0000
+            } else {
+                0x7fc0_0000
+            };
+    }
+    if exponent == 0 && fraction == 0 {
+        return sign;
+    }
+
+    let (significand, base, highest_bit) = if exponent == 0 {
+        let highest_bit = 63 - fraction.leading_zeros();
+        (u128::from(fraction), -1074i32, highest_bit)
+    } else {
+        let significand = (1u128 << 52) | u128::from(fraction);
+        let highest_bit = 52;
+        (significand, exponent as i32 - 1023 - 52, highest_bit)
+    };
+    let top_exponent = highest_bit as i32 + base;
+
+    if top_exponent >= -126 {
+        let shift = (top_exponent - 23 - base) as u32;
+        let mut rounded = round_right_to_even(significand, shift);
+        let mut exponent = top_exponent;
+        if rounded == 1u128 << 24 {
+            rounded >>= 1;
+            exponent += 1;
+        }
+        if exponent > 127 {
+            return sign | 0x7f80_0000;
+        }
+        return sign | (((exponent + 127) as u32) << 23) | ((rounded as u32) & 0x007f_ffff);
+    }
+
+    let shift = (-149 - base) as u32;
+    let rounded = round_right_to_even(significand, shift);
+    if rounded >= 1u128 << 23 {
+        sign | 0x0080_0000
+    } else {
+        sign | rounded as u32
+    }
+}
+
+fn integer_constant_as_sign_magnitude(value: &CValue) -> Option<(bool, u128)> {
+    match value {
+        CValue::Int16(bits) | CValue::Int32(bits) => {
+            let value = bits.as_const()? as i32;
+            Some((value < 0, u128::from(value.unsigned_abs())))
+        }
+        CValue::UInt8(bits) | CValue::UInt16(bits) | CValue::UInt32(bits) => {
+            Some((false, u128::from(bits.as_const()?)))
+        }
+        CValue::Int64(bits) => {
+            let value = bits.int64_as_const()?;
+            Some((value < 0, u128::from(value.unsigned_abs())))
+        }
+        CValue::UInt64(bits) => Some((false, u128::from(bits.uint64_as_const()?))),
+        CValue::Void | CValue::Float32(_) | CValue::Float64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn float_significand_as_integer(
+    negative: bool,
+    exponent: u32,
+    fraction: u64,
+    fraction_bits: u32,
+    exponent_bits: u32,
+    bias: i32,
+) -> Option<(bool, u128)> {
+    let exponent_limit = (1u32 << exponent_bits) - 1;
+    if exponent == exponent_limit {
+        return None;
+    }
+    let (significand, base) = if exponent == 0 {
+        (u128::from(fraction), 1 - bias - fraction_bits as i32)
+    } else {
+        (
+            (1u128 << fraction_bits) | u128::from(fraction),
+            exponent as i32 - bias - fraction_bits as i32,
+        )
+    };
+    let magnitude = if base >= 0 {
+        significand.checked_shl(base as u32)?
+    } else if (-base) >= 128 {
+        0
+    } else {
+        significand >> (-base as u32)
+    };
+    Some((negative && magnitude != 0, magnitude))
+}
+
+fn float_to_integer_value(negative: bool, magnitude: u128, target_type: CType) -> Option<CValue> {
+    let signed_limit = |bits: u32| (1i128 << (bits - 1)) - 1;
+    let (signed, bits) = match target_type {
+        CType::Int16 => (true, 16),
+        CType::Int32 => (true, 32),
+        CType::Int64 => (true, 64),
+        CType::UInt8 => (false, 8),
+        CType::UInt16 => (false, 16),
+        CType::UInt32 => (false, 32),
+        CType::UInt64 => (false, 64),
+        _ => return None,
+    };
+    if signed {
+        let limit = signed_limit(bits) as u128;
+        let negative_limit = limit + 1;
+        if magnitude > if negative { negative_limit } else { limit } {
+            return None;
+        }
+        let value = if negative {
+            -(magnitude as i128)
+        } else {
+            magnitude as i128
+        };
+        return Some(match target_type {
+            CType::Int16 => CValue::Int16(Bitvector32Term::Constant(value as i32 as u32)),
+            CType::Int32 => CValue::Int32(Bitvector32Term::Constant(value as i32 as u32)),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(value as i64)),
+            _ => unreachable!(),
+        });
+    }
+    if negative && magnitude != 0 {
+        return None;
+    }
+    let limit = (1u128 << bits) - 1;
+    if magnitude > limit {
+        return None;
+    }
+    let value = magnitude as u64;
+    Some(match target_type {
+        CType::UInt8 => CValue::UInt8(Bitvector32Term::Constant(value as u32)),
+        CType::UInt16 => CValue::UInt16(Bitvector32Term::Constant(value as u32)),
+        CType::UInt32 => CValue::UInt32(Bitvector32Term::Constant(value as u32)),
+        CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(value)),
+        _ => unreachable!(),
+    })
+}
+
+fn float32_to_integer_value(bits: u32, target_type: CType) -> Option<CValue> {
+    let negative = bits & 0x8000_0000 != 0;
+    let exponent = (bits >> 23) & 0xff;
+    let fraction = u64::from(bits & 0x007f_ffff);
+    let (negative, magnitude) =
+        float_significand_as_integer(negative, exponent, fraction, 23, 8, 127)?;
+    float_to_integer_value(negative, magnitude, target_type)
+}
+
+fn float64_to_integer_value(bits: u64, target_type: CType) -> Option<CValue> {
+    let negative = bits & (1u64 << 63) != 0;
+    let exponent = ((bits >> 52) & 0x7ff) as u32;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    let (negative, magnitude) =
+        float_significand_as_integer(negative, exponent, fraction, 52, 11, 1023)?;
+    float_to_integer_value(negative, magnitude, target_type)
+}
+
 pub(in crate::kernel) fn evaluate_c_expression(
     state: &CState,
     expression: &CExpression,
@@ -260,7 +515,54 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             Some(CValue::UInt64(Bitvector32Term::uint64_from_32(value)))
         }
         (CType::Float32, CValue::Float32(value)) => Some(CValue::Float32(value)),
+        (CType::Float32, CValue::Float64(value)) => Some(CValue::Float32(
+            Bitvector32Term::Constant(float64_to_float32_bits(value.uint64_as_const()?)),
+        )),
         (CType::Float64, CValue::Float64(value)) => Some(CValue::Float64(value)),
+        (CType::Float64, CValue::Float32(value)) => Some(CValue::Float64(
+            Bitvector32Term::UInt64Constant(float32_to_float64_bits(value.as_const()?)),
+        )),
+        (
+            target @ (CType::Float32 | CType::Float64),
+            value @ (CValue::Int16(_)
+            | CValue::Int32(_)
+            | CValue::UInt8(_)
+            | CValue::UInt16(_)
+            | CValue::UInt32(_)
+            | CValue::Int64(_)
+            | CValue::UInt64(_)),
+        ) => {
+            let (negative, magnitude) = integer_constant_as_sign_magnitude(&value)?;
+            Some(match target {
+                CType::Float32 => CValue::Float32(Bitvector32Term::Constant(
+                    integer_to_float32_bits(negative, magnitude),
+                )),
+                CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(
+                    integer_to_float64_bits(negative, magnitude),
+                )),
+                _ => unreachable!(),
+            })
+        }
+        (
+            target @ (CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64),
+            CValue::Float32(value),
+        ) => float32_to_integer_value(value.as_const()?, target),
+        (
+            target @ (CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64),
+            CValue::Float64(value),
+        ) => float64_to_integer_value(value.uint64_as_const()?, target),
         _ => None,
     }
 }
