@@ -31,7 +31,6 @@ when evidence exposes one.
 C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
-- [Extend the integer model beyond int32 and uint8](integer-types.md)
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
