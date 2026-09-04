@@ -140,14 +140,15 @@ pub(crate) fn finite_forall_goal_instances(
         return None;
     }
     let ranges = finite_forall_ranges(&variables, body)?;
+    // The instances are the quantifier's own finite domain: one unit of
+    // deterministic work each, so a wide domain is charged to the tactic
+    // that asked, never cut by a count.
     let instance_count = ranges.iter().try_fold(1usize, |count, range| {
         usize::try_from(range.upper - range.lower + 1)
             .ok()
             .and_then(|width| count.checked_mul(width))
     })?;
-    if instance_count > FINITE_FORALL_INSTANTIATION_LIMIT {
-        return None;
-    }
+    crate::instrumentation::record_deterministic_work(instance_count);
     let mut instances = Vec::with_capacity(instance_count);
     collect(body, &variables, &ranges, &mut Vec::new(), &mut instances);
     Some(instances)
@@ -853,7 +854,7 @@ impl PureFactContext {
                             || crate::kernel::api::propositions_alpha_equivalent_under_binders(
                                 sort, *fact_var, fact_body, *var, body,
                             )
-                            || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
+                            || self.propositions_equal_modulo_proven_terms(&renamed, body)
                     })
             }
             Proposition::Exists {
@@ -874,11 +875,7 @@ impl PureFactContext {
         &self,
         left: &Proposition,
         right: &Proposition,
-        depth: usize,
     ) -> bool {
-        if depth > 16 {
-            return false;
-        }
         if left == right {
             return true;
         }
@@ -886,11 +883,11 @@ impl PureFactContext {
             (Proposition::And(al, ar), Proposition::And(bl, br))
             | (Proposition::Or(al, ar), Proposition::Or(bl, br))
             | (Proposition::Implies(al, ar), Proposition::Implies(bl, br)) => {
-                self.propositions_equal_modulo_proven_terms(al, bl, depth + 1)
-                    && self.propositions_equal_modulo_proven_terms(ar, br, depth + 1)
+                self.propositions_equal_modulo_proven_terms(al, bl)
+                    && self.propositions_equal_modulo_proven_terms(ar, br)
             }
             (Proposition::Not(a), Proposition::Not(b)) => {
-                self.propositions_equal_modulo_proven_terms(a, b, depth + 1)
+                self.propositions_equal_modulo_proven_terms(a, b)
             }
             (
                 Proposition::ConditionIs(left_condition, left_value),
@@ -2784,7 +2781,7 @@ impl PureFactContext {
         for disjunction in self.disjunction_facts.iter() {
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
-            if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
+            if cases.len() < 2 {
                 continue;
             }
             let mut base = self.clone();
@@ -2823,9 +2820,7 @@ impl PureFactContext {
         }) else {
             return false;
         };
-        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
-            return false;
-        }
+        crate::instrumentation::record_deterministic_work(instantiation_count);
 
         let mut values = Vec::with_capacity(variables.len());
         self.proves_finite_forall_instantiations(body, &variables, &ranges, &mut values)
@@ -3042,9 +3037,7 @@ impl PureFactContext {
         }) else {
             return Vec::new();
         };
-        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
-            return Vec::new();
-        }
+        crate::instrumentation::record_deterministic_work(instantiation_count);
 
         let mut values = Vec::with_capacity(variables.len());
         let mut instantiations = Vec::with_capacity(instantiation_count);

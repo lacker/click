@@ -136,7 +136,18 @@ search, not a walk, and every counter-free replacement tried inside the
 kernel either did not finish or was the depth limit under another name
 (measurements in `issues/load-equality-prover-in-kernel.md`). Deleting it
 means moving the framed-load prover behind a surface certificate, which
-that issue tracks. The remaining slice 7 work is the width caps, the
+that issue tracks. The fifth chunk deletes the caps that never fired:
+the finite-forall instantiation cap of 128 and the per-variable range cap
+of 32 (the instances are the quantifier's own bounds, charged as
+deterministic work), the disjunction-case cap of eight (the cases are the
+fact's disjuncts), the concrete range-fold unroll cap of 1,024 (the steps
+are the range's length), the depth of 16 on the structural proposition
+comparison (it recurses on subterms), and the resource-composition query
+depth of three, which became a cycle check on the query. Deterministic
+work over the profiled examples is unchanged. The remaining bounds are
+the finite context split of eight (met 840 times over the mdtests; it
+caps a case split, a search), the upper-bound split depth of one (the
+same), the reentrancy suppressions around snapshot comparison, the
 `search_truncations` gating, and the deadline checks.
 
 ## Violated invariant

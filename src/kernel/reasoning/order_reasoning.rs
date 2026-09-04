@@ -33,9 +33,7 @@ pub(in crate::kernel) fn condition_as_order_fact(
     }
 }
 
-pub(in crate::kernel) const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
 pub(in crate::kernel) const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
-pub(in crate::kernel) const DISJUNCTION_CASE_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::kernel) struct FiniteForAllRange {
@@ -132,7 +130,7 @@ pub(in crate::kernel) fn finite_forall_ranges(
         .iter()
         .map(|variable| {
             let (lower, upper) = *hull.get(variable)?;
-            if lower > upper || upper - lower > 32 {
+            if lower > upper {
                 return None;
             }
             Some(FiniteForAllRange { lower, upper })

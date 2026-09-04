@@ -21,7 +21,6 @@ pub(crate) use memory_state::resource_context_has_symbolic_int32_range_read;
 pub(super) use resource_algebra::*;
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
-pub(super) const RANGE_FOLD_CONCRETE_UNROLL_LIMIT: i64 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Variable(pub u64);

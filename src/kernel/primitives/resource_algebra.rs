@@ -1,35 +1,81 @@
 use super::*;
 
-thread_local! {
-    static RESOURCE_COMPOSITION_QUERY_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+/// A proof-aware composition query in progress on this thread. Bridging a
+/// query's snapshot form to a carrier entry can itself ask whether a
+/// pointer survived a call havoc, which is served by the same composition,
+/// so queries nest. A query met again while it runs is a cycle through the
+/// facts and proves nothing on that path, noted as a truncation so the memo
+/// layers do not cache the weakened answer; distinct queries nest freely,
+/// bounded by the resources the facts connect.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum CompositionQuery {
+    ResourcesSeparate(CResource, CResource),
+    RangesSeparate(CMemoryRange, CMemoryRange),
+    PointersSeparate(Pointer, Pointer),
 }
 
-/// Proof-aware composition queries may nest: bridging a query's snapshot
-/// form to a carrier entry can itself ask whether a pointer survived a
-/// call havoc, which is served by the same composition. A binary lock would
-/// force those inner queries to fail where the former materialized pairs
-/// answered them, so nesting is allowed to a small fixed depth; the
-/// memory-resolution fuel still bounds total work.
-const RESOURCE_COMPOSITION_QUERY_DEPTH_LIMIT: usize = 3;
+thread_local! {
+    static COMPOSITION_QUERIES_IN_PROGRESS: std::cell::RefCell<BTreeSet<CompositionQuery>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
 
-struct ResourceCompositionQueryGuard;
+struct ResourceCompositionQueryGuard {
+    query: CompositionQuery,
+}
 
 impl ResourceCompositionQueryGuard {
-    fn enter() -> Option<Self> {
-        RESOURCE_COMPOSITION_QUERY_DEPTH.with(|depth| {
-            if depth.get() >= RESOURCE_COMPOSITION_QUERY_DEPTH_LIMIT {
-                return None;
-            }
-            depth.set(depth.get() + 1);
-            Some(Self)
-        })
+    fn enter(query: CompositionQuery) -> Option<Self> {
+        let entered = COMPOSITION_QUERIES_IN_PROGRESS
+            .with(|queries| queries.borrow_mut().insert(query.clone()));
+        if !entered {
+            crate::kernel::assumptions::note_search_truncation();
+        }
+        // `then`, not `then_some`: a guard built eagerly and discarded on
+        // the cycle path would run `drop` and unregister the outer query.
+        entered.then(|| Self { query })
     }
 }
 
 impl Drop for ResourceCompositionQueryGuard {
     fn drop(&mut self) {
-        RESOURCE_COMPOSITION_QUERY_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        COMPOSITION_QUERIES_IN_PROGRESS.with(|queries| {
+            queries.borrow_mut().remove(&self.query);
+        });
     }
+}
+
+/// A composition query already in progress refuses re-entry without
+/// unregistering the outer query, and distinct queries nest.
+#[cfg(test)]
+#[test]
+fn composition_query_guard_refuses_reentry_and_keeps_the_outer_query() {
+    let range = |index: i64| {
+        CMemoryRange::new(
+            Pointer {
+                block: "buffer".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(index as u32),
+            Bitvector32Term::Constant(index as u32 + 1),
+        )
+    };
+    let first = CompositionQuery::RangesSeparate(range(0), range(1));
+    let second = CompositionQuery::RangesSeparate(range(2), range(3));
+    let outer =
+        ResourceCompositionQueryGuard::enter(first.clone()).expect("the first query registers");
+    assert!(
+        ResourceCompositionQueryGuard::enter(first.clone()).is_none(),
+        "re-entering the query is a cycle"
+    );
+    let nested = ResourceCompositionQueryGuard::enter(second);
+    assert!(nested.is_some(), "a distinct query nests");
+    drop(nested);
+    assert!(
+        ResourceCompositionQueryGuard::enter(first.clone()).is_none(),
+        "the refused re-entry left the outer query registered"
+    );
+    drop(outer);
+    assert!(ResourceCompositionQueryGuard::enter(first).is_some());
 }
 
 fn insert_resource_index_entry<K: Ord>(
@@ -510,7 +556,9 @@ impl ResourceContext {
         right: &CResource,
         assumptions: &PureFactContext,
     ) -> bool {
-        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter(
+            CompositionQuery::ResourcesSeparate(left.clone(), right.clone()),
+        ) else {
             return false;
         };
         let left_view = CResourceFact::View(left.clone());
@@ -666,7 +714,10 @@ impl ResourceContext {
         right: &CMemoryRange,
         contains: impl Fn(&CMemoryRange, &CMemoryRange) -> bool,
     ) -> bool {
-        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter(CompositionQuery::RangesSeparate(
+            left.clone(),
+            right.clone(),
+        )) else {
             return false;
         };
         if left.base().block != right.base().block {
@@ -726,7 +777,9 @@ impl ResourceContext {
         right: &Pointer,
         contains: impl Fn(&Pointer, &CMemoryRange) -> bool,
     ) -> bool {
-        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter(
+            CompositionQuery::PointersSeparate(left.clone(), right.clone()),
+        ) else {
             return false;
         };
         if left.block != right.block {

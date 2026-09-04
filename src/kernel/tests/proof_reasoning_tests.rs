@@ -4929,3 +4929,85 @@ fn simp_derivations_have_no_step_budget() {
         );
     }
 }
+
+/// Finite quantifiers instantiate over domains of any width: the instances
+/// are the quantifier's own bounds, charged as deterministic work, and a
+/// disjunctive consequent that only instantiation decides is proved for a
+/// domain wider than the old cap of 128.
+#[test]
+fn finite_forall_instantiates_domains_of_any_width() {
+    for width in [129i64, 200, 400] {
+        let i = Variable(7_600_000);
+        let i_bits = Bitvector32Term::Variable(i);
+        let antecedent = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(
+                    i_bits.clone(),
+                    Bitvector32Term::Constant(width as u32),
+                ),
+                true,
+            )),
+        );
+        // A balanced disjunction: its depth is logarithmic in the width, so
+        // the width is what the proof exercises.
+        let mut cases = (0..width)
+            .map(|value| {
+                Proposition::ConditionIs(
+                    ConditionTerm::equal(i_bits.clone(), Bitvector32Term::Constant(value as u32)),
+                    true,
+                )
+            })
+            .collect::<Vec<_>>();
+        while cases.len() > 1 {
+            cases = cases
+                .chunks(2)
+                .map(|pair| match pair {
+                    [left, right] => {
+                        Proposition::Or(Box::new(left.clone()), Box::new(right.clone()))
+                    }
+                    [single] => single.clone(),
+                    _ => unreachable!(),
+                })
+                .collect();
+        }
+        let consequent = cases.remove(0);
+        let goal = forall_int32(
+            i,
+            Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
+        );
+        assert!(
+            PureFactContext::new().proves(&goal),
+            "a domain of {width} values instantiates"
+        );
+    }
+}
+
+/// Disjunction facts of any width eliminate: the cases are the fact's own
+/// disjuncts, and a disjunction of 12 to 48 cases, each proving the goal,
+/// derives it, which the old cap of eight cases refused.
+#[test]
+fn disjunction_cases_of_any_width_derive_a_common_consequence() {
+    for width in [12u32, 24, 48] {
+        let x = Bitvector32Term::Variable(Variable(7_700_000 + u64::from(width)));
+        let case = |value: u32| {
+            Proposition::ConditionIs(
+                ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(value)),
+                true,
+            )
+        };
+        let disjunction = (0..width - 1).rev().fold(case(width - 1), |rest, value| {
+            Proposition::Or(Box::new(case(value)), Box::new(rest))
+        });
+        let assumptions = PureFactContext::new().assume_proposition(disjunction);
+        let nonnegative = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), x.clone()),
+            true,
+        );
+        assert!(!assumptions.proves(&nonnegative));
+        assert_checkable_derivation(&assumptions, &nonnegative);
+    }
+}

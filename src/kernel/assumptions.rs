@@ -2327,10 +2327,7 @@ impl PropositionDerivation {
                 }
                 let mut expected_cases = Vec::new();
                 collect_or_cases(disjunction, &mut expected_cases);
-                if expected_cases.len() < 2
-                    || expected_cases.len() > DISJUNCTION_CASE_LIMIT
-                    || cases.len() != expected_cases.len()
-                {
+                if expected_cases.len() < 2 || cases.len() != expected_cases.len() {
                     return false;
                 }
                 let mut base = available.clone();

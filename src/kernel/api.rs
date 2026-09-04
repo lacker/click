@@ -1353,9 +1353,9 @@ pub fn forall_instantiation_candidate_values(
     let variables = vec![*var];
     if let Some(ranges) = crate::kernel::reasoning::finite_forall_ranges(&variables, body)
         && let [range] = ranges.as_slice()
-        && usize::try_from(range.upper - range.lower + 1)
-            .is_ok_and(|width| width <= crate::kernel::reasoning::FINITE_FORALL_INSTANTIATION_LIMIT)
+        && let Ok(width) = usize::try_from(range.upper - range.lower + 1)
     {
+        crate::instrumentation::record_deterministic_work(width);
         for value in range.lower..=range.upper {
             candidates.insert(signed_i64_bitvector_constant(value));
         }

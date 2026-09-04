@@ -3780,3 +3780,31 @@ fn load_equality_resolves_through_stored_cell_chains_of_any_length() {
         );
     }
 }
+
+/// A concrete range fold unrolls over ranges of any length: the steps are
+/// the range's own length, and a sum over 1,025 to 4,096 items folds to its
+/// constant, which the old unroll cap of 1,024 left symbolic.
+#[test]
+fn range_fold_unrolls_concrete_ranges_of_any_length() {
+    let accumulator = Variable(7_800_000);
+    let item = Variable(7_800_001);
+    let body = Bitvector32Term::add(
+        Bitvector32Term::Variable(accumulator),
+        Bitvector32Term::Variable(item),
+    );
+    for length in [1_025u32, 2_048, 4_096] {
+        let sum = (0..length).sum::<u32>();
+        assert_eq!(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(length),
+                Bitvector32Term::Constant(0),
+                accumulator,
+                item,
+                body.clone(),
+            ),
+            Bitvector32Term::Constant(sum),
+            "a fold over {length} items unrolls to its sum"
+        );
+    }
+}

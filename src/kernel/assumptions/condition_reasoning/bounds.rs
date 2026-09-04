@@ -108,9 +108,7 @@ impl PureFactContext {
         }) else {
             return;
         };
-        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
-            return;
-        }
+        crate::instrumentation::record_deterministic_work(instantiation_count);
 
         let mut values = Vec::with_capacity(variables.len());
         self.collect_finite_forall_order_fact_instantiations(

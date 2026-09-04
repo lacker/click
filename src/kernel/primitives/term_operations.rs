@@ -491,19 +491,23 @@ impl Bitvector32Term {
             if length <= 0 {
                 return initial;
             }
-            if length <= RANGE_FOLD_CONCRETE_UNROLL_LIMIT {
-                let mut value = initial;
-                for index in start_value..end_value {
-                    value = instantiate_range_fold_step(
-                        &body,
-                        accumulator,
-                        &value,
-                        item,
-                        &signed_i64_bitvector_constant(index),
-                    );
-                }
-                return value;
+            // A concrete range unrolls step by step: the steps are the
+            // range's own length, charged as deterministic work, never cut
+            // by a count.
+            crate::instrumentation::record_deterministic_work(
+                usize::try_from(length).unwrap_or(usize::MAX),
+            );
+            let mut value = initial;
+            for index in start_value..end_value {
+                value = instantiate_range_fold_step(
+                    &body,
+                    accumulator,
+                    &value,
+                    item,
+                    &signed_i64_bitvector_constant(index),
+                );
             }
+            return value;
         }
 
         Self::RangeFold {
