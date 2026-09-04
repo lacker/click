@@ -47,7 +47,6 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
-- [Export a machine-checkable proof artifact](exportable-certificate.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 
 ## Hard bucket: 1
