@@ -2,145 +2,311 @@
 
 ## Violated invariant
 
-The kernel checks; it does not search. A kernel decision is decided by
-rules whose work is bounded by the inputs they name, it never depends on
-a fuel counter or a depth cut, and it never tries a broader route after a
-narrower one fails. Search belongs to the surface's smart tactics, whose
-results are certificates the kernel then checks.
+The kernel checks; it does not search. An authoritative kernel operation may
+apply a fixed collection of exact rules, traverse the explicit input or
+certificate it was given, and use indexed lookups into ambient state. Its work
+and completeness must not depend on an opaque fuel, recursion-depth, or retry
+limit, and it must not fall from a local check into speculative or global proof
+search. Search belongs to the surface's smart tactics, whose successful result
+is a sequence of checked operations or another explicit certificate.
 
-The working rule for the remaining items: when a bound sits on a walk
-over a well-founded structure (a chain of DAG edges, a term, an equality
-class, a fact's disjuncts), it is replaced by the structure itself, with
-a cycle check where the walk can revisit a node. When a bound caps a
-search, whose branching factor is the number of facts rather than the
-size of the query, no counter-free replacement inside the kernel exists,
-and the fix is to move the search into a surface tactic that records a
-checkable fact. Tuning a tier or a memo until a search looks cheap enough
-is not a fix; it is the bound under another name.
+"No fallback" means no broader **search** fallback. It does not prohibit a
+short, deterministic sequence of sound rules that each answer from their named
+inputs. For example, syntactic equality followed by an indexed lookup is one
+exact decision procedure, not forbidden search. The boundary is crossed when
+failure starts candidate selection over unrelated ambient facts, recursive
+proof attempts, or alternate global reconstructions whose cost is not charged
+to explicit input or output.
+
+The working rule is:
+
+- A walk over a term, a memory DAG, an equality class, a fact's disjuncts, or
+  another explicit structure is bounded by that structure. Use an in-progress
+  query set where it can revisit a node, and an iterative implementation where
+  Rust stack depth is the concern. Do not make logical completeness depend on a
+  numeric depth cut.
+- Enumeration is allowed when the operation or certificate explicitly names
+  the enumerated input and the deterministic work is charged per item. A
+  surface tactic may choose that input; the kernel checks exactly what it is
+  given.
+- Branching whose candidates come from the ambient fact set is planning. Move
+  it to a surface smart tactic and retain enough evidence for the kernel to
+  check the selected route without rediscovering it.
+- Fixed memo capacities may evict cached results but must not change an answer.
+  Execution path, loop-unroll, and call-depth budgets are semantic execution
+  capacity and are not proof-search bounds; they remain independently owned.
+- A wall-clock deadline is crash containment, not a negative logical answer.
+  Expiry must propagate as a verification-limit error, must not be cached as
+  `false` or `None`, and must not make a later result depend on when the clock
+  happened to fire.
+
+A search that constructs a derivation and checks it inside `src/kernel/` is
+still authoritative kernel search if the result issues a theorem, discharges
+an obligation, or advances a proof object. Checking the discovered derivation
+afterward establishes soundness, but it does not establish the intended
+search/checking boundary.
 
 ## Status
 
-The dead routes, the surface's second lowering and evaluators, the
-artifact-less body execution, the environment switches, the ladders that
-answered one question twice, prover 1's handoff from certification, and
-every fuel counter or depth cut on a walk are gone from the kernel (the
-last of them on 2026-09-03). Walks that can revisit a node carry an
-in-progress cycle check on the query instead: `ResolutionQueryGuard` in
-`src/kernel/reasoning/memory_resolution.rs` is the pattern, with nested
-queries going through the memo. Enumerations the query's own inputs bound
-(quantifier instances, disjuncts, fold steps) are charged as
-deterministic work per instance. Deterministic work over the profiled
-examples fell or held at every step.
+Many dead routes, environment switches, duplicate evaluators, artifact-less
+execution paths, fallback ladders, and old fuel counters have been removed.
+Several well-founded walks now use exact in-progress query guards;
+`ResolutionQueryGuard` in `src/kernel/reasoning/memory_resolution.rs` is the
+pattern. Enumerations over explicit quantifier instances, disjuncts, and fold
+steps are charged as deterministic work per instance. Deterministic work over
+the profiled examples fell or held during that cleanup.
 
-What is left caps searches, not walks. One search is carved out: the
-load-equality depth of two (`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`,
-`src/kernel/assumptions.rs`) is owned by
-`issues/load-equality-prover-in-kernel.md`, with the measurements that
-show why no kernel-side replacement works.
+The earlier claim that every structural depth cut was gone was incorrect. The
+inventory below is the current boundary as of 2026-09-03. The load-equality
+depth of two (`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`) remains separately measured
+and designed in `issues/load-equality-prover-in-kernel.md` because it caps a
+fact-branching search rather than a structural walk.
 
-## What remains
+## Current inventory
 
-Counts are examples / mdtests, times the bound fired, measured 2026-09-03.
+Counts below are examples / mdtests, times the bound or route fired, measured
+2026-09-03 where a count is given.
 
-1. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8`
-   (`src/kernel/reasoning/order_reasoning.rs`; used by
-   `derive_by_finite_context_split` and `proves_by_finite_context_split`
-   in `src/kernel/assumptions/proposition_reasoning.rs`, and by the
-   derivation checker in `src/kernel/assumptions.rs`). Fired 8 / 840.
-   Prover 1 splits the context on a variable with a finite range and
-   proves the goal once per value; the cap refuses ranges wider than eight.
-   The split is a case analysis the surface should state (a `cases`
-   tactic recording one certificate per value); the kernel then checks
-   the cases it is given. An earlier census found the split deciding
-   0 / 20 goals.
-2. **The upper-bound split**, `UPPER_BOUND_SPLIT_DEPTH_LIMIT = 1`
-   (`derive_by_upper_bound_split`, same file). Fired 11 / 46. Splits a
-   goal on `k < b` versus `k == b` and re-enters the whole search in both
-   halves; its own comment records that a depth of two cost
-   `bubble_sort3_two_pass_sorted` 20 s for nothing. Same remedy as 1.
-3. **Reentrancy suppressions around snapshot comparison**:
-   `bounded_snapshot_comparison_active` and `inside_condition_decision`
-   gating the general alias legs in `src/kernel/reasoning/memory_resolution.rs`
-   and `src/kernel/assumptions/memory_reasoning.rs`, and the
-   `ENDPOINT_BRIDGE_ACTIVE` lock in `src/kernel/primitives/resource_algebra.rs`.
-   Fired 2 / 364. Each is a tier: a nested query gets the cheap legs, a
-   top-level one the prover. They exist because the load-equality prover
-   re-enters itself, so they go with `issues/load-equality-prover-in-kernel.md`.
-4. **`search_truncations` and the memo gating that reads it**
-   (`note_search_truncation` in `src/kernel/assumptions.rs`, read by the
-   decision, resolution, unchanged-load, and inconsistency memos). The
-   cycle checks note a truncation when they refuse re-entry, so that a
-   negative answer weakened by a cycle is not cached; that use is
-   legitimate and stays as long as cycle checks exist. Delete the counter
-   only when items 1 to 3 and the carved-out prover are gone and the
-   cycle-cut answers are shown never to be cached, or rename it to say
-   what it now records.
-5. **Deadline checks**: 35 `deadline_exceeded` sites across
-   `src/kernel/`. A wall-clock limit, not a search bound; tactic budgets
-   are enforced in deterministic work units. Whether the kernel should
-   observe wall time at all is a separate question from this issue's,
-   and the checks are harmless to it.
-6. **General pointer distinctness** (`pointers_proven_distinct`,
-   `src/kernel/reasoning/memory_resolution.rs`) never decided anything
-   over the corpus (38 / 778 queries) but is pinned by kernel unit tests
-   and costs nothing measurable. Delete it with its tests, or keep it as
-   an exact rule; either is fine.
+### Structural and fixed-point cuts
 
-`ATOMIC_PREMISE_MINIMIZATION_DEPTH` (`src/kernel/assumptions.rs`) is a
-nesting flag that disables premise minimization inside itself, not a cut.
+These are not surface-search migrations. Replace each cut with work bounded by
+the complete named structure, plus an exact cycle check or an iterative walk as
+needed.
+
+1. **Arithmetic interval term depth**, `ARITHMETIC_INTERVAL_DEPTH = 32`
+   (`src/kernel/proof/fact_reasoning.rs`). `signed_term_interval` silently
+   returns no interval for a deeper arithmetic term. Walk the complete term
+   iteratively and add a multi-size deep-term scaling regression.
+2. **Exact-load materialization hop limits**, two `for _ in 0..64` chases in
+   `src/kernel/assumptions.rs`, and **exact-load normalization depth**, the
+   `depth >= 64` returns in `src/kernel/memory_provenance.rs`. Follow the
+   complete load chain with an in-progress set keyed by the load query; do not
+   treat a long acyclic chain like a cycle.
+3. **Alternating canonicalization rounds**, `CANONICALIZATION_ROUNDS = 3` in
+   `src/kernel/assumptions.rs`. The result can depend on how many times
+   simplification and equality-class selection alternate. Replace it with a
+   fixed point that has an explicit monotone measure or cycle check, or define
+   one canonical representation computed directly.
+4. **Canonical order endpoint depth**, `CANONICAL_ORDER_ENDPOINT_DEPTH = 6`
+   in `src/kernel/assumptions/proposition_reasoning.rs`. This affects the
+   endpoint keys used by context-inconsistency reasoning. Traverse the complete
+   endpoint and preserve the bucketing/scaling property with regressions.
+5. **Deep-term canonicalization preflight**, `bitvector_term_deeper_than(...,
+   64)` in `src/kernel/api.rs`, used to skip canonicalization in proposition
+   reasoning. If the purpose is stack safety, make the canonicalizer iterative;
+   a depth predicate must not decide whether an otherwise supported fact can
+   be proved.
+6. **Havoc write-set identity depth**, the `depth >= 64` encoders in
+   `src/kernel/primitives/memory_state.rs`. They append the same literal
+   `"depth-limit"` for every deeper suffix even though the call-havoc marker is
+   described as a lossless structural key. Replace this with a genuinely
+   lossless structural/interner identity. Treat possible identity collisions as
+   a certificate/API soundness concern, not merely a performance issue.
+7. **Nested quantified-binder comparison**, called with depth eight from
+   surface theorem application but implemented in
+   `src/kernel/proof/fact_reasoning.rs`. It is a generation-side recognizer, not
+   theorem authority. Move it to the surface or make the structural comparison
+   complete; do not leave a literal exception hidden under `src/kernel/`.
+
+`ATOMIC_PREMISE_MINIMIZATION_DEPTH` (`src/kernel/assumptions.rs`) and
+`VERIFICATION_SESSION_DEPTH` (`src/kernel/mod.rs`) are nesting-state flags, not
+logical cuts. Cache-size constants are eviction policy, not completeness
+bounds. Neither category is part of the list above unless it is later shown to
+change an answer.
+
+### Search and tiering
+
+1. **The upper-bound split**, `UPPER_BOUND_SPLIT_DEPTH_LIMIT = 1` in
+   `derive_by_upper_bound_split`. Fired 11 / 46. It chooses an ambient upper
+   bound, splits `k < b` versus `k == b`, and re-enters the whole prover in both
+   branches. A surface smart closer should select the bound and emit a checked
+   proof `if k < b`; the other arm obtains equality from the recorded bound and
+   `not(k < b)`. The kernel already checks complementary proof-`if` branches.
+2. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
+   `src/kernel/reasoning/order_reasoning.rs`, used by proposition reasoning and
+   its derivation checker. Fired 8 / 840; an earlier census found it deciding
+   0 / 20 goals. A surface planner may emit nested proof `if x == value`
+   branches, or a new explicit finite-case certificate whose checker is linear
+   in the listed cases. The certificate must name only the range evidence and
+   branch proofs: the current `FiniteContextSplit` stores the entire context,
+   which violates relevant-input scaling.
+3. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
+   framed-load fallback from `memory_loads_proven_equal`. It hit 345,653 /
+   315,061 times in its census. This is owned by
+   `issues/load-equality-prover-in-kernel.md`. Its migration must cover every
+   kernel and surface consumer, not only fact matching: planning selects an
+   effect/DAG route, and a typed certificate records the route and per-edge
+   framing evidence for linear checking. The existing surface `transport`
+   checker still calls global load equality and is not yet that boundary.
+4. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` and
+   `inside_condition_decision` around snapshot aliasing,
+   `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
+   `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
+   every nested query rather than only an identical in-progress query. Remove
+   them with their owning search, or replace a genuinely structural recursion
+   with a guard keyed by the exact query.
+5. **General pointer distinctness**, `pointers_proven_distinct` in
+   `src/kernel/reasoning/memory_resolution.rs`. The route never supplied the
+   decisive answer over the measured corpus (38 / 778 queries), but it is used
+   by memory-load evaluation, a snapshot-comparison fallback, and the exported
+   theorem constructor
+   `prove_memory_load_after_store_distinct_under_assumptions`. Resolve the
+   public API choice below before deleting or narrowing it.
+
+### Incomplete-answer and authority audit
+
+1. **`search_truncations` and negative-memo gating**. The counter currently
+   records more than search: exact-query cycle cuts, wall-clock deadlines,
+   load-equality depth refusal, and coarse tier suppression. While incomplete
+   answers remain, rename it to describe that role (for example,
+   `incomplete_reasoning_epoch`) rather than documenting it as cycle-only.
+   Audit every conservative early return, including `SimpFactReasoningGuard`,
+   so a path-dependent negative is never cached. Delete the mechanism only when
+   incomplete nested answers cannot reach a memo boundary.
+2. **Deadline checks**, currently 35 `deadline_exceeded` sites under
+   `src/kernel/`. Deadlines are separate from deterministic tactic budgets, but
+   they are not harmless if a helper's `false`/`None` is observed as an ordinary
+   proof miss. Audit propagation so expiry becomes a distinct verification
+   abort and no negative result produced after expiry is memoized.
+3. **Authoritative callers of the general proposition prover**. Removing the
+   two split rules does not by itself establish "the kernel does not search."
+   `verify_lowered_invariant_path` in `src/kernel/loops.rs` calls
+   `derive_proposition_without_premise_minimization`, and
+   `theorem_from_contextual_proof` in `src/kernel/api.rs` searches for a
+   derivation and issues a theorem from its selected premises. Inventory the
+   remaining callers and either move their planning to the surface, replace
+   them with named checked evidence, or explicitly narrow this issue's claimed
+   invariant. Contract certification's existing ban on
+   `PureFactContext::proves` is necessary but not a complete authority audit.
+
+## Public API decision: pointer distinctness
+
+There are two decisions, not one:
+
+1. The internal general fallback can be deleted if a fresh census confirms it
+   is still never decisive. Keep the narrower
+   `pointers_proven_distinct_for_memory_resolution` only to the extent that its
+   rules are exact and bounded by the pointer query and indexed evidence.
+2. `prove_memory_load_after_store_distinct_under_assumptions` is exported
+   through the public `click::kernel::api` module. Deleting it is therefore a
+   source-level API break even though this repository only calls it from kernel
+   tests. Keeping its current signature also keeps proof discovery inside an
+   authoritative theorem constructor: the caller supplies an ambient
+   `PureFactContext`, and the kernel chooses how to prove distinctness.
+
+Preferred migration: introduce a checked constructor that receives explicit
+pointer-distinctness evidence (or an already checked proposition/theorem), move
+candidate selection to the surface, deprecate the contextual-search constructor
+for one compatibility interval, then remove it. If Click makes no compatibility
+commitment for this low-level API, delete it with the general fallback instead.
+Narrowing the old function to a subset of exact rules is source-compatible but
+silently changes which calls return `Some`, so it should be documented and
+tested as an intentional completeness change rather than treated as no API
+change.
+
+## Implementation order
+
+1. Correct the inventory and operational definition in this issue.
+2. Resolve the pointer-distinctness API choice; delete or narrow the general
+   fallback and its route-specific tests.
+3. Replace the structural and fixed-point cuts with complete input-sized walks,
+   landing a scaling regression with each change.
+4. Move upper-bound split selection to a surface planner that emits checked
+   proof branches.
+5. Move finite context splitting to explicit surface branches/certificates and
+   remove the whole-context derivation payload.
+6. Complete the separately measured load-equality certificate migration.
+7. Remove coarse reentrancy tiers and audit deadline propagation, cycle cuts,
+   and negative-memo gating; then delete or accurately rename the incompleteness
+   epoch.
+8. Finish the authoritative general-prover caller audit, or narrow the stated
+   invariant with an explicit rationale for any retained kernel planner.
+
+Each numbered step should be a coherent green change. A later step must not be
+used to excuse an opaque bound introduced by an earlier one.
 
 ## Method
 
-To retake a census: add a temporary `record_reasoning_route("...")`
-counter (a static mutex map in `src/instrumentation.rs`) at each site,
-have `tests/mdtests.rs` and `tests/examples.rs` print the map after the
-run, and run both harnesses with `-- --nocapture`. It takes about an
-hour to reapply and must not land. To compare cost without the machine's
-load, run `click profile <example> --top 40 --time-limit 300s` on a
-throwaway checkout of the parent commit and on the branch and compare
-the deterministic-work aggregates, not the wall time.
+To retake a census, add a temporary `record_reasoning_route("...")` counter (a
+static mutex map in `src/instrumentation.rs`) at each site, have
+`tests/mdtests.rs` and `tests/examples.rs` print the map after the run, and run
+both harnesses with `-- --nocapture`. It takes about an hour to reapply and must
+not land. Record both how often a route is attempted and how often it is the
+first route to decide the query; attempts alone do not justify retaining a
+fallback.
 
-Lessons a fresh agent should not relearn: build an in-progress guard
-with `bool::then(|| Guard)`, never `then_some(Guard)`, since the eagerly
-built guard's drop unregisters the outer query on the cycle path; when a
-bound is removed and the harness slows, the replacement was not
-structural, so census the site rather than tune it; and nested queries
-must be memoized once fuel is gone, since the memo used to refuse
-anything computed under fuel.
+To compare cost without the machine's load, run `click profile <example> --top
+40 --time-limit 300s` on a throwaway checkout of the parent commit and on the
+branch and compare deterministic-work aggregates, not wall time.
+
+Lessons a fresh agent should not relearn: build an in-progress guard with
+`bool::then(|| Guard)`, never `then_some(Guard)`, since the eagerly built
+guard's drop unregisters the outer query on the cycle path; distinguish a long
+acyclic walk from a repeated query; when removing a bound slows a harness, first
+check whether the replacement accidentally scans or clones ambient state; and
+do not expand or profile a target whose ordinary verification has not
+completed, except when the timeout itself is the tooling bug under study.
 
 ## Intended regression
 
-For every bound replaced, a deterministic scaling regression over several
-input sizes showing the replacement's work is bounded by its inputs
-(`docs/internals/verification-efficiency.md`); a kernel unit test that
-each guard refuses re-entry without unregistering the outer query; and
-the fixture harnesses with the contract-fallback census at zero. The
-regressions for the bounds already replaced are in `src/kernel/tests/`
-and beside the guards they pin.
+For every structural bound replaced, add a deterministic scaling regression
+over several input sizes showing work bounded by the complete named input. For
+every query guard, add a unit test showing that an identical query refuses
+re-entry without unregistering its outer query and that distinct queries nest.
+For every search moved outward, verify both the generated/expanded explicit
+proof and the kernel check of that proof, including rejection of a missing,
+reordered, or unrelated premise. Retain the fixture harnesses and the
+contract-fallback census at zero.
+
+The havoc identity regression must contain two structures that share their
+first 64 levels but differ below that point and show that their identities and
+checked endpoints remain distinct. Deadline regressions must show a distinct
+limit error and no reusable negative memo entry.
 
 ## Not in scope
 
-- Smart tactics and search in the surface; they produce certificates the
-  kernel checks, which is where search belongs.
-- Completed kernel-API soundness hardening; it is independent of this
-  search-and-fuel cleanup.
-- Performance work on rules that are already exact.
+- Smart tactics and search in the surface; they produce checked proof steps or
+  explicit certificates, which is where search belongs.
+- Execution path-width, loop-unroll, call-depth, and deterministic smart-tactic
+  work budgets whose units and failures are explicit.
+- Memo capacity and eviction policy when eviction cannot affect correctness or
+  completeness.
+- Performance work on an exact, relevant-input-bounded rule unless a scaling
+  regression shows that the classification is wrong.
+
+Completed kernel-API hardening is not reopened wholesale, but a depth-truncated
+value advertised as a lossless certificate identity is in scope here because
+the bound can change what the checker accepts.
 
 ## Acceptance criteria
 
-- No fuel counter or depth cut under `src/kernel/`, except
-  `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`, whose removal
-  `issues/load-equality-prover-in-kernel.md` owns; every bounded rule's
-  bound is a function of the inputs it names, with a scaling regression.
-- The finite context split and the upper-bound split are either surface
-  tactics whose cases the kernel checks, or deleted; no kernel rule
-  issues a theorem by search.
-- `search_truncations` is deleted, or documented as recording cycle cuts
-  only.
-- Certification decides by matching recorded completions and by exact
-  rules; `PureFactContext::proves` is not called from
+- No authoritative result under `src/kernel/` depends on a fuel counter or
+  numeric depth cut. `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` may remain only while
+  `issues/load-equality-prover-in-kernel.md` is open; no new tier replaces it.
+- Every structural walk is complete over its named input, cycle-safe where
+  necessary, and covered by a deterministic multi-size scaling regression.
+- The finite context split and upper-bound split are surface planning whose
+  selected cases are checked explicitly, or are deleted. No checked operation
+  clones or scans the complete context merely to validate the split.
+- Global load equality is decided from recorded evidence. Its typed certificate
+  and migration cover fact matching, transport, certification, loops,
+  resources, and other kernel consumers.
+- General pointer distinctness and its exported theorem constructor have the
+  explicitly chosen API disposition; no retained constructor discovers a proof
+  by ambient global fallback.
+- Coarse reentrancy tiers are gone. Exact-query cycle cuts cannot poison a
+  negative memo, and the incompleteness epoch is deleted or named and
+  documented for every cause it actually records.
+- Deadline expiry propagates as a verification-limit error rather than an
+  ordinary proof miss and cannot populate a negative memo.
+- Certification decides by matching recorded completions and exact rules;
+  `PureFactContext::proves` is not called from
   `src/kernel/api/contract_certification/`.
-- No route in the kernel tries a broader method after a narrower one fails
-  on the same question, and no `std::env` read under `src/kernel/`.
-- Both fixture harnesses pass with the contract-fallback census at zero;
-  deterministic work over the profiled examples does not rise.
+- Authoritative uses of the general proposition prover are removed, supplied
+  explicit checked evidence, or listed as deliberate exceptions that narrow
+  the issue's top-level invariant.
+- No speculative/global proof-search fallback and no `std::env` read remains
+  under `src/kernel/`.
+- `scripts/check.sh` passes, both fixture harnesses pass with the
+  contract-fallback census at zero, and deterministic work over the profiled
+  examples does not rise.
