@@ -149,8 +149,19 @@ struct ParsedType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructLayout {
     fields: BTreeMap<String, C0StructField>,
+    /// Leaf fields used when a struct value is copied through the kernel.
+    /// Embedded struct fields are flattened here while preserving their
+    /// declared names as qualified paths and their complete ABI offsets.
+    aggregate_fields: Vec<C0AggregateField>,
     size_bytes: u32,
     alignment_bytes: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct C0AggregateField {
+    name: String,
+    offset_bytes: u32,
+    c_type: C0Type,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -544,17 +555,21 @@ impl C0StructLayout {
     pub(crate) fn to_kernel_aggregate_layout(&self) -> crate::kernel::CAggregateLayout {
         crate::kernel::CAggregateLayout::new(
             self.size_bytes,
-            self.fields
+            self.aggregate_fields
                 .iter()
-                .map(|(field_name, field)| {
+                .map(|field| {
                     crate::kernel::CAggregateField::new(
-                        field_name,
+                        &field.name,
                         field.offset_bytes,
                         field.c_type.to_kernel_type(),
                     )
                 })
                 .collect(),
         )
+    }
+
+    fn aggregate_fields(&self) -> &[C0AggregateField] {
+        &self.aggregate_fields
     }
 }
 
@@ -1139,6 +1154,44 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
 }
 
+fn flatten_aggregate_fields(
+    fields: &BTreeMap<String, C0StructField>,
+    structs: &BTreeMap<String, C0StructLayout>,
+) -> Vec<C0AggregateField> {
+    let mut aggregate_fields = Vec::new();
+    for (field_name, field) in fields {
+        if field.c_type == C0Type::Int32
+            && field.struct_name.is_some()
+            && field.array_element_width.is_none()
+        {
+            let nested_name = field
+                .struct_name
+                .as_ref()
+                .expect("embedded struct field has a struct name");
+            let nested_layout = structs
+                .get(nested_name)
+                .expect("embedded struct field has a parsed layout");
+            for nested_field in nested_layout.aggregate_fields() {
+                aggregate_fields.push(C0AggregateField {
+                    name: format!("{field_name}.{}", nested_field.name),
+                    offset_bytes: field
+                        .offset_bytes
+                        .checked_add(nested_field.offset_bytes)
+                        .expect("validated embedded struct field offset"),
+                    c_type: nested_field.c_type,
+                });
+            }
+        } else {
+            aggregate_fields.push(C0AggregateField {
+                name: field_name.clone(),
+                offset_bytes: field.offset_bytes,
+                c_type: field.c_type,
+            });
+        }
+    }
+    aggregate_fields
+}
+
 fn struct_value_type(layout: &C0StructLayout) -> C0Type {
     C0Type::UInt8Array(layout.size_bytes)
 }
@@ -1580,17 +1633,30 @@ impl Parser {
         let layout = self.structs.get(struct_name).cloned().ok_or_else(|| {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
-        if layout.fields.values().any(|field| {
-            field.struct_name.is_some()
+        for field in layout.fields.values() {
+            if field.c_type == C0Type::Int32
+                && field.struct_name.is_some()
+                && field.array_element_width.is_none()
+            {
+                self.scalar_struct_value_layout(
+                    field
+                        .struct_name
+                        .as_deref()
+                        .expect("embedded struct field has a struct name"),
+                )?;
+                continue;
+            }
+            if field.struct_name.is_some()
                 || field.union_name.is_some()
                 || !matches!(
                     field.c_type,
                     C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
                 )
-        }) {
-            return Err(self.error_here(format!(
-                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer, embedded struct, or union field"
-            )));
+            {
+                return Err(self.error_here(format!(
+                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, and embedded struct fields; `struct {struct_name}` contains a pointer, embedded struct, or union field"
+                )));
+            }
         }
         Ok(layout)
     }
@@ -2120,12 +2186,14 @@ impl Parser {
         }
         let size_bytes = align_up(offset_bytes, struct_alignment)
             .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
+        let aggregate_fields = flatten_aggregate_fields(&fields, &self.structs);
         if self
             .structs
             .insert(
                 name.clone(),
                 C0StructLayout {
                     fields,
+                    aggregate_fields,
                     size_bytes,
                     alignment_bytes: struct_alignment,
                 },
@@ -3470,7 +3538,7 @@ impl Parser {
             .get(target_struct)
             .expect("validated struct value has a layout");
         let mut stores = Vec::new();
-        for field in layout.fields.values() {
+        for field in layout.aggregate_fields() {
             let (element_type, element_count) = match field.c_type {
                 C0Type::Int32 | C0Type::UInt8 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),

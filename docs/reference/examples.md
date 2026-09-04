@@ -148,6 +148,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   loaded from external memory and used as the base of a write resource.
 - `mdtests/struct_array_parameter_fields.md`: a one-dimensional struct array
   parameter retains the ABI stride for indexed field loads and stores.
+- `mdtests/struct_by_value_embedded_copy.md`: by-value structs recursively copy
+  fields from an embedded struct into fresh address-backed storage.
 - `mdtests/struct_multidimensional_embedded_array.md`: a fixed multidimensional
   array of embedded structs preserves row-major indexing and ABI element stride.
 

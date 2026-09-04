@@ -1180,17 +1180,29 @@ impl Parser {
             .struct_layouts
             .get(struct_name)
             .ok_or_else(|| self.error(format!("unknown struct declaration `{struct_name}`")))?;
-        if layout.fields().values().any(|field| {
-            field.struct_name().is_some()
+        for field in layout.fields().values() {
+            if field.c_type() == C0Type::Int32
+                && field.struct_name().is_some()
+                && field.array_element_width().is_none()
+            {
+                self.scalar_struct_value_type(
+                    field
+                        .struct_name()
+                        .expect("embedded struct field has a struct name"),
+                )?;
+                continue;
+            }
+            if field.struct_name().is_some()
                 || field.union_name().is_some()
                 || !matches!(
                     field.c_type(),
                     C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
                 )
-        }) {
-            return Err(self.error(format!(
-                "struct-by-value currently supports int32, uint8, named enum fields, and fixed scalar arrays; `struct {struct_name}` contains a pointer, embedded struct, or union field"
-            )));
+            {
+                return Err(self.error(format!(
+                    "struct-by-value currently supports int32, uint8, named enum fields, fixed scalar arrays, and embedded struct fields; `struct {struct_name}` contains a pointer, embedded struct, or union field"
+                )));
+            }
         }
         Ok(C0Type::UInt8Array(layout.size_bytes()))
     }

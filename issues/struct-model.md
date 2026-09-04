@@ -6,13 +6,15 @@ Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
-slice now extends this with copies of scalar and fixed-array fields.
+slice now extends this with copies of scalar, fixed-array, and recursively
+embedded-struct fields.
 Struct fields currently support `int32`, `uint8`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
-are only `int32`, `uint8`, named enum fields, or fixed one-dimensional scalar
-arrays can be parameters, locals, assignments, and returns by value; each
-operation uses fresh address-backed storage and copies array cells individually.
+are only `int32`, `uint8`, named enum fields, fixed one-dimensional scalar
+arrays, or recursively embedded structs can be parameters, locals, assignments,
+and returns by value; each operation uses fresh address-backed storage and
+copies modeled leaf fields and array cells recursively.
 Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
@@ -25,7 +27,8 @@ are represented as aggregate places during C0 parsing and are lowered to scalar
 leaf accesses; direct aggregate loads, copies, and aggregate resource segments
 remain unsupported. Union members use
 overlapping layout and read-only typed loads; union writes, whole-union values,
-and by-value containers remain rejected. Bitfields and broader struct-value
+and by-value containers with pointers, unions, or embedded-struct arrays remain
+rejected. Bitfields and broader struct-value
 shapes remain. Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
@@ -75,15 +78,20 @@ Staged mdtests, each with an unchanged C file:
    Covered by `mdtests/struct_array_of_embedded_structs.md`,
    `mdtests/struct_multidimensional_embedded_array.md`, and the C0
    ABI/execution tests.
+7. ~~A struct containing an embedded struct passed and returned by value,
+   with nested updates isolated from the caller.~~ Covered by
+   `mdtests/struct_by_value_embedded_copy.md` and the flattened aggregate
+   layout test; pointer-bearing and embedded-struct-array value shapes remain
+   open.
 
 ## Acceptance criteria
 
 - Field types extend to every supported scalar and to fixed arrays, embedded
   structs, and enums; layout follows the documented LP64 rules and is tested
   against `repr(C)`.
-- Scalar-only struct-by-value parameters, locals, assignments, and returns are
-  modeled as copies with their own local blocks; field names, offsets, and
-  scalar types remain in aggregate metadata.
+- Copyable struct-by-value parameters, locals, assignments, and returns are
+  modeled as recursive copies with their own local blocks; leaf field names,
+  offsets, and scalar types remain in flattened aggregate metadata.
 - Unions and bitfields are either modeled with explicit rules or rejected with
   a diagnostic that names the unsupported construct; no silent approximation.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.

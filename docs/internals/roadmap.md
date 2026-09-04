@@ -91,10 +91,12 @@ Likely additions:
   field resource places, and nested leaf-field access through embedded
   aggregate places. One-dimensional function parameters declared as arrays of
   the supported structs now retain their ABI stride. Copyable by-value structs
-  with scalar, named-enum, and fixed scalar-array fields now have explicit
-  fresh-copy semantics for parameters, locals, assignments, and returns; array
-  fields are copied element by element. Remaining work
-  includes broader struct values, bitfields, and broader address-taking. Named
+  with scalar, named-enum, fixed scalar-array, and recursively embedded
+  struct fields now have explicit fresh-copy semantics for parameters, locals,
+  assignments, and returns; nested fields and array elements are copied
+  recursively. Remaining work includes pointer- and union-bearing struct
+  values, embedded-struct arrays in by-value containers, bitfields, and
+  broader address-taking. Named
   enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,
   and anonymous declarations remain outside the slice.

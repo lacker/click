@@ -3509,6 +3509,93 @@ fn c0_scalar_struct_values_preserve_named_kernel_layout_metadata() {
 }
 
 #[test]
+fn c0_struct_values_flatten_embedded_layout_for_recursive_copies() {
+    #[repr(C)]
+    struct HostInner {
+        value: i32,
+        flag: u8,
+    }
+    #[repr(C)]
+    struct HostOuter {
+        tag: u8,
+        inner: HostInner,
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 flag;
+        };
+        struct outer {
+            uint8 tag;
+            struct inner inner;
+            int32 tail;
+        };
+
+        struct outer finish(struct outer value) {
+            value.inner.value = 7;
+            value.inner.flag = 9;
+            return value;
+        }
+        "#,
+    )
+    .expect("embedded structs should be supported in struct values");
+
+    let outer = function.structs().get("outer").expect("outer layout");
+    assert_eq!(
+        outer.size_bytes() as usize,
+        std::mem::size_of::<HostOuter>()
+    );
+    assert_eq!(
+        outer.alignment_bytes() as usize,
+        std::mem::align_of::<HostOuter>()
+    );
+    assert_eq!(
+        outer.field("inner").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, inner)
+    );
+    assert_eq!(
+        outer.field("inner").unwrap().byte_width() as usize,
+        std::mem::size_of::<HostInner>()
+    );
+
+    let kernel = function.to_kernel_function();
+    let layout = kernel.parameters()[0]
+        .aggregate_layout()
+        .expect("embedded struct parameter should retain aggregate metadata");
+    let field = |name: &str| {
+        layout
+            .fields()
+            .iter()
+            .find(|field| field.name() == name)
+            .unwrap_or_else(|| panic!("missing flattened aggregate field `{name}`"))
+    };
+    assert_eq!(field("tag").offset_bytes(), 0);
+    assert_eq!(field("tag").c_type(), crate::kernel::CType::UInt8);
+    assert_eq!(
+        field("inner.value").offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, inner) + std::mem::offset_of!(HostInner, value)
+    );
+    assert_eq!(field("inner.value").c_type(), crate::kernel::CType::Int32);
+    assert_eq!(
+        field("inner.flag").offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, inner) + std::mem::offset_of!(HostInner, flag)
+    );
+    assert_eq!(field("inner.flag").c_type(), crate::kernel::CType::UInt8);
+    assert_eq!(
+        field("tail").offset_bytes() as usize,
+        std::mem::offset_of!(HostOuter, tail)
+    );
+    assert_eq!(field("tail").c_type(), crate::kernel::CType::Int32);
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostOuter>()
+    );
+}
+
+#[test]
 fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
     let error = syntax::parse_function(
         r#"
@@ -3523,11 +3610,9 @@ fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
     )
     .expect_err("pointer-bearing struct values should remain outside this slice");
 
-    assert!(
-        error
-            .message()
-            .contains("int32, uint8, named enum fields, and fixed scalar arrays")
-    );
+    assert!(error.message().contains(
+        "int32, uint8, named enum fields, fixed scalar arrays, and embedded struct fields"
+    ));
     assert!(error.message().contains("contains a pointer"));
 }
 
