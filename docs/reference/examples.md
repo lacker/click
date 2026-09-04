@@ -160,6 +160,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   fields from an embedded struct into fresh address-backed storage.
 - `mdtests/struct_by_value_embedded_array_copy.md`: by-value structs flatten
   one-dimensional embedded-struct arrays into typed leaf-field copies.
+- `mdtests/struct_by_value_embedded_array_multidim_copy.md`: by-value structs
+  flatten multidimensional embedded-struct arrays row-major with ABI strides.
 - `mdtests/struct_by_value_pointer_copy.md`: by-value structs shallow-copy data
   pointers while keeping ordinary-field updates isolated.
 - `mdtests/struct_multidimensional_embedded_array.md`: a fixed multidimensional

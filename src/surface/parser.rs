@@ -1198,7 +1198,7 @@ impl Parser {
         for field in layout.fields().values() {
             if let Some(nested_name) = field.struct_name()
                 && field.array_element_width().is_some()
-                && field.array_shape().is_some_and(|shape| shape.len() == 1)
+                && field.array_shape().is_some()
             {
                 self.scalar_struct_value_type(nested_name)?;
                 continue;
@@ -1231,7 +1231,7 @@ impl Parser {
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
                 )));
             }
         }

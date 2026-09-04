@@ -312,14 +312,15 @@ flattened `CAggregateLayout`; embedded fields use qualified names such as
 `inner.value`. The kernel binds a value to an `AggregateObject` with its own
 local block. Parameter binding, local assignment, and aggregate return
 materialization allocate fresh blocks and recursively copy the modeled scalar,
-array, embedded-struct-array leaf, and data-pointer fields. Pointer fields are
+array, fixed-dimensional embedded-struct-array leaf, and data-pointer fields.
+Multidimensional embedded-struct arrays are expanded in declared row-major
+order, so each nested leaf retains its complete element stride. Pointer fields are
 shallow copies of typed
 eight-byte pointer values: the destination aggregate gets the same pointer
 provenance, not a duplicate pointee allocation or ownership transfer. The
 aggregate still has no runtime `CValue`: expressions decay to its address for
 field loads and stores, while function-pointer fields, unions, and
-multidimensional arrays of embedded structs remain outside this by-value
-slice.
+other unsupported aggregate shapes remain outside this by-value slice.
 
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an

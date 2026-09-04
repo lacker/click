@@ -7,14 +7,15 @@ Struct pointers are supported: declarations, `->` field access, and
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
 slice now extends this with copies of scalar, fixed-array, recursively
-embedded-struct, and one-dimensional embedded-struct-array fields.
+embedded-struct, and fixed-dimensional embedded-struct-array fields.
 Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
-are only `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed one-dimensional scalar
-arrays, or recursively embedded structs can be parameters, locals, assignments,
-and returns by value; each operation uses fresh address-backed storage and
-copies modeled leaf fields and array cells recursively.
+are only `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed
+one-dimensional scalar arrays, recursively embedded structs, or
+fixed-dimensional arrays of embedded structs can be parameters, locals,
+assignments, and returns by value; each operation uses fresh address-backed
+storage and copies modeled leaf fields and array cells recursively.
 Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
@@ -22,12 +23,12 @@ of those supported structs use the same stride; the kernel represents the
 decayed parameter as a byte pointer while retaining the struct layout for
 indexing and resource ranges. Fixed one-dimensional `int32` and `uint8` arrays
 are preserved as inline field shapes and indexed through their element-width
-pointer arithmetic. Embedded fields and one-dimensional embedded-struct arrays
+pointer arithmetic. Embedded fields and fixed-dimensional embedded-struct arrays
 are represented as aggregate places during C0 parsing and are lowered to scalar
 leaf accesses; direct aggregate loads, copies, and aggregate resource segments
-remain unsupported. One-dimensional embedded-struct arrays in by-value
-containers are flattened to typed leaf fields with each element's complete
-ABI stride; multidimensional embedded-struct arrays remain rejected. Union
+remain unsupported. Fixed-dimensional embedded-struct arrays in by-value
+containers are flattened row-major to typed leaf fields with each element's
+complete ABI stride. Union
 members use overlapping layout and read-only typed loads; union writes,
 whole-union values, and by-value containers with function pointers or unions
 remain rejected. Data-pointer fields in by-value containers are
@@ -90,11 +91,12 @@ Staged mdtests, each with an unchanged C file:
    pointer bits copied shallowly and pointee writes remaining shared.~~ Covered
    by `mdtests/struct_by_value_pointer_copy.md` and the C0/kernel aggregate
    metadata and copy tests.
-9. ~~A struct containing a one-dimensional array of embedded structs passed
+9. ~~A struct containing a fixed-dimensional array of embedded structs passed
    and returned by value, with nested element updates isolated from the
-   caller.~~ Covered by `mdtests/struct_by_value_embedded_array_copy.md` and
-   the flattened array-element metadata test; multidimensional array values
-   remain open.
+   caller.~~ Covered by
+   `mdtests/struct_by_value_embedded_array_copy.md`,
+   `mdtests/struct_by_value_embedded_array_multidim_copy.md`, and the flattened
+   row-major array-element metadata test.
 
 ## Acceptance criteria
 
@@ -103,7 +105,8 @@ Staged mdtests, each with an unchanged C file:
   tested against `repr(C)`.
 - Copyable struct-by-value parameters, locals, assignments, and returns are
   modeled as recursive copies with their own local blocks; leaf field names,
-  offsets, and scalar/pointer types remain in flattened aggregate metadata.
+  offsets, and scalar/pointer types remain in flattened aggregate metadata,
+  including row-major paths for every fixed-dimensional embedded-struct array.
 - Data-pointer fields in those copies preserve the exact pointer value and
   provenance without copying the pointee or transferring ownership.
 - Unions are either modeled with explicit rules or rejected with a diagnostic

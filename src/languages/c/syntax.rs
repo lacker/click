@@ -1168,6 +1168,19 @@ fn flatten_aggregate_fields(
     fields: &BTreeMap<String, C0StructField>,
     structs: &BTreeMap<String, C0StructLayout>,
 ) -> Vec<C0AggregateField> {
+    fn row_major_index_path(flat_index: u32, shape: &[u32]) -> String {
+        let mut remaining = flat_index;
+        let mut indexes = vec![0; shape.len()];
+        for (dimension, length) in shape.iter().enumerate().rev() {
+            indexes[dimension] = remaining % *length;
+            remaining /= *length;
+        }
+        indexes
+            .into_iter()
+            .map(|index| format!("[{index}]"))
+            .collect()
+    }
+
     fn append_nested_fields(
         aggregate_fields: &mut Vec<C0AggregateField>,
         prefix: &str,
@@ -1208,23 +1221,27 @@ fn flatten_aggregate_fields(
             field.struct_name.as_ref(),
             field.array_element_width,
             field.array_shape.as_deref(),
-        ) && let [length] = shape
-        {
+        ) {
             let nested_layout = structs
                 .get(nested_name)
                 .expect("embedded struct array field has a parsed layout");
-            for index in 0..*length {
+            let element_count = shape
+                .iter()
+                .try_fold(1u32, |count, length| count.checked_mul(*length))
+                .expect("validated embedded struct array field element count");
+            for flat_index in 0..element_count {
                 let element_offset = field
                     .offset_bytes
                     .checked_add(
-                        index
+                        flat_index
                             .checked_mul(element_width)
                             .expect("validated embedded struct array field offset"),
                     )
                     .expect("validated embedded struct array field offset");
+                let index_path = row_major_index_path(flat_index, shape);
                 append_nested_fields(
                     &mut aggregate_fields,
-                    &format!("{field_name}[{index}]"),
+                    &format!("{field_name}{index_path}"),
                     element_offset,
                     nested_layout,
                 );
@@ -1686,10 +1703,7 @@ impl Parser {
         for field in layout.fields.values() {
             if let Some(nested_name) = field.struct_name.as_deref()
                 && field.array_element_width.is_some()
-                && field
-                    .array_shape
-                    .as_deref()
-                    .is_some_and(|shape| shape.len() == 1)
+                && field.array_shape.is_some()
             {
                 self.scalar_struct_value_layout(nested_name)?;
                 continue;
@@ -1723,7 +1737,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, one-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported embedded-struct array, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
                 )));
             }
         }

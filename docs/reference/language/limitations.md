@@ -43,18 +43,17 @@ One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. Copyable struct values are also supported when
 every field is `int16`, `int32`, `uint8`, `uint16`, a named enum field, a
-modeled data pointer, or a fixed one-dimensional
-array of those scalar elements, or an embedded struct whose fields satisfy the
-same rule: parameters, locals, assignments, and returns use fresh
-address-backed copies, recursively copying nested fields and array elements.
+modeled data pointer, a fixed one-dimensional array of those scalar elements,
+an embedded struct whose fields satisfy the same rule, or a fixed-dimensional
+array of such embedded structs: parameters, locals, assignments, and returns
+use fresh address-backed copies, recursively copying nested fields and array
+elements.
 Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Function-pointer fields, unions,
-or arrays of embedded structs remain
-unsupported, as do direct aggregate loads, aggregate resource segments,
-multidimensional inline arrays of scalar fields, multidimensional arrays of
-embedded structs in by-value containers, packed layout, or general
-field-address expressions. Fixed multidimensional arrays of embedded structs
-are supported through indexed leaf-field access with row-major ABI stride.
+direct aggregate loads, aggregate resource segments, multidimensional inline
+arrays of scalar fields, packed layout, or general field-address expressions
+remain unsupported. Fixed-dimensional arrays of embedded structs are supported
+through indexed leaf-field access and by-value copies with row-major ABI stride.
 Bitfields and other compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Named enums use
 the four-byte scalar ABI representation; their enumerators are resolved to
