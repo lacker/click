@@ -158,8 +158,12 @@ its own ranking, and every recursive edge still needs the function-level
 measure. The loop guard is available when proving the recursive argument is
 nonnegative. The numeric function-level measure must remain unchanged by
 assignments, updates, allocation results, and call results. Structural
-recursive calls in loops still require the proof driver to expose a folded
-direct child; that boundary is tracked as `issues/termination-structural-loop-proof.md`.
+recursive calls in loops are supported for read-only resource transitions when
+the parent is observed before the loop and the loop effect is `immutable by
+frame`; the recursive call must still receive a direct contained child. See
+`mdtests/c_decreases_resource_recursive_in_loop.md`. Resource-consuming or
+mutating structural calls across a loop back edge remain tracked in
+`issues/termination-structural-loop-proof.md`.
 Recursive calls whose descent depends on a changing lexicographic caller
 measure remain unsupported.
 

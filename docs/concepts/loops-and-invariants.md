@@ -53,8 +53,14 @@ function-level `decreases` measure must strictly decrease at every recursive
 edge. The loop guard is used when proving the recursive argument is
 nonnegative. The numeric function-level measure must remain unchanged by the
 loop body; calls whose descent depends on a changing lexicographic caller
-measure remain unsupported. Structural-resource recursion inside ranked loops
-still needs the proof driver to expose the folded direct child.
+measure remain unsupported. A read-only structural-resource call inside a
+ranked loop is supported when the parent resource is observed before the loop
+and the loop effect is declared `immutable by frame`; the call must still
+receive a direct contained child. Pointer-valued branch guards are not scalar
+ranking facts, so the ranking checker checks the scalar measure on every path
+without importing those pointer comparisons. Resource-consuming or mutating
+structural calls across a loop back edge remain tracked in
+`issues/termination-structural-loop-proof.md`.
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a

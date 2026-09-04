@@ -189,6 +189,15 @@ destroying its child. Thus the surface plan cannot assert ancestry, and an
 inactive, unrelated, or same-parent resource does not become decreasing merely
 because it has the same resource name.
 
+When a scalar loop ranking is checked, known pointer-valued branch guards are
+not lowered as arithmetic assumptions. The checker still checks the ranking's
+nonnegativity and decrease on every such path; omitting an irrelevant pointer
+comparison prevents a structural guard such as `node->next != 0` from being
+mistaken for an invalid scalar measure. Read-only structural calls inside
+ranked loops are therefore supported when the checked surface proof preserves
+the observed resource at the loop back edge. Resource-consuming or mutating
+transitions across that back edge remain a separate proof boundary.
+
 Termination rules live in their own execution-environment map. Constructing or
 applying `CVerifiedFunctionRule` does not consult that map, so a termination
 feature cannot accidentally turn ordinary `ensures` into total correctness.

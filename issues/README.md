@@ -43,7 +43,7 @@ C language coverage:
 Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
-- [Certify structural recursion inside ranked loops](termination-structural-loop-proof.md)
+- [Support resource transitions for structural recursion inside ranked loops](termination-structural-loop-proof.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 

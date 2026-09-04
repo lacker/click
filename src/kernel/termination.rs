@@ -727,6 +727,48 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
     }
 }
 
+fn collect_pointer_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Declare { name, c_type } if c_type.is_pointer() => {
+            names.insert(name.clone());
+        }
+        CStatement::ContinueWithStep { step } => collect_pointer_variables(step, names),
+        CStatement::Seq(first, second) => {
+            collect_pointer_variables(first, names);
+            collect_pointer_variables(second, names);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_pointer_variables(then_branch, names);
+            collect_pointer_variables(else_branch, names);
+        }
+        CStatement::While { body, .. } => collect_pointer_variables(body, names),
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                collect_pointer_variables(&case.body, names);
+            }
+        }
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => {}
+    }
+}
+
 /// Whether any expression in `statement` takes the address of the local
 /// `name`. A local's cell can be written through a pointer only if its
 /// address was taken somewhere in the function, so this is the complete
@@ -1384,6 +1426,69 @@ fn ranking_condition_term(
     }
 }
 
+// A branch condition can carry facts that are irrelevant to a scalar loop
+// ranking. In particular, a structural recursive call commonly sits under a
+// pointer guard such as `node->next != 0`. The ranking prover cannot encode
+// pointer comparisons as arithmetic facts, but it is still sound to check the
+// scalar ranking on that path without importing the pointer fact: every path
+// must satisfy the same nonnegativity and decrease obligations.
+fn contains_known_pointer_expression(
+    expression: &CExpression,
+    pointer_variables: &BTreeSet<String>,
+) -> bool {
+    use CExpression::*;
+    match expression {
+        Value(value) => value.c_type().is_pointer(),
+        Variable(name) => pointer_variables.contains(name),
+        FunctionAddress(_) | AddressOf(_) | PointerOffsetBytes { .. } => true,
+        Cast {
+            expression,
+            target_type,
+        } => {
+            target_type.is_pointer()
+                || contains_known_pointer_expression(expression, pointer_variables)
+        }
+        TypedLoad {
+            pointer: _,
+            value_type,
+        } => value_type.is_pointer(),
+        Load(_) | Index(_, _) => false,
+        LessThan(left, right)
+        | LessEqual(left, right)
+        | GreaterThan(left, right)
+        | GreaterEqual(left, right)
+        | Equal(left, right)
+        | NotEqual(left, right)
+        | And(left, right)
+        | Or(left, right)
+        | Add(left, right)
+        | Subtract(left, right)
+        | Multiply(left, right)
+        | Divide(left, right)
+        | Remainder(left, right)
+        | ShiftLeft(left, right)
+        | ShiftRight(left, right)
+        | BitwiseAnd(left, right)
+        | BitwiseOr(left, right)
+        | BitwiseXor(left, right) => {
+            contains_known_pointer_expression(left, pointer_variables)
+                || contains_known_pointer_expression(right, pointer_variables)
+        }
+        Not(value) | BitwiseNot(value) => {
+            contains_known_pointer_expression(value, pointer_variables)
+        }
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            contains_known_pointer_expression(condition, pointer_variables)
+                || contains_known_pointer_expression(then_branch, pointer_variables)
+                || contains_known_pointer_expression(else_branch, pointer_variables)
+        }
+    }
+}
+
 fn assume_ranking_condition(
     context: PureFactContext,
     expression: &CExpression,
@@ -1871,15 +1976,25 @@ fn check_loops(
     supplied: &BTreeMap<usize, Vec<CExpression>>,
     entry_conditions: &[CExpression],
     invariants: &BTreeMap<usize, Vec<CExpression>>,
+    pointer_variables: &BTreeSet<String>,
     next_index: &mut usize,
 ) -> Result<bool, CTerminationError> {
     match statement {
-        CStatement::Seq(first, second) => {
-            Ok(
-                check_loops(first, supplied, entry_conditions, invariants, next_index)?
-                    && check_loops(second, supplied, entry_conditions, invariants, next_index)?,
-            )
-        }
+        CStatement::Seq(first, second) => Ok(check_loops(
+            first,
+            supplied,
+            entry_conditions,
+            invariants,
+            pointer_variables,
+            next_index,
+        )? && check_loops(
+            second,
+            supplied,
+            entry_conditions,
+            invariants,
+            pointer_variables,
+            next_index,
+        )?),
         CStatement::If {
             then_branch,
             else_branch,
@@ -1889,12 +2004,14 @@ fn check_loops(
             supplied,
             entry_conditions,
             invariants,
+            pointer_variables,
             next_index,
         )? && check_loops(
             else_branch,
             supplied,
             entry_conditions,
             invariants,
+            pointer_variables,
             next_index,
         )?),
         CStatement::While {
@@ -1902,8 +2019,14 @@ fn check_loops(
         } => {
             let index = *next_index;
             *next_index += 1;
-            let nested_terminate =
-                check_loops(body, supplied, entry_conditions, invariants, next_index)?;
+            let nested_terminate = check_loops(
+                body,
+                supplied,
+                entry_conditions,
+                invariants,
+                pointer_variables,
+                next_index,
+            )?;
             let Some(measures) = supplied.get(&index) else {
                 return Ok(false);
             };
@@ -1972,8 +2095,10 @@ fn check_loops(
                 }
                 context = assume_ranking_condition(context, condition, true, &variables)?;
                 for (path_condition, value) in &path.conditions {
-                    context =
-                        assume_ranking_condition(context, path_condition, *value, &variables)?;
+                    if !contains_known_pointer_expression(path_condition, pointer_variables) {
+                        context =
+                            assume_ranking_condition(context, path_condition, *value, &variables)?;
+                    }
                 }
                 for pre_term in &pre_terms {
                     let pre_positive = Proposition::ConditionIs(
@@ -2036,14 +2161,20 @@ fn check_loops(
                     supplied,
                     entry_conditions,
                     invariants,
+                    pointer_variables,
                     next_index,
                 )?;
             }
             Ok(nested_terminate)
         }
-        CStatement::ContinueWithStep { step } => {
-            check_loops(step, supplied, entry_conditions, invariants, next_index)
-        }
+        CStatement::ContinueWithStep { step } => check_loops(
+            step,
+            supplied,
+            entry_conditions,
+            invariants,
+            pointer_variables,
+            next_index,
+        ),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -2225,11 +2356,19 @@ pub fn c_verified_function_termination_rules(
                 )?;
             }
             let mut next_loop = 0;
+            let mut pointer_variables = function
+                .parameters()
+                .iter()
+                .filter(|parameter| parameter.c_type().is_pointer())
+                .map(|parameter| parameter.name().to_string())
+                .collect::<BTreeSet<_>>();
+            collect_pointer_variables(&function.source_body, &mut pointer_variables);
             component_ok &= check_loops(
                 &function.source_body,
                 loop_measures,
                 &entry_conditions,
                 &invariants,
+                &pointer_variables,
                 &mut next_loop,
             )?;
             if loop_measures.keys().any(|index| *index >= next_loop) {

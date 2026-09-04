@@ -33,9 +33,11 @@ component that decreases after the phase. Numeric recursive calls inside a
 separately ranked loop are now checked under the loop guard;
 `mdtests/c_decreases_recursive_in_loop.md` covers the numeric case and
 `mdtests/c_decreases_recursive_in_loop_rejects_same_measure.md` pins the
-negative edge. Structural-resource recursion inside a ranked loop is tracked
-separately in [termination-structural-loop-proof.md](termination-structural-loop-proof.md)
-because the surface proof driver still stops while exposing the folded child.
+negative edge. Read-only structural-resource recursion inside a ranked loop
+is now covered by `mdtests/c_decreases_resource_recursive_in_loop.md`, with a
+parent-call negative regression beside it. Resource-consuming or mutating
+structural calls inside a ranked loop remain tracked in
+[termination-structural-loop-proof.md](termination-structural-loop-proof.md).
 
 ## Intended regression
 
@@ -62,9 +64,10 @@ non-decreasing must expect `fail: ... does not decrease`.
   loop's own checked ranking and the caller/callee function-level ranking;
   the loop guard is included when establishing the recursive argument's
   nonnegativity. The recursive measure parameter must remain unchanged by
-  assignments, updates, allocation results, and call results. Structural
-  recursive calls inside ranked loops remain open because the surface proof
-  driver must expose their folded direct child; see
+  assignments, updates, allocation results, and call results. Read-only
+  structural recursive calls inside ranked loops are supported when the
+  parent resource is observed and the loop effect is immutable; resource
+  transitions that consume or mutate a child remain tracked in
   [termination-structural-loop-proof.md](termination-structural-loop-proof.md).
   Recursive calls whose descent depends on a changing lexicographic caller
   measure also remain outside this slice.
