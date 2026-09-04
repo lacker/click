@@ -89,9 +89,13 @@ offset leaves. Smart proof expansion renders those paths as ordinary
 `rewrite` steps followed by `normalize`.
 
 Likewise, theory-aware normalization used only to group candidates in an index
-is named as a bucket key. A bucket key may conservatively miss a useful join;
-it is not canonical identity unless it satisfies the complete, assumption-free
-contract above.
+is named for that purpose. Context-inconsistency checking uses a complete
+order-endpoint index key plus necessary-condition residue keys: it follows the
+entire finite endpoint and context-resolved load chain, while only comparing
+theory-sensitive pairs whose residues intersect. These keys may admit extra
+candidates but may not omit a pair accepted by the checked theory. They remain
+context-local indexing, not canonical identity, because they consult proved
+facts and do not satisfy the assumption-free contract above.
 
 ## Load variables are the canonical form of a load
 

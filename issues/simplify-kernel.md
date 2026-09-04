@@ -95,9 +95,10 @@ assumption-free, idempotent `canonical_term` from contextual proof vocabulary:
 verified calls retain canonical footprints, exact `frame using` operations
 carry proof-local endpoint evidence, and target-directed load-address
 congruence replaces the former implicit representative walk. The alternating
-round limit and the deep-term canonicalization preflight are gone. Only the
-theory-aware order-endpoint key remains in that issue; replacing its cutoff
-with an unbounded search is explicitly not the intended fix.
+round limit and the deep-term canonicalization preflight are gone. The final
+theory-aware order-endpoint cutoff is now gone too: complete input-sized key
+and residue walks preserve indexed candidate selection without introducing an
+unbounded search.
 
 ## Current inventory
 
@@ -110,10 +111,9 @@ These are not surface-search migrations. Replace each cut with work bounded by
 the complete named structure, plus an exact cycle check or an iterative walk as
 needed.
 
-The order-endpoint key depth remains tracked in
-`issues/fix-canonicalization.md`. Its former sibling cuts—the alternating
-contextual-lowering rounds and deep-term canonicalization preflight—are
-complete.
+The canonicalization issue's order-endpoint key depth is complete, along with
+its former sibling cuts: the alternating contextual-lowering rounds and
+deep-term canonicalization preflight.
 
 There are no remaining structural or fixed-point cuts owned directly by this
 issue. Nested quantified-binder comparison is complete and lives in the

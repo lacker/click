@@ -290,19 +290,24 @@ term. Nothing in the observed callers currently justifies a general e-graph.
 
 ### Context-dependent order-endpoint keys
 
-`order_endpoint_bucket_key` in
-`src/kernel/assumptions/proposition_reasoning.rs` builds a theory-aware key for
-context-inconsistency bucketing. It resolves memory loads, folds and sorts
-addition, and recursively canonicalizes addends, but stops at
-`ORDER_ENDPOINT_BUCKET_KEY_DEPTH = 6`. The result is useful as an index key,
-yet it is neither the global assumption-free canonical form nor complete at a
-fixed context.
+Stage 5 replaced `order_endpoint_bucket_key` and its depth-six cutoff with
+`normalized_order_endpoint_index_key` in
+`src/kernel/assumptions/proposition_reasoning.rs`. This purpose-specific key
+resolves every finite chain of context-determined loads, folds and sorts
+addition, and traverses conditional branches with an explicit worklist. It is
+still not global canonical form: its result is scoped to one
+`PureFactContext`, and every transformation is used only to join order
+endpoints known equal by the existing checked theory.
 
-This issue also owns that cutoff and terminology. The replacement may be a
-complete input-sized normalization used only for bucketing, or a differently
-structured index that does not require extracting a contextual representative.
-It must preserve the existing near-linear consistent-context scaling property
-and must not turn endpoint registration into all-pairs theory comparison.
+The remaining theory comparisons are not all-pairs. Complete residue indexes
+record the cheap necessary shape of every sensitive endpoint (resolved-load,
+additive arity and constant, conditional, or fold), and pairwise
+`terms_equal` calls are made only inside intersecting residues. A residue may
+contain false positives, which cost a local comparison, but the index does not
+omit a pair accepted by a theory rule. Thus performance filtering cannot
+change the inconsistency answer. A regression that previously failed at a
+contextual load-resolution depth of eight now closes at depths 8, 16, and 32;
+deterministic work over the measured chain is linear after fixed setup cost.
 
 ## Why an e-graph is not automatically the answer
 
@@ -358,7 +363,8 @@ the semantic layers and caller requirements are separated.
 5. **Index normalization is named by purpose.** Order-endpoint bucketing may
    normalize associative addition or resolved loads, but it is not called the
    global canonical form unless it satisfies that form's exact contract.
-   Bucket-key incompleteness may cost performance but must not change the
+   The extracted key and complete necessary-condition residue index may admit
+   extra comparisons, but must not omit a comparison that can change the
    logical inconsistency answer.
 
 The implementation need not attach a large proof tree to every future range
@@ -426,10 +432,18 @@ Stage 4 resolved its representation questions:
 - Exact ground-equality paths plus target-directed structural congruence cover
   the observed cases. The former generated-term representative walk is gone.
 
-The remaining choices belong to stage 5 or the optional later experiment:
-- Can order inconsistency use several cheap sound bucket keys and reserve
-  pairwise theory checks for a narrowly identified bucket, avoiding any need
-  for one context-dependent extracted representative?
+Stage 5 resolved the order-index choice:
+
+- Order inconsistency uses a complete context-local endpoint key for direct
+  class merging plus cheap, complete necessary-condition residue keys for the
+  theory comparisons that cannot be represented by one extracted term.
+- Both walks cover their entire finite endpoint and load-resolution chain.
+  They have no semantic fuel or nesting cutoff and do not scan unrelated
+  endpoint pairs.
+
+The remaining choices belong only to the optional later experiment and final
+documentation audit:
+
 - Should the smart planner use the current adjacency index with targeted path
   queries, or does evidence eventually justify a proof-producing e-graph?
   Stage 4 starts with targeted paths; any alternative must preserve branching,
@@ -518,10 +532,11 @@ useful on its own.
    deleted. Regressions cover the verified-call vocabulary mismatch,
    independently checked expansion, and rejection across different load
    epochs and blocks.
-5. **Repair order-endpoint indexing.** Replace the depth-six key construction
-   with complete, purpose-named normalization or a bucket strategy whose misses
-   cannot affect the logical answer. Retain the consistent-context scaling
-   regression.
+5. **Repair order-endpoint indexing (complete).** The purpose-named endpoint
+   key and residue-key walks cover the complete finite input and every
+   context-resolved load hop without a depth cutoff. Theory comparisons remain
+   restricted to sound candidate residues, and focused regressions cover the
+   formerly missed deep contradiction and consistent-context scaling.
 6. **Evaluate an e-graph only if evidence remains.** If callers still require
    congruence closure, prototype it outside the kernel or as a proof-producing
    index and compare its deterministic scaling and persistent-branch costs

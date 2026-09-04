@@ -4483,6 +4483,70 @@ fn derived_order_contradiction_uses_theory_equal_endpoints() {
     );
 }
 
+/// An order endpoint may resolve through any finite chain of context-equal
+/// stored addresses. Contradiction indexing must follow the complete chain:
+/// a depth cutoff can otherwise miss `load < middle < resolved(load)`.
+#[test]
+fn deep_contextual_load_order_contradiction_has_no_index_depth_cutoff() {
+    fn contextual_load_chain(
+        length: usize,
+        terminal: Bitvector32Term,
+    ) -> (Bitvector32Term, PureFactContext) {
+        let mut next = terminal;
+        let mut assumptions = PureFactContext::new();
+        for index in (0..length).rev() {
+            let stored_index = Bitvector32Term::Variable(Variable(98_000 + index as u64 * 2));
+            let query_index = Bitvector32Term::Variable(Variable(98_001 + index as u64 * 2));
+            let block = format!("deep-order-resolution-{index}");
+            let stored_pointer = Pointer {
+                block: block.clone().into(),
+                offset: PointerOffsetTerm::scale_int32(stored_index.clone(), 4),
+            };
+            let query_pointer = Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::scale_int32(query_index.clone(), 4),
+            };
+            let memory = CMemory::new().store(stored_pointer, CValue::Int32(next));
+            next = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory),
+                Box::new(query_pointer),
+            );
+            assumptions =
+                assumptions.assume_condition(ConditionTerm::equal(stored_index, query_index), true);
+        }
+        (next, assumptions)
+    }
+
+    let samples = [6usize, 8, 16, 32]
+        .into_iter()
+        .map(|length| {
+            let terminal = Bitvector32Term::Variable(Variable(99_000));
+            let middle = Bitvector32Term::Variable(Variable(99_001));
+            let (load, assumptions) = contextual_load_chain(length, terminal.clone());
+            let assumptions = assumptions
+                .assume_condition(ConditionTerm::signed_less_than(load, middle.clone()), true)
+                .assume_condition(
+                    ConditionTerm::signed_less_than(middle.clone(), terminal.clone()),
+                    true,
+                );
+            let (inconsistent, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.is_inconsistent()
+            });
+            assert!(
+                inconsistent,
+                "a contextual load chain of length {length} must close the strict cycle"
+            );
+            (length, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "deep endpoint contradiction indexing is superlinear: {samples:?}"
+        );
+    }
+}
+
 /// The issue-named fixed-arithmetic curve: one overflow decision whose
 /// operands have exact bounds, while unrelated order facts grow. The interval
 /// index answers from exact endpoint bounds, so the decision must not rescan
