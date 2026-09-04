@@ -131,6 +131,13 @@ the cell scan asks the exact cell, the element index's recorded equality
 class, and then the block's cells through the memoized pointer-equality
 query. The isolated budgets went with the fuel. A load resolves through
 a chain of 32 to 128 stored cells with work that follows the chain.
+The load-equality depth of two is carved out of this slice: it caps a
+search, not a walk, and every counter-free replacement tried inside the
+kernel either did not finish or was the depth limit under another name
+(measurements in `issues/load-equality-prover-in-kernel.md`). Deleting it
+means moving the framed-load prover behind a surface certificate, which
+that issue tracks. The remaining slice 7 work is the width caps, the
+`search_truncations` gating, and the deadline checks.
 
 ## Violated invariant
 
@@ -346,7 +353,9 @@ depends on a count.
 
 ## Acceptance criteria
 
-- No fuel counter, depth cut, or `search_truncations` under `src/kernel/`;
+- No fuel counter, depth cut, or `search_truncations` under `src/kernel/`,
+  except `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`, whose removal
+  `issues/load-equality-prover-in-kernel.md` owns;
   every bounded rule's bound is a function of the inputs it names, with a
   scaling regression.
 - Certification decides by matching recorded completions and by exact
