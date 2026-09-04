@@ -305,9 +305,10 @@ uses that same typed lvalue path, so the pointer retains the allocation block
 and the combined ABI offset rather than materializing an aggregate value.
 Direct aggregate loads and copies remain unsupported; resource clauses
 currently name nested leaf fields rather than the aggregate itself. Fixed
-multidimensional arrays of embedded structs retain
-their declared shape in C0 metadata; indexed leaf access flattens indices in
-row-major order before adding the nested struct's complete ABI stride.
+multidimensional arrays of embedded structs and supported scalar fields retain
+their declared shapes in C0 metadata. Indexed leaf access flattens indices in
+row-major order before adding the nested struct's complete ABI stride or the
+scalar field's element-width stride.
 
 Copyable by-value structs are the first exception to that address-first
 boundary. C0 retains each leaf field name, byte offset, and kernel type in a

@@ -6,13 +6,14 @@ Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
-slice now extends this with copies of scalar, fixed-array, recursively
-embedded-struct, and fixed-dimensional embedded-struct-array fields.
+slice now extends this with copies of scalar, fixed-dimensional scalar-array,
+recursively embedded-struct, and fixed-dimensional embedded-struct-array
+fields.
 Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, fixed scalar
 arrays, embedded structs, named enum fields, pointers, named read-only unions,
 and fixed-dimensional arrays of embedded structs. Structs whose fields
 are only `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed
-one-dimensional scalar arrays, recursively embedded structs, or
+fixed-dimensional scalar arrays, recursively embedded structs, or
 fixed-dimensional arrays of embedded structs can be parameters, locals,
 assignments, and returns by value; each operation uses fresh address-backed
 storage and copies modeled leaf fields and array cells recursively.
@@ -107,6 +108,11 @@ Staged mdtests, each with an unchanged C file:
     selected leaf.~~ Covered by `mdtests/struct_field_address.md` and the C0
     nested-field lowering regression. Unsupported-width address-taking must
     not silently fall back to an `int32*`.
+11. ~~Fixed multidimensional `int32` and `uint8` arrays inside structs retain
+    their declared shape, flatten indices row-major by element width, and
+    survive by-value copies.~~ Covered by
+    `mdtests/struct_multidimensional_scalar_array.md` and the C0 shape and
+    row-major lowering regressions.
 
 ## Acceptance criteria
 
@@ -116,7 +122,8 @@ Staged mdtests, each with an unchanged C file:
 - Copyable struct-by-value parameters, locals, assignments, and returns are
   modeled as recursive copies with their own local blocks; leaf field names,
   offsets, and scalar/pointer types remain in flattened aggregate metadata,
-  including row-major paths for every fixed-dimensional embedded-struct array.
+  including row-major paths for every fixed-dimensional scalar array and
+  embedded-struct array.
 - Data-pointer fields in those copies preserve the exact pointer value and
   provenance without copying the pointee or transferring ownership.
 - Address-taking of modeled scalar leaf fields preserves the original

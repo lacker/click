@@ -91,7 +91,7 @@ Likely additions:
   field resource places, and nested leaf-field access through embedded
   aggregate places. One-dimensional function parameters declared as arrays of
   the supported structs now retain their ABI stride. Copyable by-value structs
-  with scalar, named-enum, fixed scalar-array, and recursively embedded
+  with scalar, named-enum, fixed-dimensional scalar-array, and recursively embedded
   struct fields now have explicit fresh-copy semantics for parameters, locals,
   assignments, and returns; nested fields and array elements are copied
   recursively; fixed-dimensional arrays of embedded structs are flattened

@@ -194,9 +194,9 @@ pub struct C0StructField {
     /// structs. The public C0 type remains a byte-array placeholder, while
     /// member selection uses this metadata to preserve struct indexing.
     array_element_width: Option<u32>,
-    /// The fixed dimensions of an inline array of embedded structs, in C's
-    /// declared order. The shape is retained so multidimensional indexing can
-    /// be flattened with the correct row-major stride.
+    /// The fixed dimensions of a multidimensional inline array, in C's
+    /// declared order. The shape is retained so indexing can be flattened
+    /// with the correct row-major stride.
     array_shape: Option<Vec<u32>>,
     offset_bytes: u32,
     byte_width: u32,
@@ -2412,51 +2412,66 @@ impl Parser {
                 None,
             ));
         }
-        let c_type = if self.peek() == Some(&Token::LBracket) {
+        let (c_type, array_shape) = if self.peek() == Some(&Token::LBracket) {
             if base_type.struct_name.is_some()
                 || !matches!(base_type.c_type, C0Type::Int32 | C0Type::UInt8)
             {
                 return Err(self.error_here(
-                    "inline struct arrays currently support only int32 and uint8 elements",
+                    "inline scalar arrays in structs currently support only int32 and uint8 elements",
                 ));
             }
-            self.position += 1;
-            let length = match self.next() {
-                Some(Token::Number(number)) => {
-                    let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
-                        self.error_here(format!("invalid struct array length `{number}`: {reason}"))
-                    })?;
-                    let length = u32::try_from(length).map_err(|_| {
-                        self.error_here(format!("struct array length `{number}` is out of range"))
-                    })?;
-                    if length == 0 {
-                        return Err(self.error_here("struct arrays must have positive length"));
+            let mut dimensions = Vec::new();
+            let mut element_count = 1u32;
+            while self.peek() == Some(&Token::LBracket) {
+                self.position += 1;
+                let length = match self.next() {
+                    Some(Token::Number(number)) => {
+                        let length =
+                            parse_integer_literal_magnitude(&number).map_err(|reason| {
+                                self.error_here(format!(
+                                    "invalid struct array length `{number}`: {reason}"
+                                ))
+                            })?;
+                        let length = u32::try_from(length).map_err(|_| {
+                            self.error_here(format!(
+                                "struct array length `{number}` is out of range"
+                            ))
+                        })?;
+                        if length == 0 {
+                            return Err(self.error_here("struct arrays must have positive length"));
+                        }
+                        length
                     }
-                    length
-                }
-                Some(token) => {
-                    return Err(self.error_at_previous(format!(
-                        "expected struct array length, got {}",
-                        token.describe()
-                    )));
-                }
-                None => {
-                    return Err(self.error_here("expected struct array length, got end of input"));
-                }
-            };
-            self.expect(Token::RBracket)?;
-            if self.peek() == Some(&Token::LBracket) {
-                return Err(
-                    self.error_here("multidimensional inline arrays in structs are not supported")
-                );
+                    Some(token) => {
+                        return Err(self.error_at_previous(format!(
+                            "expected struct array length, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(
+                            self.error_here("expected struct array length, got end of input")
+                        );
+                    }
+                };
+                element_count = element_count.checked_mul(length).ok_or_else(|| {
+                    self.error_here(format!(
+                        "struct array dimensions are too large for `{struct_name}`"
+                    ))
+                })?;
+                dimensions.push(length);
+                self.expect(Token::RBracket)?;
             }
-            match base_type.c_type {
-                C0Type::Int32 => C0Type::Int32Array(length),
-                C0Type::UInt8 => C0Type::UInt8Array(length),
+
+            let array_shape = (dimensions.len() > 1).then_some(dimensions);
+            let c_type = match base_type.c_type {
+                C0Type::Int32 => C0Type::Int32Array(element_count),
+                C0Type::UInt8 => C0Type::UInt8Array(element_count),
                 _ => unreachable!("validated scalar struct array element type"),
-            }
+            };
+            (c_type, array_shape)
         } else {
-            base_type.c_type
+            (base_type.c_type, None)
         };
 
         if !matches!(
@@ -2492,7 +2507,7 @@ impl Parser {
             field_alignment,
             base_type.struct_name.clone(),
             None,
-            None,
+            array_shape,
         ))
     }
 
@@ -5062,6 +5077,24 @@ impl Parser {
                         };
                         continue;
                     }
+                    if let Some(shape) = self.scalar_array_field_shape(&expression) {
+                        let mut indexes = vec![first_index];
+                        while self.peek() == Some(&Token::LBracket) {
+                            self.position += 1;
+                            indexes.push(self.parse_expression()?);
+                            self.expect(Token::RBracket)?;
+                        }
+                        if indexes.len() != shape.len() {
+                            return Err(self.error_here(format!(
+                                "multidimensional scalar array field requires {} indices, got {}",
+                                shape.len(),
+                                indexes.len()
+                            )));
+                        }
+                        let offset = flatten_array_indices(indexes, &shape);
+                        expression = C0Expression::Index(Box::new(expression), Box::new(offset));
+                        continue;
+                    }
                     let shape = match &expression {
                         C0Expression::Variable(name) => {
                             self.variable_array_shapes.get(name).cloned()
@@ -5204,6 +5237,19 @@ impl Parser {
             self.structs.get(struct_name)?.size_bytes,
             shape.clone(),
         ))
+    }
+
+    fn scalar_array_field_shape(&self, expression: &C0Expression) -> Option<Vec<u32>> {
+        let C0Expression::Field {
+            field_type: C0Type::Int32Array(_) | C0Type::UInt8Array(_),
+            field_struct_name: None,
+            array_shape: Some(shape),
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        Some(shape.clone())
     }
 
     fn struct_pointer_name(&self, expression: &C0Expression) -> Option<String> {

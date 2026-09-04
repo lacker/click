@@ -4071,6 +4071,64 @@ fn c0_struct_layout_preserves_inline_scalar_array_shape() {
 }
 
 #[test]
+fn c0_struct_layout_preserves_multidimensional_scalar_array_shape() {
+    #[repr(C)]
+    struct HostPacket {
+        tag: u8,
+        values: [[i32; 3]; 2],
+        bytes: [[u8; 2]; 3],
+        tail: i32,
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            int32 values[2][3];
+            uint8 bytes[3][2];
+            int32 tail;
+        };
+
+        int32 read_packet(struct packet* packet) {
+            return packet->values[1][2] + packet->bytes[2][1] + packet->tail;
+        }
+        "#,
+    )
+    .expect("multidimensional inline scalar array fields should parse");
+    let layout = function.structs().get("packet").expect("packet layout");
+
+    let values = layout.field("values").expect("values field");
+    assert_eq!(values.c_type(), syntax::C0Type::Int32Array(6));
+    assert_eq!(values.array_shape(), Some(&[2, 3][..]));
+    assert_eq!(values.byte_width(), 24);
+    assert_eq!(
+        values.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, values)
+    );
+
+    let bytes = layout.field("bytes").expect("bytes field");
+    assert_eq!(bytes.c_type(), syntax::C0Type::UInt8Array(6));
+    assert_eq!(bytes.array_shape(), Some(&[3, 2][..]));
+    assert_eq!(bytes.byte_width(), 6);
+    assert_eq!(
+        bytes.offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, bytes)
+    );
+    assert_eq!(
+        layout.field("tail").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostPacket, tail)
+    );
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostPacket>()
+    );
+    assert_eq!(
+        layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostPacket>()
+    );
+}
+
+#[test]
 fn c0_struct_inline_scalar_array_field_supports_indexed_load_and_store() {
     let function = syntax::parse_function(
         r#"
@@ -4124,6 +4182,67 @@ fn c0_struct_inline_scalar_array_field_supports_indexed_load_and_store() {
             arguments,
             outcome: crate::kernel::CFunctionOutcome::Return {
                 value: crate::kernel::uint8(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_struct_multidimensional_scalar_array_field_flattens_row_major() {
+    let function = syntax::parse_function(
+        r#"
+        struct packet {
+            uint8 tag;
+            int32 values[2][3];
+        };
+
+        int32 write_packet(struct packet* packet) {
+            packet->values[1][2] = 7;
+            return packet->values[1][2];
+        }
+        "#,
+    )
+    .expect("multidimensional indexed scalar array access should parse")
+    .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = own_memory_context(packet.clone(), 0, 10);
+    let state = crate::kernel::CState::new()
+        .with_memory(crate::kernel::CMemory::new().with_block("packet", 28))
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("packet", 28)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "packet".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(24),
+                    },
+                    crate::kernel::int32(7),
+                ),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("multidimensional indexed scalar array access should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
                 state: final_state,
             },
         }

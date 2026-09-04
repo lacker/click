@@ -2706,6 +2706,7 @@ impl Parser {
             _ => None,
         };
         let mut struct_array_shape: Option<Vec<u32>> = None;
+        let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
         {
@@ -2754,6 +2755,38 @@ impl Parser {
                             ContractExpression::Index(Box::new(base), Box::new(index))
                         });
                     struct_array_element_width = None;
+                    indexed_scalar_field = None;
+                } else if let Some(shape) = struct_array_shape.take() {
+                    let mut indexes = vec![index.clone()];
+                    let mut surface_indexes = vec![ContractExpression::CFragment(index)];
+                    while self.peek() == Some(&Token::LBracket) {
+                        self.position += 1;
+                        let next_index = self.parse_contract_expression()?;
+                        self.expect(Token::RBracket)?;
+                        let next_index = contract_expression_as_c_fragment(&next_index)
+                            .ok_or_else(|| {
+                                self.error("struct array indices must be current C expressions")
+                            })?;
+                        indexes.push(next_index.clone());
+                        surface_indexes.push(ContractExpression::CFragment(next_index));
+                    }
+                    if indexes.len() != shape.len() {
+                        return Err(self.error(format!(
+                            "multidimensional scalar array field requires {} indices, got {}",
+                            shape.len(),
+                            indexes.len()
+                        )));
+                    }
+                    let offset = flatten_array_indices(indexes, &shape);
+                    base = CExpression::Add(Box::new(base), Box::new(offset));
+                    surface_base = surface_indexes
+                        .into_iter()
+                        .fold(surface_base_before_index, |base, index| {
+                            ContractExpression::Index(Box::new(base), Box::new(index))
+                        });
+                    struct_name = None;
+                    union_name = None;
+                    struct_array_element_width = None;
                 } else {
                     let surface_index = ContractExpression::CFragment(index.clone());
                     base = CExpression::Index(Box::new(base), Box::new(index));
@@ -2764,6 +2797,7 @@ impl Parser {
                     struct_name = None;
                     union_name = None;
                     struct_array_shape = None;
+                    indexed_scalar_field = None;
                 }
                 continue;
             }
@@ -2813,6 +2847,8 @@ impl Parser {
             {
                 let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                 let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                indexed_scalar_field = scalar_array_field_element(&field)
+                    .map(|(width, ty)| (field_name.clone(), width, ty));
                 (
                     lowered_field_expression(pointer, &field),
                     field.struct_name,
@@ -2821,6 +2857,7 @@ impl Parser {
                     field.array_shape,
                 )
             } else {
+                indexed_scalar_field = None;
                 (
                     self.resolve_field_load(base, &field_name)?,
                     None,
@@ -2839,6 +2876,19 @@ impl Parser {
             union_name = next_union_name;
             struct_array_element_width = next_array_element_width;
             struct_array_shape = next_array_shape;
+        }
+        if let Some((name, element_width, element_type)) = indexed_scalar_field {
+            return Ok(ContractSegment {
+                state: ContractSegmentState::Current,
+                base,
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Field {
+                    name,
+                    element_width: Some(element_width),
+                    element_type: Some(element_type),
+                },
+            });
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
@@ -3336,6 +3386,40 @@ impl Parser {
                             Box::new(base),
                             Box::new(stride),
                         ));
+                        struct_array_element_width = None;
+                    } else if let Some(shape) = struct_array_shape.take() {
+                        let mut indexes =
+                            vec![contract_expression_as_c_fragment(&index).ok_or_else(|| {
+                                self.error("struct array indices must be current C expressions")
+                            })?];
+                        while self.peek() == Some(&Token::LBracket) {
+                            self.position += 1;
+                            let next_index = self.parse_contract_expression()?;
+                            self.expect(Token::RBracket)?;
+                            indexes.push(
+                                contract_expression_as_c_fragment(&next_index).ok_or_else(
+                                    || {
+                                        self.error(
+                                            "struct array indices must be current C expressions",
+                                        )
+                                    },
+                                )?,
+                            );
+                        }
+                        if indexes.len() != shape.len() {
+                            return Err(self.error(format!(
+                                "multidimensional scalar array field requires {} indices, got {}",
+                                shape.len(),
+                                indexes.len()
+                            )));
+                        }
+                        let offset = flatten_array_indices(indexes, &shape);
+                        expression = ContractExpression::Index(
+                            Box::new(expression),
+                            Box::new(ContractExpression::CFragment(offset)),
+                        );
+                        struct_name = None;
+                        union_name = None;
                         struct_array_element_width = None;
                     } else {
                         expression =
@@ -4069,6 +4153,17 @@ fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExp
             pointer: Box::new(pointer),
             value_type: field.c_type.to_kernel_type(),
         }
+    }
+}
+
+fn scalar_array_field_element(field: &ResolvedField) -> Option<(u32, CType)> {
+    if field.struct_name.is_some() || field.union_name.is_some() || field.array_shape.is_none() {
+        return None;
+    }
+    match field.c_type {
+        C0Type::Int32Array(_) => Some((4, CType::Int32)),
+        C0Type::UInt8Array(_) => Some((1, CType::UInt8)),
+        _ => None,
     }
 }
 

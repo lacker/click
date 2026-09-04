@@ -169,6 +169,9 @@ retain, nonfinal release, final release, and free across opaque calls.
   pointers while keeping ordinary-field updates isolated.
 - `mdtests/struct_multidimensional_embedded_array.md`: a fixed multidimensional
   array of embedded structs preserves row-major indexing and ABI element stride.
+- `mdtests/struct_multidimensional_scalar_array.md`: fixed multidimensional
+  scalar-array fields preserve shape, element width, row-major indexing, and
+  by-value copy behavior.
 
 ## Byte values and buffers
 

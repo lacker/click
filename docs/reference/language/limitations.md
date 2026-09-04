@@ -31,8 +31,9 @@ conversions, unrelated custom allocator APIs, and `realloc` remain outside
 this surface description.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int16`, `int32`, `uint8`, `uint16`, named enum fields, fixed one-dimensional
-arrays of the supported scalars, and pointer-valued fields, plus chained `p->child->field`
+declarations with `int16`, `int32`, `uint8`, `uint16`, named enum fields,
+fixed-dimensional arrays of the supported `int32` and `uint8` scalars, and
+pointer-valued fields, plus chained `p->child->field`
 loads/stores through struct pointers. Inline scalar arrays retain their element
 width and are accessed through C's array-to-pointer conversion, so
 `uint8 buf[16]` uses byte-width indexing rather than pointer-sized storage. It
@@ -46,20 +47,22 @@ One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
 does not change the pointer ABI. Copyable struct values are also supported when
 every field is `int16`, `int32`, `uint8`, `uint16`, a named enum field, a
-modeled data pointer, a fixed one-dimensional array of those scalar elements,
+modeled data pointer, a fixed-dimensional array of `int32` or `uint8` elements,
 an embedded struct whose fields satisfy the same rule, or a fixed-dimensional
 array of such embedded structs: parameters, locals, assignments, and returns
 use fresh address-backed copies, recursively copying nested fields and array
 elements.
 Data-pointer fields are shallow-copied, so their pointer value is shared even
 though the containing struct storage is fresh. Function-pointer fields, unions,
-direct aggregate loads, aggregate resource segments, multidimensional inline
-arrays of scalar fields, packed layout, or address-taking of union members
-remain unsupported. Address-taking of modeled scalar leaf fields, including
+direct aggregate loads, aggregate resource segments, packed layout, or
+address-taking of union members remain unsupported. Address-taking of modeled
+scalar leaf fields, including
 nested embedded-struct leaves, preserves the field's ABI offset and allocation
 provenance; pointer forms for unsupported scalar widths remain unsupported.
-Fixed-dimensional arrays of embedded structs are supported
-through indexed leaf-field access and by-value copies with row-major ABI stride.
+Fixed-dimensional arrays of embedded structs and supported scalar fields are
+supported through indexed leaf-field access and by-value copies with row-major
+ABI stride. Scalar-array dimensions are retained as metadata while their cells
+are lowered by element width.
 Bitfields and other compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Named enums use
 the four-byte scalar ABI representation; their enumerators are resolved to
