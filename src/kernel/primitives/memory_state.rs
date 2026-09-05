@@ -835,6 +835,27 @@ impl CLocalEnvironment {
         volatile: bool,
         pointee_volatile: bool,
     ) {
+        self.set_typed_with_all_qualifiers(
+            name,
+            value,
+            c_type,
+            volatile,
+            pointee_volatile,
+            false,
+            false,
+        );
+    }
+
+    pub(in crate::kernel) fn set_typed_with_all_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        volatile: bool,
+        pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
+    ) {
         let name = name.into();
         let slot = self
             .bindings
@@ -842,13 +863,15 @@ impl CLocalEnvironment {
             .map(CLocalBinding::slot)
             .cloned()
             .unwrap_or_else(|| CMemory::local_pointer(&name));
-        self.set_typed_qualified(
+        self.set_typed_qualified_with_all_qualifiers(
             name,
             value.retag_pointer(c_type),
             c_type,
             slot,
             volatile,
             pointee_volatile,
+            constant,
+            pointee_constant,
         );
     }
 
@@ -861,14 +884,41 @@ impl CLocalEnvironment {
         volatile: bool,
         pointee_volatile: bool,
     ) {
+        self.set_typed_qualified_with_all_qualifiers(
+            name,
+            value,
+            c_type,
+            slot,
+            volatile,
+            pointee_volatile,
+            false,
+            false,
+        );
+    }
+
+    pub(in crate::kernel) fn set_typed_qualified_with_all_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::Object {
-                value: value.with_pointer_pointee_volatile(pointee_volatile),
+                value: value
+                    .with_pointer_pointee_volatile(pointee_volatile)
+                    .with_pointer_pointee_constant(pointee_constant),
                 c_type,
                 slot,
                 volatile,
                 pointee_volatile,
+                constant,
+                pointee_constant,
             },
         );
     }
@@ -891,6 +941,17 @@ impl CLocalEnvironment {
         slot: Pointer,
         volatile: bool,
     ) {
+        self.set_global_with_qualifiers(name, c_type, slot, volatile, false);
+    }
+
+    pub(in crate::kernel) fn set_global_with_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        constant: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::GlobalObject {
@@ -898,6 +959,8 @@ impl CLocalEnvironment {
                 slot,
                 volatile,
                 pointee_volatile: false,
+                constant,
+                pointee_constant: false,
             },
         );
     }
@@ -925,6 +988,27 @@ impl CLocalEnvironment {
         volatile: bool,
         pointee_volatile: bool,
     ) {
+        self.set_uninitialized_with_all_qualifiers(
+            name,
+            c_type,
+            slot,
+            volatile,
+            pointee_volatile,
+            false,
+            false,
+        );
+    }
+
+    pub(in crate::kernel) fn set_uninitialized_with_all_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::UninitializedObject {
@@ -932,6 +1016,8 @@ impl CLocalEnvironment {
                 slot,
                 volatile,
                 pointee_volatile,
+                constant,
+                pointee_constant,
             },
         );
     }
@@ -986,12 +1072,24 @@ impl CLocalEnvironment {
         length: u32,
         slot: Pointer,
     ) {
+        self.set_array_object_at_with_constant(name, element_type, length, slot, false);
+    }
+
+    pub(in crate::kernel) fn set_array_object_at_with_constant(
+        &mut self,
+        name: impl Into<String>,
+        element_type: CType,
+        length: u32,
+        slot: Pointer,
+        constant: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::ArrayObject {
                 element_type,
                 length,
                 slot,
+                constant,
             },
         );
     }
@@ -1056,14 +1154,18 @@ impl CLocalEnvironment {
             .iter()
             .filter_map(|(name, binding)| match binding {
                 CLocalBinding::ArrayObject {
-                    element_type, slot, ..
+                    element_type,
+                    slot,
+                    constant,
+                    ..
                 } => Some((
                     name.as_str(),
-                    CValue::typed_pointer(
+                    CValue::typed_pointer_with_pointee_constant(
                         slot.clone(),
                         element_type
                             .pointer_to()
                             .expect("array element type must have a pointer type"),
+                        *constant,
                     ),
                     *element_type,
                 )),
@@ -1244,6 +1346,19 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::new(size));
         record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
         self
+    }
+
+    pub(in crate::kernel) fn with_block_or_read_only(
+        self,
+        block: impl Into<PointerBlock>,
+        size: u32,
+        read_only: bool,
+    ) -> Self {
+        if read_only {
+            self.with_read_only_block(block, size)
+        } else {
+            self.with_block(block, size)
+        }
     }
 
     pub(in crate::kernel) fn with_read_only_block(

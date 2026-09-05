@@ -432,6 +432,8 @@ pub struct FunctionParameter {
     c_type: C0Type,
     name: String,
     struct_name: Option<String>,
+    constant: bool,
+    pointee_constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3458,6 +3460,14 @@ impl FunctionParameter {
 
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
     }
 }
 

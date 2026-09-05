@@ -906,11 +906,24 @@ pub fn c_declare_qualified(
     volatile: bool,
     pointee_volatile: bool,
 ) -> CStatement {
+    c_declare_with_all_qualifiers(name, c_type, volatile, pointee_volatile, false, false)
+}
+
+pub fn c_declare_with_all_qualifiers(
+    name: impl Into<String>,
+    c_type: CType,
+    volatile: bool,
+    pointee_volatile: bool,
+    constant: bool,
+    pointee_constant: bool,
+) -> CStatement {
     CStatement::Declare {
         name: name.into(),
         c_type,
         volatile,
         pointee_volatile,
+        constant,
+        pointee_constant,
     }
 }
 

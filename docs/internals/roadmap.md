@@ -86,8 +86,10 @@ Likely additions:
 - Basic ASCII string literal support now lowers to null-terminated, read-only
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
-- Remaining static-storage work: other linkage forms, immutable global tables,
-  and initialization ordering. Static scalar-field aggregates now accept
+- Remaining static-storage work: other linkage forms and initialization
+  ordering. Immutable scalar globals and scalar tables now use stable
+  read-only storage, and pointer-to-const views preserve their write
+  restriction across translation units. Static scalar-field aggregates now accept
   out-of-order `.field = literal` designators, and their fixed-size
   one-dimensional arrays accept `[literal] = {...}` element designators with
   static zero fill. Fixed-size

@@ -8,6 +8,8 @@ impl CParameter {
             aggregate_layout: None,
             volatile: false,
             pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -31,6 +33,14 @@ impl CParameter {
         self.pointee_volatile
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
         self
@@ -38,6 +48,16 @@ impl CParameter {
 
     pub fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
         self.pointee_volatile = pointee_volatile;
+        self
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
+    pub fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 
@@ -101,6 +121,7 @@ impl CGlobal {
             c_type,
             initial_value,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -126,6 +147,15 @@ impl CGlobal {
 
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
         self
     }
 }
@@ -163,6 +193,7 @@ impl CGlobalArray {
             element_type,
             length,
             initial_values,
+            constant: false,
         }
     }
 
@@ -184,6 +215,15 @@ impl CGlobalArray {
 
     pub fn initial_values(&self) -> &[CValue] {
         &self.initial_values
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 
@@ -308,6 +348,7 @@ impl CStaticLocal {
             c_type,
             initial_value,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -333,6 +374,15 @@ impl CStaticLocal {
 
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
         self
     }
 }
@@ -373,6 +423,7 @@ impl CStaticArray {
             element_type,
             length,
             initial_values,
+            constant: false,
         }
     }
 
@@ -394,6 +445,15 @@ impl CStaticArray {
 
     pub fn initial_values(&self) -> &[CValue] {
         &self.initial_values
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 

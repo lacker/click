@@ -1667,13 +1667,17 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // and make pointer preconditions impossible to lower.
         let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())
             .expect("function arguments were type-checked before building contract views");
-        let value = value.with_pointer_pointee_volatile(parameter.pointee_is_volatile());
-        state.locals.set_typed_with_qualifiers(
+        let value = value
+            .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
+            .with_pointer_pointee_constant(parameter.pointee_is_constant());
+        state.locals.set_typed_with_all_qualifiers(
             parameter.name().to_string(),
             value.clone(),
             parameter.c_type(),
             parameter.is_volatile(),
             parameter.pointee_is_volatile(),
+            parameter.is_constant(),
+            parameter.pointee_is_constant(),
         );
         if let CValue::Pointer(pointer) = &value {
             let element_width = parameter
@@ -2070,28 +2074,33 @@ pub(super) fn bind_c_function_arguments(
             continue;
         }
         let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())?
-            .with_pointer_pointee_volatile(parameter.pointee_is_volatile());
+            .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
+            .with_pointer_pointee_constant(parameter.pointee_is_constant());
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             callee_state.memory = callee_state
                 .memory
                 .with_block(slot.block.clone(), value.byte_width())
                 .store(slot.clone(), value.clone());
-            callee_state.locals.set_typed_qualified(
+            callee_state.locals.set_typed_qualified_with_all_qualifiers(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 slot,
                 parameter.is_volatile(),
                 parameter.pointee_is_volatile(),
+                parameter.is_constant(),
+                parameter.pointee_is_constant(),
             );
         } else {
-            callee_state.locals.set_typed_with_qualifiers(
+            callee_state.locals.set_typed_with_all_qualifiers(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 parameter.is_volatile(),
                 parameter.pointee_is_volatile(),
+                parameter.is_constant(),
+                parameter.pointee_is_constant(),
             );
         }
     }
@@ -2189,21 +2198,27 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory
-                .with_block(slot.block.clone(), global.c_type().byte_width())
+                .with_block_or_read_only(
+                    slot.block.clone(),
+                    global.c_type().byte_width(),
+                    global.is_constant(),
+                )
                 .store(slot.clone(), global.initial_value().clone());
         }
-        state.locals.set_global_at(
+        state.locals.set_global_with_qualifiers(
             global.kernel_name().to_string(),
             global.c_type(),
             slot.clone(),
             global.is_volatile(),
+            global.is_constant(),
         );
         if global.kernel_name() != global.name() && !state.locals.contains_name(global.name()) {
-            state.locals.set_global_at(
+            state.locals.set_global_with_qualifiers(
                 global.name().to_string(),
                 global.c_type(),
                 slot,
                 global.is_volatile(),
+                global.is_constant(),
             );
         }
     }
@@ -2214,7 +2229,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             .checked_mul(global_array.element_type().byte_width())
             .expect("validated C global array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                bytes,
+                global_array.is_constant(),
+            );
             for (index, value) in global_array.initial_values().iter().enumerate() {
                 state.memory = state.memory.store(
                     slot.offset_by_bytes(
@@ -2226,20 +2245,22 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 );
             }
         }
-        state.locals.set_array_object_at(
+        state.locals.set_array_object_at_with_constant(
             global_array.kernel_name().to_string(),
             global_array.element_type(),
             global_array.length(),
             slot.clone(),
+            global_array.is_constant(),
         );
         if global_array.kernel_name() != global_array.name()
             && !state.locals.contains_name(global_array.name())
         {
-            state.locals.set_array_object_at(
+            state.locals.set_array_object_at_with_constant(
                 global_array.name().to_string(),
                 global_array.element_type(),
                 global_array.length(),
                 slot,
+                global_array.is_constant(),
             );
         }
     }
@@ -2316,14 +2337,19 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory
-                .with_block(slot.block.clone(), static_local.c_type().byte_width())
+                .with_block_or_read_only(
+                    slot.block.clone(),
+                    static_local.c_type().byte_width(),
+                    static_local.is_constant(),
+                )
                 .store(slot.clone(), static_local.initial_value().clone());
         }
-        state.locals.set_global_at(
+        state.locals.set_global_with_qualifiers(
             static_local.kernel_name().to_string(),
             static_local.c_type(),
             slot.clone(),
             static_local.is_volatile(),
+            static_local.is_constant(),
         );
         // Contract C fragments use the source spelling. A nested static may
         // have a kernel-only name to distinguish it from another object in a
@@ -2332,11 +2358,12 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
         if static_local.kernel_name() != static_local.source_name()
             && !state.locals.contains_name(static_local.source_name())
         {
-            state.locals.set_global_at(
+            state.locals.set_global_with_qualifiers(
                 static_local.source_name().to_string(),
                 static_local.c_type(),
                 slot,
                 static_local.is_volatile(),
+                static_local.is_constant(),
             );
         }
     }
@@ -2347,7 +2374,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             .checked_mul(static_array.element_type().byte_width())
             .expect("validated C static local array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                bytes,
+                static_array.is_constant(),
+            );
             for (index, value) in static_array.initial_values().iter().enumerate() {
                 state.memory = state.memory.store(
                     slot.offset_by_bytes(
@@ -2359,20 +2390,22 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 );
             }
         }
-        state.locals.set_array_object_at(
+        state.locals.set_array_object_at_with_constant(
             static_array.kernel_name().to_string(),
             static_array.element_type(),
             static_array.length(),
             slot.clone(),
+            static_array.is_constant(),
         );
         if static_array.kernel_name() != static_array.source_name()
             && !state.locals.contains_name(static_array.source_name())
         {
-            state.locals.set_array_object_at(
+            state.locals.set_array_object_at_with_constant(
                 static_array.source_name().to_string(),
                 static_array.element_type(),
                 static_array.length(),
                 slot,
+                static_array.is_constant(),
             );
         }
     }

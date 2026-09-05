@@ -2525,6 +2525,8 @@ fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
                     parameter.name().to_string(),
                     parameter.struct_name().map(str::to_string),
                 )
+                .with_constant(parameter.is_constant())
+                .with_pointee_constant(parameter.pointee_is_constant())
             })
             .collect(),
     )

@@ -1413,12 +1413,16 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                     c_type,
                     volatile,
                     pointee_volatile,
+                    constant,
+                    pointee_constant,
                     ..
                 })
                 | Some(CLocalBinding::UninitializedObject {
                     c_type,
                     volatile,
                     pointee_volatile,
+                    constant,
+                    pointee_constant,
                     ..
                 }) => {
                     let lvalue = CLValue::local_with_qualifiers(
@@ -1426,7 +1430,9 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                         *c_type,
                         *volatile,
                         *pointee_volatile,
-                    );
+                    )
+                    .with_constant(*constant)
+                    .with_pointee_constant(*pointee_constant);
                     CLValueOutcome::LValue(lvalue)
                 }
                 Some(CLocalBinding::GlobalObject {
@@ -1434,12 +1440,18 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                     slot,
                     volatile,
                     pointee_volatile,
-                }) => CLValueOutcome::LValue(CLValue::memory_with_qualifiers(
-                    slot.clone(),
-                    *c_type,
-                    *volatile,
-                    *pointee_volatile,
-                )),
+                    constant,
+                    pointee_constant,
+                }) => CLValueOutcome::LValue(
+                    CLValue::memory_with_qualifiers(
+                        slot.clone(),
+                        *c_type,
+                        *volatile,
+                        *pointee_volatile,
+                    )
+                    .with_constant(*constant)
+                    .with_pointee_constant(*pointee_constant),
+                ),
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
@@ -1465,11 +1477,14 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
-                            pointer.pointer().clone(),
-                            value_type,
-                            pointer.pointee_volatile(),
-                        )),
+                        outcome: CLValueOutcome::LValue(
+                            CLValue::memory_with_volatile(
+                                pointer.pointer().clone(),
+                                value_type,
+                                pointer.pointee_volatile(),
+                            )
+                            .with_pointee_constant(pointer.pointee_constant()),
+                        ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -1502,11 +1517,14 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
-                            pointer.pointer().clone(),
-                            *value_type,
-                            pointer.pointee_volatile(),
-                        )),
+                        outcome: CLValueOutcome::LValue(
+                            CLValue::memory_with_volatile(
+                                pointer.pointer().clone(),
+                                *value_type,
+                                pointer.pointee_volatile(),
+                            )
+                            .with_pointee_constant(pointer.pointee_constant()),
+                        ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -1541,11 +1559,14 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
-                            pointer.pointer().clone(),
-                            value_type,
-                            pointer.pointee_volatile(),
-                        )),
+                        outcome: CLValueOutcome::LValue(
+                            CLValue::memory_with_volatile(
+                                pointer.pointer().clone(),
+                                value_type,
+                                pointer.pointee_volatile(),
+                            )
+                            .with_pointee_constant(pointer.pointee_constant()),
+                        ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -1614,7 +1635,8 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     Some(value) if lvalue.value_type.accepts(value) => CExpressionOutcome::Value(
                         value
                             .clone()
-                            .with_pointer_pointee_volatile(lvalue.pointee_is_volatile()),
+                            .with_pointer_pointee_volatile(lvalue.pointee_is_volatile())
+                            .with_pointer_pointee_constant(lvalue.pointee_is_constant()),
                     ),
                     Some(_) => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     None if matches!(
@@ -1756,7 +1778,8 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
                                 pointer,
                                 pointer_type,
                                 lvalue.is_volatile(),
-                            ),
+                            )
+                            .with_pointer_pointee_constant(lvalue.is_constant()),
                         ),
                         facts: lvalue_path.facts,
                         obligations: lvalue_path.obligations,

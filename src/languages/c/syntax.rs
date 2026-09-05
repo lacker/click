@@ -174,6 +174,7 @@ pub struct C0Global {
     initializer: Option<C0Expression>,
     file_static: bool,
     volatile: bool,
+    constant: bool,
 }
 
 impl C0Global {
@@ -186,6 +187,7 @@ impl C0Global {
             initializer: None,
             file_static: false,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -203,6 +205,7 @@ impl C0Global {
             initializer: Some(initializer),
             file_static: false,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -221,6 +224,7 @@ impl C0Global {
             initializer: Some(initializer),
             file_static: true,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -256,8 +260,17 @@ impl C0Global {
         self.volatile
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
         self
     }
 
@@ -285,7 +298,8 @@ impl C0Global {
                 self.c_type.to_kernel_type(),
                 value,
             )
-            .with_volatile(self.is_volatile()),
+            .with_volatile(self.is_volatile())
+            .with_constant(self.is_constant()),
         )
     }
 }
@@ -302,6 +316,7 @@ pub struct C0GlobalArray {
     length: u32,
     initializer: Option<Vec<C0Expression>>,
     file_static: bool,
+    constant: bool,
 }
 
 impl C0GlobalArray {
@@ -319,6 +334,7 @@ impl C0GlobalArray {
             length,
             initializer: None,
             file_static,
+            constant: false,
         }
     }
 
@@ -337,6 +353,7 @@ impl C0GlobalArray {
             length,
             initializer: Some(initializer),
             file_static,
+            constant: false,
         }
     }
 
@@ -369,6 +386,15 @@ impl C0GlobalArray {
         self.file_static
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub fn initializer(&self) -> Option<&[C0Expression]> {
         self.initializer.as_deref()
     }
@@ -379,13 +405,16 @@ impl C0GlobalArray {
             .iter()
             .map(|value| kernel_integer_literal_value(self.element_type, value))
             .collect::<Option<Vec<_>>>()?;
-        Some(crate::kernel::CGlobalArray::new_with_kernel_name(
-            self.name.clone(),
-            self.kernel_name.clone(),
-            self.element_type.to_kernel_type(),
-            self.length,
-            values,
-        ))
+        Some(
+            crate::kernel::CGlobalArray::new_with_kernel_name(
+                self.name.clone(),
+                self.kernel_name.clone(),
+                self.element_type.to_kernel_type(),
+                self.length,
+                values,
+            )
+            .with_constant(self.is_constant()),
+        )
     }
 }
 
@@ -742,6 +771,7 @@ pub struct C0StaticLocal {
     c_type: C0Type,
     initializer: C0Expression,
     volatile: bool,
+    constant: bool,
 }
 
 /// A function-local fixed-size scalar array with static storage duration.
@@ -754,6 +784,7 @@ pub struct C0StaticArray {
     element_type: C0Type,
     length: u32,
     initializer: Vec<C0Expression>,
+    constant: bool,
 }
 
 impl C0StaticArray {
@@ -770,6 +801,7 @@ impl C0StaticArray {
             element_type,
             length,
             initializer,
+            constant: false,
         }
     }
 
@@ -798,6 +830,15 @@ impl C0StaticArray {
         &self.initializer
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub(crate) fn to_kernel_static_array(&self) -> Option<crate::kernel::CStaticArray> {
         let values = self
             .initializer
@@ -811,6 +852,7 @@ impl C0StaticArray {
             self.length,
             values,
         ))
+        .map(|array| array.with_constant(self.is_constant()))
     }
 }
 
@@ -827,6 +869,7 @@ impl C0StaticLocal {
             c_type,
             initializer,
             volatile: false,
+            constant: false,
         }
     }
 
@@ -850,8 +893,17 @@ impl C0StaticLocal {
         self.volatile
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
         self
     }
 
@@ -883,7 +935,8 @@ impl C0StaticLocal {
                 self.c_type.to_kernel_type(),
                 value,
             )
-            .with_volatile(self.is_volatile()),
+            .with_volatile(self.is_volatile())
+            .with_constant(self.is_constant()),
         )
     }
 }
@@ -1052,6 +1105,8 @@ pub struct C0Parameter {
     name: String,
     volatile: bool,
     pointee_volatile: bool,
+    constant: bool,
+    pointee_constant: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
     /// The ABI width of one element when the source parameter was declared as
@@ -1068,6 +1123,8 @@ struct ParsedType {
     enum_name: Option<String>,
     union_name: Option<String>,
     is_volatile: bool,
+    is_constant: bool,
+    pointee_constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1298,6 +1355,8 @@ pub enum C0Statement {
         name: String,
         volatile: bool,
         pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
     },
     DeclareStructValue {
         name: String,
@@ -1838,6 +1897,8 @@ impl C0Parameter {
             name,
             volatile: false,
             pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
             struct_name,
             struct_layout: None,
             array_element_width: None,
@@ -1858,6 +1919,24 @@ impl C0Parameter {
 
     pub fn pointee_is_volatile(&self) -> bool {
         self.pointee_volatile
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
+    pub(crate) fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
+    pub(crate) fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
+        self
     }
 
     pub fn struct_name(&self) -> Option<&str> {
@@ -1889,7 +1968,9 @@ impl C0Parameter {
                 layout,
             )
             .with_volatile(self.is_volatile())
-            .with_pointee_volatile(self.pointee_is_volatile());
+            .with_pointee_volatile(self.pointee_is_volatile())
+            .with_constant(self.is_constant())
+            .with_pointee_constant(self.pointee_is_constant());
         }
         let c_type = self
             .array_element_width
@@ -1898,6 +1979,8 @@ impl C0Parameter {
         crate::kernel::c_parameter(self.name.clone(), c_type)
             .with_volatile(self.is_volatile())
             .with_pointee_volatile(self.pointee_is_volatile())
+            .with_constant(self.is_constant())
+            .with_pointee_constant(self.pointee_is_constant())
     }
 }
 
@@ -2027,11 +2110,15 @@ impl C0Statement {
                 name,
                 volatile,
                 pointee_volatile,
-            } => crate::kernel::c_declare_qualified(
+                constant,
+                pointee_constant,
+            } => crate::kernel::c_declare_with_all_qualifiers(
                 name.clone(),
                 c_type.to_kernel_type(),
                 *volatile,
                 *pointee_volatile,
+                *constant,
+                *pointee_constant,
             ),
             Self::DeclareStructValue { name, layout } => crate::kernel::c_declare_aggregate(
                 name.clone(),
@@ -3063,6 +3150,8 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
+    variable_constants: BTreeSet<String>,
+    variable_pointee_constants: BTreeSet<String>,
     unions: BTreeMap<String, C0UnionLayout>,
     /// The names declared in each open lexical scope, innermost last. The
     /// source name is retained for lookup, while `kernel_name` is the
@@ -3157,6 +3246,8 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
+            variable_constants: BTreeSet::new(),
+            variable_pointee_constants: BTreeSet::new(),
             unions: BTreeMap::new(),
             scopes: Vec::new(),
             next_scoped_name: 0,
@@ -3196,6 +3287,8 @@ impl Parser {
             self.variable_struct_values.remove(&binding.kernel_name);
             self.variable_array_shapes.remove(&binding.kernel_name);
             self.variable_types.remove(&binding.kernel_name);
+            self.variable_constants.remove(&binding.kernel_name);
+            self.variable_pointee_constants.remove(&binding.kernel_name);
         }
     }
 
@@ -3227,6 +3320,100 @@ impl Parser {
                     .map(|global| global.kernel_name().to_string())
             })
             .unwrap_or_else(|| source_name.to_string())
+    }
+
+    fn variable_is_constant(&self, name: &str) -> bool {
+        self.variable_constants.contains(name)
+            || self.globals.get(name).is_some_and(C0Global::is_constant)
+            || self
+                .global_arrays
+                .get(name)
+                .is_some_and(C0GlobalArray::is_constant)
+    }
+
+    fn variable_pointee_is_constant(&self, name: &str) -> bool {
+        self.variable_pointee_constants.contains(name)
+    }
+
+    fn expression_is_constant_lvalue(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Variable(name) => self.variable_is_constant(name),
+            C0Expression::Load(pointer) => self.expression_pointee_is_constant(pointer),
+            C0Expression::Index(base, _) => self.expression_pointee_is_constant(base),
+            C0Expression::Field { pointer, .. } | C0Expression::UnionField { pointer, .. } => {
+                self.expression_is_constant_lvalue(pointer)
+                    || self.expression_pointee_is_constant(pointer)
+            }
+            C0Expression::AggregateAddress { pointer, .. }
+            | C0Expression::UnionAddress { pointer, .. } => {
+                self.expression_is_constant_lvalue(pointer)
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_pointee_is_constant(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Variable(name) => {
+                self.variable_pointee_is_constant(name)
+                    || (self.variable_is_constant(name)
+                        && self.variable_types.get(name).is_some_and(|c_type| {
+                            matches!(
+                                c_type,
+                                C0Type::Int16Array(_)
+                                    | C0Type::UInt8Array(_)
+                                    | C0Type::UInt16Array(_)
+                                    | C0Type::UInt32Array(_)
+                                    | C0Type::Int32Array(_)
+                                    | C0Type::Int64Array(_)
+                                    | C0Type::UInt64Array(_)
+                                    | C0Type::Float32Array(_)
+                                    | C0Type::Float64Array(_)
+                            )
+                        }))
+            }
+            C0Expression::AddressOf(target) => self.expression_is_constant_lvalue(target),
+            C0Expression::PointerOffsetBytes { pointer, .. }
+            | C0Expression::Subtract(pointer, _)
+            | C0Expression::Add(pointer, _) => self.expression_pointee_is_constant(pointer),
+            C0Expression::Cast { expression, .. } => {
+                self.expression_pointee_is_constant(expression)
+            }
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.expression_pointee_is_constant(then_branch)
+                    || self.expression_pointee_is_constant(else_branch)
+            }
+            _ => false,
+        }
+    }
+
+    fn reject_constant_lvalue_write(&self, expression: &C0Expression) -> Result<(), C0SyntaxError> {
+        if self.expression_is_constant_lvalue(expression) {
+            Err(self.error_here("cannot modify a const-qualified lvalue"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn reject_discarded_const_pointer(
+        &self,
+        declared_type: C0Type,
+        declared_pointee_constant: bool,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if declared_type.is_pointer()
+            && !declared_pointee_constant
+            && self.expression_pointee_is_constant(expression)
+        {
+            return Err(
+                self.error_here("cannot discard const qualification from a pointer initializer")
+            );
+        }
+        Ok(())
     }
 
     fn file_static_kernel_name(&self, source_name: &str) -> String {
@@ -3376,7 +3563,10 @@ impl Parser {
 
     fn is_type_start(&self) -> bool {
         self.peek_ident().is_some_and(|name| {
-            name == "volatile" || is_builtin_type_start(name) || self.typedefs.contains_key(name)
+            name == "const"
+                || name == "volatile"
+                || is_builtin_type_start(name)
+                || self.typedefs.contains_key(name)
         })
     }
 
@@ -3570,6 +3760,11 @@ impl Parser {
 
     fn parse_function_header(&mut self) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.is_constant || parsed_return_type.pointee_constant {
+            return Err(self.error_here(
+                "const-qualified function return types are not supported in this slice",
+            ));
+        }
         if parsed_return_type.is_volatile {
             return Err(self.error_here("volatile qualifies objects, not function return types"));
         }
@@ -3729,6 +3924,11 @@ impl Parser {
             return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
         }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_constant {
+                return Err(self.error_here(
+                    "const-qualified aggregate globals are not supported in this slice; use a scalar or scalar array table",
+                ));
+            }
             if parsed_type.is_volatile {
                 return Err(self.error_here(
                     "the small volatile model does not support volatile aggregate globals",
@@ -3923,6 +4123,7 @@ impl Parser {
                                 initializer,
                                 is_file_static,
                             )
+                            .with_constant(parsed_type.is_constant)
                         })
                         .unwrap_or_else(|| {
                             C0GlobalArray::declaration(
@@ -3932,6 +4133,7 @@ impl Parser {
                                 length,
                                 is_file_static,
                             )
+                            .with_constant(parsed_type.is_constant)
                         }),
                 )?;
                 self.variable_types.insert(
@@ -3969,6 +4171,7 @@ impl Parser {
                                     initializer,
                                 )
                                 .with_volatile(parsed_type.is_volatile)
+                                .with_constant(parsed_type.is_constant)
                             } else {
                                 C0Global::definition(
                                     name.clone(),
@@ -3977,6 +4180,7 @@ impl Parser {
                                     initializer,
                                 )
                                 .with_volatile(parsed_type.is_volatile)
+                                .with_constant(parsed_type.is_constant)
                             }
                         })
                         .unwrap_or_else(|| {
@@ -3986,6 +4190,7 @@ impl Parser {
                                 struct_pointer_name.clone(),
                             )
                             .with_volatile(parsed_type.is_volatile)
+                            .with_constant(parsed_type.is_constant)
                         }),
                 )?;
                 self.variable_types
@@ -4121,6 +4326,11 @@ impl Parser {
                     "conflicting volatile qualifiers for global `{name}`"
                 )));
             }
+            if previous.is_constant() != declaration.is_constant() {
+                return Err(
+                    self.error_here(format!("conflicting const qualifiers for global `{name}`"))
+                );
+            }
             if previous.is_file_static() != declaration.is_file_static() {
                 return Err(self.error_here(format!(
                     "conflicting linkage declarations for global `{name}`"
@@ -4159,6 +4369,11 @@ impl Parser {
             if previous.element_type != element_type || previous.length != length {
                 return Err(self.error_here(format!(
                     "conflicting declarations for global array `{name}`"
+                )));
+            }
+            if previous.is_constant() != declaration.is_constant() {
+                return Err(self.error_here(format!(
+                    "conflicting const qualifiers for global array `{name}`"
                 )));
             }
             if previous.is_file_static() != declaration.is_file_static() {
@@ -4444,6 +4659,11 @@ impl Parser {
                 "the small volatile model does not support volatile struct or union fields",
             ));
         }
+        if base_type.is_constant || base_type.pointee_constant {
+            return Err(self.error_here(
+                "const-qualified struct or union fields are not supported in this slice",
+            ));
+        }
         if base_type.struct_name.is_some() || base_type.union_name.is_some() {
             return Err(self.error_here(format!(
                 "union `{union_name}` fields may not contain embedded structs or unions"
@@ -4584,6 +4804,11 @@ impl Parser {
         if base_type.is_volatile {
             return Err(self.error_here(
                 "the small volatile model does not support volatile struct or union fields",
+            ));
+        }
+        if base_type.is_constant || base_type.pointee_constant {
+            return Err(self.error_here(
+                "const-qualified struct or union fields are not supported in this slice",
             ));
         }
         if let Some(enum_name) = base_type.enum_name.as_deref() {
@@ -4852,6 +5077,8 @@ impl Parser {
                     name: kernel_name,
                     volatile: false,
                     pointee_volatile: false,
+                    constant: false,
+                    pointee_constant: false,
                     struct_layout: None,
                     struct_name: None,
                     array_element_width: None,
@@ -4875,6 +5102,11 @@ impl Parser {
             let struct_array =
                 parsed_type.struct_name.is_some() && self.peek() == Some(&Token::LBracket);
             let struct_value = is_plain_struct_type(&parsed_type) && !struct_array;
+            if struct_value && parsed_type.is_constant {
+                return Err(self.error_here(
+                    "const-qualified struct value parameters are not supported in this slice",
+                ));
+            }
             let struct_value_layout = if struct_value {
                 Some(
                     self.scalar_struct_value_layout(
@@ -4887,13 +5119,23 @@ impl Parser {
             } else {
                 None
             };
+            let array_parameter = self.peek() == Some(&Token::LBracket);
             let c_type = struct_value_layout
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
             let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
             let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
+            let object_constant = parsed_type.is_constant && !array_parameter;
+            let pointee_constant =
+                parsed_type.pointee_constant || (parsed_type.is_constant && array_parameter);
             self.variable_types.insert(kernel_name.clone(), c_type);
+            if object_constant {
+                self.variable_constants.insert(kernel_name.clone());
+            }
+            if pointee_constant {
+                self.variable_pointee_constants.insert(kernel_name.clone());
+            }
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array && !struct_value {
@@ -4912,6 +5154,8 @@ impl Parser {
                         name: kernel_name,
                         volatile: object_volatile,
                         pointee_volatile,
+                        constant: object_constant,
+                        pointee_constant,
                         struct_layout: struct_value_layout,
                         struct_name,
                         array_element_width: None,
@@ -4939,6 +5183,8 @@ impl Parser {
                         name: kernel_name,
                         volatile: object_volatile,
                         pointee_volatile,
+                        constant: object_constant,
+                        pointee_constant,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         struct_name,
                         array_element_width: Some(element_width),
@@ -4955,6 +5201,8 @@ impl Parser {
                 name: kernel_name,
                 volatile: object_volatile,
                 pointee_volatile,
+                constant: object_constant,
+                pointee_constant,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
@@ -4971,6 +5219,12 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
+        let is_constant = if self.peek_ident() == Some("const") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
         let is_volatile = if self.peek_ident() == Some("volatile") {
             self.position += 1;
             true
@@ -4988,6 +5242,8 @@ impl Parser {
                 enum_name: None,
                 union_name: None,
                 is_volatile: false,
+                is_constant: false,
+                pointee_constant: false,
             },
             Some(Token::Ident(name)) if name == "union" => ParsedType {
                 // A union has no runtime aggregate value in C0. Keep its tag
@@ -5006,6 +5262,8 @@ impl Parser {
                     Some(union_name)
                 },
                 is_volatile: false,
+                is_constant: false,
+                pointee_constant: false,
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
@@ -5021,6 +5279,8 @@ impl Parser {
                     Some(enum_name)
                 },
                 is_volatile: false,
+                is_constant: false,
+                pointee_constant: false,
             },
             Some(Token::Ident(name)) => self.parse_named_type(name)?,
             Some(token) => {
@@ -5037,7 +5297,21 @@ impl Parser {
         };
 
         let mut c_type = parsed.c_type;
+        let mut object_constant = is_constant || parsed.is_constant;
+        let mut pointee_constant = parsed.pointee_constant;
+        if self.peek_ident() == Some("const") {
+            self.position += 1;
+            object_constant = true;
+        }
+        let mut saw_pointer = false;
         while self.peek() == Some(&Token::Star) {
+            if saw_pointer && pointee_constant {
+                return Err(self.error_at_previous(
+                    "const qualification beyond the first pointer level is not supported",
+                ));
+            }
+            let base_constant = object_constant;
+            object_constant = false;
             self.position += 1;
             c_type = match c_type {
                 C0Type::Int16 => C0Type::Int16Pointer,
@@ -5093,6 +5367,14 @@ impl Parser {
                     );
                 }
             };
+            if base_constant {
+                pointee_constant = true;
+            }
+            if self.peek_ident() == Some("const") {
+                self.position += 1;
+                object_constant = true;
+            }
+            saw_pointer = true;
             if parsed.union_name.is_some() {
                 return Err(
                     self.error_at_previous("pointers to union values are not supported yet")
@@ -5108,6 +5390,8 @@ impl Parser {
             enum_name: parsed.enum_name,
             union_name: parsed.union_name,
             is_volatile: is_volatile || parsed.is_volatile,
+            is_constant: object_constant,
+            pointee_constant,
         })
     }
 
@@ -5276,6 +5560,8 @@ impl Parser {
             enum_name: None,
             union_name: None,
             is_volatile: false,
+            is_constant: false,
+            pointee_constant: false,
         })
     }
 
@@ -6771,6 +7057,11 @@ impl Parser {
                 "enum local declarations are not supported; use enum values in struct fields",
             ));
         }
+        if parsed_type.is_constant {
+            return Err(self.error_here(
+                "const-qualified local objects are not supported in this slice; use file-scope or static storage",
+            ));
+        }
         if parsed_type.is_volatile
             && (parsed_type.struct_name.is_some()
                 || parsed_type.enum_name.is_some()
@@ -6787,6 +7078,11 @@ impl Parser {
             ));
         }
         if self.peek() == Some(&Token::LParen) {
+            if parsed_type.is_constant || parsed_type.pointee_constant {
+                return Err(self.error_here(
+                    "const-qualified function-pointer declarations are not supported in this slice",
+                ));
+            }
             let Some((name, c_type)) =
                 self.parse_function_pointer_declarator(parsed_type.c_type)?
             else {
@@ -6799,6 +7095,8 @@ impl Parser {
                 name: kernel_name.clone(),
                 volatile: false,
                 pointee_volatile: false,
+                constant: false,
+                pointee_constant: false,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -6818,6 +7116,11 @@ impl Parser {
         }
 
         let struct_value_candidate = is_plain_struct_type(&parsed_type);
+        if struct_value_candidate && parsed_type.is_constant {
+            return Err(
+                self.error_here("const-qualified struct locals are not supported in this slice")
+            );
+        }
         let mut declarations = Vec::new();
         loop {
             let source_name = self.expect_ident("local name")?;
@@ -6922,6 +7225,14 @@ impl Parser {
             self.variable_types.insert(name.clone(), c_type);
             let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
             let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
+            let object_constant = parsed_type.is_constant;
+            let pointee_constant = parsed_type.pointee_constant;
+            if object_constant {
+                self.variable_constants.insert(name.clone());
+            }
+            if pointee_constant {
+                self.variable_pointee_constants.insert(name.clone());
+            }
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
             }
@@ -6947,6 +7258,8 @@ impl Parser {
                 name: name.clone(),
                 volatile: object_volatile,
                 pointee_volatile,
+                constant: object_constant,
+                pointee_constant,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -6985,6 +7298,7 @@ impl Parser {
                             Some(c_type),
                             &expression,
                         )?;
+                        self.reject_discarded_const_pointer(c_type, pointee_constant, &expression)?;
                         C0Statement::Seq(
                             Box::new(declaration),
                             Box::new(C0Statement::Assign { name, expression }),
@@ -6997,6 +7311,7 @@ impl Parser {
                         Some(c_type),
                         &expression,
                     )?;
+                    self.reject_discarded_const_pointer(c_type, pointee_constant, &expression)?;
                     C0Statement::Seq(
                         Box::new(declaration),
                         Box::new(C0Statement::Assign { name, expression }),
@@ -7029,6 +7344,11 @@ impl Parser {
             ));
         }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_constant {
+                return Err(self.error_here(
+                    "const-qualified aggregate statics are not supported in this slice; use a scalar or scalar array table",
+                ));
+            }
             if parsed_type.is_volatile {
                 return Err(self.error_here(
                     "the small volatile model does not support volatile aggregate statics",
@@ -7149,19 +7469,29 @@ impl Parser {
                     array_type_for_element(parsed_type.c_type, length)
                         .expect("validated static array element type"),
                 );
+                if parsed_type.is_constant {
+                    self.variable_constants.insert(kernel_name.clone());
+                }
                 self.static_arrays.insert(
                     kernel_name.clone(),
                     C0StaticArray::new(
                         source_name,
-                        kernel_name,
+                        kernel_name.clone(),
                         parsed_type.c_type,
                         length,
                         initializer,
-                    ),
+                    )
+                    .with_constant(parsed_type.is_constant),
                 );
             } else {
                 self.variable_types
                     .insert(kernel_name.clone(), parsed_type.c_type);
+                if parsed_type.is_constant {
+                    self.variable_constants.insert(kernel_name.clone());
+                }
+                if parsed_type.pointee_constant {
+                    self.variable_pointee_constants.insert(kernel_name.clone());
+                }
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
                     let initializer = self.parse_expression()?;
@@ -7173,7 +7503,8 @@ impl Parser {
                 self.static_locals.insert(
                     kernel_name.clone(),
                     C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
-                        .with_volatile(parsed_type.is_volatile),
+                        .with_volatile(parsed_type.is_volatile)
+                        .with_constant(parsed_type.is_constant),
                 );
             }
             if self.peek() != Some(&Token::Comma) {
@@ -7428,6 +7759,11 @@ impl Parser {
                 "enum local declarations are not supported; use enum values in struct fields",
             ));
         }
+        if parsed_type.is_constant {
+            return Err(
+                self.error_here("const-qualified for-loop locals are not supported in this slice")
+            );
+        }
         if is_plain_struct_type(&parsed_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
         }
@@ -7444,17 +7780,28 @@ impl Parser {
             let object_volatile = parsed_type.is_volatile && !parsed_type.c_type.is_pointer();
             let pointee_volatile =
                 parsed_type.is_volatile && parsed_type.c_type.is_scalar_pointer();
+            let object_constant = parsed_type.is_constant;
+            let pointee_constant = parsed_type.pointee_constant;
+            if object_constant {
+                self.variable_constants.insert(name.clone());
+            }
+            if pointee_constant {
+                self.variable_pointee_constants.insert(name.clone());
+            }
             if self.peek() != Some(&Token::Equal) {
                 return Err(self.error_here("for-loop declarations require an initializer"));
             }
             self.position += 1;
             let expression = self.parse_expression()?;
+            self.reject_discarded_const_pointer(parsed_type.c_type, pointee_constant, &expression)?;
             initializers.push(C0Statement::Seq(
                 Box::new(C0Statement::Declare {
                     c_type: parsed_type.c_type,
                     name: name.clone(),
                     volatile: object_volatile,
                     pointee_volatile,
+                    constant: object_constant,
+                    pointee_constant,
                 }),
                 Box::new(C0Statement::Assign { name, expression }),
             ));
@@ -7473,6 +7820,11 @@ impl Parser {
             );
         };
         let name = self.resolve_name(&source_name);
+        if self.variable_is_constant(&name) {
+            return Err(self.error_here(format!(
+                "cannot assign to const-qualified lvalue `{source_name}`"
+            )));
+        }
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
         Ok(C0Statement::Assign { name, expression })
@@ -7506,6 +7858,11 @@ impl Parser {
             }
         };
         let name = self.resolve_name(&source_name);
+        if self.variable_is_constant(&name) {
+            return Err(self.error_here(format!(
+                "cannot update const-qualified lvalue `{source_name}`"
+            )));
+        }
         let operator = match prefix_operator {
             Some(operator) => operator,
             None => self.next().ok_or_else(|| {
@@ -7543,7 +7900,18 @@ impl Parser {
                     }
                     self.position = call_start;
                 }
-                self.parse_expression()?
+                {
+                    let expression = self.parse_expression()?;
+                    self.reject_discarded_const_pointer(
+                        self.variable_types
+                            .get(&name)
+                            .copied()
+                            .unwrap_or(C0Type::Void),
+                        self.variable_pointee_is_constant(&name),
+                        &expression,
+                    )?;
+                    expression
+                }
             }
             Token::PlusPlus => C0Expression::Add(
                 Box::new(C0Expression::Variable(name.clone())),
@@ -7649,6 +8017,7 @@ impl Parser {
                 ))
             })?,
         };
+        self.reject_constant_lvalue_write(&target)?;
         if operator == Token::Equal {
             if let C0Expression::AggregateAddress {
                 pointer,
@@ -8760,6 +9129,8 @@ impl Parser {
                     name: target.clone(),
                     volatile: false,
                     pointee_volatile: false,
+                    constant: false,
+                    pointee_constant: false,
                 });
                 prefix.push(C0Statement::If {
                     condition,
@@ -8989,6 +9360,18 @@ impl Parser {
                 .and_then(|name| self.function_declarations.get(name))
                 .and_then(|function| function.parameters.get(argument_index))
                 .is_some_and(|parameter| !parameter.is_struct_value());
+            if let Some(parameter) = function_name
+                .and_then(|name| self.function_declarations.get(name))
+                .and_then(|function| function.parameters.get(argument_index))
+                && parameter.c_type.is_pointer()
+                && !parameter.pointee_is_constant()
+            {
+                self.reject_discarded_const_pointer(
+                    parameter.c_type,
+                    parameter.pointee_is_constant(),
+                    &expression,
+                )?;
+            }
             if known_scalar_parameter && self.expression_contains_aggregate(&expression) {
                 return Err(self.aggregate_expression_error());
             }

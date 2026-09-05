@@ -152,6 +152,8 @@ fn parses_checked_signature_and_contract_clauses() {
             c_type: C0Type::Int32Pointer,
             name: "p".to_string(),
             struct_name: None,
+            constant: false,
+            pointee_constant: false,
         }]
     );
     assert_eq!(
@@ -251,6 +253,8 @@ fn parses_pure_theorem_definition() {
             c_type: C0Type::Int32,
             name: "x".to_string(),
             struct_name: None,
+            constant: false,
+            pointee_constant: false,
         }]
     );
     assert_eq!(theorem.requires().len(), 1);
@@ -1561,6 +1565,8 @@ fn parses_array_parameter_signature_as_pointer() {
             c_type: C0Type::Int32Pointer,
             name: "p".to_string(),
             struct_name: None,
+            constant: false,
+            pointee_constant: false,
         }]
     );
 }
@@ -1586,6 +1592,8 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             c_type: C0Type::Int32Pointer,
             name: "obj".to_string(),
             struct_name: Some("json_object".to_string()),
+            constant: false,
+            pointee_constant: false,
         }]
     );
     assert_eq!(
