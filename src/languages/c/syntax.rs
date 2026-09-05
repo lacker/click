@@ -3757,7 +3757,7 @@ impl Parser {
             } else {
                 false
             };
-            let is_inline = if self.peek_ident() == Some("inline") {
+            let is_inline = if self.peek_inline_specifier() {
                 self.position += 1;
                 true
             } else {
@@ -3765,12 +3765,12 @@ impl Parser {
             };
             if is_inline && !is_static {
                 return Err(self.error_here(
-                    "inline function definitions require `static inline` in this slice",
+                    "inline function definitions require `static inline` or `static __always_inline` in this slice",
                 ));
             }
             if is_static && !is_inline {
                 return Err(self.error_here(
-                    "file-scope static functions require `static inline` in this slice",
+                    "file-scope static functions require `static inline` or `static __always_inline` in this slice",
                 ));
             }
             if !self.is_type_start() {
@@ -3827,15 +3827,16 @@ impl Parser {
             } else {
                 false
             };
-            let is_inline = if self.peek_ident() == Some("inline") {
+            let is_inline = if self.peek_inline_specifier() {
                 self.position += 1;
                 true
             } else {
                 false
             };
             if is_inline && !is_static {
-                return Err(self
-                    .error_here("inline function definitions in headers require `static inline`"));
+                return Err(self.error_here(
+                    "inline function definitions in headers require `static inline` or `static __always_inline`",
+                ));
             }
             if !self.is_type_start() {
                 return Err(self.error_here(format!(
@@ -3850,7 +3851,7 @@ impl Parser {
                 if is_extern || !is_static || !is_inline {
                     self.pop_scope();
                     return Err(self.error_here(format!(
-                        "function definitions in headers require `static inline`; `{}` has a body",
+                        "function definitions in headers require `static inline` or `static __always_inline`; `{}` has a body",
                         header.source_name
                     )));
                 }
@@ -4058,10 +4059,10 @@ impl Parser {
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
         while self.peek().is_some() {
             if self.peek_ident() == Some("static")
-                && self.peek_n(1) == Some(&Token::Ident("inline".to_string()))
+                && self.peek_n(1).is_some_and(Self::is_inline_specifier)
             {
                 break;
-            } else if self.peek_ident() == Some("inline") {
+            } else if self.peek_inline_specifier() {
                 break;
             } else if self.peek_ident() == Some("static") {
                 self.parse_global_declaration()?;
@@ -10998,6 +10999,14 @@ impl Parser {
 
     fn peek_n(&self, offset: usize) -> Option<&Token> {
         self.tokens.get(self.position + offset)
+    }
+
+    fn peek_inline_specifier(&self) -> bool {
+        self.peek_n(0).is_some_and(Self::is_inline_specifier)
+    }
+
+    fn is_inline_specifier(token: &Token) -> bool {
+        matches!(token, Token::Ident(name) if name == "inline" || name == "__always_inline")
     }
 
     fn is_type_start_at(&self, offset: usize) -> bool {

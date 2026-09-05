@@ -541,7 +541,8 @@ pub(super) fn execute_c_function_call_paths(
             budget,
         );
     }
-    // A header-provided `static inline` body has no Click contract to apply.
+    // A header-provided `static inline` or `static __always_inline` body has
+    // no Click contract to apply.
     // Its checked C body is the call-site semantics, including while the
     // surrounding function is being contract-certified. All other functions
     // retain the normal verified-rule boundary.

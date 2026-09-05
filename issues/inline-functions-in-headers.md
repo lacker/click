@@ -1,7 +1,8 @@
 # Verify inline function definitions reached through headers
 
 Found by the 2026-09-04 MVR audit. Click now accepts the first narrow inline
-header slice: supported `static inline` definitions are parsed from each
+header slice: supported `static inline` and `static __always_inline` definitions
+are parsed from each
 expanded translation unit and their calls execute the checked bodies directly.
 Linux `rbtree.h` and `rbtree_augmented.h` contain essential `static inline` and
 `static __always_inline` implementations. `lib/rbtree.c` calls those helpers,
@@ -24,18 +25,23 @@ outer helper. The complete call chain verifies. Including the same guarded
 header through two paths does not create duplicate definitions, while two
 translation units receive distinct internal-linkage instances.
 
+A companion regression uses the exact Linux spelling `static __always_inline`
+for the same helper chain and rejects a bare `__always_inline` definition with
+a source-named diagnostic.
+
 A pinned rbtree import regression must eventually resolve calls from
 `lib/rbtree.c` to the actual inline bodies from the Linux headers rather than
 opaque contracts.
 
 ## Acceptance criteria
 
-- Included headers may contribute supported `static inline` function
+- Included headers may contribute supported `static inline` or
+  `static __always_inline` function
   definitions as well as declarations; those helpers execute their checked C
   bodies at call sites and do not yet have sidecar contracts.
-- `static inline`, `extern inline`, and the selected GNU always-inline spelling
-  have documented linkage and body-selection rules for the supported compiler
-  profile.
+- `static inline` and the selected GNU always-inline spelling
+  `static __always_inline` have documented linkage and body-selection rules for
+  the supported compiler profile; `extern inline` remains a later slice.
 - Repeated guarded inclusion does not duplicate a definition, and internal
   linkage remains translation-unit-local.
 - Sidecar contracts attach to source-named inline functions without losing

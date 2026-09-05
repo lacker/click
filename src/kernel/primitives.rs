@@ -1210,7 +1210,8 @@ pub struct CFunction {
     pub(super) return_type: CType,
     pub(super) return_aggregate_layout: Option<CAggregateLayout>,
     pub(super) name: String,
-    /// Header-provided `static inline` functions have a checked body but no
+    /// Header-provided `static inline` or `static __always_inline` functions
+    /// have a checked body but no
     /// Click contract. Calls to them execute that body at the call site
     /// instead of requiring an opaque verified-function rule.
     pub(super) inline_body: bool,

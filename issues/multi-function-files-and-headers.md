@@ -14,7 +14,8 @@ lists the preprocessor as deferred.
 The first implementation slice accepts multiple function definitions and
 compatible forward prototypes in one source. The next slice now resolves
 quoted project-local includes from the named source bundle, recursively expands
-their declarations and supported `static inline` bodies, and rejects other
+their declarations and supported `static inline` or `static __always_inline`
+bodies, and rejects other
 function definitions in headers. System headers,
 macros, conditional compilation, and other preprocessor handling remain open.
 The follow-up slice now recognizes canonical whole-header guards and
@@ -73,7 +74,8 @@ general conditional expression.
   of them and sidecar contracts attach by name.
 - Function prototypes and forward references parse and resolve.
 - `#include "local.h"` is resolved relative to the source and parsed for
-  declarations and supported `static inline` bodies; headers are supplied as
+  declarations and supported `static inline` or `static __always_inline` bodies;
+  headers are supplied as
   named source-bundle dependencies and other function definitions remain
   unsupported. Missing headers and include cycles receive source-named
   diagnostics.

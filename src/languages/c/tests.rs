@@ -1160,13 +1160,31 @@ fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
         int32 helper(int32 value);
         extern int32 other(int32 value);
         static inline int32 add_one(int32 value) { return value + 1; }
+        static __always_inline int32 add_two(int32 value) { return value + 2; }
         "#,
     )
-    .expect("headers should accept supported declarations and static inline helpers");
+    .expect("headers should accept supported inline and always-inline helpers");
 
     let error = syntax::validate_header("inline int32 helper() { return 1; }")
         .expect_err("headers must require internal linkage for inline definitions");
     assert!(error.message().contains("require `static inline`"));
+
+    let error = syntax::validate_header("__always_inline int32 helper() { return 1; }")
+        .expect_err("headers must require internal linkage for always-inline definitions");
+    assert!(error.message().contains("static __always_inline"));
+}
+
+#[test]
+fn c0_always_inline_header_helpers_parse_as_translation_unit_local_functions() {
+    let functions = syntax::parse_functions_for_source(
+        "static __always_inline int32 add_one(int32 value) { return value + 1; }\n\
+         int32 run(int32 value) { return add_one(value); }",
+        "always-inline.c",
+    )
+    .expect("GNU always-inline spelling should use the static inline body path");
+
+    assert_eq!(functions[0].name(), "add_one#inline:always-inline.c");
+    assert_eq!(functions[1].name(), "run");
 }
 
 #[test]
