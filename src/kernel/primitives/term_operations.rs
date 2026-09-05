@@ -1740,6 +1740,48 @@ impl ConditionTerm {
         }
     }
 
+    /// `address(pointer) & (alignment - 1) == 0`: the low address bits are
+    /// zero. This is the kernel form of the spec proposition
+    /// `aligned(pointer, alignment)`; `alignment` must be a power of two.
+    pub(crate) fn pointer_aligned(pointer: Pointer, alignment: u64) -> Self {
+        debug_assert!(alignment.is_power_of_two());
+        Self::uint64_equal(
+            Bitvector32Term::uint64_bitwise_and(
+                Bitvector32Term::PointerAddress(Box::new(pointer)),
+                Bitvector32Term::UInt64Constant(alignment - 1),
+            ),
+            Bitvector32Term::UInt64Constant(0),
+        )
+    }
+
+    /// Recognizes the alignment shape in either operand order and with any
+    /// constant spelling of the mask and the zero.
+    pub(crate) fn as_pointer_alignment(&self) -> Option<(&Pointer, u64)> {
+        let Self::Bitvector64Equal(left, right) = self else {
+            return None;
+        };
+        let masked = if right.uint64_as_const() == Some(0) {
+            left
+        } else if left.uint64_as_const() == Some(0) {
+            right
+        } else {
+            return None;
+        };
+        let Bitvector32Term::UInt64BitwiseAnd(left, right) = masked.as_ref() else {
+            return None;
+        };
+        let (pointer, mask) = match (left.as_ref(), right.as_ref()) {
+            (Bitvector32Term::PointerAddress(pointer), mask)
+            | (mask, Bitvector32Term::PointerAddress(pointer)) => (pointer, mask),
+            _ => return None,
+        };
+        let mask = mask.uint64_as_const()?;
+        let alignment = mask.checked_add(1)?;
+        alignment
+            .is_power_of_two()
+            .then_some((pointer.as_ref(), alignment))
+    }
+
     pub(crate) fn int64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         if left == right {
             return Self::Constant(true);
@@ -2195,6 +2237,18 @@ impl CType {
                         })
             }
             _ => false,
+        }
+    }
+
+    /// The LP64 alignment of an object of this type: scalar and pointer
+    /// widths, or the element width of an array.
+    pub(crate) fn abi_alignment(self) -> u32 {
+        match self {
+            Self::Int32Array(_) | Self::UInt32Array(_) | Self::Float32Array(_) => 4,
+            Self::UInt8Array(_) => 1,
+            Self::Int16Array(_) | Self::UInt16Array(_) => 2,
+            Self::Int64Array(_) | Self::UInt64Array(_) | Self::Float64Array(_) => 8,
+            scalar => scalar.byte_width().min(C_POINTER_BYTE_WIDTH),
         }
     }
 

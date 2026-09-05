@@ -439,6 +439,10 @@ id = "language.word.address"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.aligned"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.all"
 path = "reference/language/grammar.md#word-index"
 

@@ -921,6 +921,23 @@ fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContex
 /// comparison of one finite value with itself has the corresponding reflexive
 /// result. The finite classification must be one of the explicit premises;
 /// no ambient context is consulted here.
+/// `arithmetic using (aligned(base, m))` closes `aligned(base + k, n)` (or
+/// its negation) exactly as the atomic prover decides it: from the one listed
+/// base fact, or from nothing for a heap base.
+pub(crate) fn check_pointer_alignment_arithmetic(
+    goal: &Proposition,
+    premises: &[Proposition],
+) -> bool {
+    let Proposition::ConditionIs(condition, value) = goal else {
+        return false;
+    };
+    let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
+        return false;
+    };
+    assumptions_from_propositions(premises).decide_pointer_alignment(pointer, alignment)
+        == Some(*value)
+}
+
 pub(crate) fn check_float_reflexive_comparison(
     proposition: &Proposition,
     premises: &[Proposition],

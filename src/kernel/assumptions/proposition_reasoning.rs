@@ -1636,6 +1636,20 @@ impl PureFactContext {
             .map(|evidence| {
                 AtomicPropositionDerivationEvidence::ForallInt32Instantiation(Box::new(evidence))
             });
+        let pointer_alignment_evidence = match proposition {
+            Proposition::ConditionIs(condition, value) => condition
+                .as_pointer_alignment()
+                .and_then(|(pointer, alignment)| {
+                    self.pointer_alignment_decision(pointer, alignment)
+                })
+                .filter(|(aligned, _)| aligned == value)
+                .map(|(_, premise)| {
+                    AtomicPropositionDerivationEvidence::PointerAlignment(Box::new(
+                        PointerAlignmentEvidence { premise },
+                    ))
+                }),
+            _ => None,
+        };
         let result = memory_evidence
             .or(load_address_congruence_evidence)
             .or(equality_path_evidence)
@@ -1668,6 +1682,7 @@ impl PureFactContext {
             .or(one_le_predecessor_strictly_decreases_evidence)
             .or(equal_one_predecessor_is_zero_evidence)
             .or(forall_instantiation_evidence)
+            .or(pointer_alignment_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1710,6 +1725,27 @@ impl PureFactContext {
         premises_id: u64,
         evidence: &AtomicPropositionDerivationEvidence,
     ) -> bool {
+        if let AtomicPropositionDerivationEvidence::PointerAlignment(evidence) = evidence {
+            let Proposition::ConditionIs(condition, value) = proposition else {
+                return false;
+            };
+            let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
+                return false;
+            };
+            // Check against exactly the retained base fact (or none for a
+            // heap base) so the check never consults a wider context than
+            // the certificate names.
+            let premises = match &evidence.premise {
+                Some(premise) => {
+                    if !self.contains_assumed_exact(premise) {
+                        return false;
+                    }
+                    PureFactContext::new().assume_proposition(premise.clone())
+                }
+                None => PureFactContext::new(),
+            };
+            return premises.decide_pointer_alignment(pointer, alignment) == Some(*value);
+        }
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
             return evidence.checks(proposition, self);
         }

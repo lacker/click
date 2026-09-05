@@ -42,8 +42,13 @@ impl PureFactContext {
                 }
             }
             ConditionTerm::Bitvector64Equal(left, right) => {
-                ConditionTerm::address_equality_as_pointer_equality(left, right)
-                    .and_then(|condition| self.decide(&condition))
+                if let Some(pointer_condition) =
+                    ConditionTerm::address_equality_as_pointer_equality(left, right)
+                {
+                    return self.decide(&pointer_condition);
+                }
+                let (pointer, alignment) = condition.as_pointer_alignment()?;
+                self.decide_pointer_alignment(pointer, alignment)
             }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -940,6 +945,98 @@ fn cancel_common_offset_addends(
         }
     }
     (rebuild(left_addends), rebuild(right_addends))
+}
+
+/// The largest alignment a fact may state; probes above it are pointless.
+const MAX_PROBED_ALIGNMENT: u64 = 4096;
+
+/// The alignment every successful heap allocation has under the LP64
+/// profile (`max_align_t` for the C library allocator).
+const HEAP_ALLOCATION_ALIGNMENT: u64 = 16;
+
+impl PureFactContext {
+    /// Decides `aligned(pointer, alignment)` from the pointer's formation: a
+    /// heap block base is allocator-aligned, and any other base needs a
+    /// recorded alignment fact (from address-of or a contract). A constant
+    /// byte displacement from such a base is then decided exactly. Anything
+    /// else stays undecided; alignment is never inferred from a pointee type.
+    pub(in crate::kernel) fn decide_pointer_alignment(
+        &self,
+        pointer: &Pointer,
+        alignment: u64,
+    ) -> Option<bool> {
+        self.pointer_alignment_decision(pointer, alignment)
+            .map(|(aligned, _)| aligned)
+    }
+
+    /// The decision together with the exact base fact it used, so a
+    /// derivation can retain that premise for its check.
+    pub(in crate::kernel) fn pointer_alignment_decision(
+        &self,
+        pointer: &Pointer,
+        alignment: u64,
+    ) -> Option<(bool, Option<Proposition>)> {
+        if !alignment.is_power_of_two() {
+            return None;
+        }
+        let (base, displacement) = split_constant_displacement(&pointer.offset);
+        let premise = if matches!(pointer.block, PointerBlock::Heap(_))
+            && base.as_const() == Some(0)
+            && alignment <= HEAP_ALLOCATION_ALIGNMENT
+        {
+            None
+        } else {
+            let base_pointer = Pointer {
+                block: pointer.block.clone(),
+                offset: base,
+            };
+            let mut probe = alignment;
+            loop {
+                if probe > MAX_PROBED_ALIGNMENT {
+                    return None;
+                }
+                let fact = ConditionTerm::pointer_aligned(base_pointer.clone(), probe);
+                if self.exact_condition_value(&fact) == Some(true) {
+                    break Some(Proposition::ConditionIs(fact, true));
+                }
+                probe *= 2;
+            }
+        };
+        Some((displacement.rem_euclid(alignment as i64) == 0, premise))
+    }
+}
+
+/// Separates the constant byte addends of an offset from its symbolic part,
+/// rebuilding the symbolic part with the canonical constructor so it matches
+/// the shape a recorded fact about the base pointer has.
+fn split_constant_displacement(
+    offset: &crate::kernel::PointerOffsetTerm,
+) -> (crate::kernel::PointerOffsetTerm, i64) {
+    use crate::kernel::PointerOffsetTerm;
+    fn addends(offset: &PointerOffsetTerm, out: &mut Vec<PointerOffsetTerm>) {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                addends(left, out);
+                addends(right, out);
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    let mut parts = Vec::new();
+    addends(offset, &mut parts);
+    let mut displacement = 0i64;
+    let mut symbolic = Vec::new();
+    for part in parts {
+        match part.as_const() {
+            Some(constant) => displacement = displacement.wrapping_add(constant),
+            None => symbolic.push(part),
+        }
+    }
+    let base = symbolic
+        .into_iter()
+        .reduce(PointerOffsetTerm::add)
+        .unwrap_or(PointerOffsetTerm::Constant(0));
+    (base, displacement)
 }
 
 /// A wrapped comparison of rebuilt terms can refute offset equality (equal

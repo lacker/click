@@ -475,6 +475,18 @@ and memory-load obligations share the same rules as execution. It currently
 accepts C0 expression fragments; `old`, `at`, folds, lets, and Click function
 calls inside `defined(...)` are not yet supported.
 
+`aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
+a power of two. It is sugar for `address(pointer) & (n - 1) == 0`. Click
+decides it from how the pointer was formed, never from its pointee type: a
+successful heap allocation is 16-byte aligned, taking the address of a
+declared scalar local records that local's type alignment, and a pointer
+reached through a parameter needs an `aligned` clause in a contract or a
+`fact` in a resource. Globals, statics, and struct locals do not yet record
+alignment. A constant byte displacement
+from such a base is then decided exactly, so `aligned(p + 1, 8)` is refuted
+when `aligned(p, 8)` holds. Symbolic displacements and pointers without
+evidence stay undecided.
+
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,
 package it as a named predicate and unfold it at proof sites when needed.

@@ -111,6 +111,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the base-alignment premise an atomic pointer-alignment
+    /// decision retained; the inner `None` marks an intrinsic heap base.
+    pub fn pointer_alignment_premise(&self) -> Option<Option<&Proposition>> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::PointerAlignment(evidence),
+                ..
+            } => Some(evidence.premise.as_ref()),
+            _ => None,
+        }
+    }
+
     /// Return the exact strict-order premise selected when the atomic prover
     /// used the int32 increment-upper-bound rule.
     pub fn int32_increment_upper_bound_step(&self) -> Option<&SignedOrderDerivationStep> {

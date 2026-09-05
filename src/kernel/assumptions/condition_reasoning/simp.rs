@@ -23,6 +23,10 @@ impl PureFactContext {
                 ConditionTerm::address_equality_as_pointer_equality(left, right)
                     .and_then(|condition| self.decide_condition_for_simp(&condition))
             }
+            ConditionTerm::Bitvector64Equal(_, _) if condition.as_pointer_alignment().is_some() => {
+                let (pointer, alignment) = condition.as_pointer_alignment()?;
+                self.decide_pointer_alignment(pointer, alignment)
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {
                     Some(true)

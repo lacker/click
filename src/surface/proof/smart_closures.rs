@@ -2851,6 +2851,7 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))
+            .or_else(|| plan_recorded_pointer_alignment(goal, derivation, &premise_pairs))
             .or_else(|| {
                 let recorded =
                     recorded_load_address_congruence_path_pairs(derivation, &premise_pairs)?;

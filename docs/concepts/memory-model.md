@@ -33,6 +33,13 @@ decided either way. Integer coincidence therefore never manufactures an
 allocation identity. Null converts to the integer zero. Tag arithmetic on an
 address is not yet modeled.
 
+Alignment is evidence, not a property of the pointee type. `aligned(p, n)`
+holds when the address of `p` is a multiple of `n`; Click derives it from a
+heap allocation (16 bytes), from taking the address of a declared scalar
+local (its type's alignment), or from an explicit contract or resource fact,
+and it propagates through constant byte displacements. See the language reference
+for the proposition.
+
 For `int32**` and `uint8**`, pointer arithmetic advances by the eight-byte
 ABI width of each pointer-valued cell.
 

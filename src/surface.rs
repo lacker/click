@@ -118,6 +118,7 @@ pub const FULL_DIAGNOSTICS_ENV: &str = "CLICK_FULL_DIAGNOSTICS";
 pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "abstract",
     "address",
+    "aligned",
     "all",
     "and",
     "any",

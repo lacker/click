@@ -1828,18 +1828,27 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
         paths.push(match lvalue_path.outcome {
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
                 Some(pointer) => match lvalue.value_type().pointer_to() {
-                    Some(pointer_type) => CExpressionPath {
-                        outcome: CExpressionOutcome::Value(
-                            CValue::typed_pointer_with_pointee_volatile(
-                                pointer,
-                                pointer_type,
-                                lvalue.is_volatile(),
-                            )
-                            .with_pointer_pointee_constant(lvalue.is_constant()),
-                        ),
-                        facts: lvalue_path.facts,
-                        obligations: lvalue_path.obligations,
-                    },
+                    Some(pointer_type) => {
+                        let mut facts = lvalue_path.facts;
+                        record_declared_object_alignment(
+                            &pointer,
+                            lvalue.value_type(),
+                            &mut facts,
+                            assumptions,
+                        );
+                        CExpressionPath {
+                            outcome: CExpressionOutcome::Value(
+                                CValue::typed_pointer_with_pointee_volatile(
+                                    pointer,
+                                    pointer_type,
+                                    lvalue.is_volatile(),
+                                )
+                                .with_pointer_pointee_constant(lvalue.is_constant()),
+                            ),
+                            facts,
+                            obligations: lvalue_path.obligations,
+                        }
+                    }
                     None => CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: lvalue_path.facts,
@@ -1868,6 +1877,32 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+/// Taking the address of a declared local is alignment evidence: the
+/// compiler places the object at an address aligned for its type. Argument
+/// memory and other opaque blocks get no such fact; their alignment must
+/// come from a contract. Globals and statics are read through an implicit
+/// address-of, so recording a fact here on every read would reshape the
+/// path facts of unrelated proofs; their alignment belongs with block
+/// creation and is not recorded yet.
+fn record_declared_object_alignment(
+    pointer: &Pointer,
+    value_type: CType,
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+) {
+    let declared = pointer.block.starts_with("local:");
+    let alignment = u64::from(value_type.abi_alignment());
+    if !declared || alignment < 2 || pointer.offset.as_const() != Some(0) {
+        return;
+    }
+    let _ = add_internal_condition_path_fact(
+        facts,
+        assumptions,
+        ConditionTerm::pointer_aligned(pointer.clone(), alignment),
+        true,
+    );
 }
 
 pub(in crate::kernel) fn is_external_memory_pointer(pointer: &Pointer) -> bool {

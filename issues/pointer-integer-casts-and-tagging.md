@@ -185,6 +185,19 @@ syntactic: the 64-bit value must be exactly an address term or zero. Slice 3
 extends it to values proven equal to an address under the alignment and tag
 obligations. The resource-body pointer witness has not yet been exercised.
 
+Slice 2 landed the same day: `aligned(p, n)` as sugar for
+`address(p) & (n - 1) == 0`, decided from a heap base (16 bytes), from the
+address-of fact recorded for declared scalar locals, globals, and statics,
+or from an explicit contract or resource fact, and propagated through
+constant byte displacements. The smart closure records a typed
+`PointerAlignment` evidence whose certificate is one `arithmetic() using`
+step (or `normalize` for a heap base). Regressions are
+`mdtests/aligned_*.md`. Not yet covered: globals and statics (a fact on
+every implicit address-of read reshaped unrelated call summaries, so their
+alignment should be recorded once at block creation), stack aggregates
+(struct locals), symbolic displacements, and derivation from struct-object
+resources.
+
 1. The provenance-carrying integer term, the pointer-to-`unsigned long`
    cast, cast-back when the term is syntactically an untagged address, and
    the equality rule. Covers `rb_link_node` and `RB_EMPTY_NODE`.

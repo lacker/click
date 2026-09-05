@@ -2594,6 +2594,14 @@ pub struct SignedOrderDerivationStep {
     pub(super) premise: Proposition,
 }
 
+/// The base-alignment fact an atomic pointer-alignment decision rested on.
+/// `None` means the base is a heap allocation, whose alignment is intrinsic
+/// to the LP64 allocator profile and needs no context fact.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PointerAlignmentEvidence {
+    pub(super) premise: Option<Proposition>,
+}
+
 /// One exact ground-int32 equality edge retained in the orientation selected
 /// by an atomic derivation. `premise` is the exact context proposition; the
 /// source/target orientation may be the reverse of its written equality.
@@ -2794,6 +2802,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32LeAndNeqImpliesStrict(Box<Int32LeAndNeqStrictEvidence>),
     Int32LeAndNotLtImpliesEquality(Box<Int32LeAndNotLtEqualityEvidence>),
     Int32GeAndNotGtImpliesEquality(Box<Int32GeAndNotGtEqualityEvidence>),
+    PointerAlignment(Box<PointerAlignmentEvidence>),
     Legacy,
 }
 

@@ -3335,6 +3335,23 @@ pub(super) fn plan_recorded_bitvector_equality_path(
     Some(tactics)
 }
 
+/// A pointer-alignment decision is certified by one `arithmetic using` step
+/// naming the retained base fact, or as `normalize` when the base is a heap
+/// allocation and the alignment is intrinsic.
+pub(super) fn plan_recorded_pointer_alignment(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    match derivation.pointer_alignment_premise()? {
+        None => normalizes_context_free(goal).then(|| vec![ProofTactic::Normalize]),
+        Some(premise) => {
+            let (_, surface) = premise_pairs.iter().find(|(kernel, _)| kernel == premise)?;
+            Some(vec![ProofTactic::ArithmeticUsing(vec![surface.clone()])])
+        }
+    }
+}
+
 /// Expand registered-load address congruence into the ordinary exact
 /// equality rewrites that establish it. `rewrite` descends through the
 /// registered load origins, while `normalize` checks that the resulting

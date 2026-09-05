@@ -1959,6 +1959,47 @@ impl Parser {
             return Ok(ClickProposition::Loadable { segment });
         }
 
+        if self.peek_ident() == Some("aligned") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let pointer = self.parse_contract_expression()?;
+            let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
+                return Err(self.error("aligned expects a current C pointer expression"));
+            };
+            self.expect(Token::Comma)?;
+            let alignment = match self.next() {
+                Some(Token::Number(alignment)) if alignment.is_power_of_two() => alignment,
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "aligned expects a power-of-two byte alignment, got {token:?}"
+                    )));
+                }
+                None => {
+                    return Err(self
+                        .error("aligned expects a power-of-two byte alignment, got end of input"));
+                }
+            };
+            self.expect(Token::RParen)?;
+            // `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the
+            // kernel decides that shape from the pointer's formation.
+            let uint64 = |value: u64| {
+                ContractExpression::CFragment(CExpression::Value(CValue::UInt64(
+                    Bitvector32Term::UInt64Constant(value),
+                )))
+            };
+            return Ok(ClickProposition::Comparison {
+                left: ContractExpression::BitwiseAnd(
+                    Box::new(ContractExpression::CFragment(CExpression::Cast {
+                        expression: Box::new(pointer),
+                        target_type: CType::UInt64,
+                    })),
+                    Box::new(uint64(u64::from(alignment) - 1)),
+                ),
+                operator: ComparisonOperator::Equal,
+                right: uint64(0),
+            });
+        }
+
         if self.peek_ident() == Some("defined") && self.peek_next() == Some(&Token::LParen) {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -1976,7 +2017,14 @@ impl Parser {
                 && self.tokens.get(self.position + 3) == Some(&Token::LParen))
             && !matches!(
                 self.peek_ident(),
-                Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
+                Some(
+                    "load_int32"
+                        | "load_uint8"
+                        | "load_int32_pointer"
+                        | "load_uint8_pointer"
+                        | "address"
+                        | "byte_offset"
+                )
             )
             && self.peek_next() == Some(&Token::LParen)
         {
