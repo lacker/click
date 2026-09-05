@@ -236,6 +236,7 @@ pub struct CPointerValue {
     pointer: Pointer,
     c_type: CType,
     pointee_volatile: bool,
+    pointee_constant: bool,
 }
 
 impl CPointerValue {
@@ -248,6 +249,7 @@ impl CPointerValue {
             pointer,
             c_type,
             pointee_volatile: false,
+            pointee_constant: false,
         }
     }
 
@@ -267,16 +269,26 @@ impl CPointerValue {
         self.pointee_volatile
     }
 
+    pub(crate) fn pointee_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     pub(crate) fn with_type(self, c_type: CType) -> Self {
         Self {
             pointer: self.pointer,
             c_type,
             pointee_volatile: self.pointee_volatile,
+            pointee_constant: self.pointee_constant,
         }
     }
 
     pub(crate) fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
         self.pointee_volatile = pointee_volatile;
+        self
+    }
+
+    pub(crate) fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 
@@ -423,6 +435,8 @@ pub struct CLValue {
     pub(super) value_type: CType,
     pub(super) volatile: bool,
     pub(super) pointee_volatile: bool,
+    pub(super) constant: bool,
+    pub(super) pointee_constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -810,6 +824,8 @@ pub enum CStatement {
         c_type: CType,
         volatile: bool,
         pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
     },
     /// Declare an address-backed scalar-only aggregate. Aggregate values are
     /// not runtime `CValue`s; their local binding exposes the block base so
@@ -947,6 +963,8 @@ pub struct CParameter {
     pub(super) aggregate_layout: Option<CAggregateLayout>,
     pub(super) volatile: bool,
     pub(super) pointee_volatile: bool,
+    pub(super) constant: bool,
+    pub(super) pointee_constant: bool,
 }
 
 /// A linked file-scope scalar. Globals use one stable memory block across all
@@ -959,6 +977,7 @@ pub struct CGlobal {
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
+    pub(super) constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -968,6 +987,7 @@ pub struct CGlobalArray {
     pub(super) element_type: CType,
     pub(super) length: u32,
     pub(super) initial_values: Vec<CValue>,
+    pub(super) constant: bool,
 }
 
 /// A linked file-scope aggregate. The layout describes the typed leaf cells
@@ -1000,6 +1020,7 @@ pub struct CStaticLocal {
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
+    pub(super) constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1009,6 +1030,7 @@ pub struct CStaticArray {
     pub(super) element_type: CType,
     pub(super) length: u32,
     pub(super) initial_values: Vec<CValue>,
+    pub(super) constant: bool,
 }
 
 /// A function-local aggregate with one stable function-qualified block.
@@ -1516,23 +1538,30 @@ pub(super) enum CLocalBinding {
         slot: Pointer,
         volatile: bool,
         pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
     },
     UninitializedObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
         pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
     },
     GlobalObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
         pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
     },
     ArrayObject {
         element_type: CType,
         length: u32,
         slot: Pointer,
+        constant: bool,
     },
     AggregateObject {
         layout: CAggregateLayout,

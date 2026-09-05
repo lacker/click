@@ -253,6 +253,105 @@ fn c0_collects_file_scope_scalar_arrays() {
 }
 
 #[test]
+fn c0_preserves_const_global_tables_and_pointer_views() {
+    let functions = syntax::parse_functions(
+        r#"
+        const int32 table[3] = {2, 4, 6};
+
+        int32 read_table(const int32 *values) {
+            return values[1];
+        }
+
+        int32 read_global() {
+            return table[2];
+        }
+        "#,
+    )
+    .expect("const scalar tables and pointer views should parse");
+
+    let table = &functions[0].global_arrays()["table"];
+    assert!(table.is_constant());
+    let kernel_function = functions[0].to_kernel_function();
+    let kernel_table = kernel_function
+        .global_arrays()
+        .iter()
+        .find(|array| array.name() == "table")
+        .expect("kernel const table metadata");
+    assert!(kernel_table.is_constant());
+
+    let read_table = &functions[0];
+    assert!(read_table.parameters()[0].pointee_is_constant());
+    assert!(read_table.to_kernel_function().parameters()[0].pointee_is_constant());
+}
+
+#[test]
+fn c0_headers_accept_const_global_table_declarations() {
+    syntax::validate_header("extern const int32 table[3]; int32 read_table(const int32 *values);")
+        .expect("headers should accept const scalar tables and pointer views");
+}
+
+#[test]
+fn c0_const_global_table_cross_file_verifies() {
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "table.c";
+        verifying "reader.c";
+
+        int32 run() {
+            ensures table_value: result == 4 by auto;
+        }
+
+        int32 read_table(const int32 *values) {
+            views values[0..3];
+            ensures table_value: result == values[1] by auto;
+        }
+        "#,
+        &[
+            (
+                "table.h",
+                "extern const int32 table[3];\nint32 read_table(const int32 *values);",
+            ),
+            (
+                "table.c",
+                "const int32 table[3] = {2, 4, 6};\nint32 read_table(const int32 *values) { return values[1]; }",
+            ),
+            (
+                "reader.c",
+                "#include \"table.h\"\nint32 run() { return read_table(table); }",
+            ),
+        ],
+    )
+    .expect("const global tables should verify across translation units");
+}
+
+#[test]
+fn c0_rejects_const_global_and_pointer_view_writes() {
+    for source in [
+        r#"
+        const int32 value = 1;
+        int32 bad() {
+            value = 2;
+            return value;
+        }
+        "#,
+        r#"
+        int32 bad(const int32 *values) {
+            values[0] = 2;
+            return 0;
+        }
+        "#,
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("writes through const-qualified lvalues must be rejected");
+        assert!(
+            error.message().contains("const-qualified"),
+            "{}",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_collects_file_scope_struct_aggregates() {
     let functions = syntax::parse_functions(
         r#"

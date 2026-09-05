@@ -1,6 +1,8 @@
 # Preserve `const` qualification in C types
 
-Found by the 2026-09-04 MVR audit. C0 does not currently model `const`, while
+Found by the 2026-09-04 MVR audit. C0 now models `const` for scalar globals,
+scalar tables, static scalar storage, and pointer-to-const views. The broader
+qualifier problem remains open while
 the Linux rbtree API uses `const struct rb_node *`,
 `const struct rb_root *`, and pointers to `const struct rb_augment_callbacks`.
 Several functions cast away qualification only when returning an existing
@@ -22,8 +24,8 @@ an indirect write through the const-qualified pointer and is rejected.
 
 ## Acceptance criteria
 
-- The parser represents top-level and pointee `const` independently through
-  the pointer depths supported by C0.
+- The parser represents top-level and pointee `const` independently for the
+  scalar and one-pointer-depth forms currently accepted by this slice.
 - Loads, address-taking, field access, calls, and compatible qualification
   conversions preserve that metadata.
 - Stores through a const-qualified lvalue are rejected before proof search.

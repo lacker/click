@@ -307,6 +307,13 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     assumptions: &PureFactContext,
     next_kernel_variable: &mut u64,
 ) -> Vec<CStatementExecutionPath> {
+    if lvalue.is_constant() || lvalue.pointee_is_constant() {
+        return vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+            facts,
+            obligations,
+        }];
+    }
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
     // The current owned resource composition is proof authority for memory
@@ -1758,6 +1765,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             c_type,
             volatile,
             pointee_volatile,
+            constant,
+            pointee_constant,
         } => {
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
@@ -1768,6 +1777,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     *c_type,
                     *volatile,
                     *pointee_volatile,
+                    *constant,
+                    *pointee_constant,
                 ))
             };
             vec![CStatementExecutionPath {
@@ -2502,6 +2513,8 @@ pub(in crate::kernel) fn declare_local(
     c_type: CType,
     volatile: bool,
     pointee_volatile: bool,
+    constant: bool,
+    pointee_constant: bool,
 ) -> CState {
     let mut state = state.clone();
     let byte_width = match c_type {
@@ -2534,108 +2547,148 @@ pub(in crate::kernel) fn declare_local(
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(4));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::Int32, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Int32,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::UInt8Array(length) => {
             let pointer = CMemory::local_pointer(name);
-            state.memory = state.memory.with_block(pointer.block, length);
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::UInt8, length);
+            state.memory = state.memory.with_block(pointer.block.clone(), length);
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::UInt8,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::Int16Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(2));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::Int16, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(2));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Int16,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::UInt16Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(2));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::UInt16, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(2));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::UInt16,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::UInt32Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(4));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::UInt32, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::UInt32,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::Int64Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(8));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::Int64, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Int64,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::UInt64Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(8));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::UInt64, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::UInt64,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::Float32Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(4));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::Float32, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Float32,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
         CType::Float64Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.saturating_mul(8));
-            state
-                .locals
-                .set_array_object(name.to_string(), CType::Float64, length);
+                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Float64,
+                length,
+                pointer,
+                constant,
+            );
             return state;
         }
     };
     let pointer = CMemory::local_pointer(name);
     state.memory = state.memory.with_block(pointer.block.clone(), byte_width);
     if volatile {
-        state.locals.set_uninitialized_qualified_at(
+        state.locals.set_uninitialized_with_all_qualifiers(
             name.to_string(),
             c_type,
             pointer,
             true,
             pointee_volatile,
+            constant,
+            pointee_constant,
         );
     } else {
-        state.locals.set_uninitialized_qualified_at(
+        state.locals.set_uninitialized_with_all_qualifiers(
             name.to_string(),
             c_type,
             pointer,
             false,
             pointee_volatile,
+            constant,
+            pointee_constant,
         );
     }
     state

@@ -2250,6 +2250,14 @@ impl CValue {
         Self::Pointer(CPointerValue::new(pointer, c_type).with_pointee_volatile(pointee_volatile))
     }
 
+    pub(crate) fn typed_pointer_with_pointee_constant(
+        pointer: Pointer,
+        c_type: CType,
+        pointee_constant: bool,
+    ) -> Self {
+        Self::Pointer(CPointerValue::new(pointer, c_type).with_pointee_constant(pointee_constant))
+    }
+
     pub(crate) fn retag_pointer(self, c_type: CType) -> Self {
         match self {
             Self::Pointer(pointer) => Self::Pointer(pointer.with_type(c_type)),
@@ -2261,6 +2269,15 @@ impl CValue {
         match self {
             Self::Pointer(pointer) => {
                 Self::Pointer(pointer.with_pointee_volatile(pointee_volatile))
+            }
+            value => value,
+        }
+    }
+
+    pub(crate) fn with_pointer_pointee_constant(self, pointee_constant: bool) -> Self {
+        match self {
+            Self::Pointer(pointer) => {
+                Self::Pointer(pointer.with_pointee_constant(pointee_constant))
             }
             value => value,
         }
@@ -2323,6 +2340,8 @@ impl CLValue {
             value_type,
             volatile,
             pointee_volatile,
+            constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -2349,7 +2368,19 @@ impl CLValue {
             value_type,
             volatile,
             pointee_volatile,
+            constant: false,
+            pointee_constant: false,
         }
+    }
+
+    pub(in crate::kernel) fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
+    pub(in crate::kernel) fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
+        self
     }
 
     pub fn value_type(&self) -> CType {
@@ -2362,6 +2393,14 @@ impl CLValue {
 
     pub(in crate::kernel) fn pointee_is_volatile(&self) -> bool {
         self.pointee_volatile
+    }
+
+    pub(in crate::kernel) fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub(in crate::kernel) fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
     }
 
     pub(in crate::kernel) fn pointer(&self, state: &CState) -> Option<Pointer> {

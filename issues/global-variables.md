@@ -18,7 +18,9 @@ supported scalar leaf fields now use stable typed aggregate storage, including
 cross-file `extern` sharing and field-level contract effects. Positional
 compile-time scalar and null-pointer initializers now populate those same
 objects, with omitted leaves retaining zero initialization. Designated
-initializers, multidimensional or incomplete arrays, initialization ordering,
+Const-qualified scalar globals and scalar tables now use read-only backing
+blocks and preserve pointer-to-const views across translation units.
+Designated initializers, multidimensional or incomplete arrays, initialization ordering,
 and wider string-literal forms remain unsupported; dynamic or non-literal
 initialization remains unsupported as well. Fixed-size one-dimensional arrays
 of those aggregates now use one stable ABI-sized block, support nested
@@ -65,8 +67,8 @@ propagation, and indirect-write rejection.
 
 - The parser accepts supported scalar file-scope declarations with optional
   literal initializers, `extern` declarations, and internal-linkage `static`
-  definitions, and rejects duplicate or missing external definitions across
-  the source bundle.
+  definitions, including const-qualified scalar objects and scalar arrays, and
+  rejects duplicate or missing external definitions across the source bundle.
 - The kernel models each externally linked scalar as one stable global block
   and each file-scope `static` scalar as one stable translation-unit-qualified
   block, materialized at entry with its literal initial value or zero and
@@ -74,7 +76,9 @@ propagation, and indirect-write rejection.
 - The kernel models each fixed-size one-dimensional scalar global as one stable
   array block, initialized element-by-element with omitted values set to zero;
   external definitions are shared across translation units and file-scope
-  `static` arrays are translation-unit-private.
+  `static` arrays are translation-unit-private. Const-qualified scalar globals
+  and arrays use read-only backing blocks, and pointer-to-const views reject
+  stores while preserving reads and provenance.
 - The parser accepts zero-initialized, positionally initialized, or designated
   struct globals and function-local struct statics whose layouts contain
   supported scalar leaf fields, links compatible external declarations to one
@@ -113,7 +117,8 @@ propagation, and indirect-write rejection.
   global write not named in `mutable` is rejected. Aggregate-array indexed
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
-  non-literal designators, multidimensional/incomplete arrays, dynamic or
+  non-literal designators, const-qualified aggregate objects and automatic
+  locals, multidimensional/incomplete arrays, dynamic or
   non-literal initialization, initialization ordering, and wider literal forms
   remain open.
 - `scripts/check.sh` passes.

@@ -164,6 +164,8 @@ struct ParsedType {
     c_type: C0Type,
     struct_name: Option<String>,
     struct_pointer: bool,
+    constant: bool,
+    pointee_constant: bool,
 }
 
 fn is_c_type_keyword(name: &str) -> bool {
@@ -190,6 +192,7 @@ fn is_c_type_keyword(name: &str) -> bool {
             | "uint64_t"
             | "float"
             | "double"
+            | "const"
             | "volatile"
     )
 }
@@ -1077,6 +1080,11 @@ impl Parser {
 
     fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
         let parsed_return_type = self.parse_type()?;
+        if parsed_return_type.constant || parsed_return_type.pointee_constant {
+            return Err(
+                self.error("const-qualified function return types are not supported in this slice")
+            );
+        }
         let return_type = if let Some(struct_name) = parsed_return_type
             .struct_name
             .as_deref()
@@ -1129,6 +1137,8 @@ impl Parser {
                         c_type,
                         name,
                         struct_name: None,
+                        constant: false,
+                        pointee_constant: false,
                     },
                     struct_name: None,
                     declared_bytes: None,
@@ -1170,21 +1180,36 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, ClickError> {
+        let is_constant = if self.peek_ident() == Some("const") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
         let spelling = self.expect_ident("type")?;
         if spelling == "struct" {
             let struct_name = self.expect_ident("struct name")?;
+            let mut object_constant = is_constant;
+            if self.peek_ident() == Some("const") {
+                self.position += 1;
+                object_constant = true;
+            }
             if self.peek() == Some(&Token::Star) {
                 self.position += 1;
                 return Ok(ParsedType {
                     c_type: C0Type::Int32Pointer,
                     struct_name: Some(struct_name),
                     struct_pointer: true,
+                    constant: false,
+                    pointee_constant: object_constant,
                 });
             }
             return Ok(ParsedType {
                 c_type: C0Type::Int32Pointer,
                 struct_name: Some(struct_name),
                 struct_pointer: false,
+                constant: object_constant,
+                pointee_constant: false,
             });
         }
 
@@ -1260,7 +1285,15 @@ impl Parser {
             }
         };
         let mut c_type = scalar_type;
+        let mut object_constant = is_constant;
+        let mut pointee_constant = false;
+        if self.peek_ident() == Some("const") {
+            self.position += 1;
+            object_constant = true;
+        }
         while self.peek() == Some(&Token::Star) {
+            let base_constant = object_constant;
+            object_constant = false;
             self.position += 1;
             c_type = match c_type {
                 C0Type::Void => return Err(self.error("`void *` is not supported yet")),
@@ -1280,11 +1313,20 @@ impl Parser {
                 C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
                 _ => return Err(self.error("pointer depth beyond `**` is not supported")),
             };
+            if base_constant {
+                pointee_constant = true;
+            }
+            if self.peek_ident() == Some("const") {
+                self.position += 1;
+                object_constant = true;
+            }
         }
         Ok(ParsedType {
             c_type,
             struct_name: None,
             struct_pointer: false,
+            constant: object_constant,
+            pointee_constant,
         })
     }
 
@@ -1448,6 +1490,8 @@ impl Parser {
                     c_type,
                     name,
                     struct_name: struct_name.clone(),
+                    constant: parsed_type.constant,
+                    pointee_constant: parsed_type.pointee_constant,
                 },
                 struct_name,
                 declared_bytes: None,
@@ -1469,6 +1513,8 @@ impl Parser {
                     c_type: C0Type::Int32Pointer,
                     name,
                     struct_name: struct_name.clone(),
+                    constant: false,
+                    pointee_constant: parsed_type.constant || parsed_type.pointee_constant,
                 },
                 struct_name,
                 declared_bytes: None,
@@ -1505,6 +1551,8 @@ impl Parser {
                 c_type: pointer_type,
                 name,
                 struct_name: None,
+                constant: false,
+                pointee_constant: parsed_type.constant || parsed_type.pointee_constant,
             },
             struct_name: None,
             declared_bytes,
