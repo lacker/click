@@ -11,8 +11,11 @@ recursively embedded-struct, and fixed-dimensional embedded-struct-array
 fields.
 Struct fields currently support `int16`, `int32`, `uint8`, `uint16`, `uint32`,
 `int64`, `uint64`, fixed scalar arrays, embedded structs, named enum fields,
-pointers, named read-only unions, and fixed-dimensional arrays of embedded
-structs. Structs whose fields are only `int16`, `int32`, `uint8`, `uint16`,
+pointers, modeled function-pointer callback fields, named read-only unions, and
+fixed-dimensional arrays of embedded structs. Function-pointer fields retain
+their structural callback key and nominal signature metadata; a compatible
+concrete function address can be stored, loaded into a local callback, and
+called. Structs whose fields are only `int16`, `int32`, `uint8`, `uint16`,
 `uint32`, `int64`, `uint64`, named enum fields,
 fixed-dimensional scalar arrays, recursively embedded structs, or
 fixed-dimensional arrays of embedded structs can be parameters, locals,
@@ -186,6 +189,13 @@ Staged mdtests, each with an unchanged C file:
     `mdtests/local_struct_array_designators.md` and the C0 index-boundary
     regression. Static/file-scope designated aggregate initializers remain
     separate.
+22. ~~A pointer-backed struct callback field retains its signature and LP64
+    slot, accepts a compatible concrete function address, loads into a local
+    callback, and dispatches the known target; incompatible targets are
+    rejected.~~ Covered by `mdtests/struct_function_pointer_field.md` and the
+    C0 field metadata, assignment-validation, and execution regressions.
+    Abstract callback contracts, direct calls through the field expression, and
+    by-value structs containing callback fields remain separate.
 
 ## Acceptance criteria
 
@@ -199,6 +209,10 @@ Staged mdtests, each with an unchanged C file:
   embedded-struct array.
 - Data-pointer fields in those copies preserve the exact pointer value and
   provenance without copying the pointee or transferring ownership.
+- Pointer-backed callback fields preserve their structural signature key,
+  nominal signature metadata, and LP64 slot; compatible concrete function
+  addresses can be stored and loaded for known-target dispatch, while
+  incompatible known targets and by-value callback fields remain rejected.
 - Address-taking of modeled scalar leaf fields preserves the original
   allocation block, adds every ABI field offset in the chain, and returns the
   correct modeled pointer type; unsupported pointer forms are rejected rather

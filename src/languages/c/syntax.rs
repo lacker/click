@@ -1277,6 +1277,7 @@ pub struct C0StructField {
     struct_name: Option<String>,
     enum_name: Option<String>,
     union_name: Option<String>,
+    function_pointer_signature: Option<C0FunctionPointerSignature>,
     /// The ABI width of one element when this is an inline array of embedded
     /// structs. The public C0 type remains a byte-array placeholder, while
     /// member selection uses this metadata to preserve struct indexing.
@@ -1607,6 +1608,7 @@ pub enum C0Expression {
         pointer: Box<C0Expression>,
         field_type: C0Type,
         field_struct_name: Option<String>,
+        function_pointer_signature: Option<C0FunctionPointerSignature>,
         array_shape: Option<Vec<u32>>,
     },
     UnionField {
@@ -1955,6 +1957,10 @@ impl C0StructField {
 
     pub fn union_name(&self) -> Option<&str> {
         self.union_name.as_deref()
+    }
+
+    pub fn function_pointer_signature(&self) -> Option<&C0FunctionPointerSignature> {
+        self.function_pointer_signature.as_ref()
     }
 
     pub fn array_element_width(&self) -> Option<u32> {
@@ -2945,6 +2951,7 @@ fn field_expression(
     field_type: C0Type,
     field_struct_name: Option<String>,
     field_union_name: Option<String>,
+    function_pointer_signature: Option<C0FunctionPointerSignature>,
     array_shape: Option<Vec<u32>>,
 ) -> C0Expression {
     if let Some(union_name) = field_union_name {
@@ -2965,6 +2972,7 @@ fn field_expression(
         pointer: Box::new(pointer),
         field_type,
         field_struct_name,
+        function_pointer_signature,
         array_shape,
     }
 }
@@ -4916,6 +4924,40 @@ impl Parser {
                 return Err(self.error_here("expected struct field or `}`, got end of input"));
             }
             let field_type = self.parse_type()?;
+            if let Some((field_name, c_type, function_pointer_signature)) =
+                self.parse_function_pointer_declarator(field_type.clone())?
+            {
+                let (field_size, field_alignment) = self.abi.size_and_alignment(c_type);
+                offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
+                    self.error_here(format!("struct `{name}` layout is too large"))
+                })?;
+                if fields
+                    .insert(
+                        field_name.clone(),
+                        C0StructField {
+                            c_type,
+                            struct_name: None,
+                            enum_name: None,
+                            union_name: None,
+                            function_pointer_signature: Some(function_pointer_signature),
+                            array_element_width: None,
+                            array_shape: None,
+                            offset_bytes,
+                            byte_width: field_size,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(self
+                        .error_here(format!("duplicate field `{field_name}` in struct `{name}`")));
+                }
+                offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
+                    self.error_here(format!("struct `{name}` layout is too large"))
+                })?;
+                struct_alignment = struct_alignment.max(field_alignment);
+                self.expect(Token::Semicolon)?;
+                continue;
+            }
             loop {
                 let field_name = self.expect_ident("struct field name")?;
                 let (
@@ -4941,6 +4983,7 @@ impl Parser {
                             union_name: (c_type == field_type.c_type)
                                 .then(|| field_type.union_name.clone())
                                 .flatten(),
+                            function_pointer_signature: None,
                             array_element_width,
                             array_shape,
                             offset_bytes,
@@ -8038,6 +8081,7 @@ impl Parser {
                         pointer: Box::new(source_pointer),
                         field_type: element_type,
                         field_struct_name: None,
+                        function_pointer_signature: None,
                         array_shape: None,
                     },
                     value_type: Some(element_type),
@@ -8373,8 +8417,12 @@ impl Parser {
                     pointer,
                     field_type,
                     field_struct_name,
+                    function_pointer_signature,
                     ..
                 } => {
+                    if let Some(signature) = function_pointer_signature {
+                        self.validate_function_pointer_value(&signature, &value)?;
+                    }
                     if let Some(struct_name) = field_struct_name {
                         if matches!(field_type, C0Type::Int32Pointer | C0Type::UInt8Pointer) {
                             self.validate_struct_pointer_value(&struct_name, &value)?;
@@ -9539,6 +9587,7 @@ impl Parser {
                 pointer,
                 field_type,
                 field_struct_name,
+                function_pointer_signature,
                 array_shape,
             } => {
                 let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
@@ -9548,6 +9597,7 @@ impl Parser {
                         pointer: Box::new(pointer),
                         field_type,
                         field_struct_name,
+                        function_pointer_signature,
                         array_shape,
                     },
                 ))
@@ -9797,6 +9847,10 @@ impl Parser {
                 (then_signature == else_signature).then_some(then_signature)
             }
             C0Expression::Cast { expression, .. } => self.function_pointer_signature(expression),
+            C0Expression::Field {
+                function_pointer_signature: Some(signature),
+                ..
+            } => Some(signature.clone()),
             _ => None,
         }
     }
@@ -10327,28 +10381,33 @@ impl Parser {
                     };
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
-                    let (pointer, field_type, field_struct_name, field_union_name, array_shape) =
-                        if dot {
-                            let struct_value = matches!(
-                                &expression,
-                                C0Expression::Variable(name)
-                                    if self.variable_struct_values.contains_key(name)
-                                        || (self.variable_structs.contains_key(name)
-                                            && matches!(
-                                                self.variable_types.get(name),
-                                                Some(C0Type::UInt8Array(_))
-                                            ))
-                            );
-                            if struct_value
-                                || matches!(&expression, C0Expression::UnionAddress { .. })
-                            {
-                                self.resolve_field_access(&expression, &field_name)?
-                            } else {
-                                self.resolve_array_struct_field_access(&expression, &field_name)?
-                            }
-                        } else {
+                    let (
+                        pointer,
+                        field_type,
+                        field_struct_name,
+                        field_union_name,
+                        function_pointer_signature,
+                        array_shape,
+                    ) = if dot {
+                        let struct_value = matches!(
+                            &expression,
+                            C0Expression::Variable(name)
+                                if self.variable_struct_values.contains_key(name)
+                                    || (self.variable_structs.contains_key(name)
+                                        && matches!(
+                                            self.variable_types.get(name),
+                                            Some(C0Type::UInt8Array(_))
+                                        ))
+                        );
+                        if struct_value || matches!(&expression, C0Expression::UnionAddress { .. })
+                        {
                             self.resolve_field_access(&expression, &field_name)?
-                        };
+                        } else {
+                            self.resolve_array_struct_field_access(&expression, &field_name)?
+                        }
+                    } else {
+                        self.resolve_field_access(&expression, &field_name)?
+                    };
                     expression = if let Some(union_name) = union_base {
                         C0Expression::UnionField {
                             pointer: Box::new(pointer),
@@ -10361,6 +10420,7 @@ impl Parser {
                             field_type,
                             field_struct_name,
                             field_union_name,
+                            function_pointer_signature,
                             array_shape,
                         )
                     };
@@ -10697,6 +10757,7 @@ impl Parser {
             C0Type,
             Option<String>,
             Option<String>,
+            Option<C0FunctionPointerSignature>,
             Option<Vec<u32>>,
         ),
         C0SyntaxError,
@@ -10738,6 +10799,7 @@ impl Parser {
                 field.c_type,
                 field.struct_name.clone(),
                 field.union_name.clone(),
+                field.function_pointer_signature.clone(),
                 field.array_shape.clone(),
             ));
         }
@@ -10751,6 +10813,7 @@ impl Parser {
             return Ok((
                 offset_field_pointer(base.clone(), field.offset_bytes),
                 field.c_type,
+                None,
                 None,
                 None,
                 None,
@@ -10771,6 +10834,7 @@ impl Parser {
             C0Type,
             Option<String>,
             Option<String>,
+            Option<C0FunctionPointerSignature>,
             Option<Vec<u32>>,
         ),
         C0SyntaxError,
@@ -10823,6 +10887,7 @@ impl Parser {
             field.c_type,
             field.struct_name.clone(),
             field.union_name.clone(),
+            field.function_pointer_signature.clone(),
             field.array_shape.clone(),
         ))
     }

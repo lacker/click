@@ -228,6 +228,7 @@ struct ResolvedField {
     c_type: C0Type,
     struct_name: Option<String>,
     union_name: Option<String>,
+    function_pointer_signature: Option<syntax::C0FunctionPointerSignature>,
     array_element_width: Option<u32>,
     array_shape: Option<Vec<u32>>,
     offset_bytes: u32,
@@ -3530,6 +3531,7 @@ impl Parser {
                         pointer: Box::new(pointer),
                         field_type: field.c_type,
                         field_struct_name: None,
+                        function_pointer_signature: None,
                         array_shape: None,
                     }
                 }
@@ -3538,6 +3540,7 @@ impl Parser {
                     pointer: Box::new(pointer),
                     field_type: field.c_type,
                     field_struct_name: field.struct_name,
+                    function_pointer_signature: field.function_pointer_signature.clone(),
                     array_shape: field.array_shape,
                 }
             }));
@@ -3603,6 +3606,7 @@ impl Parser {
             c_type: field.c_type(),
             struct_name: field.struct_name().map(str::to_string),
             union_name: field.union_name().map(str::to_string),
+            function_pointer_signature: field.function_pointer_signature().cloned(),
             array_element_width: field.array_element_width(),
             array_shape: field.array_shape().map(|shape| shape.to_vec()),
             offset_bytes: field.offset_bytes(),
@@ -3626,6 +3630,7 @@ impl Parser {
             c_type: field.c_type(),
             struct_name: None,
             union_name: None,
+            function_pointer_signature: None,
             array_element_width: None,
             array_shape: None,
             offset_bytes: field.offset_bytes(),

@@ -7202,6 +7202,157 @@ fn c0_function_pointer_signatures_preserve_struct_pointer_tags() {
 }
 
 #[test]
+fn c0_struct_function_pointer_fields_preserve_signature_and_lp64_layout() {
+    let function = syntax::parse_function(
+        r#"
+        struct callback_table {
+            uint8 tag;
+            int32 (*compare)(int32, int32);
+            int32 count;
+        };
+
+        int32 read_count(struct callback_table* table) {
+            return table->count;
+        }
+        "#,
+    )
+    .expect("function-pointer struct fields should parse");
+
+    let layout = function
+        .structs()
+        .get("callback_table")
+        .expect("callback table layout");
+    let callback = layout.field("compare").expect("callback field");
+    assert!(matches!(
+        callback.c_type(),
+        syntax::C0Type::FunctionPointer(_)
+    ));
+    assert_eq!(callback.offset_bytes(), 8);
+    assert_eq!(callback.byte_width(), 8);
+    let signature = callback
+        .function_pointer_signature()
+        .expect("callback field signature metadata");
+    assert_eq!(signature.return_type(), syntax::C0Type::Int32);
+    assert_eq!(signature.parameters().len(), 2);
+    assert_eq!(signature.parameters()[0].c_type(), syntax::C0Type::Int32);
+    assert_eq!(signature.parameters()[1].c_type(), syntax::C0Type::Int32);
+    assert_eq!(layout.field("count").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.size_bytes(), 24);
+}
+
+#[test]
+fn c0_struct_function_pointer_fields_load_and_dispatch_known_targets() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct callback_table {
+            int32 (*compare)(int32, int32);
+        };
+
+        int32 compare(int32 left, int32 right) {
+            return left - right;
+        }
+
+        int32 apply(struct callback_table* table) {
+            int32 (*callback)(int32, int32);
+            callback = table->compare;
+            return callback(40, 2);
+        }
+
+        int32 caller() {
+            struct callback_table* table;
+            int32 result;
+            table = malloc(sizeof(struct callback_table));
+            table->compare = &compare;
+            result = apply(table);
+            free(table);
+            return result;
+        }
+        "#,
+    )
+    .expect("callback field load and dispatch should parse");
+    let compare = functions
+        .iter()
+        .find(|function| function.name() == "compare")
+        .expect("compare function")
+        .to_kernel_function();
+    let apply = functions
+        .iter()
+        .find(|function| function.name() == "apply")
+        .expect("apply function")
+        .to_kernel_function();
+    let apply_for_environment = apply.clone();
+
+    let table = crate::kernel::Pointer {
+        block: "table".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let callback = crate::kernel::CValue::typed_pointer(
+        crate::kernel::Pointer::function("compare"),
+        compare.function_pointer_type(),
+    );
+    let state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("table", 8)
+                .store(table.clone(), callback),
+        )
+        .with_resource_context(own_memory_context(table.clone(), 0, 8));
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        state,
+        apply,
+        vec![crate::kernel::c_typed_pointer_value(
+            table,
+            crate::kernel::CType::Int32Pointer,
+        )],
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new()
+            .with_function(compare)
+            .with_function(apply_for_environment),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("known callback field target should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!(
+            "expected callback field execution theorem, got {:#?}",
+            theorem
+        );
+    };
+    assert_eq!(value, &crate::kernel::int32(38));
+}
+
+#[test]
+fn c0_struct_function_pointer_fields_reject_incompatible_targets() {
+    let error = syntax::parse_functions(
+        r#"
+        struct callback_table {
+            int32 (*compare)(int32, int32);
+        };
+
+        uint8 wrong(uint8 left, uint8 right) {
+            return left - right;
+        }
+
+        int32 bad() {
+            struct callback_table* table;
+            table = malloc(sizeof(struct callback_table));
+            table->compare = &wrong;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("an incompatible callback field target should be rejected");
+    assert!(
+        error.message().contains("callback signature mismatch"),
+        "{error}"
+    );
+}
+
+#[test]
 fn c0_function_pointer_signatures_reject_nominally_wrong_struct_targets() {
     let error = syntax::parse_functions(
         r#"

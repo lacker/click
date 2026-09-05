@@ -613,6 +613,21 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         return Some(value);
     }
 
+    // A direct function address starts with the intentionally untyped
+    // FunctionPointer(0) marker. Call arguments retag it from the declared
+    // parameter type before binding; typed stores need the same destination
+    // context so a callback field can be initialized without weakening
+    // already-typed function-pointer compatibility checks.
+    if let (CType::FunctionPointer(signature), CValue::Pointer(pointer)) = (target_type, &value)
+        && pointer.block.is_function()
+        && pointer.c_type() == CType::FunctionPointer(0)
+    {
+        return Some(CValue::typed_pointer(
+            pointer.pointer().clone(),
+            CType::FunctionPointer(signature),
+        ));
+    }
+
     match (target_type, value) {
         (CType::Int32, CValue::Int16(value) | CValue::UInt8(value) | CValue::UInt16(value)) => {
             Some(CValue::Int32(value))
