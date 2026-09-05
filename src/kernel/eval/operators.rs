@@ -77,6 +77,74 @@ fn scalar_width(left: &CValue, right: &CValue) -> Option<ScalarWidth> {
     }
 }
 
+fn coerce_c_float_operands(
+    left: &CValue,
+    right: &CValue,
+    obligations: &[ProofObligation],
+    assumptions: &PureFactContext,
+) -> Option<(CValue, CValue, CType, Vec<ProofObligation>)> {
+    let target_type = if matches!(left, CValue::Float64(_)) || matches!(right, CValue::Float64(_)) {
+        CType::Float64
+    } else if matches!(left, CValue::Float32(_)) || matches!(right, CValue::Float32(_)) {
+        CType::Float32
+    } else {
+        return None;
+    };
+    let mut obligations = obligations.to_vec();
+    let left = coerce_c_value_to_type(left.clone(), target_type, &mut obligations, assumptions)?;
+    let right = coerce_c_value_to_type(right.clone(), target_type, &mut obligations, assumptions)?;
+    Some((left, right, target_type, obligations))
+}
+
+fn apply_c_float_binary(
+    left: CValue,
+    right: CValue,
+    target_type: CType,
+    operator: CFloatBinaryOperator,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+) -> Vec<CExpressionPath> {
+    let outcome = match (target_type, left, right) {
+        (CType::Float32, CValue::Float32(left), CValue::Float32(right)) => {
+            CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::float32_binary(
+                left, right, operator,
+            )))
+        }
+        (CType::Float64, CValue::Float64(left), CValue::Float64(right)) => {
+            CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::float64_binary(
+                left, right, operator,
+            )))
+        }
+        _ => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+    };
+    vec![CExpressionPath {
+        outcome,
+        facts,
+        obligations,
+    }]
+}
+
+fn apply_c_float_comparison(
+    left: CValue,
+    right: CValue,
+    target_type: CType,
+    operator: CComparisonOperator,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    let condition = match (target_type, left, right) {
+        (CType::Float32, CValue::Float32(left), CValue::Float32(right)) => {
+            ConditionTerm::float32_compare(left, right, operator)
+        }
+        (CType::Float64, CValue::Float64(left), CValue::Float64(right)) => {
+            ConditionTerm::float64_compare(left, right, operator)
+        }
+        _ => return vec![c_type_mismatch_expression_path(facts, obligations)],
+    };
+    condition_as_c_int32_paths(condition, facts, obligations, assumptions)
+}
+
 pub(in crate::kernel) fn evaluate_c_add_paths(
     state: &CState,
     left: &CExpression,
@@ -174,6 +242,18 @@ pub(in crate::kernel) fn apply_c_add(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_binary(
+            left,
+            right,
+            target_type,
+            CFloatBinaryOperator::Add,
+            facts,
+            obligations,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_add(left, right, width, facts, obligations, assumptions);
     }
@@ -668,6 +748,18 @@ pub(in crate::kernel) fn apply_c_multiply(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_binary(
+            left,
+            right,
+            target_type,
+            CFloatBinaryOperator::Multiply,
+            facts,
+            obligations,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_multiply(left, right, width, facts, obligations, assumptions);
     }
@@ -713,6 +805,18 @@ pub(in crate::kernel) fn apply_c_divide(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_binary(
+            left,
+            right,
+            target_type,
+            CFloatBinaryOperator::Divide,
+            facts,
+            obligations,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_divide(left, right, width, facts, obligations, assumptions);
     }
@@ -1098,6 +1202,19 @@ fn apply_c_comparison(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_comparison(
+            left,
+            right,
+            target_type,
+            operator,
+            facts,
+            obligations,
+            assumptions,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_comparison(
             operator,
@@ -1188,6 +1305,18 @@ fn apply_c_comparison(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, operator),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, operator),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
@@ -1202,6 +1331,18 @@ pub(in crate::kernel) fn apply_c_subtract(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_binary(
+            left,
+            right,
+            target_type,
+            CFloatBinaryOperator::Subtract,
+            facts,
+            obligations,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_subtract(left, right, width, facts, obligations, assumptions);
     }
@@ -3078,6 +3219,19 @@ pub(in crate::kernel) fn apply_c_equal(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_comparison(
+            left,
+            right,
+            target_type,
+            CComparisonOperator::Equal,
+            facts,
+            obligations,
+            assumptions,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let mut facts = facts;
         let Some((left, right, _)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)
@@ -3159,6 +3313,18 @@ pub(in crate::kernel) fn apply_c_equal(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, CComparisonOperator::Equal),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, CComparisonOperator::Equal),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
@@ -3189,6 +3355,19 @@ pub(in crate::kernel) fn apply_c_not_equal(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if let Some((left, right, target_type, obligations)) =
+        coerce_c_float_operands(&left, &right, &obligations, assumptions)
+    {
+        return apply_c_float_comparison(
+            left,
+            right,
+            target_type,
+            CComparisonOperator::NotEqual,
+            facts,
+            obligations,
+            assumptions,
+        );
+    }
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let mut facts = facts;
         let Some((left, right, _)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)
@@ -3270,6 +3449,18 @@ pub(in crate::kernel) fn apply_c_not_equal(
                 assumptions,
             )
         }
+        (CValue::Float32(left), CValue::Float32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float32_compare(left, right, CComparisonOperator::NotEqual),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Float64(left), CValue::Float64(right)) => condition_as_c_int32_paths(
+            ConditionTerm::float64_compare(left, right, CComparisonOperator::NotEqual),
+            facts,
+            obligations,
+            assumptions,
+        ),
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }

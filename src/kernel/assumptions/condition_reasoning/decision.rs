@@ -73,6 +73,9 @@ impl PureFactContext {
                 if let Some(value) = self.exact_condition_value(condition) {
                     return Some(value);
                 }
+                if let Some(value) = self.decide_reflexive_float_comparison(condition) {
+                    return Some(value);
+                }
                 if let ConditionTerm::Bitvector32Equal(left, right) = condition
                     && super::super::super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
                         left,
@@ -118,6 +121,60 @@ impl PureFactContext {
                     .or_else(|| self.decide_from_order_facts(condition))
             }
         }
+    }
+
+    fn decide_reflexive_float_comparison(&self, condition: &ConditionTerm) -> Option<bool> {
+        let (operator, left, right) = match condition {
+            ConditionTerm::Float32(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => (*operator, left.as_ref(), right.as_ref()),
+            ConditionTerm::Float64(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => (*operator, left.as_ref(), right.as_ref()),
+            _ => return None,
+        };
+        if left != right
+            && !super::super::super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+                left, right, self,
+            )
+        {
+            return None;
+        }
+        let finite_left = match condition {
+            ConditionTerm::Float32(_) => {
+                ConditionTerm::float32_classification(left.clone(), CFloatClassification::Finite)
+            }
+            ConditionTerm::Float64(_) => {
+                ConditionTerm::float64_classification(left.clone(), CFloatClassification::Finite)
+            }
+            _ => unreachable!(),
+        };
+        let finite_right = match condition {
+            ConditionTerm::Float32(_) => {
+                ConditionTerm::float32_classification(right.clone(), CFloatClassification::Finite)
+            }
+            ConditionTerm::Float64(_) => {
+                ConditionTerm::float64_classification(right.clone(), CFloatClassification::Finite)
+            }
+            _ => unreachable!(),
+        };
+        let left_is_finite = self.decide(&finite_left);
+        let right_is_finite = self.decide(&finite_right);
+        if left_is_finite != Some(true) && right_is_finite != Some(true) {
+            return None;
+        }
+        Some(match operator {
+            CComparisonOperator::Equal
+            | CComparisonOperator::LessEqual
+            | CComparisonOperator::GreaterEqual => true,
+            CComparisonOperator::NotEqual
+            | CComparisonOperator::LessThan
+            | CComparisonOperator::GreaterThan => false,
+        })
     }
 
     pub(in crate::kernel) fn decide_intrinsically(condition: &ConditionTerm) -> Option<bool> {
@@ -669,6 +726,38 @@ impl PureFactContext {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Float32(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => ConditionTerm::float32_compare(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            ConditionTerm::Float32(CFloatCondition::Classification {
+                classification,
+                value,
+            }) => ConditionTerm::float32_classification(
+                self.simplify_bitvector_under_assumptions(value),
+                *classification,
+            ),
+            ConditionTerm::Float64(CFloatCondition::Comparison {
+                operator,
+                left,
+                right,
+            }) => ConditionTerm::float64_compare(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            ConditionTerm::Float64(CFloatCondition::Classification {
+                classification,
+                value,
+            }) => ConditionTerm::float64_classification(
+                self.simplify_bitvector_under_assumptions(value),
+                *classification,
+            ),
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
@@ -747,6 +836,30 @@ impl PureFactContext {
             Bitvector32Term::BitwiseNot(value) => {
                 Bitvector32Term::bitwise_not(self.simplify_bitvector_under_assumptions(value))
             }
+            Bitvector32Term::Float32Negate(value) => {
+                Bitvector32Term::float32_negate(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Float32Binary {
+                operator,
+                left,
+                right,
+            } => Bitvector32Term::float32_binary(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
+            Bitvector32Term::Float64Negate(value) => {
+                Bitvector32Term::float64_negate(self.simplify_bitvector_under_assumptions(value))
+            }
+            Bitvector32Term::Float64Binary {
+                operator,
+                left,
+                right,
+            } => Bitvector32Term::float64_binary(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+                *operator,
+            ),
             Bitvector32Term::Int64Constant(value) => Bitvector32Term::Int64Constant(*value),
             Bitvector32Term::UInt64Constant(value) => Bitvector32Term::UInt64Constant(*value),
             Bitvector32Term::Int64From32(value) => {

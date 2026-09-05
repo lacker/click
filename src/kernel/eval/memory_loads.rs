@@ -399,6 +399,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             CType::UInt32 => CValue::UInt32(Bitvector32Term::Constant(0)),
             CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
             CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
+            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
+            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
             _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {
@@ -1123,6 +1125,12 @@ pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
             let (left, right) = binary(left, right);
             ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Float32(float_condition) => {
+            ConditionTerm::Float32(float_condition.map_bitvector_terms(canonical_term))
+        }
+        ConditionTerm::Float64(float_condition) => {
+            ConditionTerm::Float64(float_condition.map_bitvector_terms(canonical_term))
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
             Box::new(canonical_offset_term(left)),
             Box::new(canonical_offset_term(right)),
@@ -1169,12 +1177,22 @@ fn substitute_load_variables(
         VisitOffset(&'a PointerOffsetTerm),
         RebuildBinary(BinaryConstructor),
         RebuildUnary(UnaryConstructor),
+        RebuildFloatUnary(bool),
+        RebuildFloatBinary {
+            is_float64: bool,
+            operator: CFloatBinaryOperator,
+        },
         RebuildIf,
         RebuildPureFunction {
             name: String,
             argument_count: usize,
         },
         RebuildConditionBinary(ConditionConstructor),
+        RebuildFloatCondition {
+            is_float64: bool,
+            condition: CFloatCondition,
+            term_count: usize,
+        },
         RebuildPointerOffsetEqual,
         RebuildPointerEqual {
             left_block: PointerBlock,
@@ -1273,6 +1291,38 @@ fn substitute_load_variables(
                     }
                     Bitvector32Term::BitwiseNot(value) => {
                         visit_unary!(Bitvector32Term::BitwiseNot, value, tasks)
+                    }
+                    Bitvector32Term::Float32Negate(value) => {
+                        tasks.push(Task::RebuildFloatUnary(false));
+                        tasks.push(Task::VisitTerm(value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        tasks.push(Task::RebuildFloatUnary(true));
+                        tasks.push(Task::VisitTerm(value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(Task::RebuildFloatBinary {
+                            is_float64: false,
+                            operator: *operator,
+                        });
+                        tasks.push(Task::VisitTerm(right));
+                        tasks.push(Task::VisitTerm(left));
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        tasks.push(Task::RebuildFloatBinary {
+                            is_float64: true,
+                            operator: *operator,
+                        });
+                        tasks.push(Task::VisitTerm(right));
+                        tasks.push(Task::VisitTerm(left));
                     }
                     Bitvector32Term::Int64From32(value) => {
                         visit_unary!(Bitvector32Term::Int64From32, value, tasks)
@@ -1563,6 +1613,46 @@ fn substitute_load_variables(
                         tasks
                     )
                 }
+                ConditionTerm::Float32(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(Task::RebuildFloatCondition {
+                        is_float64: false,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(Task::VisitTerm(right));
+                            tasks.push(Task::VisitTerm(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(Task::VisitTerm(value));
+                        }
+                    }
+                }
+                ConditionTerm::Float64(float_condition) => {
+                    let term_count = match float_condition {
+                        CFloatCondition::Comparison { .. } => 2,
+                        CFloatCondition::Classification { .. } => 1,
+                    };
+                    tasks.push(Task::RebuildFloatCondition {
+                        is_float64: true,
+                        condition: float_condition.clone(),
+                        term_count,
+                    });
+                    match float_condition {
+                        CFloatCondition::Comparison { left, right, .. } => {
+                            tasks.push(Task::VisitTerm(right));
+                            tasks.push(Task::VisitTerm(left));
+                        }
+                        CFloatCondition::Classification { value, .. } => {
+                            tasks.push(Task::VisitTerm(value));
+                        }
+                    }
+                }
                 ConditionTerm::PointerOffsetEqual(left, right) => {
                     tasks.push(Task::RebuildPointerOffsetEqual);
                     tasks.push(Task::VisitOffset(right));
@@ -1611,6 +1701,26 @@ fn substitute_load_variables(
                 let value = term_results.pop().expect("visited unary term");
                 term_results.push(constructor(Box::new(value)));
             }
+            Task::RebuildFloatUnary(is_float64) => {
+                let value = term_results.pop().expect("visited float unary term");
+                term_results.push(if is_float64 {
+                    Bitvector32Term::float64_negate(value)
+                } else {
+                    Bitvector32Term::float32_negate(value)
+                });
+            }
+            Task::RebuildFloatBinary {
+                is_float64,
+                operator,
+            } => {
+                let right = term_results.pop().expect("visited right float term");
+                let left = term_results.pop().expect("visited left float term");
+                term_results.push(if is_float64 {
+                    Bitvector32Term::float64_binary(left, right, operator)
+                } else {
+                    Bitvector32Term::float32_binary(left, right, operator)
+                });
+            }
             Task::RebuildIf => {
                 let else_term = term_results.pop().expect("visited else term");
                 let then_term = term_results.pop().expect("visited then term");
@@ -1633,6 +1743,25 @@ fn substitute_load_variables(
                 let right = term_results.pop().expect("visited right condition operand");
                 let left = term_results.pop().expect("visited left condition operand");
                 condition_results.push(constructor(Box::new(left), Box::new(right)));
+            }
+            Task::RebuildFloatCondition {
+                is_float64,
+                condition,
+                term_count,
+            } => {
+                let first = term_results.len() - term_count;
+                let mut index = first;
+                let rebuilt = condition.map_bitvector_terms(|_| {
+                    let term = term_results[index].clone();
+                    index += 1;
+                    term
+                });
+                term_results.truncate(first);
+                condition_results.push(if is_float64 {
+                    ConditionTerm::Float64(rebuilt)
+                } else {
+                    ConditionTerm::Float32(rebuilt)
+                });
             }
             Task::RebuildPointerOffsetEqual => {
                 let right = offset_results.pop().expect("visited right pointer offset");
@@ -1741,6 +1870,10 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseXor(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -1770,7 +1903,9 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
-        Bitvector32Term::BitwiseNot(value) => term_mentions_a_memory_load(value),
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => term_mentions_a_memory_load(value),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -1818,6 +1953,13 @@ fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            let mut mentions = false;
+            float_condition.for_each_bitvector_term(|term| {
+                mentions |= term_mentions_a_memory_load(term);
+            });
+            mentions
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             offset_mentions_a_memory_load(left) || offset_mentions_a_memory_load(right)

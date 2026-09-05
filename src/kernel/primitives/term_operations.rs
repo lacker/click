@@ -63,6 +63,63 @@ fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
 }
 
 impl Bitvector32Term {
+    pub(crate) fn opaque_conversion(name: impl Into<String>, value: Self) -> Self {
+        Self::PureFunctionApplication {
+            name: name.into(),
+            arguments: vec![value],
+        }
+    }
+
+    pub(crate) fn float32_as_const(&self) -> Option<u32> {
+        float32_bits_as_const(self)
+    }
+
+    pub(crate) fn float64_as_const(&self) -> Option<u64> {
+        float64_bits_as_const(self)
+    }
+
+    pub(crate) fn float32_negate(value: Self) -> Self {
+        match float32_bits_as_const(&value) {
+            Some(value) => Self::Constant(value ^ 0x8000_0000),
+            None => Self::Float32Negate(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn float64_negate(value: Self) -> Self {
+        match float64_bits_as_const(&value) {
+            Some(value) => Self::UInt64Constant(value ^ 0x8000_0000_0000_0000),
+            None => Self::Float64Negate(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn float32_binary(left: Self, right: Self, operator: CFloatBinaryOperator) -> Self {
+        match (float32_bits_as_const(&left), float32_bits_as_const(&right)) {
+            (Some(left), Some(right)) => {
+                Self::Constant(
+                    float_binary_bits(u64::from(left), u64::from(right), 8, 23, operator) as u32,
+                )
+            }
+            _ => Self::Float32Binary {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+        }
+    }
+
+    pub(crate) fn float64_binary(left: Self, right: Self, operator: CFloatBinaryOperator) -> Self {
+        match (float64_bits_as_const(&left), float64_bits_as_const(&right)) {
+            (Some(left), Some(right)) => {
+                Self::UInt64Constant(float_binary_bits(left, right, 11, 52, operator))
+            }
+            _ => Self::Float64Binary {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+        }
+    }
+
     pub fn var(var: Variable) -> Self {
         Self::Variable(var)
     }
@@ -105,7 +162,11 @@ impl Bitvector32Term {
             | Self::UInt64BitwiseAnd(_, _)
             | Self::UInt64BitwiseOr(_, _)
             | Self::UInt64BitwiseXor(_, _)
-            | Self::UInt64BitwiseNot(_) => None,
+            | Self::UInt64BitwiseNot(_)
+            | Self::Float32Negate(_)
+            | Self::Float32Binary { .. }
+            | Self::Float64Negate(_)
+            | Self::Float64Binary { .. } => None,
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
@@ -682,6 +743,494 @@ fn uint64_constant(term: &Bitvector32Term) -> Option<u64> {
     }
 }
 
+const FLOAT_ROUND_EXTRA_BITS: u32 = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecodedFloat {
+    Nan,
+    Infinity {
+        negative: bool,
+    },
+    Finite {
+        negative: bool,
+        significand: u64,
+        exponent: i32,
+    },
+}
+
+fn float32_bits_as_const(term: &Bitvector32Term) -> Option<u32> {
+    match term {
+        Bitvector32Term::Constant(value) => Some(*value),
+        Bitvector32Term::Float32Negate(value) => Some(float32_bits_as_const(value)? ^ 0x8000_0000),
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => Some(float_binary_bits(
+            u64::from(float32_bits_as_const(left)?),
+            u64::from(float32_bits_as_const(right)?),
+            8,
+            23,
+            *operator,
+        ) as u32),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match condition.as_ref() {
+            ConditionTerm::Constant(true) => float32_bits_as_const(then_term),
+            ConditionTerm::Constant(false) => float32_bits_as_const(else_term),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn float64_bits_as_const(term: &Bitvector32Term) -> Option<u64> {
+    match term {
+        Bitvector32Term::UInt64Constant(value) => Some(*value),
+        Bitvector32Term::Float64Negate(value) => {
+            Some(float64_bits_as_const(value)? ^ 0x8000_0000_0000_0000)
+        }
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => Some(float_binary_bits(
+            float64_bits_as_const(left)?,
+            float64_bits_as_const(right)?,
+            11,
+            52,
+            *operator,
+        )),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match condition.as_ref() {
+            ConditionTerm::Constant(true) => float64_bits_as_const(then_term),
+            ConditionTerm::Constant(false) => float64_bits_as_const(else_term),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn decode_float_bits(bits: u64, exponent_bits: u32, fraction_bits: u32, bias: i32) -> DecodedFloat {
+    let sign_bit = 1u64 << (exponent_bits + fraction_bits);
+    let exponent_mask = (1u64 << exponent_bits) - 1;
+    let fraction_mask = (1u64 << fraction_bits) - 1;
+    let exponent = (bits >> fraction_bits) & exponent_mask;
+    let fraction = bits & fraction_mask;
+    let negative = bits & sign_bit != 0;
+    if exponent == exponent_mask {
+        return if fraction == 0 {
+            DecodedFloat::Infinity { negative }
+        } else {
+            DecodedFloat::Nan
+        };
+    }
+    if exponent == 0 {
+        return DecodedFloat::Finite {
+            negative,
+            significand: fraction,
+            exponent: 1 - bias - fraction_bits as i32,
+        };
+    }
+    DecodedFloat::Finite {
+        negative,
+        significand: (1u64 << fraction_bits) | fraction,
+        exponent: exponent as i32 - bias - fraction_bits as i32,
+    }
+}
+
+fn canonical_float_nan(exponent_bits: u32, fraction_bits: u32) -> u64 {
+    (((1u64 << exponent_bits) - 1) << fraction_bits) | (1u64 << (fraction_bits - 1))
+}
+
+fn float_infinity(negative: bool, exponent_bits: u32, fraction_bits: u32) -> u64 {
+    let sign = if negative {
+        1u64 << (exponent_bits + fraction_bits)
+    } else {
+        0
+    };
+    sign | (((1u64 << exponent_bits) - 1) << fraction_bits)
+}
+
+fn float_zero(negative: bool, exponent_bits: u32, fraction_bits: u32) -> u64 {
+    if negative {
+        1u64 << (exponent_bits + fraction_bits)
+    } else {
+        0
+    }
+}
+
+fn shift_right_jam(value: u128, shift: u32) -> u128 {
+    if shift == 0 {
+        return value;
+    }
+    if shift >= 128 {
+        return u128::from(value != 0);
+    }
+    let truncated = value >> shift;
+    let lost = value & ((1u128 << shift) - 1);
+    truncated | u128::from(lost != 0)
+}
+
+fn round_right_to_even(value: u128, shift: u32) -> u128 {
+    if shift == 0 {
+        return value;
+    }
+    if shift >= 128 {
+        return 0;
+    }
+    let truncated = value >> shift;
+    let remainder = value & ((1u128 << shift) - 1);
+    let halfway = 1u128 << (shift - 1);
+    if remainder > halfway || (remainder == halfway && truncated & 1 != 0) {
+        truncated + 1
+    } else {
+        truncated
+    }
+}
+
+fn round_float_result(
+    negative: bool,
+    significand: u128,
+    exponent: i32,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    bias: i32,
+) -> u64 {
+    let sign = if negative {
+        1u64 << (exponent_bits + fraction_bits)
+    } else {
+        0
+    };
+    if significand == 0 {
+        return sign;
+    }
+
+    let precision = fraction_bits + 1;
+    let min_normal_exponent = 1 - bias;
+    let min_subnormal_exponent = min_normal_exponent - fraction_bits as i32;
+    let max_encoded_exponent = (1u32 << exponent_bits) - 1;
+    let max_normal_exponent = max_encoded_exponent as i32 - 1 - bias;
+
+    let significand_bits = 128 - significand.leading_zeros();
+    let mut unbiased_exponent = exponent + significand_bits as i32 - 1;
+    if unbiased_exponent >= min_normal_exponent {
+        let shift = significand_bits.saturating_sub(precision);
+        let mut rounded = if shift == 0 {
+            significand
+        } else {
+            round_right_to_even(significand, shift)
+        };
+        if rounded >= (1u128 << precision) {
+            rounded >>= 1;
+            unbiased_exponent += 1;
+        }
+        if unbiased_exponent > max_normal_exponent {
+            return float_infinity(negative, exponent_bits, fraction_bits);
+        }
+        let encoded_exponent = (unbiased_exponent + bias) as u64;
+        return sign
+            | (encoded_exponent << fraction_bits)
+            | ((rounded as u64) & ((1u64 << fraction_bits) - 1));
+    }
+
+    let rounded = if exponent >= min_subnormal_exponent {
+        significand << (exponent - min_subnormal_exponent) as u32
+    } else {
+        round_right_to_even(significand, (min_subnormal_exponent - exponent) as u32)
+    };
+    if rounded >= (1u128 << fraction_bits) {
+        // Rounding the largest subnormal up crosses into the least normal.
+        return sign | (1u64 << fraction_bits);
+    }
+    if rounded == 0 {
+        return sign;
+    }
+    sign | rounded as u64
+}
+
+fn negate_decoded_float(value: DecodedFloat) -> DecodedFloat {
+    match value {
+        DecodedFloat::Nan => DecodedFloat::Nan,
+        DecodedFloat::Infinity { negative } => DecodedFloat::Infinity {
+            negative: !negative,
+        },
+        DecodedFloat::Finite {
+            negative,
+            significand,
+            exponent,
+        } => DecodedFloat::Finite {
+            negative: !negative,
+            significand,
+            exponent,
+        },
+    }
+}
+
+fn add_decoded_floats(
+    left: DecodedFloat,
+    right: DecodedFloat,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    bias: i32,
+) -> u64 {
+    match (left, right) {
+        (DecodedFloat::Nan, _) | (_, DecodedFloat::Nan) => {
+            return canonical_float_nan(exponent_bits, fraction_bits);
+        }
+        (DecodedFloat::Infinity { negative: left }, DecodedFloat::Infinity { negative: right }) => {
+            return if left == right {
+                float_infinity(left, exponent_bits, fraction_bits)
+            } else {
+                canonical_float_nan(exponent_bits, fraction_bits)
+            };
+        }
+        (DecodedFloat::Infinity { negative }, _) | (_, DecodedFloat::Infinity { negative }) => {
+            return float_infinity(negative, exponent_bits, fraction_bits);
+        }
+        _ => {}
+    }
+
+    let DecodedFloat::Finite {
+        negative: left_negative,
+        significand: left_significand,
+        exponent: left_exponent,
+    } = left
+    else {
+        unreachable!();
+    };
+    let DecodedFloat::Finite {
+        negative: right_negative,
+        significand: right_significand,
+        exponent: right_exponent,
+    } = right
+    else {
+        unreachable!();
+    };
+    if left_significand == 0 && right_significand == 0 {
+        return float_zero(
+            left_negative && right_negative,
+            exponent_bits,
+            fraction_bits,
+        );
+    }
+
+    let exponent = left_exponent.max(right_exponent);
+    let left = shift_right_jam(
+        u128::from(left_significand) << FLOAT_ROUND_EXTRA_BITS,
+        (exponent - left_exponent) as u32,
+    );
+    let right = shift_right_jam(
+        u128::from(right_significand) << FLOAT_ROUND_EXTRA_BITS,
+        (exponent - right_exponent) as u32,
+    );
+    let signed_left = if left_negative {
+        -(left as i128)
+    } else {
+        left as i128
+    };
+    let signed_right = if right_negative {
+        -(right as i128)
+    } else {
+        right as i128
+    };
+    let sum = signed_left + signed_right;
+    if sum == 0 {
+        return float_zero(false, exponent_bits, fraction_bits);
+    }
+    let negative = sum < 0;
+    let magnitude = if negative {
+        (-sum) as u128
+    } else {
+        sum as u128
+    };
+    round_float_result(
+        negative,
+        magnitude,
+        exponent - FLOAT_ROUND_EXTRA_BITS as i32,
+        exponent_bits,
+        fraction_bits,
+        bias,
+    )
+}
+
+fn multiply_decoded_floats(
+    left: DecodedFloat,
+    right: DecodedFloat,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    bias: i32,
+) -> u64 {
+    let (left_negative, left_significand, left_exponent) = match left {
+        DecodedFloat::Nan => return canonical_float_nan(exponent_bits, fraction_bits),
+        DecodedFloat::Infinity { negative } => match right {
+            DecodedFloat::Finite { significand: 0, .. } => {
+                return canonical_float_nan(exponent_bits, fraction_bits);
+            }
+            DecodedFloat::Nan => return canonical_float_nan(exponent_bits, fraction_bits),
+            _ => {
+                return float_infinity(
+                    negative ^ decoded_sign(right),
+                    exponent_bits,
+                    fraction_bits,
+                );
+            }
+        },
+        DecodedFloat::Finite {
+            negative,
+            significand,
+            exponent,
+        } => (negative, significand, exponent),
+    };
+    let (right_negative, right_significand, right_exponent) = match right {
+        DecodedFloat::Nan => return canonical_float_nan(exponent_bits, fraction_bits),
+        DecodedFloat::Infinity { negative } => {
+            if left_significand == 0 {
+                return canonical_float_nan(exponent_bits, fraction_bits);
+            }
+            return float_infinity(negative ^ left_negative, exponent_bits, fraction_bits);
+        }
+        DecodedFloat::Finite {
+            negative,
+            significand,
+            exponent,
+        } => (negative, significand, exponent),
+    };
+    let negative = left_negative ^ right_negative;
+    if left_significand == 0 || right_significand == 0 {
+        return float_zero(negative, exponent_bits, fraction_bits);
+    }
+    let product = u128::from(left_significand) * u128::from(right_significand);
+    let target_top = fraction_bits + FLOAT_ROUND_EXTRA_BITS;
+    let highest_bit = 127 - product.leading_zeros();
+    let (significand, exponent) = if highest_bit > target_top {
+        (
+            shift_right_jam(product, highest_bit - target_top),
+            left_exponent + right_exponent + (highest_bit - target_top) as i32,
+        )
+    } else {
+        (
+            product << (target_top - highest_bit),
+            left_exponent + right_exponent - (target_top - highest_bit) as i32,
+        )
+    };
+    round_float_result(
+        negative,
+        significand,
+        exponent,
+        exponent_bits,
+        fraction_bits,
+        bias,
+    )
+}
+
+fn decoded_sign(value: DecodedFloat) -> bool {
+    match value {
+        DecodedFloat::Nan => false,
+        DecodedFloat::Infinity { negative } | DecodedFloat::Finite { negative, .. } => negative,
+    }
+}
+
+fn divide_decoded_floats(
+    left: DecodedFloat,
+    right: DecodedFloat,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    bias: i32,
+) -> u64 {
+    let negative = decoded_sign(left) ^ decoded_sign(right);
+    match (left, right) {
+        (DecodedFloat::Nan, _) | (_, DecodedFloat::Nan) => {
+            return canonical_float_nan(exponent_bits, fraction_bits);
+        }
+        (DecodedFloat::Infinity { .. }, DecodedFloat::Infinity { .. })
+        | (
+            DecodedFloat::Finite { significand: 0, .. },
+            DecodedFloat::Finite { significand: 0, .. },
+        ) => {
+            return canonical_float_nan(exponent_bits, fraction_bits);
+        }
+        (DecodedFloat::Infinity { .. }, _) => {
+            return float_infinity(negative, exponent_bits, fraction_bits);
+        }
+        (_, DecodedFloat::Infinity { .. }) => {
+            return float_zero(negative, exponent_bits, fraction_bits);
+        }
+        (DecodedFloat::Finite { significand: 0, .. }, _) => {
+            return float_zero(negative, exponent_bits, fraction_bits);
+        }
+        (_, DecodedFloat::Finite { significand: 0, .. }) => {
+            return float_infinity(negative, exponent_bits, fraction_bits);
+        }
+        _ => {}
+    }
+
+    let DecodedFloat::Finite {
+        significand: left_significand,
+        exponent: left_exponent,
+        ..
+    } = left
+    else {
+        unreachable!();
+    };
+    let DecodedFloat::Finite {
+        significand: right_significand,
+        exponent: right_exponent,
+        ..
+    } = right
+    else {
+        unreachable!();
+    };
+    let numerator = u128::from(left_significand) << (fraction_bits + FLOAT_ROUND_EXTRA_BITS);
+    let mut quotient = numerator / u128::from(right_significand);
+    if numerator % u128::from(right_significand) != 0 {
+        quotient |= 1;
+    }
+    round_float_result(
+        negative,
+        quotient,
+        left_exponent - right_exponent - (fraction_bits + FLOAT_ROUND_EXTRA_BITS) as i32,
+        exponent_bits,
+        fraction_bits,
+        bias,
+    )
+}
+
+fn float_binary_bits(
+    left: u64,
+    right: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    operator: CFloatBinaryOperator,
+) -> u64 {
+    let bias = (1i32 << (exponent_bits - 1)) - 1;
+    let left = decode_float_bits(left, exponent_bits, fraction_bits, bias);
+    let right = decode_float_bits(right, exponent_bits, fraction_bits, bias);
+    match operator {
+        CFloatBinaryOperator::Add => {
+            add_decoded_floats(left, right, exponent_bits, fraction_bits, bias)
+        }
+        CFloatBinaryOperator::Subtract => add_decoded_floats(
+            left,
+            negate_decoded_float(right),
+            exponent_bits,
+            fraction_bits,
+            bias,
+        ),
+        CFloatBinaryOperator::Multiply => {
+            multiply_decoded_floats(left, right, exponent_bits, fraction_bits, bias)
+        }
+        CFloatBinaryOperator::Divide => {
+            divide_decoded_floats(left, right, exponent_bits, fraction_bits, bias)
+        }
+    }
+}
+
 fn int64_shift_count_constant(term: &Bitvector32Term) -> Option<u32> {
     let value = match term {
         Bitvector32Term::Constant(value) => u64::from(*value),
@@ -1037,6 +1586,72 @@ impl PointerOffsetTerm {
 }
 
 impl ConditionTerm {
+    pub(crate) fn float32_compare(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        operator: CComparisonOperator,
+    ) -> Self {
+        match (left.float32_as_const(), right.float32_as_const()) {
+            (Some(left), Some(right)) => Self::Constant(compare_float_bits(
+                u64::from(left),
+                u64::from(right),
+                8,
+                23,
+                operator,
+            )),
+            _ => Self::Float32(CFloatCondition::Comparison {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+        }
+    }
+
+    pub(crate) fn float64_compare(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        operator: CComparisonOperator,
+    ) -> Self {
+        match (left.float64_as_const(), right.float64_as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant(compare_float_bits(left, right, 11, 52, operator))
+            }
+            _ => Self::Float64(CFloatCondition::Comparison {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+        }
+    }
+
+    pub(crate) fn float32_classification(
+        value: Bitvector32Term,
+        classification: CFloatClassification,
+    ) -> Self {
+        match value.float32_as_const() {
+            Some(value) => {
+                Self::Constant(classify_float_bits(u64::from(value), 8, 23, classification))
+            }
+            None => Self::Float32(CFloatCondition::Classification {
+                classification,
+                value: Box::new(value),
+            }),
+        }
+    }
+
+    pub(crate) fn float64_classification(
+        value: Bitvector32Term,
+        classification: CFloatClassification,
+    ) -> Self {
+        match value.float64_as_const() {
+            Some(value) => Self::Constant(classify_float_bits(value, 11, 52, classification)),
+            None => Self::Float64(CFloatCondition::Classification {
+                classification,
+                value: Box::new(value),
+            }),
+        }
+    }
+
     pub(crate) fn int64_signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.int64_as_const(), right.int64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left < right),
@@ -1329,6 +1944,83 @@ impl ConditionTerm {
         } else {
             Self::PointerEqual(Box::new(left), Box::new(right))
         }
+    }
+}
+
+fn classify_float_bits(
+    bits: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    classification: CFloatClassification,
+) -> bool {
+    let exponent_mask = (1u64 << exponent_bits) - 1;
+    let exponent = (bits >> fraction_bits) & exponent_mask;
+    let fraction = bits & ((1u64 << fraction_bits) - 1);
+    let all_ones = exponent == exponent_mask;
+    let zero_exponent = exponent == 0;
+    match classification {
+        CFloatClassification::Finite => !all_ones,
+        CFloatClassification::Infinite => all_ones && fraction == 0,
+        CFloatClassification::Zero => zero_exponent && fraction == 0,
+        CFloatClassification::Subnormal => zero_exponent && fraction != 0,
+        CFloatClassification::Nan => all_ones && fraction != 0,
+    }
+}
+
+fn compare_float_bits(
+    left: u64,
+    right: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    operator: CComparisonOperator,
+) -> bool {
+    let nan = CFloatClassification::Nan;
+    let left_nan = classify_float_bits(left, exponent_bits, fraction_bits, nan);
+    let right_nan = classify_float_bits(right, exponent_bits, fraction_bits, nan);
+    if left_nan || right_nan {
+        return matches!(operator, CComparisonOperator::NotEqual);
+    }
+
+    let left_zero = classify_float_bits(
+        left,
+        exponent_bits,
+        fraction_bits,
+        CFloatClassification::Zero,
+    );
+    let right_zero = classify_float_bits(
+        right,
+        exponent_bits,
+        fraction_bits,
+        CFloatClassification::Zero,
+    );
+    let equal = (left_zero && right_zero) || left == right;
+    if equal {
+        return matches!(
+            operator,
+            CComparisonOperator::Equal
+                | CComparisonOperator::LessEqual
+                | CComparisonOperator::GreaterEqual
+        );
+    }
+
+    let sign_bit = 1u64 << (exponent_bits + fraction_bits);
+    let left_key = if left & sign_bit != 0 {
+        !left
+    } else {
+        left ^ sign_bit
+    };
+    let right_key = if right & sign_bit != 0 {
+        !right
+    } else {
+        right ^ sign_bit
+    };
+    match operator {
+        CComparisonOperator::Equal => false,
+        CComparisonOperator::NotEqual => true,
+        CComparisonOperator::LessThan => left_key < right_key,
+        CComparisonOperator::LessEqual => left_key <= right_key,
+        CComparisonOperator::GreaterThan => left_key > right_key,
+        CComparisonOperator::GreaterEqual => left_key >= right_key,
     }
 }
 

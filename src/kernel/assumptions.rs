@@ -1003,6 +1003,9 @@ fn hash_memory_blind_condition<H: std::hash::Hasher>(condition: &ConditionTerm, 
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            std::hash::Hash::hash(float_condition, hasher);
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             hash_memory_blind_pointer_offset(left, hasher);
             hash_memory_blind_pointer_offset(right, hasher);
@@ -1068,7 +1071,14 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
             hash_memory_blind_bitvector(left, hasher);
             hash_memory_blind_bitvector(right, hasher);
         }
-        Bitvector32Term::BitwiseNot(value) => hash_memory_blind_bitvector(value, hasher),
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            hash_memory_blind_bitvector(left, hasher);
+            hash_memory_blind_bitvector(right, hasher);
+        }
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => hash_memory_blind_bitvector(value, hasher),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -1136,6 +1146,10 @@ fn collect_condition_memory_load_keys(
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_binary(left, right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_memory_load_keys(term, keys));
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_memory_load_keys(left, keys);
@@ -1230,7 +1244,14 @@ fn collect_bitvector_memory_load_keys(
             collect_bitvector_memory_load_keys(left, keys);
             collect_bitvector_memory_load_keys(right, keys);
         }
-        Bitvector32Term::BitwiseNot(value) => collect_bitvector_memory_load_keys(value, keys),
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_bitvector_memory_load_keys(left, keys);
+            collect_bitvector_memory_load_keys(right, keys);
+        }
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => collect_bitvector_memory_load_keys(value, keys),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -3319,7 +3340,13 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
             bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
         }
-        Bitvector32Term::BitwiseNot(value) => bitvector_term_contains_load(value),
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
+        }
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => bitvector_term_contains_load(value),
         Bitvector32Term::If {
             then_term,
             else_term,

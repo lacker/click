@@ -3009,6 +3009,9 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
             ClickProposition::Comparison { left, right, .. } => {
                 expression_is_stable(left) && expression_is_stable(right)
             }
+            ClickProposition::FloatClassification { expression, .. } => {
+                expression_is_stable(expression)
+            }
             ClickProposition::Defined { expression } => expression_is_stable(expression),
             ClickProposition::At { .. } => true,
             ClickProposition::And(left, right)

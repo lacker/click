@@ -45,6 +45,14 @@ fn substitute_c_expression_variables(
             expression: unary(body),
             target_type: *target_type,
         },
+        FloatClassification {
+            expression: body,
+            classification,
+        } => FloatClassification {
+            expression: unary(body),
+            classification: *classification,
+        },
+        FloatNegate(body) => FloatNegate(unary(body)),
         Conditional {
             condition,
             then_branch,
@@ -644,6 +652,7 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
     match expression {
         Value(_) | Variable(_) | FunctionAddress(_) => false,
         Cast { expression, .. } => inner(expression),
+        FloatNegate(expression) | FloatClassification { expression, .. } => inner(expression),
         Conditional {
             condition,
             then_branch,
@@ -683,6 +692,8 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
             names.insert(name.clone());
         }
         Cast { expression, .. }
+        | FloatNegate(expression)
+        | FloatClassification { expression, .. }
         | AddressOf(expression)
         | PointerOffsetBytes {
             pointer: expression,
@@ -1330,6 +1341,8 @@ fn ranking_term(
             target_type: CType::Int32 | CType::UInt8,
         } => ranking_term(expression, variables),
         Cast { .. }
+        | FloatNegate(_)
+        | FloatClassification { .. }
         | FunctionAddress(_)
         | AddressOf(_)
         | PointerOffsetBytes { .. }
@@ -1453,6 +1466,9 @@ fn contains_known_pointer_expression(
             value_type,
         } => value_type.is_pointer(),
         Load(_) | Index(_, _) => false,
+        FloatNegate(expression) | FloatClassification { expression, .. } => {
+            contains_known_pointer_expression(expression, pointer_variables)
+        }
         LessThan(left, right)
         | LessEqual(left, right)
         | GreaterThan(left, right)

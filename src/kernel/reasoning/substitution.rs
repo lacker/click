@@ -726,6 +726,10 @@ fn collect_c_expression_bound_variables(
             collect_c_expression_bound_variables(then_branch, variables);
             collect_c_expression_bound_variables(else_branch, variables);
         }
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
+            collect_c_expression_bound_variables(expression, variables);
+        }
         CExpression::AddressOf(body)
         | CExpression::Not(body)
         | CExpression::Load(body)
@@ -1055,7 +1059,9 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
-        Bitvector32Term::BitwiseNot(value) => {
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => {
             collect_bitvector_bound_variables(value, variables);
         }
         Bitvector32Term::If {
@@ -1123,7 +1129,9 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         | Bitvector32Term::UInt64LogicalShiftRight(left, right)
         | Bitvector32Term::UInt64BitwiseAnd(left, right)
         | Bitvector32Term::UInt64BitwiseOr(left, right)
-        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+        | Bitvector32Term::UInt64BitwiseXor(left, right)
+        | Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
@@ -1162,6 +1170,10 @@ fn collect_condition_bound_variables(
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_bound_variables(term, variables));
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bound_variables(left, variables);
@@ -1264,6 +1276,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
                 to,
             )),
         },
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => CExpression::FloatClassification {
+            expression: Box::new(substitute_bitvector_variable_in_c_expression(
+                expression, from, to,
+            )),
+            classification: *classification,
+        },
+        CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        )),
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),
@@ -2590,6 +2614,38 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        ConditionTerm::Float32(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => ConditionTerm::float32_compare(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        ConditionTerm::Float32(CFloatCondition::Classification {
+            classification,
+            value,
+        }) => ConditionTerm::float32_classification(
+            substitute_bitvector_variable(value, from, to),
+            *classification,
+        ),
+        ConditionTerm::Float64(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => ConditionTerm::float64_compare(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        ConditionTerm::Float64(CFloatCondition::Classification {
+            classification,
+            value,
+        }) => ConditionTerm::float64_classification(
+            substitute_bitvector_variable(value, from, to),
+            *classification,
+        ),
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             substitute_bitvector_variable_in_pointer_offset(left, from, to),
             substitute_bitvector_variable_in_pointer_offset(right, from, to),
@@ -2751,6 +2807,30 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         Bitvector32Term::UInt64BitwiseNot(value) => {
             Bitvector32Term::uint64_bitwise_not(substitute_bitvector_variable(value, from, to))
         }
+        Bitvector32Term::Float32Negate(value) => {
+            Bitvector32Term::float32_negate(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::float32_binary(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
+        Bitvector32Term::Float64Negate(value) => {
+            Bitvector32Term::float64_negate(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::float64_binary(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+            *operator,
+        ),
         Bitvector32Term::Add(left, right) => Bitvector32Term::add(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
@@ -3540,6 +3620,18 @@ fn substitute_pointer_variable_in_c_expression(
                 to,
             )),
         },
+        CExpression::FloatClassification {
+            expression,
+            classification,
+        } => CExpression::FloatClassification {
+            expression: Box::new(substitute_pointer_variable_in_c_expression(
+                expression, from, to,
+            )),
+            classification: *classification,
+        },
+        CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
+            substitute_pointer_variable_in_c_expression(expression, from, to),
+        )),
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_pointer_variable_in_c_expression(body, from, to),
         )),
@@ -4345,6 +4437,13 @@ fn substitute_pointer_variable_in_spec_proposition(
             left: substitute_pointer_variable_in_spec_expression(left, from, to),
             operator: *operator,
             right: substitute_pointer_variable_in_spec_expression(right, from, to),
+        },
+        SpecProposition::FloatClassification {
+            expression,
+            classification,
+        } => SpecProposition::FloatClassification {
+            expression: substitute_pointer_variable_in_spec_expression(expression, from, to),
+            classification: *classification,
         },
         SpecProposition::And(left, right) => SpecProposition::And(
             Box::new(substitute_pointer_variable_in_spec_proposition(

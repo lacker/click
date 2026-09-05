@@ -110,6 +110,14 @@ fn collect_offset_load_variables_from_term(
             collect_offset_load_variables_from_term(left, load_variables);
             collect_offset_load_variables_from_term(right, load_variables);
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_offset_load_variables_from_term(left, load_variables);
+            collect_offset_load_variables_from_term(right, load_variables);
+        }
+        Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
+            collect_offset_load_variables_from_term(value, load_variables);
+        }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
@@ -242,6 +250,14 @@ fn assert_scaled_index_free_of_raw_loads(
         }
         Bitvector32Term::BitwiseNot(value) => {
             assert_scaled_index_free_of_raw_loads(value, load_variables)
+        }
+        Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
+            assert_scaled_index_free_of_raw_loads(value, load_variables)
+        }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            assert_scaled_index_free_of_raw_loads(left, load_variables);
+            assert_scaled_index_free_of_raw_loads(right, load_variables);
         }
         Bitvector32Term::If {
             condition: _,

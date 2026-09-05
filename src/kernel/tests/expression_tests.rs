@@ -11,6 +11,583 @@ fn bitwise_xor_normalizes_swap_identities() {
     assert_eq!(recovered_x, x);
     assert_eq!(recovered_y, y);
 }
+
+#[test]
+fn floating_point_constant_conversions_round_in_integer_space() {
+    let state = CState::new();
+    let cases = [
+        (
+            c_cast(c_uint64_literal(16_777_217), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0x4b80_0000)),
+        ),
+        (
+            c_cast(c_uint64_literal(9_007_199_254_740_993), CType::Float64),
+            CValue::Float64(Bitvector32Term::UInt64Constant(0x4340_0000_0000_0000)),
+        ),
+        (
+            c_cast(c_float64_literal(0x3ff0_0000_1000_0000), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0x3f80_0000)),
+        ),
+        (
+            c_cast(c_float32_literal(0x3fc0_0000), CType::Float64),
+            CValue::Float64(Bitvector32Term::UInt64Constant(0x3ff8_0000_0000_0000)),
+        ),
+        (
+            c_cast(c_int64_literal(-16_777_217), CType::Float32),
+            CValue::Float32(Bitvector32Term::Constant(0xcb80_0000)),
+        ),
+    ];
+
+    for (expression, expected) in cases {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("constant floating conversion should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::Value(expected),
+            }
+        );
+    }
+}
+
+#[test]
+fn floating_point_to_integer_conversion_truncates_and_rejects_invalid_values() {
+    let state = CState::new();
+    let valid = [
+        (
+            c_cast(c_float32_literal(0x4070_0000), CType::Int32),
+            CValue::Int32(Bitvector32Term::Constant(3)),
+        ),
+        (
+            c_cast(c_float64_literal(0xc00e_0000_0000_0000), CType::Int64),
+            CValue::Int64(Bitvector32Term::Int64Constant(-3)),
+        ),
+        (
+            c_cast(c_float64_literal(0x8000_0000_0000_0000), CType::UInt32),
+            CValue::UInt32(Bitvector32Term::Constant(0)),
+        ),
+    ];
+    for (expression, expected) in valid {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("valid floating-to-integer conversion should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::Value(expected),
+            }
+        );
+    }
+
+    for expression in [
+        c_cast(c_float64_literal(0x7ff8_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x7ff0_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x41e0_0000_0000_0000), CType::Int32),
+        c_cast(c_float64_literal(0x7fef_ffff_ffff_ffff), CType::Int64),
+    ] {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("invalid floating-to-integer conversion should retain a diagnostic");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            }
+        );
+    }
+}
+
+#[test]
+fn floating_point_conditions_follow_ieee_ordering_and_classification() {
+    let state = CState::new();
+    let evaluate = |condition| {
+        let evaluation =
+            prove_symbolic_c_condition_evaluation(state.clone(), condition, PureFactContext::new());
+        assert_eq!(evaluation.paths().len(), 1);
+        match evaluation.paths()[0]
+            .theorem()
+            .proposition()
+            .peel_implications()
+        {
+            Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(value),
+                ..
+            } => *value,
+            proposition => panic!("unexpected concrete float condition {proposition:?}"),
+        }
+    };
+    let assert_ordering =
+        |left: CExpression, right: CExpression, expected: (bool, bool, bool, bool, bool, bool)| {
+            assert_eq!(
+                evaluate(c_less_than(left.clone(), right.clone())),
+                expected.0
+            );
+            assert_eq!(
+                evaluate(c_less_equal(left.clone(), right.clone())),
+                expected.1
+            );
+            assert_eq!(
+                evaluate(c_greater_than(left.clone(), right.clone())),
+                expected.2
+            );
+            assert_eq!(
+                evaluate(c_greater_equal(left.clone(), right.clone())),
+                expected.3
+            );
+            assert_eq!(evaluate(c_equal(left.clone(), right.clone())), expected.4);
+            assert_eq!(evaluate(c_not_equal(left, right)), expected.5);
+        };
+
+    assert_ordering(
+        c_float32_literal(1.0f32.to_bits()),
+        c_float32_literal(2.0f32.to_bits()),
+        (true, true, false, false, false, true),
+    );
+    assert_ordering(
+        c_float64_literal(1.0f64.to_bits()),
+        c_float64_literal(2.0f64.to_bits()),
+        (true, true, false, false, false, true),
+    );
+    assert_ordering(
+        c_float32_literal(0),
+        c_float32_literal(0x8000_0000),
+        (false, true, false, true, true, false),
+    );
+    assert_ordering(
+        c_float64_literal(0),
+        c_float64_literal(0x8000_0000_0000_0000),
+        (false, true, false, true, true, false),
+    );
+    assert_ordering(
+        c_float32_literal(0x7fc0_0000),
+        c_float32_literal(1.0f32.to_bits()),
+        (false, false, false, false, false, true),
+    );
+    assert_ordering(
+        c_float64_literal(0x7ff8_0000_0000_0000),
+        c_float64_literal(1.0f64.to_bits()),
+        (false, false, false, false, false, true),
+    );
+
+    let classifications = [
+        (1.0f32.to_bits(), CFloatClassification::Finite),
+        (f32::INFINITY.to_bits(), CFloatClassification::Infinite),
+        (0, CFloatClassification::Zero),
+        (1, CFloatClassification::Subnormal),
+        (0x7fc0_0000, CFloatClassification::Nan),
+    ];
+    for (bits, expected_classification) in classifications {
+        for classification in [
+            CFloatClassification::Finite,
+            CFloatClassification::Infinite,
+            CFloatClassification::Zero,
+            CFloatClassification::Subnormal,
+            CFloatClassification::Nan,
+        ] {
+            assert_eq!(
+                evaluate(c_float_classification(
+                    c_float32_literal(bits),
+                    classification,
+                )),
+                match expected_classification {
+                    CFloatClassification::Finite => classification == CFloatClassification::Finite,
+                    CFloatClassification::Zero => matches!(
+                        classification,
+                        CFloatClassification::Finite | CFloatClassification::Zero
+                    ),
+                    CFloatClassification::Subnormal => matches!(
+                        classification,
+                        CFloatClassification::Finite | CFloatClassification::Subnormal
+                    ),
+                    _ => classification == expected_classification,
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn symbolic_floating_conditions_split_and_preserve_float_truthiness() {
+    let variable = Variable(901);
+    let state = CState::new().with_local("value", float32(Bitvector32Term::Variable(variable)));
+    let outcomes = |condition| {
+        prove_symbolic_c_condition_evaluation(state.clone(), condition, PureFactContext::new())
+            .paths()
+            .iter()
+            .map(
+                |path| match path.theorem().proposition().peel_implications() {
+                    Proposition::CConditionEvaluates { outcome, .. } => outcome.clone(),
+                    proposition => panic!("unexpected symbolic float condition {proposition:?}"),
+                },
+            )
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        outcomes(c_less_than(
+            c_variable("value"),
+            c_float32_literal(1.0f32.to_bits()),
+        )),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+    assert_eq!(
+        outcomes(c_float_classification(
+            c_variable("value"),
+            CFloatClassification::Nan,
+        )),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+    assert_eq!(
+        outcomes(c_variable("value")),
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+}
+
+#[test]
+fn floating_point_arithmetic_rounds_both_widths_in_integer_space() {
+    let state = CState::new();
+    let evaluate = |expression| {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression)
+            .expect("constant floating arithmetic should evaluate");
+        match theorem.proposition() {
+            Proposition::CExpressionEvaluates { outcome, .. } => outcome.clone(),
+            proposition => panic!("unexpected floating arithmetic theorem {proposition:?}"),
+        }
+    };
+
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(1.0f32.to_bits()),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float32(
+            Bitvector32Term::Constant(3.0f32.to_bits(),)
+        ))
+    );
+    assert_eq!(
+        evaluate(c_subtract(
+            c_float32_literal(1.0f32.to_bits()),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::Constant(
+            (-1.0f32).to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_multiply(
+            c_float32_literal(1.5f32.to_bits()),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float32(
+            Bitvector32Term::Constant(3.0f32.to_bits(),)
+        ))
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float32_literal(3.0f32.to_bits()),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float32(
+            Bitvector32Term::Constant(1.5f32.to_bits(),)
+        ))
+    );
+
+    assert_eq!(
+        evaluate(c_add(
+            c_float64_literal(1.0f64.to_bits()),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            3.0f64.to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_multiply(
+            c_float64_literal(1.5f64.to_bits()),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            3.0f64.to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float64_literal(3.0f64.to_bits()),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            1.5f64.to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_float_negate(c_float32_literal(0x8000_0000))),
+        CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::Constant(0)))
+    );
+    assert_eq!(
+        evaluate(c_float_negate(c_float64_literal(0))),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            0x8000_0000_0000_0000,
+        )))
+    );
+}
+
+#[test]
+fn floating_point_arithmetic_preserves_ieee_exceptions_and_ties() {
+    let state = CState::new();
+    let evaluate = |expression| {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression)
+            .expect("constant floating arithmetic should evaluate");
+        match theorem.proposition() {
+            Proposition::CExpressionEvaluates { outcome, .. } => outcome.clone(),
+            proposition => panic!("unexpected floating arithmetic theorem {proposition:?}"),
+        }
+    };
+    let f32_value =
+        |bits| CExpressionOutcome::Value(CValue::Float32(Bitvector32Term::Constant(bits)));
+    let f64_value =
+        |bits| CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(bits)));
+
+    // The halfway case rounds to the even significand; an exact ulp reaches
+    // the next representable value.
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(0x3f80_0000),
+            c_float32_literal(0x3380_0000),
+        )),
+        f32_value(0x3f80_0000)
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(0x3f80_0000),
+            c_float32_literal(0x3440_0000),
+        )),
+        f32_value(0x3f80_0002)
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(0x3f80_0000),
+            c_float32_literal(0x3400_0000),
+        )),
+        f32_value(0x3f80_0001)
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float64_literal(0x3ff0_0000_0000_0000),
+            c_float64_literal(0x3ca0_0000_0000_0000),
+        )),
+        f64_value(0x3ff0_0000_0000_0000)
+    );
+
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(0x7f7f_ffff),
+            c_float32_literal(0x7f7f_ffff),
+        )),
+        f32_value(0x7f80_0000)
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(0x7f80_0000),
+            c_float32_literal(0xff80_0000),
+        )),
+        f32_value(0x7fc0_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(c_float32_literal(0), c_float32_literal(0),)),
+        f32_value(0x7fc0_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float32_literal(0x0080_0000),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        f32_value(0x0040_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float32_literal(1),
+            c_float32_literal(2.0f32.to_bits()),
+        )),
+        f32_value(0)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float64_literal(0x0010_0000_0000_0000),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        f64_value(0x0008_0000_0000_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float64_literal(1),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        f64_value(0)
+    );
+    assert_eq!(
+        evaluate(c_multiply(
+            c_float32_literal(f32::INFINITY.to_bits()),
+            c_float32_literal(0),
+        )),
+        f32_value(0x7fc0_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float64_literal(1.0f64.to_bits()),
+            c_float64_literal(0),
+        )),
+        f64_value(0x7ff0_0000_0000_0000)
+    );
+    assert_eq!(
+        evaluate(c_divide(
+            c_float64_literal(f64::INFINITY.to_bits()),
+            c_float64_literal(f64::INFINITY.to_bits()),
+        )),
+        f64_value(0x7ff8_0000_0000_0000)
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float64_literal(0x7fe_fffff_ffff_ffff),
+            c_float64_literal(0x7fe_fffff_ffff_ffff),
+        )),
+        f64_value(0x7ff0_0000_0000_0000)
+    );
+    assert_eq!(
+        evaluate(c_multiply(
+            c_float32_literal(0x8000_0000),
+            c_float32_literal(1.0f32.to_bits()),
+        )),
+        f32_value(0x8000_0000)
+    );
+}
+
+#[test]
+fn symbolic_floating_arithmetic_remains_typed_and_opaque() {
+    let variable = Variable(902);
+    let state = CState::new().with_local("value", float32(Bitvector32Term::Variable(variable)));
+    let expression = c_add(c_variable("value"), c_float32_literal(1.0f32.to_bits()));
+    let theorem = prove_c_expression_evaluation(state, expression).expect("symbolic float add");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(CValue::Float32(term)),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("symbolic float addition should produce a float value");
+    };
+    assert!(matches!(term, Bitvector32Term::Float32Binary { .. }));
+}
+
+#[test]
+fn mixed_floating_arithmetic_promotes_to_the_wider_or_present_float_type() {
+    let state = CState::new();
+    let evaluate = |expression| {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression)
+            .expect("mixed floating arithmetic should evaluate");
+        match theorem.proposition() {
+            Proposition::CExpressionEvaluates { outcome, .. } => outcome.clone(),
+            proposition => panic!("unexpected mixed floating theorem {proposition:?}"),
+        }
+    };
+
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(1.5f32.to_bits()),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            3.5f64.to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(1.5f32.to_bits()),
+            c_int32_literal(2)
+        )),
+        CExpressionOutcome::Value(CValue::Float32(
+            Bitvector32Term::Constant(3.5f32.to_bits(),)
+        ))
+    );
+    assert_eq!(
+        evaluate(c_less_than(
+            c_float64_literal(1.0f64.to_bits()),
+            c_int32_literal(2),
+        )),
+        CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(1)))
+    );
+}
+
+#[test]
+fn symbolic_float_conversions_remain_typed_and_float_to_integer_is_guarded() {
+    let f32_variable = Variable(903);
+    let f64_variable = Variable(904);
+    let integer_variable = Variable(905);
+    let state = CState::new()
+        .with_local("f32", float32(Bitvector32Term::Variable(f32_variable)))
+        .with_local("f64", float64(Bitvector32Term::Variable(f64_variable)))
+        .with_local(
+            "integer",
+            int32(Bitvector32Term::Variable(integer_variable)),
+        );
+
+    let theorem =
+        prove_c_expression_evaluation(state.clone(), c_cast(c_variable("integer"), CType::Float64))
+            .expect("symbolic integer-to-float conversion should evaluate");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(CValue::Float64(term)),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("symbolic integer-to-float conversion should produce a double");
+    };
+    assert!(matches!(
+        term,
+        Bitvector32Term::PureFunctionApplication { .. }
+    ));
+
+    let theorem =
+        prove_c_expression_evaluation(state.clone(), c_cast(c_variable("f32"), CType::Float64))
+            .expect("symbolic float widening conversion should evaluate");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(CValue::Float64(term)),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("symbolic float widening conversion should produce a double");
+    };
+    assert!(matches!(
+        term,
+        Bitvector32Term::PureFunctionApplication { .. }
+    ));
+
+    let paths = evaluate_c_expression_paths(
+        &state,
+        &c_cast(c_variable("f64"), CType::Int32),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("symbolic float-to-integer conversion should retain its guard");
+    assert_eq!(paths.len(), 1);
+    assert!(matches!(
+        paths[0].outcome,
+        CExpressionOutcome::Value(CValue::Int32(
+            Bitvector32Term::PureFunctionApplication { .. }
+        ))
+    ));
+    assert_eq!(paths[0].obligations.len(), 3);
+}
+
 #[test]
 fn signed_add_overflow_is_native_undefined_behavior() {
     let state = CState::new();
@@ -388,6 +965,30 @@ fn spec_pointer_equality_lowers_to_a_pure_fact() {
             &CValue::Int32(Bitvector32Term::Constant(0)),
         ),
         None,
+    );
+}
+
+#[test]
+fn finite_float_context_proves_reflexive_comparisons() {
+    let value = Bitvector32Term::Variable(Variable(22_102));
+    let finite = ConditionTerm::float64_classification(value.clone(), CFloatClassification::Finite);
+    let assumptions = PureFactContext::new().assume_condition(finite, true);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::float64_compare(
+            value.clone(),
+            value.clone(),
+            CComparisonOperator::Equal,
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::float64_compare(
+            value.clone(),
+            value,
+            CComparisonOperator::NotEqual,
+        )),
+        Some(false)
     );
 }
 

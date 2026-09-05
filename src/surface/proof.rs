@@ -2350,6 +2350,7 @@ fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {
         | ClickProposition::RangeAll { body, .. }
         | ClickProposition::RangeAny { body, .. } => click_proposition_mentions_defined(body),
         ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }

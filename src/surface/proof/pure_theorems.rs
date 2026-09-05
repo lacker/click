@@ -2063,6 +2063,11 @@ fn click_function_applications(
                 expression(left, known_facts, applications);
                 expression(right, known_facts, applications);
             }
+            ClickProposition::FloatClassification {
+                expression: value, ..
+            } => {
+                expression(value, known_facts, applications);
+            }
             ClickProposition::Defined { expression: value } => {
                 expression(value, known_facts, applications)
             }

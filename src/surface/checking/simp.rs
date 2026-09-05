@@ -486,6 +486,28 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 Bitvector32Term::BitwiseNot(value) => {
                     Bitvector32Term::BitwiseNot(Box::new(rewrite_term_offset(value, left, right)))
                 }
+                Bitvector32Term::Float32Negate(value) => {
+                    Bitvector32Term::float32_negate(rewrite_term_offset(value, left, right))
+                }
+                Bitvector32Term::Float32Binary {
+                    operator,
+                    left: left_term,
+                    right: right_term,
+                } => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::float32_binary(*left, *right, *operator)
+                }
+                Bitvector32Term::Float64Negate(value) => {
+                    Bitvector32Term::float64_negate(rewrite_term_offset(value, left, right))
+                }
+                Bitvector32Term::Float64Binary {
+                    operator,
+                    left: left_term,
+                    right: right_term,
+                } => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::float64_binary(*left, *right, *operator)
+                }
                 Bitvector32Term::PureFunctionApplication { name, arguments } => {
                     Bitvector32Term::PureFunctionApplication {
                         name: name.clone(),
@@ -974,6 +996,28 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
             Bitvector32Term::BitwiseNot(value) => {
                 Bitvector32Term::BitwiseNot(Box::new(rewrite_term(value, from, to)))
+            }
+            Bitvector32Term::Float32Negate(value) => {
+                Bitvector32Term::float32_negate(rewrite_term(value, from, to))
+            }
+            Bitvector32Term::Float32Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::float32_binary(*left, *right, *operator)
+            }
+            Bitvector32Term::Float64Negate(value) => {
+                Bitvector32Term::float64_negate(rewrite_term(value, from, to))
+            }
+            Bitvector32Term::Float64Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::float64_binary(*left, *right, *operator)
             }
             Bitvector32Term::PureFunctionApplication { name, arguments } => {
                 Bitvector32Term::PureFunctionApplication {
@@ -1787,6 +1831,8 @@ pub(in crate::surface) fn simp_condition_without_assumptions(
         | ConditionTerm::Bitvector64SignedMultiplyOverflows(_, _)
         | ConditionTerm::Bitvector64SignedDivideOverflows(_, _)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _)
+        | ConditionTerm::Float32(_)
+        | ConditionTerm::Float64(_)
         | ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _) => None,
     }
@@ -1825,6 +1871,10 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
         | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. }
         | Bitvector32Term::RangeFold { .. }
         | Bitvector32Term::PureFunctionApplication { .. }
         | Bitvector32Term::MemoryLoad(_, _) => None,
@@ -2055,6 +2105,26 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
             bitvector32_xor(simp_bitvector(left), simp_bitvector(right))
         }
         Bitvector32Term::BitwiseNot(value) => bitvector32_not(simp_bitvector(value)),
+        Bitvector32Term::Float32Negate(value) => {
+            Bitvector32Term::float32_negate(simp_bitvector(value))
+        }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => {
+            Bitvector32Term::float32_binary(simp_bitvector(left), simp_bitvector(right), *operator)
+        }
+        Bitvector32Term::Float64Negate(value) => {
+            Bitvector32Term::float64_negate(simp_bitvector(value))
+        }
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => {
+            Bitvector32Term::float64_binary(simp_bitvector(left), simp_bitvector(right), *operator)
+        }
         Bitvector32Term::If {
             condition,
             then_term,

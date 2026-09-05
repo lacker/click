@@ -611,6 +611,9 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 return Err(PropositionCloseError::ArithmeticPremiseUnavailable(index));
             }
         }
+        if super::fact_reasoning::check_float_reflexive_comparison(goal.proposition(), premises) {
+            return Ok(self.closed_focused());
+        }
         super::fact_reasoning::check_signed_affine_arithmetic(goal.proposition(), premises)
             .map_err(PropositionCloseError::Arithmetic)?;
         Ok(self.closed_focused())

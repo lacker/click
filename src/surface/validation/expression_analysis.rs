@@ -5,6 +5,10 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
         CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
         CExpression::Variable(name) => name == variable,
         CExpression::Cast { expression, .. } => c_expression_uses_variable(expression, variable),
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
+            c_expression_uses_variable(expression, variable)
+        }
         CExpression::Conditional {
             condition,
             then_branch,
@@ -167,6 +171,9 @@ pub(in crate::surface) fn proposition_contains_resource_count(
         ClickProposition::Comparison { left, right, .. } => {
             contains_resource_count(left) || contains_resource_count(right)
         }
+        ClickProposition::FloatClassification { expression, .. } => {
+            contains_resource_count(expression)
+        }
         ClickProposition::Defined { expression } => contains_resource_count(expression),
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)
@@ -278,6 +285,9 @@ pub(in crate::surface) fn collect_resource_count_families(
             collect_expression(left, families);
             collect_expression(right, families);
         }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_expression(expression, families);
+        }
         ClickProposition::Defined { expression } => collect_expression(expression, families),
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)
@@ -344,6 +354,7 @@ pub(in crate::surface) fn collect_called_predicates(
             collect_called_predicates(body, names);
         }
         ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
@@ -374,6 +385,9 @@ pub(in crate::surface) fn proposition_contains_old_expression(
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_old_expression(left) || contains_old_expression(right)
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            contains_old_expression(expression)
         }
         ClickProposition::Separate { left, right } => {
             resource_subject_contains_old_expression(left)
@@ -490,6 +504,9 @@ pub(in crate::surface) fn proposition_contains_at_expression(
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_at_expression(left) || contains_at_expression(right)
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            contains_at_expression(expression)
         }
         ClickProposition::Separate { left, right } => {
             resource_subject_contains_at_expression(left)
@@ -628,6 +645,9 @@ pub(in crate::surface) fn collect_click_function_calls_in_proposition(
         ClickProposition::Comparison { left, right, .. } => {
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_click_function_calls(expression, calls);
         }
         ClickProposition::Separate { left, right } => {
             collect_click_function_calls_in_resource_subject(left, calls);
@@ -1003,6 +1023,9 @@ fn validate_recursive_calls_in_proposition(
             expression(left)?;
             expression(right)
         }
+        ClickProposition::FloatClassification {
+            expression: value, ..
+        } => expression(value),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {

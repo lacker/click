@@ -472,6 +472,90 @@ fn c0_collects_aggregate_arrays() {
 }
 
 #[test]
+fn c0_collects_designated_static_aggregate_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared = {.ready = 1, .value = 7};
+        struct state table[3] = {
+            [2] = {.value = 9},
+            [0] = {.ready = 1}
+        };
+
+        int32 read() {
+            static struct state local = {.value = 3};
+            static struct state entries[3] = {
+                [1] = {.ready = 1, .value = 4}
+            };
+            return shared.value + table[0].ready + table[2].value
+                + local.value + entries[1].value;
+        }
+        "#,
+    )
+    .expect("designated static aggregate initializers should parse");
+
+    let function = &functions[0];
+    let global = &function.global_aggregates()["shared"];
+    let global_initializers = global.initializer().expect("global initializer");
+    assert_eq!(global_initializers.len(), 2);
+    assert_eq!(global_initializers[0].offset_bytes(), 4);
+    assert_eq!(global_initializers[1].offset_bytes(), 0);
+
+    let array = &function.global_aggregate_arrays()["table"];
+    let array_initializers = array.initializer().expect("global array initializer");
+    assert_eq!(array_initializers.len(), 2);
+    assert_eq!(array_initializers[0].offset_bytes(), 16);
+    assert_eq!(array_initializers[1].offset_bytes(), 4);
+
+    let local = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("local aggregate initializer");
+    assert_eq!(local.initializer().len(), 1);
+    assert_eq!(local.initializer()[0].offset_bytes(), 0);
+
+    let local_array = function
+        .static_aggregate_arrays()
+        .values()
+        .next()
+        .expect("local aggregate array initializer");
+    assert_eq!(local_array.initializer().len(), 2);
+    assert_eq!(local_array.initializer()[0].offset_bytes(), 12);
+    assert_eq!(local_array.initializer()[1].offset_bytes(), 8);
+}
+
+#[test]
+fn c0_rejects_unsupported_static_aggregate_designators() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; struct state shared = {.missing = 1}; int32 read() { return 0; }",
+            "unknown field `missing`",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[2] = {1}}; int32 read() { return 0; }",
+            "out of bounds",
+        ),
+        (
+            "int32 index; struct state { int32 value; }; struct state shared[2] = {[index] = {1}}; int32 read() { return 0; }",
+            "require integer literals",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[0] = {[0] = 1}}; int32 read() { return 0; }",
+            "only field designators",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported static aggregate designators must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_rejects_unsupported_aggregate_array_initializers() {
     for (source, expected) in [
         (
@@ -1640,7 +1724,11 @@ fn c0_syntax_rejects_non_scalar_casts() {
         "#,
     )
     .expect_err("pointer casts are outside the scalar cast subset");
-    assert!(error.message().contains("scalar integer values"));
+    assert!(
+        error
+            .message()
+            .contains("scalar integer or floating-point values")
+    );
 }
 
 #[test]
@@ -3118,6 +3206,56 @@ fn c0_syntax_targets_kernel_struct_field_load() {
             statement,
             outcome: crate::kernel::CStatementOutcome::Return {
                 value: crate::kernel::int32(3),
+                state: initial,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_kernel_float64_struct_field_load() {
+    let function = syntax::parse_function(
+        r#"
+        struct json_object {
+            double value;
+        };
+
+        double json_object_get_double(struct json_object* obj) {
+            return obj->value;
+        }
+        "#,
+    )
+    .expect("float64 struct getter should parse");
+
+    let pointer = crate::kernel::Pointer {
+        block: "object".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let value = crate::kernel::float64(crate::kernel::Bitvector32Term::UInt64Constant(
+        1.25f64.to_bits(),
+    ));
+    let statement = function.body_kernel_statement();
+    let memory = crate::kernel::CMemory::new()
+        .with_block("object", 8)
+        .store(pointer.clone(), value.clone());
+    let initial = crate::kernel::CState::new()
+        .with_local("obj", crate::kernel::CValue::pointer(pointer.clone()))
+        .with_memory(memory)
+        .with_resource_context(view_memory_context(pointer, 0, 2));
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        initial.clone(),
+        statement.clone(),
+        Default::default(),
+    )
+    .expect("float64 struct getter should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CStatementExecutes {
+            state: initial.clone(),
+            statement,
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value,
                 state: initial,
             },
         }
@@ -5043,36 +5181,41 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
 }
 
 #[test]
-fn c0_rejects_unsupported_designated_struct_initializer_forms() {
-    for source in [
-        r#"
-        struct packet {
-            int32 value;
-        };
+fn c0_rejects_unsupported_static_aggregate_initializer_forms() {
+    for (source, expected) in [
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
 
-        struct packet packet = {.value = 1};
+            struct packet packets[2] = {.value = 1};
 
-        int32 read() {
-            return packet.value;
-        }
-        "#,
-        r#"
-        struct packet {
-            int32 value;
-        };
+            int32 read() {
+                return packets[0].value;
+            }
+            "#,
+            "only array index designators",
+        ),
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
 
-        int32 read() {
-            static struct packet packet = {.value = 1};
-            return packet.value;
-        }
-        "#,
+            int32 index;
+
+            int32 read() {
+                static struct packet packets[2] = {[index] = {.value = 1}};
+                return packets[0].value;
+            }
+            "#,
+            "require integer literals",
+        ),
     ] {
         let error = syntax::parse_functions(source)
-            .expect_err("static and file-scope designated initializers remain unsupported");
-        assert_eq!(
-            error.message(),
-            "designated aggregate initializers are not supported"
-        );
+            .expect_err("unsupported static aggregate initializer forms must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
     }
 }
 
@@ -6497,6 +6640,55 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
 }
 
 #[test]
+fn c0_syntax_targets_kernel_float_argument_conversion() {
+    let widen = syntax::parse_function(
+        r#"
+        double widen(double value) {
+            return value;
+        }
+        "#,
+    )
+    .expect("floating-point helper should parse")
+    .to_kernel_function();
+    let caller = syntax::parse_function(
+        r#"
+        double caller() {
+            double result;
+            result = widen(1);
+            return result;
+        }
+        "#,
+    )
+    .expect("integer-to-double call argument should parse")
+    .to_kernel_function();
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller,
+        Vec::new(),
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new().with_function(widen),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("integer-to-double call argument should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Float64(value),
+                ..
+            },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("integer-to-double call argument should return a double");
+    };
+    assert_eq!(
+        value,
+        &crate::kernel::Bitvector32Term::UInt64Constant(1.0f64.to_bits())
+    );
+}
+
+#[test]
 fn c0_syntax_lowers_calls_in_expression_position() {
     let function = syntax::parse_function(
         r#"
@@ -6921,6 +7113,119 @@ fn c0_floating_point_literals_use_declared_binary_formats() {
         suffix
             .to_string()
             .contains("long double literals are not modeled in C0")
+    );
+}
+
+#[test]
+fn c0_floating_point_constants_cover_ties_signs_and_classification() {
+    let functions = syntax::parse_functions(
+        r#"
+        float single_tie() { return 16777217.0f; }
+        double double_tie() { return 9007199254740993.0; }
+        float negative_zero() { return -0.0f; }
+        double negative_infinity() { return -INFINITY; }
+        int finite() { return isfinite(1.0); }
+        int infinity() { return isinf(INFINITY); }
+        int zero() { return iszero(-0.0f); }
+        int subnormal() { return issubnormal(1.401298464324817e-45f); }
+        int nan() { return isnan(NAN); }
+        "#,
+    )
+    .expect("floating constants and literal predicates should parse");
+
+    assert_eq!(
+        functions[0].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float32Literal(0x4b80_0000))
+    );
+    assert_eq!(
+        functions[1].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float64Literal(0x4340_0000_0000_0000,))
+    );
+    assert_eq!(
+        functions[2].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float32Literal(0x8000_0000))
+    );
+    assert_eq!(
+        functions[3].body(),
+        &syntax::C0Statement::Return(syntax::C0Expression::Float64Literal(0xfff0_0000_0000_0000,))
+    );
+    for function in &functions[4..] {
+        assert_eq!(
+            function.body(),
+            &syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(1))
+        );
+    }
+}
+
+#[test]
+fn c0_floating_point_conditions_accept_symbolic_operands() {
+    let functions = syntax::parse_functions(
+        r#"
+        int compare(float value) { return value < 1.0f; }
+        int classify(double value) { return isfinite(value) && !isnan(value); }
+        "#,
+    )
+    .expect("symbolic floating comparisons and classifications should parse");
+
+    assert!(matches!(
+        functions[0].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::LessThan(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Variable(name) if name == "value")
+                && matches!(right.as_ref(), syntax::C0Expression::Float32Literal(bits) if *bits == 1.0f32.to_bits())
+    ));
+    assert!(matches!(
+        functions[1].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::And(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::FloatClassification {
+                expression,
+                classification: syntax::C0FloatClassification::Finite,
+            } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "value"))
+                && matches!(right.as_ref(), syntax::C0Expression::Not(inner)
+                    if matches!(inner.as_ref(), syntax::C0Expression::FloatClassification {
+                        expression,
+                        classification: syntax::C0FloatClassification::Nan,
+                    } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "value")))
+    ));
+
+    let compare = functions[0].to_kernel_function();
+    assert_eq!(compare.return_type(), crate::kernel::CType::Int32);
+    let classify = functions[1].to_kernel_function();
+    assert_eq!(classify.return_type(), crate::kernel::CType::Int32);
+}
+
+#[test]
+fn c0_floating_point_arithmetic_accepts_symbolic_same_width_operands() {
+    let functions = syntax::parse_functions(
+        r#"
+        float single(float value) { return -(value + 1.0f) * 2.0f; }
+        double double_value(double value) { return (value * 2.0) / 3.0; }
+        "#,
+    )
+    .expect("same-width floating arithmetic should parse");
+
+    assert!(matches!(
+        functions[0].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Multiply(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::FloatNegate(inner)
+                if matches!(inner.as_ref(), syntax::C0Expression::Add(_, _)))
+                && matches!(right.as_ref(), syntax::C0Expression::Float32Literal(bits)
+                    if *bits == 2.0f32.to_bits())
+    ));
+    assert!(matches!(
+        functions[1].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Divide(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Multiply(_, _))
+                && matches!(right.as_ref(), syntax::C0Expression::Float64Literal(bits)
+                    if *bits == 3.0f64.to_bits())
+    ));
+
+    assert_eq!(
+        functions[0].to_kernel_function().return_type(),
+        crate::kernel::CType::Float32
+    );
+    assert_eq!(
+        functions[1].to_kernel_function().return_type(),
+        crate::kernel::CType::Float64
     );
 }
 

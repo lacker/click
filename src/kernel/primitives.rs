@@ -153,6 +153,18 @@ pub enum Bitvector32Term {
     UInt64BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
     UInt64BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
     UInt64BitwiseNot(Box<Bitvector32Term>),
+    Float32Negate(Box<Bitvector32Term>),
+    Float32Binary {
+        operator: CFloatBinaryOperator,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    },
+    Float64Negate(Box<Bitvector32Term>),
+    Float64Binary {
+        operator: CFloatBinaryOperator,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -203,6 +215,8 @@ pub enum ConditionTerm {
     Bitvector64SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector64SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector64SignedShiftLeftOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Float32(CFloatCondition),
+    Float64(CFloatCondition),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
     PointerEqual(Box<Pointer>, Box<Pointer>),
 }
@@ -354,11 +368,9 @@ pub enum CValue {
     UInt32(Bitvector32Term),
     Int64(Bitvector32Term),
     UInt64(Bitvector32Term),
-    /// Opaque IEEE-754 binary32 payload. Slice 1 only preserves and moves the
-    /// representation; no integer or real arithmetic may consume this term.
+    /// IEEE-754 binary32 payload represented in the shared checked term arena.
     Float32(Bitvector32Term),
-    /// Opaque IEEE-754 binary64 payload. Slice 1 only preserves and moves the
-    /// representation; no integer or real arithmetic may consume this term.
+    /// IEEE-754 binary64 payload represented in the shared checked term arena.
     Float64(Bitvector32Term),
     Pointer(CPointerValue),
 }
@@ -433,6 +445,11 @@ pub enum CExpression {
         then_branch: Box<CExpression>,
         else_branch: Box<CExpression>,
     },
+    FloatNegate(Box<CExpression>),
+    FloatClassification {
+        expression: Box<CExpression>,
+        classification: CFloatClassification,
+    },
     AddressOf(Box<CExpression>),
     PointerOffsetBytes {
         pointer: Box<CExpression>,
@@ -474,6 +491,96 @@ pub enum CComparisonOperator {
     LessEqual,
     GreaterThan,
     GreaterEqual,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFloatBinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFloatClassification {
+    Finite,
+    Infinite,
+    Zero,
+    Subnormal,
+    Nan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFloatCondition {
+    Comparison {
+        operator: CComparisonOperator,
+        left: Box<Bitvector32Term>,
+        right: Box<Bitvector32Term>,
+    },
+    Classification {
+        classification: CFloatClassification,
+        value: Box<Bitvector32Term>,
+    },
+}
+
+impl CFloatCondition {
+    pub(crate) fn for_each_bitvector_term(&self, mut visit: impl FnMut(&Bitvector32Term)) {
+        match self {
+            Self::Comparison { left, right, .. } => {
+                visit(left);
+                visit(right);
+            }
+            Self::Classification { value, .. } => visit(value),
+        }
+    }
+
+    pub(crate) fn map_bitvector_terms(
+        &self,
+        mut map: impl FnMut(&Bitvector32Term) -> Bitvector32Term,
+    ) -> Self {
+        match self {
+            Self::Comparison {
+                operator,
+                left,
+                right,
+            } => Self::Comparison {
+                operator: *operator,
+                left: Box::new(map(left)),
+                right: Box::new(map(right)),
+            },
+            Self::Classification {
+                classification,
+                value,
+            } => Self::Classification {
+                classification: *classification,
+                value: Box::new(map(value)),
+            },
+        }
+    }
+
+    pub(crate) fn try_map_bitvector_terms(
+        &self,
+        mut map: impl FnMut(&Bitvector32Term) -> Option<Bitvector32Term>,
+    ) -> Option<Self> {
+        Some(match self {
+            Self::Comparison {
+                operator,
+                left,
+                right,
+            } => Self::Comparison {
+                operator: *operator,
+                left: Box::new(map(left)?),
+                right: Box::new(map(right)?),
+            },
+            Self::Classification {
+                classification,
+                value,
+            } => Self::Classification {
+                classification: *classification,
+                value: Box::new(map(value)?),
+            },
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -608,6 +715,10 @@ pub enum SpecProposition {
         left: SpecExpression,
         operator: CComparisonOperator,
         right: SpecExpression,
+    },
+    FloatClassification {
+        expression: SpecExpression,
+        classification: CFloatClassification,
     },
     And(Box<SpecProposition>, Box<SpecProposition>),
     Or(Box<SpecProposition>, Box<SpecProposition>),

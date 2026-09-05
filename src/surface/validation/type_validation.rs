@@ -35,6 +35,19 @@ pub(super) fn validate_proposition_expression_types(
             let _ = infer_contract_expression_type(right, variables, click_functions, context)?;
             Ok(())
         }
+        ClickProposition::FloatClassification { expression, .. } => {
+            let actual =
+                infer_contract_expression_type(expression, variables, click_functions, context)?;
+            if let Some(actual) = actual
+                && !type_is_float(actual)
+            {
+                return Err(ClickError::new(format!(
+                    "float classification expects a float expression in {context}, got {}",
+                    describe_c0_type(actual)
+                )));
+            }
+            Ok(())
+        }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_expression_types(left, variables, click_functions, context)?;
             validate_resource_subject_expression_types(right, variables, click_functions, context)
@@ -386,6 +399,7 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         | (C0Type::Float64Array(_), C0Type::Float64Pointer)
         | (C0Type::Float64Pointer, C0Type::Float64Array(_)) => true,
         (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
+        (actual, expected) if type_is_arithmetic(actual) && type_is_arithmetic(expected) => true,
         _ => actual == expected,
     }
 }
@@ -467,9 +481,12 @@ fn infer_contract_expression_type(
         ContractExpression::Subtract(left, right) => {
             infer_subtract_expression_type(left, right, variables, click_functions, context)
         }
-        ContractExpression::Multiply(left, right)
-        | ContractExpression::Divide(left, right)
-        | ContractExpression::Remainder(left, right)
+        ContractExpression::Multiply(left, right) | ContractExpression::Divide(left, right) => {
+            let left = infer_contract_expression_type(left, variables, click_functions, context)?;
+            let right = infer_contract_expression_type(right, variables, click_functions, context)?;
+            Ok(arithmetic_result_type(left, right))
+        }
+        ContractExpression::Remainder(left, right)
         | ContractExpression::BitwiseAnd(left, right)
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right) => {
@@ -652,13 +669,18 @@ fn infer_c_expression_type(
             let then_type = infer_c_expression_type(then_branch, variables);
             let else_type = infer_c_expression_type(else_branch, variables);
             match (then_type, else_type) {
-                (Some(left), Some(right)) if left == right => Some(left),
-                (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-                    Some(scalar_arithmetic_result_type(left, right))
-                }
+                (Some(left), Some(right)) => arithmetic_result_type(Some(left), Some(right)),
                 _ => None,
             }
         }
+        CExpression::FloatNegate(expression) => {
+            infer_c_expression_type(expression, variables).filter(|c_type| type_is_float(*c_type))
+        }
+        CExpression::FloatClassification { expression, .. } => matches!(
+            infer_c_expression_type(expression, variables),
+            Some(C0Type::Float32 | C0Type::Float64)
+        )
+        .then_some(C0Type::Int32),
         CExpression::AddressOf(_) | CExpression::FunctionAddress(_) => None,
         CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)
@@ -674,9 +696,12 @@ fn infer_c_expression_type(
         | CExpression::Or(_, _) => Some(C0Type::Int32),
         CExpression::Add(left, right) => infer_c_add_type(left, right, variables),
         CExpression::Subtract(left, right) => infer_c_subtract_type(left, right, variables),
-        CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
+        CExpression::Multiply(left, right) | CExpression::Divide(left, right) => {
+            let left = infer_c_expression_type(left, variables);
+            let right = infer_c_expression_type(right, variables);
+            arithmetic_result_type(left, right)
+        }
+        CExpression::Remainder(left, right)
         | CExpression::BitwiseAnd(left, right)
         | CExpression::BitwiseOr(left, right)
         | CExpression::BitwiseXor(left, right) => {
@@ -753,7 +778,7 @@ fn infer_add_expression_type(
 ) -> Result<Option<C0Type>, ClickError> {
     let left = infer_contract_expression_type(left, variables, click_functions, context)?;
     let right = infer_contract_expression_type(right, variables, click_functions, context)?;
-    Ok(pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right)))
+    Ok(pointer_arithmetic_type(left, right).or_else(|| arithmetic_result_type(left, right)))
 }
 
 fn infer_subtract_expression_type(
@@ -769,7 +794,7 @@ fn infer_subtract_expression_type(
         (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
             Some(left)
         }
-        _ => scalar_arithmetic_type(left, right),
+        _ => arithmetic_result_type(left, right),
     })
 }
 
@@ -780,7 +805,7 @@ fn infer_c_add_type(
 ) -> Option<C0Type> {
     let left = infer_c_expression_type(left, variables);
     let right = infer_c_expression_type(right, variables);
-    pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right))
+    pointer_arithmetic_type(left, right).or_else(|| arithmetic_result_type(left, right))
 }
 
 fn infer_c_subtract_type(
@@ -794,7 +819,7 @@ fn infer_c_subtract_type(
         (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
             Some(left)
         }
-        _ => scalar_arithmetic_type(left, right),
+        _ => arithmetic_result_type(left, right),
     }
 }
 
@@ -810,10 +835,20 @@ fn pointer_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Optio
     }
 }
 
-fn scalar_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
+fn type_is_float(c_type: C0Type) -> bool {
+    matches!(c_type, C0Type::Float32 | C0Type::Float64)
+}
+
+fn arithmetic_result_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
     match (left, right) {
-        (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
-            Some(scalar_arithmetic_result_type(left, right))
+        (Some(left), Some(right)) if type_is_arithmetic(left) && type_is_arithmetic(right) => {
+            if matches!(left, C0Type::Float64) || matches!(right, C0Type::Float64) {
+                Some(C0Type::Float64)
+            } else if matches!(left, C0Type::Float32) || matches!(right, C0Type::Float32) {
+                Some(C0Type::Float32)
+            } else {
+                Some(scalar_arithmetic_result_type(left, right))
+            }
         }
         _ => None,
     }
@@ -870,6 +905,10 @@ fn type_is_scalar(c_type: C0Type) -> bool {
             | C0Type::Int64
             | C0Type::UInt64
     )
+}
+
+fn type_is_arithmetic(c_type: C0Type) -> bool {
+    type_is_scalar(c_type) || type_is_float(c_type)
 }
 
 fn scalar_arithmetic_result_type(left: C0Type, right: C0Type) -> C0Type {
@@ -1047,6 +1086,9 @@ pub(super) fn validate_predicate_calls_in_proposition(
         ClickProposition::Comparison { left, right, .. } => {
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            validate_contract_expression_calls(expression, click_functions, context)
         }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_calls(left, click_functions, context)?;
@@ -1265,6 +1307,9 @@ fn validate_if_condition_proposition(
         ClickProposition::Comparison { left, right, .. } => {
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            validate_contract_expression_calls(expression, click_functions, context)
         }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_calls(left, click_functions, context)?;

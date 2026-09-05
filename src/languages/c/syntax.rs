@@ -1335,6 +1335,15 @@ pub enum C0UpdateOperator {
     BitwiseXor,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum C0FloatClassification {
+    Finite,
+    Infinite,
+    Zero,
+    Subnormal,
+    Nan,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Expression {
     Void,
@@ -1359,6 +1368,11 @@ pub enum C0Expression {
         then_branch: Box<C0Expression>,
         else_branch: Box<C0Expression>,
     },
+    FloatNegate(Box<C0Expression>),
+    FloatClassification {
+        expression: Box<C0Expression>,
+        classification: C0FloatClassification,
+    },
     AddressOf(Box<C0Expression>),
     PointerOffsetBytes {
         pointer: Box<C0Expression>,
@@ -1369,11 +1383,9 @@ pub enum C0Expression {
     UInt32Literal(u32),
     Int64Literal(i64),
     UInt64Literal(u64),
-    /// The IEEE-754 binary32 representation, kept opaque until float
-    /// operations are modeled in a later slice.
+    /// The IEEE-754 binary32 representation used by the typed float model.
     Float32Literal(u32),
-    /// The IEEE-754 binary64 representation, kept opaque until float
-    /// operations are modeled in a later slice.
+    /// The IEEE-754 binary64 representation used by the typed double model.
     Float64Literal(u64),
     SizeOfStruct {
         name: String,
@@ -2125,6 +2137,26 @@ impl C0Expression {
                 then_branch.to_kernel_expression(),
                 else_branch.to_kernel_expression(),
             ),
+            Self::FloatNegate(expression) => {
+                crate::kernel::c_float_negate(expression.to_kernel_expression())
+            }
+            Self::FloatClassification {
+                expression,
+                classification,
+            } => crate::kernel::c_float_classification(
+                expression.to_kernel_expression(),
+                match classification {
+                    C0FloatClassification::Finite => crate::kernel::CFloatClassification::Finite,
+                    C0FloatClassification::Infinite => {
+                        crate::kernel::CFloatClassification::Infinite
+                    }
+                    C0FloatClassification::Zero => crate::kernel::CFloatClassification::Zero,
+                    C0FloatClassification::Subnormal => {
+                        crate::kernel::CFloatClassification::Subnormal
+                    }
+                    C0FloatClassification::Nan => crate::kernel::CFloatClassification::Nan,
+                },
+            ),
             Self::AddressOf(target) => match target.as_ref() {
                 Self::AggregateAddress { pointer, .. } | Self::UnionAddress { pointer, .. } => {
                     pointer.to_kernel_expression()
@@ -2720,6 +2752,8 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         C0Expression::Call { .. } => false,
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatNegate(expression)
+        | C0Expression::FloatClassification { expression, .. }
         | C0Expression::PointerOffsetBytes {
             pointer: expression,
             ..
@@ -5761,10 +5795,30 @@ impl Parser {
     ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         let mut initializers = Vec::new();
-        let mut element_index = 0u32;
+        let mut next_element_index = 0u32;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                if element_index == length {
+                let element_index = if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    let index = self.parse_aggregate_array_designator(object_name, length)?;
+                    self.expect(Token::Equal)?;
+                    next_element_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate array designator index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::Dot) {
+                        return Err(self.error_here(
+                            "aggregate array initializers support only array index designators",
+                        ));
+                    }
+                    let index = next_element_index;
+                    next_element_index = next_element_index
+                        .checked_add(1)
+                        .expect("validated aggregate array initializer index");
+                    index
+                };
+                if element_index >= length {
                     return Err(self.error_here(format!(
                         "too many initializers for aggregate array `{object_name}[{length}]`"
                     )));
@@ -5782,7 +5836,6 @@ impl Parser {
                     struct_name,
                     base_offset,
                 )?);
-                element_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -5809,6 +5862,46 @@ impl Parser {
         Ok(initializers)
     }
 
+    fn parse_aggregate_array_designator(
+        &mut self,
+        object_name: &str,
+        length: u32,
+    ) -> Result<u32, C0SyntaxError> {
+        let index = match self.next() {
+            Some(Token::Number(number)) => {
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid aggregate array designator index `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(magnitude).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "aggregate array designator index `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(Token::CharLiteral(value)) => u32::from(value),
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "aggregate array designators currently require integer literals, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self.error_here(
+                    "aggregate array designators currently require an integer literal",
+                ));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        if index >= length {
+            return Err(self.error_here(format!(
+                "aggregate array designator index `{index}` is out of bounds for `{object_name}[{length}]`"
+            )));
+        }
+        Ok(index)
+    }
+
     fn parse_aggregate_initializer_level(
         &mut self,
         object_name: &str,
@@ -5820,31 +5913,51 @@ impl Parser {
             .get(struct_name)
             .expect("validated aggregate initializer has a layout")
             .fields
-            .values()
-            .cloned()
+            .iter()
+            .map(|(name, field)| (name.clone(), field.clone()))
             .collect::<Vec<_>>();
-        fields.sort_by_key(|field| field.offset_bytes);
+        fields.sort_by_key(|(_, field)| field.offset_bytes);
 
         self.expect(Token::LBrace)?;
         let mut initializers = Vec::new();
-        let mut field_index = 0usize;
+        let mut next_field_index = 0usize;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                let Some(field) = fields.get(field_index) else {
+                let field_index = if self.peek() == Some(&Token::Dot) {
+                    self.position += 1;
+                    let field_name = self.expect_ident("aggregate field name")?;
+                    self.expect(Token::Equal)?;
+                    let Some(index) = fields.iter().position(|(name, _)| name == &field_name)
+                    else {
+                        return Err(self.error_here(format!(
+                            "unknown field `{field_name}` in `struct {struct_name}` initializer"
+                        )));
+                    };
+                    next_field_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::LBracket) {
+                        return Err(self.error_here(
+                            "struct aggregate initializers support only field designators",
+                        ));
+                    }
+                    let index = next_field_index;
+                    next_field_index = next_field_index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                };
+                let Some((_, field)) = fields.get(field_index) else {
                     return Err(self
                         .error_here(format!("too many initializers for `struct {struct_name}`")));
                 };
-                if matches!(self.peek(), Some(Token::Dot | Token::LBracket)) {
-                    return Err(
-                        self.error_here("designated aggregate initializers are not supported")
-                    );
-                }
                 initializers.extend(self.parse_aggregate_initializer_field(
                     object_name,
                     base_offset,
                     field,
                 )?);
-                field_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -7759,6 +7872,8 @@ impl Parser {
             | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. }
             | C0Expression::Cast { .. }
+            | C0Expression::FloatNegate(_)
+            | C0Expression::FloatClassification { .. }
             | C0Expression::AddressOf(_)
             | C0Expression::PointerOffsetBytes { .. }
             | C0Expression::LessThan(_, _)
@@ -7810,6 +7925,8 @@ impl Parser {
             | C0Expression::UnionAddress { .. }
             | C0Expression::UnionField { .. } => false,
             C0Expression::Cast { expression, .. }
+            | C0Expression::FloatNegate(expression)
+            | C0Expression::FloatClassification { expression, .. }
             | C0Expression::PointerOffsetBytes {
                 pointer: expression,
                 ..
@@ -8049,6 +8166,8 @@ impl Parser {
             match expression {
                 C0Expression::Call { .. } => return true,
                 C0Expression::Cast { expression, .. }
+                | C0Expression::FloatNegate(expression)
+                | C0Expression::FloatClassification { expression, .. }
                 | C0Expression::AddressOf(expression)
                 | C0Expression::PointerOffsetBytes {
                     pointer: expression,
@@ -8513,6 +8632,23 @@ impl Parser {
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
+            C0Expression::FloatNegate(expression) => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((prefix, C0Expression::FloatNegate(Box::new(expression))))
+            }
+            C0Expression::FloatClassification {
+                expression,
+                classification,
+            } => {
+                let (prefix, expression) = self.lower_expression_calls(*expression)?;
+                Ok((
+                    prefix,
+                    C0Expression::FloatClassification {
+                        expression: Box::new(expression),
+                        classification,
+                    },
+                ))
+            }
             C0Expression::AddressOf(expression) => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((prefix, C0Expression::AddressOf(Box::new(expression))))
@@ -8956,10 +9092,11 @@ impl Parser {
                     None,
                     None,
                 ) => parsed_type.c_type,
+                (C0Type::Float32 | C0Type::Float64, None, None) => parsed_type.c_type,
                 _ => {
-                    return Err(
-                        self.error_at_previous("casts support only modeled scalar integer values")
-                    );
+                    return Err(self.error_at_previous(
+                        "casts support only modeled scalar integer or floating-point values",
+                    ));
                 }
             };
             return Ok(C0Expression::Cast {
@@ -8975,6 +9112,17 @@ impl Parser {
         if self.peek() == Some(&Token::Minus) {
             self.position += 1;
             if let Some(Token::Number(number)) = self.peek().cloned() {
+                if is_floating_literal(&number) {
+                    self.position += 1;
+                    let expression = parse_float_literal_expression(&number).map_err(|reason| {
+                        self.error_here(format!(
+                            "invalid floating-point literal `{number}`: {reason}"
+                        ))
+                    })?;
+                    return negate_float_literal(expression).ok_or_else(|| {
+                        self.error_here("unary negation requires a float or double literal")
+                    });
+                }
                 self.position += 1;
                 let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
                     self.error_here(format!("invalid integer literal `{number}`: {reason}"))
@@ -9005,9 +9153,16 @@ impl Parser {
                 };
                 return Ok(C0Expression::Int64Literal(value));
             }
+            let expression = self.parse_unary()?;
+            if let Some(expression) = negate_float_literal(expression.clone()) {
+                return Ok(expression);
+            }
+            if self.expression_is_float(&expression) {
+                return Ok(C0Expression::FloatNegate(Box::new(expression)));
+            }
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),
-                Box::new(self.parse_unary()?),
+                Box::new(expression),
             ));
         }
 
@@ -9058,6 +9213,13 @@ impl Parser {
                         }
                     };
                     let arguments = self.parse_call_arguments(Some(&function_name))?;
+                    if let Some(result) =
+                        parse_float_classification_call(&function_name, &arguments)
+                    {
+                        expression = result
+                            .map_err(|reason| self.error_at_position(call_position, reason))?;
+                        continue;
+                    }
                     expression = C0Expression::Call {
                         function_name,
                         arguments,
@@ -9276,6 +9438,92 @@ impl Parser {
             return None;
         };
         Some(shape.clone())
+    }
+
+    fn expression_is_float(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::FloatNegate(_) => true,
+            C0Expression::Variable(name) => matches!(
+                self.variable_types.get(name),
+                Some(C0Type::Float32 | C0Type::Float64)
+            ),
+            C0Expression::Cast { c_type, .. } => {
+                matches!(c_type, C0Type::Float32 | C0Type::Float64)
+            }
+            C0Expression::Field { field_type, .. }
+            | C0Expression::UnionField { field_type, .. } => {
+                matches!(field_type, C0Type::Float32 | C0Type::Float64)
+            }
+            C0Expression::Load(pointer) => self.expression_pointee_is_float(pointer),
+            C0Expression::Index(base, _) => self.expression_pointee_is_float(base),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => self.expression_is_float(then_branch) || self.expression_is_float(else_branch),
+            C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right) => {
+                self.expression_is_float(left) || self.expression_is_float(right)
+            }
+            C0Expression::Void
+            | C0Expression::Call { .. }
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::FloatClassification { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::LessThan(_, _)
+            | C0Expression::LessEqual(_, _)
+            | C0Expression::GreaterThan(_, _)
+            | C0Expression::GreaterEqual(_, _)
+            | C0Expression::Equal(_, _)
+            | C0Expression::NotEqual(_, _)
+            | C0Expression::Not(_)
+            | C0Expression::And(_, _)
+            | C0Expression::Or(_, _)
+            | C0Expression::Remainder(_, _)
+            | C0Expression::ShiftLeft(_, _)
+            | C0Expression::ShiftRight(_, _)
+            | C0Expression::BitwiseAnd(_, _)
+            | C0Expression::BitwiseOr(_, _)
+            | C0Expression::BitwiseXor(_, _)
+            | C0Expression::BitwiseNot(_)
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. } => false,
+        }
+    }
+
+    fn expression_pointee_is_float(&self, expression: &C0Expression) -> bool {
+        let c_type = match expression {
+            C0Expression::Variable(name) => self.variable_types.get(name).copied(),
+            C0Expression::Field { field_type, .. }
+            | C0Expression::UnionField { field_type, .. } => Some(*field_type),
+            C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::Index(base, _) => {
+                return self.expression_pointee_is_float(base);
+            }
+            _ => None,
+        };
+        matches!(
+            c_type,
+            Some(
+                C0Type::Float32Pointer
+                    | C0Type::Float64Pointer
+                    | C0Type::Float32Array(_)
+                    | C0Type::Float64Array(_)
+            )
+        )
     }
 
     fn struct_pointer_name(&self, expression: &C0Expression) -> Option<String> {
@@ -9641,9 +9889,18 @@ impl Parser {
         }
         let at = self.error_context();
         match self.next() {
-            Some(Token::Ident(name)) => match self.enum_constants.get(&name) {
-                Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
-                None => Ok(C0Expression::Variable(self.resolve_name(&name))),
+            Some(Token::Ident(name)) => match name.as_str() {
+                // These C library-style constants give the value slice a
+                // source-level way to exercise exceptional IEEE classes
+                // without importing a host-specific math header.
+                "INFINITY" => Ok(C0Expression::Float64Literal(0x7ff0_0000_0000_0000)),
+                "NAN" => Ok(C0Expression::Float64Literal(0x7ff8_0000_0000_0000)),
+                "INFINITYF" => Ok(C0Expression::Float32Literal(0x7f80_0000)),
+                "NANF" => Ok(C0Expression::Float32Literal(0x7fc0_0000)),
+                _ => match self.enum_constants.get(&name) {
+                    Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
+                    None => Ok(C0Expression::Variable(self.resolve_name(&name))),
+                },
             },
             Some(Token::Number(number)) => {
                 if is_floating_literal(&number) {
@@ -9923,6 +10180,83 @@ fn parse_float_literal_expression(literal: &str) -> Result<C0Expression, &'stati
             .ok_or("value is not a finite binary32 literal"),
         "l" | "L" => Err("long double literals are not modeled in C0"),
         _ => Err("unsupported floating-point literal suffix"),
+    }
+}
+
+fn negate_float_literal(expression: C0Expression) -> Option<C0Expression> {
+    match expression {
+        C0Expression::Float32Literal(bits) => {
+            Some(C0Expression::Float32Literal(bits ^ 0x8000_0000))
+        }
+        C0Expression::Float64Literal(bits) => {
+            Some(C0Expression::Float64Literal(bits ^ 0x8000_0000_0000_0000))
+        }
+        _ => None,
+    }
+}
+
+fn parse_float_classification_call(
+    function_name: &str,
+    arguments: &[C0Expression],
+) -> Option<Result<C0Expression, &'static str>> {
+    let classification = match function_name {
+        "isfinite" => C0FloatClassification::Finite,
+        "isinf" => C0FloatClassification::Infinite,
+        "iszero" => C0FloatClassification::Zero,
+        "issubnormal" => C0FloatClassification::Subnormal,
+        "isnan" => C0FloatClassification::Nan,
+        _ => return None,
+    };
+    if arguments.len() != 1 {
+        return Some(Err(
+            "floating classification predicates require one argument",
+        ));
+    }
+    let result = match &arguments[0] {
+        C0Expression::Float32Literal(bits) => {
+            classify_float_bits(u64::from(*bits), 8, 23, classification_name(classification))
+        }
+        C0Expression::Float64Literal(bits) => {
+            classify_float_bits(*bits, 11, 52, classification_name(classification))
+        }
+        _ => {
+            return Some(Ok(C0Expression::FloatClassification {
+                expression: Box::new(arguments[0].clone()),
+                classification,
+            }));
+        }
+    };
+    Some(Ok(C0Expression::Int32Literal(u32::from(result))))
+}
+
+fn classification_name(classification: C0FloatClassification) -> &'static str {
+    match classification {
+        C0FloatClassification::Finite => "isfinite",
+        C0FloatClassification::Infinite => "isinf",
+        C0FloatClassification::Zero => "iszero",
+        C0FloatClassification::Subnormal => "issubnormal",
+        C0FloatClassification::Nan => "isnan",
+    }
+}
+
+fn classify_float_bits(
+    bits: u64,
+    exponent_bits: u32,
+    fraction_bits: u32,
+    classification: &str,
+) -> bool {
+    let exponent_mask = (1u64 << exponent_bits) - 1;
+    let exponent = (bits >> fraction_bits) & exponent_mask;
+    let fraction = bits & ((1u64 << fraction_bits) - 1);
+    let all_ones = exponent == exponent_mask;
+    let zero_exponent = exponent == 0;
+    match classification {
+        "isfinite" => !all_ones,
+        "isinf" => all_ones && fraction == 0,
+        "iszero" => zero_exponent && fraction == 0,
+        "issubnormal" => zero_exponent && fraction != 0,
+        "isnan" => all_ones && fraction != 0,
+        _ => unreachable!("classification was validated by the caller"),
     }
 }
 
@@ -10249,6 +10583,8 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             ..
         } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::Cast { expression, .. }
+        | C0Expression::FloatNegate(expression)
+        | C0Expression::FloatClassification { expression, .. }
         | C0Expression::AddressOf(expression)
         | C0Expression::PointerOffsetBytes {
             pointer: expression,

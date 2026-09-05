@@ -175,7 +175,14 @@ fn bitvector_term_exceeds_depth_limit(root: &Bitvector32Term) -> bool {
                 pending.push((left, depth + 1));
                 pending.push((right, depth + 1));
             }
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                pending.push((left, depth + 1));
+                pending.push((right, depth + 1));
+            }
             Bitvector32Term::BitwiseNot(value)
+            | Bitvector32Term::Float32Negate(value)
+            | Bitvector32Term::Float64Negate(value)
             | Bitvector32Term::Int64From32(value)
             | Bitvector32Term::Int64FromUInt32(value)
             | Bitvector32Term::UInt64From32(value)
@@ -1073,6 +1080,12 @@ fn synthesize_surface_bitvector(
         Bitvector32Term::BitwiseNot(value) => Some(ContractExpression::BitwiseNot(Box::new(
             synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
         ))),
+        // Floating-point operation terms are not integer surface fragments;
+        // callers that need them retain the original C expression instead.
+        Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => None,
         Bitvector32Term::MemoryLoad(_, kernel_pointer) => {
             if let PointerBlock::Concrete(block) = &kernel_pointer.block
                 && let Some(name) = block.strip_prefix("local:")
@@ -1480,6 +1493,11 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
                 pending.push(left);
                 pending.push(right);
             }
+            Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. } => {
+                pending.push(left);
+                pending.push(right);
+            }
             Bitvector32Term::BitwiseNot(value)
             | Bitvector32Term::Int64BitwiseNot(value)
             | Bitvector32Term::UInt64BitwiseNot(value)
@@ -1487,7 +1505,9 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
             | Bitvector32Term::UInt64From32(value)
             | Bitvector32Term::Int64FromUInt32(value)
             | Bitvector32Term::UInt64FromInt32(value)
-            | Bitvector32Term::UInt64FromInt64(value) => pending.push(value),
+            | Bitvector32Term::UInt64FromInt64(value)
+            | Bitvector32Term::Float32Negate(value)
+            | Bitvector32Term::Float64Negate(value) => pending.push(value),
             Bitvector32Term::If {
                 then_term,
                 else_term,

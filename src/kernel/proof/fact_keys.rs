@@ -6,7 +6,8 @@
 
 use crate::kernel::Sort;
 use crate::kernel::{
-    Bitvector32Term, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
+    Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
+    CFloatCondition, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
     PointerOffsetTerm, Proposition, Variable,
 };
 use std::collections::BTreeMap;
@@ -64,8 +65,23 @@ pub(crate) enum SnapshotBlindConditionKey {
     MultiplyOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
     DivideOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
     ShiftLeftOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    Float32(SnapshotBlindFloatConditionKey),
+    Float64(SnapshotBlindFloatConditionKey),
     PointerOffsetEqual(SnapshotBlindPointerOffsetKey, SnapshotBlindPointerOffsetKey),
     PointerEqual(SnapshotBlindPointerKey, SnapshotBlindPointerKey),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) enum SnapshotBlindFloatConditionKey {
+    Comparison {
+        operator: CComparisonOperator,
+        left: SnapshotBlindBitvectorKey,
+        right: SnapshotBlindBitvectorKey,
+    },
+    Classification {
+        classification: CFloatClassification,
+        value: SnapshotBlindBitvectorKey,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -134,6 +150,7 @@ impl SnapshotBlindConditionKey {
             | Self::ShiftLeftOverflows(left, right) => {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
+            Self::Float32(condition) | Self::Float64(condition) => condition.forgets_a_snapshot(),
             Self::PointerOffsetEqual(left, right) => {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
@@ -141,6 +158,17 @@ impl SnapshotBlindConditionKey {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
             Self::Constant(_) | Self::Variable(_) => false,
+        }
+    }
+}
+
+impl SnapshotBlindFloatConditionKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::Comparison { left, right, .. } => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::Classification { value, .. } => value.forgets_a_snapshot(),
         }
     }
 }
@@ -311,6 +339,12 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
             let (left, right) = terms(left, right);
             SnapshotBlindConditionKey::ShiftLeftOverflows(left, right)
         }
+        ConditionTerm::Float32(float_condition) => {
+            SnapshotBlindConditionKey::Float32(snapshot_blind_float_condition_key(float_condition))
+        }
+        ConditionTerm::Float64(float_condition) => {
+            SnapshotBlindConditionKey::Float64(snapshot_blind_float_condition_key(float_condition))
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             SnapshotBlindConditionKey::PointerOffsetEqual(
                 snapshot_blind_pointer_offset_key(left),
@@ -321,6 +355,29 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
             snapshot_blind_pointer_key(left),
             snapshot_blind_pointer_key(right),
         ),
+    }
+}
+
+fn snapshot_blind_float_condition_key(
+    condition: &CFloatCondition,
+) -> SnapshotBlindFloatConditionKey {
+    match condition {
+        CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        } => SnapshotBlindFloatConditionKey::Comparison {
+            operator: *operator,
+            left: snapshot_blind_bitvector_key(left),
+            right: snapshot_blind_bitvector_key(right),
+        },
+        CFloatCondition::Classification {
+            classification,
+            value,
+        } => SnapshotBlindFloatConditionKey::Classification {
+            classification: *classification,
+            value: snapshot_blind_bitvector_key(value),
+        },
     }
 }
 
@@ -443,6 +500,8 @@ enum AlphaBitvectorBinaryOp {
     UInt64BitwiseAnd,
     UInt64BitwiseOr,
     UInt64BitwiseXor,
+    Float32(CFloatBinaryOperator),
+    Float64(CFloatBinaryOperator),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -455,6 +514,8 @@ enum AlphaBitvectorKey {
     BitwiseNot(Box<Self>),
     Int64BitwiseNot(Box<Self>),
     UInt64BitwiseNot(Box<Self>),
+    Float32Negate(Box<Self>),
+    Float64Negate(Box<Self>),
     If {
         condition: Box<AlphaConditionKey>,
         then_term: Box<Self>,
@@ -728,6 +789,16 @@ fn alpha_bitvector_key(
         Bitvector32Term::UInt64BitwiseXor(left, right) => {
             binary(AlphaBitvectorBinaryOp::UInt64BitwiseXor, left, right)?
         }
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => binary(AlphaBitvectorBinaryOp::Float32(*operator), left, right)?,
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => binary(AlphaBitvectorBinaryOp::Float64(*operator), left, right)?,
         Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
@@ -735,6 +806,12 @@ fn alpha_bitvector_key(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64BitwiseNot(body) => AlphaBitvectorKey::UInt64BitwiseNot(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Float32Negate(body) => AlphaBitvectorKey::Float32Negate(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
+        Bitvector32Term::Float64Negate(body) => AlphaBitvectorKey::Float64Negate(Box::new(
             alpha_bitvector_key(body, bindings, next_binder)?,
         )),
         Bitvector32Term::If {

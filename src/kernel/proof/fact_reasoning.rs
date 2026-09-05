@@ -54,7 +54,11 @@ fn signed_term_interval(
         }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
-        | Bitvector32Term::PureFunctionApplication { .. } => Some(
+        | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => Some(
             bounds
                 .get(&crate::kernel::eval::canonical_term(term))
                 .copied()
@@ -359,7 +363,11 @@ fn collect_signed_affine_terms(
         | Bitvector32Term::UInt64BitwiseAnd(_, _)
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
-        | Bitvector32Term::UInt64BitwiseNot(_) => return None,
+        | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => return None,
     }
     Some(())
 }
@@ -547,7 +555,11 @@ fn signed_affine_term_is_defined(
         | Bitvector32Term::UInt64BitwiseAnd(_, _)
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
-        | Bitvector32Term::UInt64BitwiseNot(_) => false,
+        | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::Float32Negate(_)
+        | Bitvector32Term::Float32Binary { .. }
+        | Bitvector32Term::Float64Negate(_)
+        | Bitvector32Term::Float64Binary { .. } => false,
     }
 }
 
@@ -900,6 +912,62 @@ fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContex
         .iter()
         .cloned()
         .fold(PureFactContext::new(), PureFactContext::assume_proposition)
+}
+
+/// Checks the small float certificate used by `simp using`: an IEEE
+/// comparison of one finite value with itself has the corresponding reflexive
+/// result. The finite classification must be one of the explicit premises;
+/// no ambient context is consulted here.
+pub(crate) fn check_float_reflexive_comparison(
+    proposition: &Proposition,
+    premises: &[Proposition],
+) -> bool {
+    let Proposition::ConditionIs(condition, expected) = proposition else {
+        return false;
+    };
+    let (operator, left, right, finite) = match condition {
+        ConditionTerm::Float32(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => (
+            *operator,
+            left.as_ref(),
+            right.as_ref(),
+            ConditionTerm::float32_classification(
+                left.as_ref().clone(),
+                CFloatClassification::Finite,
+            ),
+        ),
+        ConditionTerm::Float64(CFloatCondition::Comparison {
+            operator,
+            left,
+            right,
+        }) => (
+            *operator,
+            left.as_ref(),
+            right.as_ref(),
+            ConditionTerm::float64_classification(
+                left.as_ref().clone(),
+                CFloatClassification::Finite,
+            ),
+        ),
+        _ => return false,
+    };
+    if left != right {
+        return false;
+    }
+    let assumptions = assumptions_from_propositions(premises);
+    if assumptions.decide(&finite) != Some(true) {
+        return false;
+    }
+    let reflexive = matches!(
+        operator,
+        CComparisonOperator::Equal
+            | CComparisonOperator::LessEqual
+            | CComparisonOperator::GreaterEqual
+    );
+    *expected == reflexive
 }
 
 pub(crate) fn is_implicit_fact_transport_context(proposition: &Proposition) -> bool {

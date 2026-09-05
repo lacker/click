@@ -64,6 +64,7 @@ C import and execution:
 Specification and proof:
 
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
+- [Add a specification sequence type](sequence-type.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
@@ -89,7 +90,6 @@ C language coverage:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)
-- [Model floating-point values](floating-point.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)
 - [Model volatile accesses to pointer-valued objects](volatile-pointer-objects.md)
@@ -107,6 +107,7 @@ Semantics and reasoning:
 
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
+- [Add a specification sequence type](sequence-type.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)

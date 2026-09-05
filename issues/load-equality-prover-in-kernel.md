@@ -34,6 +34,79 @@ over a well-founded structure; it caps a search. Measured on owned-vector
 The memo does nothing because the pairs are distinct, which is what a
 search produces; the last variant is the depth limit under another name.
 
+## Deciding-route census (2026-09-05)
+
+The follow-up census measured the last-resort
+`c_memory_load_is_unchanged` call itself, after every cheaper leg in
+`memory_loads_proven_equal` had failed. Temporary counters recorded both the
+outer result and the first successful route inside the fallback. The counters
+were run with
+`cargo test --test examples example_projects -- --nocapture` and
+`cargo test --test mdtests mdtests -- --nocapture`, then removed.
+
+| corpus | fallback attempts | decided true | misses |
+|---|---:|---:|---:|
+| examples | 1,628 | 31 | 1,597 |
+| mdtests | 1,347 | 27 | 1,320 |
+| total | 2,975 | 58 | 2,917 |
+
+Thus 98.1% of the last-resort calls did not prove anything. The 58 positive
+answers came from only four mechanisms. Twenty-three were positive-memo hits,
+not independent evidence; the decisions which populated them are included in
+the other rows.
+
+| first deciding mechanism | fresh decisions | memo reuses | fixture and consumer |
+|---|---:|---:|---|
+| canonical snapshot match | 2 | 0 | `copy3.contract` / `simp` (1); `sort3_sorted` verifier core (1) |
+| small-snapshot alias check | 13 | 0 | `copy3.contract` / `simp` (8); `fill_tail_old_prefix_segment.contract` / `simp` (5) |
+| effect-fact chain | 12 | 0 | `copy3.contract` / `simp` (12) |
+| memory-derivation walk | 8 | 23 | the example consumers detailed below |
+
+The example decisions through the memory DAG were:
+
+| fixture and claim/phase | active tactic | fresh DAG decisions | memo reuses | load being transported |
+|---|---|---:|---:|---|
+| bounded-pool, `pool_pipeline.contract` | `transport` | 1 | 0 | `pool->capacity` across writes to the two objects |
+| input-cursor, `input_cursor_shared_pipeline.contract` | `have` | 1 | 0 | shared `data[0]` across mutation of the left cursor |
+| owned-split-buffer, `owned_split_buffer_pipeline.contract` | `step` | 1 | 5 | `owner->data` across adjacent call snapshots |
+| owned-split-buffer, certification | none | 2 | 6 | the same `owner->data` load, checked again while certifying the result |
+| owned-split-buffer, verifier core | none | 0 | 2 | the same already-proved pair, checked again by a core consumer |
+| owned-string, `owned_string_pipeline.contract` | `step` | 2 | 8 | `owner->data` across the `pop` call snapshots |
+| owned-string, `owned_string_pipeline.contract` | `unfold` | 0 | 2 | the same already-proved pair during resource unfolding |
+| owned-vector, `allocated_vector_push.contract` | `have` | 1 | 0 | one old-prefix element load across the grow/push path |
+
+The mdtest loads were `src[k]` across the `copy3` loop, `p[k]` for the
+unchanged prefix of `fill_tail`, and indexed `p` loads in the verifier-core
+phase of `sort3`. This means the migration has four concrete obligations:
+
+1. Canonical snapshot equality needs no surface search. Hoist that exact,
+   assumption-free comparison into the cheap decision path (or represent its
+   result as ordinary retained equality evidence) so it never enters the
+   framed-load prover.
+2. For the 13 small-snapshot decisions, `simp` must emit a pointer-specific
+   frame certificate naming the intervening writes and the checked
+   disjointness/alias evidence. Its checked result is a recorded equality of
+   the two loads, not another request to compare the complete snapshots.
+3. For the 12 `copy3` effect-chain decisions, `simp` must select the exact
+   sequence of effect-summary or mutates-only facts and emit per-hop framing
+   evidence. The kernel checks the named chain linearly and records the
+   terminal load equality.
+4. For the eight fresh DAG decisions, `step`, `transport`, and `have` must
+   retain the selected DAG path with typed justification for every
+   assumption-dependent edge. The existing
+   `AtomicMemoryLoadEqualityEvidence`/`MemoryDagLoadEqualityEvidence` types are
+   the starting point, but their comments correctly note that this typed
+   subset is not yet a complete certificate. Certification and later core
+   consumers must reuse that retained fact; they account for 23 repeated
+   answers in this census.
+
+There were no positive fallback decisions in perpetual-service. It remains a
+useful negative hot-path fixture: removing the fallback should eliminate its
+speculative calls without requiring replacement evidence. Owned-vector also
+has only the single positive decision listed above, so its many other probes
+are likewise evidence for deleting, rather than reproducing, the ambient
+search.
+
 ## Violated invariant
 
 The kernel checks; it does not search. A kernel decision is decided by
@@ -54,15 +127,17 @@ summary frames the loaded pointer, should still verify, and it should do so
 through a recorded snapshot-equality fact rather than a proof the kernel
 runs at match time. A scaling regression should show that matching a goal
 against N such facts costs work near-linear in N, with the framed-load
-prover never invoked from fact matching. The perpetual-service and
-owned-vector examples exercise this path most (their framed-load walk
-counts above); they must verify unchanged.
+prover never invoked from fact matching. The fixtures in the census tables
+must verify unchanged. A negative-path regression should also retain a
+representative proof such as perpetual-service and show that failed fact
+comparisons do not invoke a framed-load planner.
 
 ## Acceptance criteria
 
-- A census records, per claim, which loads the framed-load prover decided
-  that no cheaper leg could, and what fact the surface would have to record
-  in its place.
+- **Complete (2026-09-05):** the census above records, per claim or later
+  certification phase, which loads the framed-load prover decided after every
+  cheaper leg failed and the exact evidence the surface must record in its
+  place.
 - A surface tactic (transport, frame, or a completion of the call step)
   records the snapshot-equality fact the kernel needs, as a checkable
   certificate.

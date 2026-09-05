@@ -476,6 +476,10 @@ fn collect_expression_variable_names(expression: &CExpression, names: &mut BTree
         CExpression::Cast { expression, .. } => {
             collect_expression_variable_names(expression, names)
         }
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
+            collect_expression_variable_names(expression, names)
+        }
         CExpression::Conditional {
             condition,
             then_branch,

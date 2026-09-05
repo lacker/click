@@ -809,6 +809,9 @@ fn collect_condition_bitvector_atoms(
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bitvector_atoms(left, atoms);
             collect_pointer_offset_bitvector_atoms(right, atoms);
@@ -862,6 +865,11 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
+        Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_bitvector_atoms(left, atoms);
+            collect_bitvector_atoms(right, atoms);
+        }
         Bitvector32Term::BitwiseNot(value)
         | Bitvector32Term::Int64BitwiseNot(value)
         | Bitvector32Term::UInt64BitwiseNot(value)
@@ -869,7 +877,9 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         | Bitvector32Term::UInt64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
-        | Bitvector32Term::UInt64FromInt64(value) => collect_bitvector_atoms(value, atoms),
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => collect_bitvector_atoms(value, atoms),
         Bitvector32Term::If {
             condition,
             then_term,

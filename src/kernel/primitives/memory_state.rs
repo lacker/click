@@ -21,6 +21,10 @@ enum HavocIdentityTask {
     PointerOffset(PointerOffsetTerm),
     Bitvector(Bitvector32Term),
     Condition(ConditionTerm),
+    FloatCondition {
+        condition: CFloatCondition,
+        is_float64: bool,
+    },
     LeaveRegisteredLoad(Variable),
 }
 
@@ -226,6 +230,42 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::Bitvector(*value));
                     }
+                    Bitvector32Term::Float32Negate(value) => {
+                        identity.push_str("tf32n(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Float64Negate(value) => {
+                        identity.push_str("tf64n(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
+                    }
+                    Bitvector32Term::Float32Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let tag = match operator {
+                            CFloatBinaryOperator::Add => "tf32a",
+                            CFloatBinaryOperator::Subtract => "tf32s",
+                            CFloatBinaryOperator::Multiply => "tf32m",
+                            CFloatBinaryOperator::Divide => "tf32d",
+                        };
+                        push_havoc_binary(&mut identity, &mut tasks, tag, *left, *right);
+                    }
+                    Bitvector32Term::Float64Binary {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let tag = match operator {
+                            CFloatBinaryOperator::Add => "tf64a",
+                            CFloatBinaryOperator::Subtract => "tf64s",
+                            CFloatBinaryOperator::Multiply => "tf64m",
+                            CFloatBinaryOperator::Divide => "tf64d",
+                        };
+                        push_havoc_binary(&mut identity, &mut tasks, tag, *left, *right);
+                    }
                     Bitvector32Term::Int64From32(value) => push_havoc_binary(
                         &mut identity,
                         &mut tasks,
@@ -377,6 +417,34 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         identity.push_str("load(");
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::Pointer(*pointer));
+                    }
+                }
+            }
+            HavocIdentityTask::FloatCondition {
+                condition,
+                is_float64,
+            } => {
+                crate::instrumentation::record_deterministic_work(1);
+                let width = if is_float64 { "64" } else { "32" };
+                match condition {
+                    CFloatCondition::Comparison {
+                        operator,
+                        left,
+                        right,
+                    } => {
+                        let _ = write!(identity, "fc{width}cmp{operator:?}(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*right));
+                        tasks.push(HavocIdentityTask::Text(","));
+                        tasks.push(HavocIdentityTask::Bitvector(*left));
+                    }
+                    CFloatCondition::Classification {
+                        classification,
+                        value,
+                    } => {
+                        let _ = write!(identity, "fc{width}class{classification:?}(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Bitvector(*value));
                     }
                 }
             }
@@ -542,6 +610,18 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                             *left,
                             *right,
                         )
+                    }
+                    ConditionTerm::Float32(condition) => {
+                        tasks.push(HavocIdentityTask::FloatCondition {
+                            condition,
+                            is_float64: false,
+                        });
+                    }
+                    ConditionTerm::Float64(condition) => {
+                        tasks.push(HavocIdentityTask::FloatCondition {
+                            condition,
+                            is_float64: true,
+                        });
                     }
                     ConditionTerm::PointerOffsetEqual(left, right) => {
                         identity.push_str("coe(");

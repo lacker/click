@@ -38,6 +38,17 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
             assumptions,
             budget,
         ),
+        SpecProposition::FloatClassification {
+            expression,
+            classification,
+        } => lower_spec_float_classification_proposition_at_state(
+            state,
+            expression,
+            *classification,
+            loop_entry_state,
+            assumptions,
+            budget,
+        ),
         SpecProposition::And(left, right) => {
             let mut paths = Vec::new();
             for left_path in lower_spec_proposition_at_state_with_loop_entry(
@@ -412,6 +423,37 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
             }])
         }
     }
+}
+
+fn lower_spec_float_classification_proposition_at_state(
+    state: &CState,
+    expression: &SpecExpression,
+    classification: CFloatClassification,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    Ok(evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        expression,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )?
+    .into_iter()
+    .filter_map(|path| {
+        let condition = match path.value {
+            CValue::Float32(value) => ConditionTerm::float32_classification(value, classification),
+            CValue::Float64(value) => ConditionTerm::float64_classification(value, classification),
+            _ => return None,
+        };
+        Some(SpecPropositionPath {
+            proposition: Proposition::ConditionIs(condition, true),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+    })
+    .collect())
 }
 
 #[derive(Clone)]
@@ -1288,7 +1330,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 if !memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
                     let loadable = Proposition::CMemoryLoadable {
                         memory: memory.clone(),
-                        base: pointer,
+                        base: pointer.clone(),
                         bytes: Bitvector32Term::Constant(value_type.byte_width()),
                     };
                     if add_proof_obligation(&mut obligations, assumptions, loadable).is_none() {
@@ -2165,6 +2207,45 @@ pub(super) fn c_value_comparison_proposition(
     };
     if let Some((condition, value)) = pointer_condition {
         return Some(Proposition::ConditionIs(condition, value));
+    }
+
+    let target_type = if matches!(left, CValue::Float64(_)) || matches!(right, CValue::Float64(_)) {
+        Some(CType::Float64)
+    } else if matches!(left, CValue::Float32(_)) || matches!(right, CValue::Float32(_)) {
+        Some(CType::Float32)
+    } else {
+        None
+    };
+    if let Some(target_type) = target_type {
+        let mut obligations = Vec::new();
+        let left = coerce_c_value_to_type(
+            left.clone(),
+            target_type,
+            &mut obligations,
+            &PureFactContext::new(),
+        )?;
+        let right = coerce_c_value_to_type(
+            right.clone(),
+            target_type,
+            &mut obligations,
+            &PureFactContext::new(),
+        )?;
+        if !obligations.is_empty() {
+            return None;
+        }
+        let condition = match (target_type, left, right) {
+            (CType::Float32, CValue::Float32(left), CValue::Float32(right)) => {
+                ConditionTerm::float32_compare(left, right, operator)
+            }
+            (CType::Float64, CValue::Float64(left), CValue::Float64(right)) => {
+                ConditionTerm::float64_compare(left, right, operator)
+            }
+            _ => return None,
+        };
+        return Some(Proposition::ConditionIs(
+            condition,
+            !matches!(operator, CComparisonOperator::NotEqual),
+        ));
     }
 
     if matches!(left, CValue::UInt64(_)) || matches!(right, CValue::UInt64(_)) {

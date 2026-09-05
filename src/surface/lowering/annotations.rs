@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
 
 type FunctionContractSummary = (
@@ -841,6 +842,7 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
         | ClickProposition::RangeAll { body, .. }
         | ClickProposition::RangeAny { body, .. } => proposition_supported_in_opaque_contract(body),
         ClickProposition::Comparison { .. } | ClickProposition::PredicateCall { .. } => true,
+        ClickProposition::FloatClassification { .. } => true,
     }
 }
 
@@ -1175,6 +1177,19 @@ impl AnnotationLowerer<'_> {
                 left: self.lower_contract_expression_to_spec(left, environment)?,
                 operator: c_comparison_operator(*operator),
                 right: self.lower_contract_expression_to_spec(right, environment)?,
+            }),
+            ClickProposition::FloatClassification {
+                expression,
+                classification,
+            } => Ok(SpecProposition::FloatClassification {
+                expression: self.lower_contract_expression_to_spec(expression, environment)?,
+                classification: match classification {
+                    syntax::C0FloatClassification::Finite => CFloatClassification::Finite,
+                    syntax::C0FloatClassification::Infinite => CFloatClassification::Infinite,
+                    syntax::C0FloatClassification::Zero => CFloatClassification::Zero,
+                    syntax::C0FloatClassification::Subnormal => CFloatClassification::Subnormal,
+                    syntax::C0FloatClassification::Nan => CFloatClassification::Nan,
+                },
             }),
             ClickProposition::Separate { left, right } => Ok(SpecProposition::ResourceSeparate {
                 left: self.lower_resource_subject_to_spec(left, environment)?,

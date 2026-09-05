@@ -270,6 +270,10 @@ pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
             collect_c_expression_bitvector_variables(then_branch, variables);
             collect_c_expression_bitvector_variables(else_branch, variables);
         }
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
+            collect_c_expression_bitvector_variables(expression, variables)
+        }
         CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }
@@ -504,6 +508,9 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
         SpecProposition::Comparison { left, right, .. } => {
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
+        }
+        SpecProposition::FloatClassification { expression, .. } => {
+            collect_spec_expression_bitvector_variables(expression, variables);
         }
         SpecProposition::And(left, right)
         | SpecProposition::Or(left, right)
@@ -894,6 +901,10 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition
+                .for_each_bitvector_term(|term| collect_bitvector_variables(term, variables));
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bitvector_variables(left, variables);
             collect_pointer_offset_bitvector_variables(right, variables);
@@ -959,7 +970,9 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         | Bitvector32Term::UInt64LogicalShiftRight(left, right)
         | Bitvector32Term::UInt64BitwiseAnd(left, right)
         | Bitvector32Term::UInt64BitwiseOr(left, right)
-        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+        | Bitvector32Term::UInt64BitwiseXor(left, right)
+        | Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
@@ -970,7 +983,9 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         | Bitvector32Term::UInt64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
-        | Bitvector32Term::UInt64FromInt64(value) => {
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => {
             collect_bitvector_variables(value, variables);
         }
         Bitvector32Term::If {

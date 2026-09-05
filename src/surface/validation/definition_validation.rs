@@ -706,6 +706,7 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
         | ClickProposition::Loadable { .. }
         | ClickProposition::Defined { .. } => {
             let source = describe_click_proposition(proposition);
@@ -836,6 +837,17 @@ fn collect_resource_fact_reads_from_proposition(
             )?;
             collect_resource_fact_reads_from_contract_expression(
                 right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_resource_fact_reads_from_contract_expression(
+                expression,
                 predicate_definitions,
                 click_function_definitions,
                 visited_predicates,
@@ -1364,6 +1376,10 @@ fn collect_resource_fact_reads_from_c_expression(
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
+            collect_resource_fact_reads_from_c_expression(expression, reads);
+        }
+        CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. } => {
             collect_resource_fact_reads_from_c_expression(expression, reads);
         }
         CExpression::Conditional {
