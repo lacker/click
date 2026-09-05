@@ -18,8 +18,8 @@ multiset, while copying preserves both. The concatenation function exercises
 the associative sequence operation that later tree models will use to define
 in-order traversal.
 
-`sequence_transform.click` now verifies the first sequence slice without
-changing the C: exact three-cell copying and the fixed two-by-two
-concatenation. The remaining reverse, membership, symbolic range projection,
-and general sequence algebra work is tracked by
+`sequence_transform.click` now verifies the first two sequence slices without
+changing the C: exact three-cell copying, fixed two-by-two concatenation, and
+in-place reversal. The remaining membership, symbolic range projection, and
+first-class sequence-value work is tracked by
 [`sequence-type.md`](../../issues/sequence-type.md).

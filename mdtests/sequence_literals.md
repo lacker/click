@@ -21,6 +21,14 @@ theorem sequence_concat_reflexive(a: int32, b: int32, c: int32) {
     ensures [a] ++ [b, c] == [a] ++ [b, c] by simp;
 }
 
+theorem sequence_concat_associative(a: int32, b: int32, c: int32) {
+    ensures [a] ++ [b] ++ [c] == [a] ++ ([b] ++ [c]) by simp;
+}
+
+theorem sequence_literal_and_concat_have_the_same_contents(a: int32, b: int32, c: int32) {
+    ensures [a, b] ++ [c] == [a] ++ [b, c] by simp;
+}
+
 theorem sequence_length_distinguishes_multiplicity() {
     ensures [0] != [0, 0] by simp;
 }

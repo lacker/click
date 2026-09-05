@@ -34,3 +34,15 @@ void sequence_concatenate2(
     frame();
     simp();
 }
+
+void sequence_reverse3(int32 values[]) {
+    owns values[0..3];
+    mutable values[0..3];
+
+    ensures [values[0], values[1], values[2]]
+        == old([values[2], values[1], values[0]]);
+} by {
+    execute();
+    frame();
+    simp();
+}

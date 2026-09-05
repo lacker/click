@@ -131,6 +131,10 @@ and `left ++ right` concatenates two compatible sequences without allocating C
 memory or granting memory authority. Sequence values support `==` and `!=`;
 ordering comparisons are rejected.
 
+Concatenation is associative and `[]` is its left and right identity. Sequence
+equality compares elements rather than concatenation-tree shape, preserving
+order and multiplicity.
+
 `old(...)` and proof snapshots evaluate every element in the selected state,
 so a contract can relate current array cells to their exact entry order:
 

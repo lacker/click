@@ -127,6 +127,9 @@ pub(in crate::kernel) fn memory_effect_execution_facts(
 
 pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     match proposition {
+        Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
+            sequence_terms_equal_by_elements(left, right)
+        }
         Proposition::Equal(left, right) => left == right,
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
         Proposition::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
@@ -172,34 +175,75 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     }
 }
 
+fn sequence_terms_equal_by_elements(left: &SequenceTerm, right: &SequenceTerm) -> bool {
+    if let (Some(left_type), Some(right_type)) = (left.element_type, right.element_type)
+        && left_type != right_type
+    {
+        return false;
+    }
+    let mut left = SequenceElements::new(left);
+    let mut right = SequenceElements::new(right);
+    loop {
+        match (left.next(), right.next()) {
+            (Some(left), Some(right)) if left == right => {}
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
 fn sequence_terms_definitely_distinct(left: &SequenceTerm, right: &SequenceTerm) -> bool {
     if let (Some(left_type), Some(right_type)) = (left.element_type, right.element_type)
         && left_type != right_type
     {
         return true;
     }
-    let left = sequence_elements(left);
-    let right = sequence_elements(right);
-    left.len() != right.len()
-        || left
-            .iter()
-            .zip(right)
-            .any(|(left, right)| c_values_definitely_distinct(left, right))
+    let mut left = SequenceElements::new(left);
+    let mut right = SequenceElements::new(right);
+    loop {
+        match (left.next(), right.next()) {
+            (Some(left), Some(right)) if c_values_definitely_distinct(left, right) => return true,
+            (Some(_), Some(_)) => {}
+            (None, None) => return false,
+            _ => return true,
+        }
+    }
 }
 
-fn sequence_elements(sequence: &SequenceTerm) -> Vec<&CValue> {
-    let mut elements = Vec::new();
-    let mut pending = vec![sequence];
-    while let Some(sequence) = pending.pop() {
-        match sequence.node.as_ref() {
-            SequenceTermNode::Literal(values) => elements.extend(values.iter()),
-            SequenceTermNode::Concat(left, right) => {
-                pending.push(right);
-                pending.push(left);
+struct SequenceElements<'a> {
+    pending: Vec<&'a SequenceTerm>,
+    current: Option<std::slice::Iter<'a, CValue>>,
+}
+
+impl<'a> SequenceElements<'a> {
+    fn new(sequence: &'a SequenceTerm) -> Self {
+        Self {
+            pending: vec![sequence],
+            current: None,
+        }
+    }
+}
+
+impl<'a> Iterator for SequenceElements<'a> {
+    type Item = &'a CValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(values) = &mut self.current {
+                if let Some(value) = values.next() {
+                    return Some(value);
+                }
+                self.current = None;
+            }
+            match self.pending.pop()?.node.as_ref() {
+                SequenceTermNode::Literal(values) => self.current = Some(values.iter()),
+                SequenceTermNode::Concat(left, right) => {
+                    self.pending.push(right);
+                    self.pending.push(left);
+                }
             }
         }
     }
-    elements
 }
 
 fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
@@ -223,6 +267,47 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
             matches!((constant(left), constant(right)), (Some(left), Some(right)) if left != right)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod sequence_equality_tests {
+    use super::*;
+
+    fn singleton(value: u32) -> SequenceTerm {
+        SequenceTerm {
+            element_type: Some(CType::Int32),
+            node: std::sync::Arc::new(SequenceTermNode::Literal(
+                vec![crate::kernel::api::int32(value)].into(),
+            )),
+        }
+    }
+
+    fn concatenate(left: SequenceTerm, right: SequenceTerm) -> SequenceTerm {
+        SequenceTerm {
+            element_type: Some(CType::Int32),
+            node: std::sync::Arc::new(SequenceTermNode::Concat(left, right)),
+        }
+    }
+
+    #[test]
+    fn associative_sequence_equality_is_iterative_across_rope_shapes() {
+        for size in [8u32, 64, 512] {
+            let mut left_associated = singleton(0);
+            for value in 1..size {
+                left_associated = concatenate(left_associated, singleton(value));
+            }
+
+            let mut right_associated = singleton(size - 1);
+            for value in (0..size - 1).rev() {
+                right_associated = concatenate(singleton(value), right_associated);
+            }
+
+            assert!(solve_builtin_prop(&Proposition::Equal(
+                Term::Sequence(left_associated),
+                Term::Sequence(right_associated),
+            )));
+        }
     }
 }
 
