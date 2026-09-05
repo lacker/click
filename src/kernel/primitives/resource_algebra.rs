@@ -2479,37 +2479,17 @@ fn range_endpoint_terms_equal(
         right: &Bitvector32Term,
         assumptions: &PureFactContext,
     ) -> bool {
-        // The load-unchanged check re-enters separation reasoning, which can
-        // re-enter range comparison; guard against unbounded mutual
-        // recursion rather than relying on structural depth.
-        thread_local! {
-            static ENDPOINT_BRIDGE_ACTIVE: std::cell::Cell<bool> =
-                const { std::cell::Cell::new(false) };
-        }
         if let (
-            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+            Bitvector32Term::MemoryLoad(_, left_pointer),
+            Bitvector32Term::MemoryLoad(_, right_pointer),
         ) = (left, right)
             && left_pointer == right_pointer
         {
-            if ENDPOINT_BRIDGE_ACTIVE.with(std::cell::Cell::get) {
-                crate::kernel::assumptions::note_search_truncation();
-                return false;
-            }
-            ENDPOINT_BRIDGE_ACTIVE.with(|active| active.set(true));
-            let bridged = crate::kernel::api::c_memory_load_is_unchanged(
-                left_memory,
-                right_memory,
-                left_pointer,
-                assumptions,
-            ) || crate::kernel::api::c_memory_load_is_unchanged(
-                right_memory,
-                left_memory,
-                left_pointer,
+            return crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                left,
+                right,
                 assumptions,
             );
-            ENDPOINT_BRIDGE_ACTIVE.with(|active| active.set(false));
-            return bridged;
         }
         false
     }

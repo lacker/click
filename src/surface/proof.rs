@@ -328,21 +328,6 @@ fn pointer_offset_equality_by_frame(target: &Proposition, available: &[Propositi
                 right,
                 &assumptions,
             )
-            || matches!((left, right), (
-                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-            ) if left_pointer == right_pointer
-                && (crate::kernel::c_memory_load_is_unchanged(
-                    left_memory,
-                    right_memory,
-                    left_pointer,
-                    &assumptions,
-                ) || crate::kernel::c_memory_load_is_unchanged(
-                    right_memory,
-                    left_memory,
-                    left_pointer,
-                    &assumptions,
-                )))
     };
     pointer_offsets_match_by_term_equivalence(left, right, &terms_equivalent)
 }
@@ -378,21 +363,6 @@ fn equal_by_premise_chain(
                 right,
                 &frame_assumptions,
             )
-            || matches!((left, right), (
-                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-            ) if left_pointer == right_pointer
-                && (crate::kernel::c_memory_load_is_unchanged(
-                    left_memory,
-                    right_memory,
-                    left_pointer,
-                    &frame_assumptions,
-                ) || crate::kernel::c_memory_load_is_unchanged(
-                    right_memory,
-                    left_memory,
-                    left_pointer,
-                    &frame_assumptions,
-                )))
     };
     let mut classes: Vec<Vec<Bitvector32Term>> = Vec::new();
     {
@@ -483,17 +453,11 @@ fn equal_by_premise_chain(
         same_block
             && same_value
             && same_offset
-            && (crate::kernel::c_memory_load_is_unchanged(
-                target_memory,
-                memory,
-                target_pointer,
+            && crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                &Bitvector32Term::MemoryLoad(target_memory.clone(), target_pointer.clone()),
+                &Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone()),
                 &frame_assumptions,
-            ) || crate::kernel::c_memory_load_is_unchanged(
-                memory,
-                target_memory,
-                pointer,
-                &frame_assumptions,
-            ))
+            )
     })
 }
 

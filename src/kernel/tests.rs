@@ -90,6 +90,35 @@ fn contract_certification_calls_no_general_prover() {
     );
 }
 
+/// Boundaries whose load equality is present in the recorded memory DAG must
+/// not regain the ambient whole-context prover. Contract materialization and
+/// framed atomic transport are tracked separately until their earlier checked
+/// equality can be retained for later resource checks.
+#[test]
+fn migrated_load_equality_consumers_use_recorded_dag_evidence() {
+    let needle = ["c_memory_load", "_is_unchanged("].concat();
+    let sources = [
+        "src/kernel/api/contract_certification.rs",
+        "src/kernel/loops.rs",
+        "src/kernel/primitives/resource_algebra.rs",
+        "src/kernel/proof/fact_reasoning.rs",
+        "src/surface/proof.rs",
+    ];
+    let offenders = sources
+        .iter()
+        .filter(|relative| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+            std::fs::read_to_string(path)
+                .expect("load-equality consumer source is readable")
+                .contains(&needle)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        offenders.is_empty(),
+        "migrated load-equality consumer invokes the global prover: {offenders:?}"
+    );
+}
+
 /// The kernel reads no environment variable: its behaviour is fixed, and
 /// its test-only audits are switched on by the tests that run them. Every
 /// A/B handle it once read kept a second code path alive.

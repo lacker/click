@@ -2293,21 +2293,11 @@ fn pointer_offsets_equal_with_resolved_atoms(
         left == right
             || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
             || assumptions.memory_loads_proven_equal(left, right)
-            || matches!((left, right), (
-                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-            ) if left_pointer == right_pointer
-                && (crate::kernel::c_memory_load_is_unchanged(
-                    left_memory,
-                    right_memory,
-                    left_pointer,
-                    assumptions,
-                ) || crate::kernel::c_memory_load_is_unchanged(
-                    right_memory,
-                    left_memory,
-                    right_pointer,
-                    assumptions,
-                )))
+            || crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                left,
+                right,
+                assumptions,
+            )
     };
     let atoms_match = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
         if left == right
@@ -2454,13 +2444,17 @@ fn certification_proves_equality_via_load_fact(
                     assumptions,
                 )
                 && [left_pointer, right_pointer].into_iter().any(|pointer| {
-                    c_memory_load_is_unchanged(left_memory, right_memory, pointer, assumptions)
-                        || c_memory_load_is_unchanged(
-                            right_memory,
-                            left_memory,
-                            pointer,
-                            assumptions,
-                        )
+                    crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                        &Bitvector32Term::MemoryLoad(
+                            (*left_memory).clone().into(),
+                            Box::new((*pointer).clone()),
+                        ),
+                        &Bitvector32Term::MemoryLoad(
+                            (*right_memory).clone().into(),
+                            Box::new((*pointer).clone()),
+                        ),
+                        assumptions,
+                    )
                 })
         })
     })
@@ -2754,7 +2748,11 @@ fn names_of_one_cell_framed(
         return false;
     };
     left_pointer == right_pointer
-        && c_memory_load_is_unchanged(&left_memory, &right_memory, &left_pointer, assumptions)
+        && crate::kernel::explicit_atomic_equality_from_memory_derivations(
+            &Bitvector32Term::MemoryLoad(left_memory, Box::new(left_pointer)),
+            &Bitvector32Term::MemoryLoad(right_memory, Box::new(right_pointer)),
+            assumptions,
+        )
 }
 
 fn has_exact_strict_increment_max_bound(

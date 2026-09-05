@@ -1584,7 +1584,7 @@ mod tests {
     };
 
     #[test]
-    fn canonical_origin_transport_uses_bounded_snapshot_alias_check() {
+    fn canonical_origin_transport_uses_explicit_memory_derivations() {
         let preserved = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
@@ -1625,8 +1625,8 @@ mod tests {
         );
 
         // Also force snapshot comparison with a write to the queried cell.
-        // The answer is false, and the load-variable bridge must reach it
-        // through the bounded alias route.
+        // The explicit derivation check must reject this pair without entering
+        // the global snapshot-comparison planner.
         let loaded = preserved;
         let changed_before =
             CMemory::new().store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
@@ -1655,12 +1655,12 @@ mod tests {
             "a write to the loaded cell must not be transported as unchanged"
         );
         assert!(
-            events.iter().any(|event| matches!(
+            !events.iter().any(|event| matches!(
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                     if name == "snapshot comparison: bounded alias"
             )),
-            "the regression must exercise bounded snapshot comparison: {events:#?}"
+            "explicit origin transport must not plan a snapshot comparison: {events:#?}"
         );
     }
 
@@ -2070,24 +2070,14 @@ impl<'a> OriginsUnchanged<'a> {
         ) else {
             return false;
         };
-        // The unchanged proof comes from the cheap routes — recorded
-        // derivations crossed with exact-fact distinctness — never from
-        // whole-snapshot alias search, which is the giant-term recursion
-        // load-variable construction exists to avoid.
+        // The unchanged proof comes from recorded derivations crossed with
+        // exact-fact distinctness, never from whole-snapshot alias search.
         left_pointer == right_pointer
-            && crate::kernel::with_bounded_snapshot_comparison(|| {
-                crate::kernel::c_memory_load_is_unchanged(
-                    &left_memory,
-                    &right_memory,
-                    &left_pointer,
-                    self.assumptions,
-                ) || crate::kernel::c_memory_load_is_unchanged(
-                    &right_memory,
-                    &left_memory,
-                    &left_pointer,
-                    self.assumptions,
-                )
-            })
+            && crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                &Bitvector32Term::MemoryLoad(left_memory, Box::new(left_pointer.clone())),
+                &Bitvector32Term::MemoryLoad(right_memory, Box::new(right_pointer)),
+                self.assumptions,
+            )
     }
 }
 

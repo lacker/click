@@ -45,7 +45,6 @@ pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_ca
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};
-pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;
 pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;
 pub use primitives::*;
@@ -54,7 +53,6 @@ pub(crate) use reasoning::resolve_load_variables_from_registry;
 pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
-pub(crate) use reasoning::with_bounded_snapshot_comparison;
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

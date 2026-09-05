@@ -1009,18 +1009,11 @@ impl PureFactContext {
             return Some(index);
         }
 
-        // Bounded comparison scopes answer offset equality by structure and
-        // load variables only; the general decider's per-pair cost is the
-        // breadth that bounded callers exist to avoid.
         let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
-            if crate::kernel::reasoning::memory_resolution::bounded_snapshot_comparison_active() {
-                crate::kernel::eval::offsets_have_same_canonical_form(left, right)
-            } else {
-                self.decide(&ConditionTerm::pointer_offset_equal(
-                    left.clone(),
-                    right.clone(),
-                )) == Some(true)
-            }
+            self.decide(&ConditionTerm::pointer_offset_equal(
+                left.clone(),
+                right.clone(),
+            )) == Some(true)
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_equal(left, &base.offset) {
@@ -1136,17 +1129,7 @@ impl PureFactContext {
             self.exact_condition_value(&condition) == Some(true)
                 || self.exact_ordering_modulo_canonical_atoms(&condition)
                 || self.nonnegative_successor_by_exact_facts(&condition)
-                // Bounded comparison scopes answer from exact facts only:
-                // the general decider's order-fact matching resolves loads
-                // and fans out. Suppression records a truncation so this
-                // weaker context's negatives are never memoized where the
-                // full check would have run.
-                || if crate::kernel::reasoning::memory_resolution::bounded_snapshot_comparison_active() {
-                    crate::kernel::assumptions::note_search_truncation();
-                    false
-                } else {
-                    self.decide(&condition) == Some(true)
-                }
+                || self.decide(&condition) == Some(true)
         };
         let range_base = base.offset_by_elements(start.clone(), element_width);
         if let Some(index) =

@@ -76,6 +76,15 @@ independently and both fixture harnesses pass. Direct framed-load consumers and
 the reentrant snapshot-resolution path remain, so the depth limit cannot yet
 be removed.
 
+The second load-equality slice moved every consumer that was already decidable
+from the recorded memory DAG: surface proof matching, load-variable origin
+matching, loop effects, resource endpoints, and the ordinary contract
+certification helpers. The special bounded-snapshot-comparison mode is now
+dead and deleted. Two production consumers remain because their required
+equality was checked earlier but not retained: contract materialization
+(`arena_read` reaches this at `observe`) and framed resource transport
+(owned-string reaches it at `unfold`).
+
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
 distinctness fallback has been deleted. Click has no compatibility commitment

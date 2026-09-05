@@ -118,6 +118,28 @@ run far past its normal completion time. Those consumers and the reentrant resol
 path need explicit evidence or exact-query guards before the prover and depth
 limit can be deleted.
 
+A second migration slice moved all consumers whose answer is already present
+in the recorded memory DAG to the explicit equality check. This includes
+surface proof matching, load-variable origin matching, loop effects, resource
+endpoints, and the ordinary contract certification helpers. It also deletes
+the now-unused bounded-snapshot-comparison mode and its conditional reasoning
+paths.
+
+Two production consumers remain. They are not mechanically replaceable with
+the current recorded-DAG check:
+
+- contract materialization needs a load equality checked while establishing a
+  function claim; replacing its global query makes `arena_read.contract` fail
+  at proof step 6 (`observe`);
+- framed atomic term transport needs an `owner->data` load equality established
+  across an earlier call; replacing its global query makes owned-string fail
+  at proof step 20 (`unfold`).
+
+Both failures have the same boundary: a simple step checked the relevant
+framing relationship, but later resource checking cannot consume it as
+retained equality evidence. Reconstructing the answer with ambient search at
+the later boundary would preserve the violated invariant under another name.
+
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
 speculative calls without requiring replacement evidence. Owned-vector also
@@ -159,6 +181,10 @@ comparisons do not invoke a framed-load planner.
 - **Partial:** fixed-state restricted `simp` retains a snapshot-anchored
   `transport`, and fact matching no longer calls the global framed-load prover.
   The independently re-parsed input-cursor expansion is the regression.
+- **Partial:** all consumers already decided by the recorded memory DAG use
+  explicit equality, and the special bounded-snapshot-comparison mode is
+  deleted. The two remaining production consumers are the contract
+  materialization and framed-resource cases above.
 - A surface tactic (transport, frame, or a completion of the call step)
   records the snapshot-equality fact the kernel needs, as a checkable
   certificate.

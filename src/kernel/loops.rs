@@ -1838,10 +1838,15 @@ pub(super) fn collect_loop_effect_check_obligations(
                 )
             });
             !has_disjoint_effect_summary
-                || !c_memory_load_is_unchanged(
-                    before_state.memory(),
-                    after_state.memory(),
-                    pointer,
+                || !explicit_atomic_equality_from_memory_derivations(
+                    &Bitvector32Term::MemoryLoad(
+                        before_state.memory().clone().into(),
+                        Box::new(pointer.clone()),
+                    ),
+                    &Bitvector32Term::MemoryLoad(
+                        after_state.memory().clone().into(),
+                        Box::new(pointer.clone()),
+                    ),
                     &effective_assumptions,
                 )
         })
