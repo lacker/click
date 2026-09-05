@@ -1,4 +1,4 @@
-# Headers are declaration-only
+# Headers reject unsupported non-inline function definitions
 
 ```c filename=bad.h
 int32 hidden() {
@@ -23,5 +23,5 @@ int32 run() {
 ```
 
 ```expect
-fail: function definitions are not allowed in headers
+fail: function definitions in headers require `static inline`
 ```

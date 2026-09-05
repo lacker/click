@@ -2371,6 +2371,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     CFunction {
         return_type: function.return_type,
         name: function.name.clone(),
+        inline_body: function.inline_body,
         parameters: function.parameters.clone(),
         body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
@@ -4773,6 +4774,7 @@ fn substitute_pointer_variable_in_c_function(
     CFunction {
         return_type: function.return_type,
         name: function.name.clone(),
+        inline_body: function.inline_body,
         parameters: function.parameters.clone(),
         body: substitute_pointer_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_pointer_variable_in_c_statement(function.source_body(), from, to),

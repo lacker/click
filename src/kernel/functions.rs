@@ -541,29 +541,37 @@ pub(super) fn execute_c_function_call_paths(
             budget,
         );
     }
-    match execution_semantics.calls {
-        CCallSemantics::ExecuteBodies => {}
-        CCallSemantics::ApplyVerifiedRules => {
-            let Some(rule) = environment.get_verified_function_rule(function.name()) else {
-                let error = if function.opaque_contract_supported() {
-                    CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
-                } else {
-                    CRuntimeError::UnsupportedOpaqueFunctionContract(function.name().to_string())
+    // A header-provided `static inline` body has no Click contract to apply.
+    // Its checked C body is the call-site semantics, including while the
+    // surrounding function is being contract-certified. All other functions
+    // retain the normal verified-rule boundary.
+    if !function.has_inline_body() {
+        match execution_semantics.calls {
+            CCallSemantics::ExecuteBodies => {}
+            CCallSemantics::ApplyVerifiedRules => {
+                let Some(rule) = environment.get_verified_function_rule(function.name()) else {
+                    let error = if function.opaque_contract_supported() {
+                        CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
+                    } else {
+                        CRuntimeError::UnsupportedOpaqueFunctionContract(
+                            function.name().to_string(),
+                        )
+                    };
+                    return Ok(vec![CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts: Vec::new(),
+                        obligations: Vec::new(),
+                    }]);
                 };
-                return Ok(vec![CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts: Vec::new(),
-                    obligations: Vec::new(),
-                }]);
-            };
-            return execute_verified_function_rule(
-                caller_state,
-                rule,
-                arguments,
-                assumptions,
-                environment,
-                budget,
-            );
+                return execute_verified_function_rule(
+                    caller_state,
+                    rule,
+                    arguments,
+                    assumptions,
+                    environment,
+                    budget,
+                );
+            }
         }
     }
     budget.consume_function_call()?;

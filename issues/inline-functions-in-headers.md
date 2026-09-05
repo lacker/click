@@ -1,18 +1,20 @@
 # Verify inline function definitions reached through headers
 
-Found by the 2026-09-04 MVR audit. Click currently permits declarations in
-included headers but rejects function bodies there. Linux `rbtree.h` and
-`rbtree_augmented.h` contain essential `static inline` and
+Found by the 2026-09-04 MVR audit. Click now accepts the first narrow inline
+header slice: supported `static inline` definitions are parsed from each
+expanded translation unit and their calls execute the checked bodies directly.
+Linux `rbtree.h` and `rbtree_augmented.h` contain essential `static inline` and
 `static __always_inline` implementations. `lib/rbtree.c` calls those helpers,
 including `rb_set_parent_color`, `__rb_change_child`, and
 `__rb_erase_augmented`; treating them as unverified declarations would move
-the core algorithm outside the proof.
+the core algorithm outside the proof. GNU `__always_inline`, richer inline
+signatures, and sidecar contracts for header helpers remain follow-up work.
 
 ## Violated invariant
 
-A verified translation unit must include the semantics of inline function
-definitions supplied by its headers, with C linkage and per-translation-unit
-identity preserved.
+A verified translation unit must include the semantics of supported inline
+function definitions supplied by its headers, with C linkage and
+per-translation-unit identity preserved.
 
 ## Intended regression
 
@@ -22,13 +24,15 @@ outer helper. The complete call chain verifies. Including the same guarded
 header through two paths does not create duplicate definitions, while two
 translation units receive distinct internal-linkage instances.
 
-A pinned rbtree import regression must resolve calls from `lib/rbtree.c` to
-the actual inline bodies from the Linux headers rather than opaque contracts.
+A pinned rbtree import regression must eventually resolve calls from
+`lib/rbtree.c` to the actual inline bodies from the Linux headers rather than
+opaque contracts.
 
 ## Acceptance criteria
 
-- Included headers may contribute supported inline function definitions as
-  well as declarations.
+- Included headers may contribute supported `static inline` function
+  definitions as well as declarations; those helpers execute their checked C
+  bodies at call sites and do not yet have sidecar contracts.
 - `static inline`, `extern inline`, and the selected GNU always-inline spelling
   have documented linkage and body-selection rules for the supported compiler
   profile.

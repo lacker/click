@@ -1152,24 +1152,71 @@ fn c0_rejects_conflicting_function_prototypes() {
 }
 
 #[test]
-fn c0_headers_accept_declarations_but_reject_function_bodies() {
+fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
     syntax::validate_header(
         r#"
         typedef int32 index_t;
         struct pair { index_t value; };
         int32 helper(int32 value);
         extern int32 other(int32 value);
+        static inline int32 add_one(int32 value) { return value + 1; }
         "#,
     )
-    .expect("headers should accept supported declarations and prototypes");
+    .expect("headers should accept supported declarations and static inline helpers");
 
-    let error = syntax::validate_header("int32 helper() { return 1; }")
-        .expect_err("headers must not contain function definitions");
-    assert!(
-        error
-            .message()
-            .contains("function definitions are not allowed in headers")
+    let error = syntax::validate_header("inline int32 helper() { return 1; }")
+        .expect_err("headers must require internal linkage for inline definitions");
+    assert!(error.message().contains("require `static inline`"));
+}
+
+#[test]
+fn c0_static_inline_header_helpers_are_translation_unit_local() {
+    let expanded = source::expand_includes(
+        "alpha.c",
+        &std::collections::BTreeMap::from([
+            (
+                "alpha.c",
+                "#include \"helper.h\"\nint32 run(int32 value) { return add_one(value); }",
+            ),
+            (
+                "helper.h",
+                "#ifndef HELPER_H\n#define HELPER_H\nstatic inline int32 add_one(int32 value) { return value + 1; }\n#endif",
+            ),
+        ]),
+    )
+    .expect("local static inline helper should expand");
+    let functions = syntax::parse_functions_for_source(expanded.source(), "alpha.c")
+        .expect("expanded static inline helper should parse");
+    assert_eq!(
+        functions
+            .iter()
+            .map(syntax::C0Function::name)
+            .collect::<Vec<_>>(),
+        vec!["add_one#inline:alpha.c", "run"]
     );
+
+    let beta = syntax::parse_functions_for_source(
+        &source::expand_includes(
+            "beta.c",
+            &std::collections::BTreeMap::from([
+                (
+                    "beta.c",
+                    "#include \"helper.h\"\nint32 run_beta(int32 value) { return add_one(value); }",
+                ),
+                (
+                    "helper.h",
+                    "static inline int32 add_one(int32 value) { return value + 1; }",
+                ),
+            ]),
+        )
+        .expect("second local static inline helper should expand")
+        .source()
+        .to_string(),
+        "beta.c",
+    )
+    .expect("second expanded static inline helper should parse");
+    assert_eq!(beta[0].name(), "add_one#inline:beta.c");
+    assert_ne!(functions[0].name(), beta[0].name());
 }
 
 #[test]

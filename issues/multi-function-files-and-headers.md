@@ -14,7 +14,8 @@ lists the preprocessor as deferred.
 The first implementation slice accepts multiple function definitions and
 compatible forward prototypes in one source. The next slice now resolves
 quoted project-local includes from the named source bundle, recursively expands
-their declaration text, and rejects function bodies in headers. System headers,
+their declarations and supported `static inline` bodies, and rejects other
+function definitions in headers. System headers,
 macros, conditional compilation, and other preprocessor handling remain open.
 The follow-up slice now recognizes canonical whole-header guards and
 `#pragma once`, suppressing repeated expansion of shared headers while keeping
@@ -72,9 +73,10 @@ general conditional expression.
   of them and sidecar contracts attach by name.
 - Function prototypes and forward references parse and resolve.
 - `#include "local.h"` is resolved relative to the source and parsed for
-  declarations; headers are supplied as named source-bundle dependencies and
-  may not contain function definitions. Missing headers and include cycles
-  receive source-named diagnostics.
+  declarations and supported `static inline` bodies; headers are supplied as
+  named source-bundle dependencies and other function definitions remain
+  unsupported. Missing headers and include cycles receive source-named
+  diagnostics.
 - Canonical whole-header guards and `#pragma once` prevent repeated expansion
   when a shared header is reached through multiple include paths.
 - `<stdint.h>` is accepted as a modeled no-op for the standard C0 type

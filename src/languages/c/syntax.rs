@@ -123,6 +123,7 @@ pub struct C0Function {
     return_struct_name: Option<String>,
     return_pointer_struct_name: Option<String>,
     name: String,
+    inline_body: bool,
     parameters: Vec<C0Parameter>,
     body: C0Statement,
     structs: BTreeMap<String, C0StructLayout>,
@@ -1634,6 +1635,7 @@ impl C0Function {
             return_struct_name: None,
             return_pointer_struct_name: None,
             name,
+            inline_body: false,
             parameters,
             body: C0Statement::Skip,
             structs: BTreeMap::new(),
@@ -1770,6 +1772,9 @@ impl C0Function {
                 .collect(),
             self.body.to_kernel_statement(),
         );
+        if self.inline_body {
+            function = function.with_inline_body();
+        }
         if let Some(name) = &self.return_struct_name {
             let layout = self
                 .structs
@@ -3270,6 +3275,12 @@ struct C0FunctionHeader {
     return_type: C0Type,
     return_struct_name: Option<String>,
     return_pointer_struct_name: Option<String>,
+    /// The C spelling used to resolve declarations and calls in this
+    /// translation unit.
+    source_name: String,
+    /// The kernel identity. Internal-linkage inline definitions are qualified
+    /// by the including translation unit so separate TUs get separate
+    /// instances of a shared header helper.
     name: String,
     parameters: Vec<C0Parameter>,
 }
@@ -3500,6 +3511,28 @@ impl Parser {
         )
     }
 
+    fn inline_function_kernel_name(&self, source_name: &str) -> String {
+        format!(
+            "{source_name}#inline:{}",
+            self.source_identity.as_deref().unwrap_or("source")
+        )
+    }
+
+    fn resolve_function_name(&self, source_name: &str) -> String {
+        self.function_declarations
+            .get(source_name)
+            .map(|function| function.name.clone())
+            .unwrap_or_else(|| source_name.to_string())
+    }
+
+    fn function_declaration(&self, name: &str) -> Option<&C0FunctionHeader> {
+        self.function_declarations.get(name).or_else(|| {
+            self.function_declarations
+                .values()
+                .find(|function| function.name == name)
+        })
+    }
+
     /// Records a parameter or local declaration in the innermost scope. A
     /// shadowing declaration gets a kernel-only identity; source references
     /// continue to resolve by their ordinary C spelling. Call right after
@@ -3689,7 +3722,7 @@ impl Parser {
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_declarations()?;
-        let function = self.parse_function_definition()?;
+        let function = self.parse_function_definition(false)?;
         self.parse_declarations()?;
         self.expect_end(function.name())?;
         Ok(function)
@@ -3705,6 +3738,28 @@ impl Parser {
             } else {
                 false
             };
+            let is_static = if self.peek_ident() == Some("static") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
+            let is_inline = if self.peek_ident() == Some("inline") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
+            if is_inline && !is_static {
+                return Err(self.error_here(
+                    "inline function definitions require `static inline` in this slice",
+                ));
+            }
+            if is_static && !is_inline {
+                return Err(self.error_here(
+                    "file-scope static functions require `static inline` in this slice",
+                ));
+            }
             if !self.is_type_start() {
                 return Err(self.error_here(format!(
                     "expected function declaration, got {}",
@@ -3713,7 +3768,7 @@ impl Parser {
                         .unwrap_or_else(|| "end of input".to_string())
                 )));
             }
-            let header = self.parse_function_header()?;
+            let header = self.parse_function_header(is_static && is_inline)?;
             if self.peek() == Some(&Token::LBrace) {
                 if is_extern {
                     return Err(self.error_here(
@@ -3726,7 +3781,7 @@ impl Parser {
                 if self.peek() != Some(&Token::Semicolon) {
                     return Err(self.error_here(format!(
                         "expected function body or `;` after `{}`",
-                        header.name
+                        header.source_name
                     )));
                 }
                 self.pop_scope();
@@ -3747,8 +3802,27 @@ impl Parser {
         self.header_mode = true;
         self.parse_declarations()?;
         while self.peek().is_some() {
-            if self.peek_ident() == Some("extern") {
+            let is_extern = if self.peek_ident() == Some("extern") {
                 self.position += 1;
+                true
+            } else {
+                false
+            };
+            let is_static = if self.peek_ident() == Some("static") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
+            let is_inline = if self.peek_ident() == Some("inline") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
+            if is_inline && !is_static {
+                return Err(self
+                    .error_here("inline function definitions in headers require `static inline`"));
             }
             if !self.is_type_start() {
                 return Err(self.error_here(format!(
@@ -3758,12 +3832,25 @@ impl Parser {
                         .unwrap_or_else(|| "end of input".to_string())
                 )));
             }
-            let header = self.parse_function_header()?;
+            let header = self.parse_function_header(is_static && is_inline)?;
+            if self.peek() == Some(&Token::LBrace) {
+                if is_extern || !is_static || !is_inline {
+                    self.pop_scope();
+                    return Err(self.error_here(format!(
+                        "function definitions in headers require `static inline`; `{}` has a body",
+                        header.source_name
+                    )));
+                }
+                self.register_function_declaration(&header, true)?;
+                self.finish_function_definition(header)?;
+                self.parse_declarations()?;
+                continue;
+            }
             if self.peek() != Some(&Token::Semicolon) {
                 self.pop_scope();
                 return Err(self.error_here(format!(
-                    "function definitions are not allowed in headers; `{}` has a body",
-                    header.name
+                    "expected `;` after header declaration `{}`",
+                    header.source_name
                 )));
             }
             self.pop_scope();
@@ -3774,11 +3861,17 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_function_definition(&mut self) -> Result<C0Function, C0SyntaxError> {
-        let header = self.parse_function_header()?;
+    fn parse_function_definition(
+        &mut self,
+        internal_linkage: bool,
+    ) -> Result<C0Function, C0SyntaxError> {
+        let header = self.parse_function_header(internal_linkage)?;
         self.register_function_declaration(&header, true)?;
         if self.peek() != Some(&Token::LBrace) {
-            return Err(self.error_here(format!("expected function body after `{}`", header.name)));
+            return Err(self.error_here(format!(
+                "expected function body after `{}`",
+                header.source_name
+            )));
         }
         self.finish_function_definition(header)
     }
@@ -3813,11 +3906,13 @@ impl Parser {
 
         let static_locals = std::mem::take(&mut self.static_locals);
         let string_literals = std::mem::take(&mut self.string_literals);
+        let inline_body = header.name != header.source_name;
         Ok(C0Function {
             return_type: header.return_type,
             return_struct_name: header.return_struct_name,
             return_pointer_struct_name: header.return_pointer_struct_name,
             name: header.name,
+            inline_body,
             parameters: header.parameters,
             body,
             structs: self.structs.clone(),
@@ -3835,7 +3930,10 @@ impl Parser {
         })
     }
 
-    fn parse_function_header(&mut self) -> Result<C0FunctionHeader, C0SyntaxError> {
+    fn parse_function_header(
+        &mut self,
+        internal_linkage: bool,
+    ) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
         if parsed_return_type.is_constant || parsed_return_type.pointee_constant {
             return Err(self.error_here(
@@ -3887,15 +3985,21 @@ impl Parser {
         if self.peek() == Some(&Token::LParen) {
             return Err(self.error_here("function-pointer declarations are not supported in C0"));
         }
-        let name = self.expect_ident("function name")?;
+        let source_name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         self.push_scope();
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
+        let name = if internal_linkage {
+            self.inline_function_kernel_name(&source_name)
+        } else {
+            source_name.clone()
+        };
         Ok(C0FunctionHeader {
             return_type,
             return_struct_name,
             return_pointer_struct_name,
+            source_name,
             name,
             parameters,
         })
@@ -3906,36 +4010,47 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
-        if self.globals.contains_key(&header.name)
-            || self.global_arrays.contains_key(&header.name)
-            || self.global_aggregates.contains_key(&header.name)
-            || self.global_aggregate_arrays.contains_key(&header.name)
+        if self.globals.contains_key(&header.source_name)
+            || self.global_arrays.contains_key(&header.source_name)
+            || self.global_aggregates.contains_key(&header.source_name)
+            || self
+                .global_aggregate_arrays
+                .contains_key(&header.source_name)
         {
             return Err(self.error_here(format!(
                 "function `{}` conflicts with a global declaration",
-                header.name
+                header.source_name
             )));
         }
-        if let Some(previous) = self.function_declarations.get(&header.name) {
+        if let Some(previous) = self.function_declarations.get(&header.source_name) {
             if !function_headers_compatible(previous, header) {
                 return Err(self.error_here(format!(
                     "conflicting declarations for function `{}`",
-                    header.name
+                    header.source_name
                 )));
             }
         } else {
             self.function_declarations
-                .insert(header.name.clone(), header.clone());
+                .insert(header.source_name.clone(), header.clone());
         }
-        if definition && !self.defined_functions.insert(header.name.clone()) {
-            return Err(self.error_here(format!("duplicate function definition `{}`", header.name)));
+        if definition && !self.defined_functions.insert(header.source_name.clone()) {
+            return Err(self.error_here(format!(
+                "duplicate function definition `{}`",
+                header.source_name
+            )));
         }
         Ok(())
     }
 
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
         while self.peek().is_some() {
-            if self.peek_ident() == Some("static") {
+            if self.peek_ident() == Some("static")
+                && self.peek_n(1) == Some(&Token::Ident("inline".to_string()))
+            {
+                break;
+            } else if self.peek_ident() == Some("inline") {
+                break;
+            } else if self.peek_ident() == Some("static") {
                 self.parse_global_declaration()?;
             } else if self.peek_ident() == Some("typedef") {
                 self.parse_typedef_declaration()?;
@@ -6129,16 +6244,16 @@ impl Parser {
                             pointer: pointer.clone(),
                         })
                     } else if self.peek_next() == Some(&Token::LParen) {
-                        let function_name = self.expect_ident("function name")?;
-                        if matches!(function_name.as_str(), "malloc" | "calloc" | "realloc") {
+                        let source_name = self.expect_ident("function name")?;
+                        if matches!(source_name.as_str(), "malloc" | "calloc" | "realloc") {
                             return Err(
                                 self.error_here("the allocation result may not be discarded")
                             );
                         }
-                        let arguments = self.parse_call_arguments(Some(&function_name))?;
+                        let arguments = self.parse_call_arguments(Some(&source_name))?;
                         self.expect(Token::Semicolon)?;
                         Ok(C0Statement::Call {
-                            function_name,
+                            function_name: self.resolve_function_name(&source_name),
                             arguments,
                         })
                     } else {
@@ -7281,10 +7396,13 @@ impl Parser {
                     } else if matches!(self.peek(), Some(Token::Ident(_)))
                         && self.peek_next() == Some(&Token::LParen)
                     {
-                        let function_name = self.expect_ident("function name")?;
-                        let arguments = self.parse_call_arguments(Some(&function_name))?;
-                        let call =
-                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                        let source_name = self.expect_ident("function name")?;
+                        let arguments = self.parse_call_arguments(Some(&source_name))?;
+                        let call = self.call_assignment_statement(
+                            name.clone(),
+                            self.resolve_function_name(&source_name),
+                            arguments,
+                        )?;
                         C0Statement::Seq(Box::new(declaration), Box::new(call))
                     } else {
                         let expression = self.parse_expression_allow_direct_aggregate()?;
@@ -7403,11 +7521,14 @@ impl Parser {
                     && self.peek_next() == Some(&Token::LParen)
                 {
                     let call_start = self.position;
-                    let function_name = self.expect_ident("function name")?;
-                    let arguments = self.parse_call_arguments(Some(&function_name))?;
+                    let source_name = self.expect_ident("function name")?;
+                    let arguments = self.parse_call_arguments(Some(&source_name))?;
                     if matches!(self.peek(), Some(Token::Comma | Token::Semicolon)) {
-                        let call =
-                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                        let call = self.call_assignment_statement(
+                            name.clone(),
+                            self.resolve_function_name(&source_name),
+                            arguments,
+                        )?;
                         C0Statement::Seq(Box::new(declaration), Box::new(call))
                     } else {
                         self.position = call_start;
@@ -8000,9 +8121,13 @@ impl Parser {
             if matches!(self.peek(), Some(Token::Ident(_)))
                 && self.peek_next() == Some(&Token::LParen)
             {
-                let function_name = self.expect_ident("function name")?;
-                let arguments = self.parse_call_arguments(Some(&function_name))?;
-                return self.call_assignment_statement(name, function_name, arguments);
+                let source_name = self.expect_ident("function name")?;
+                let arguments = self.parse_call_arguments(Some(&source_name))?;
+                return self.call_assignment_statement(
+                    name,
+                    self.resolve_function_name(&source_name),
+                    arguments,
+                );
             }
             let expression = self.parse_expression_allow_direct_aggregate()?;
             return self.struct_value_copy_statement(&name, expression);
@@ -8013,10 +8138,14 @@ impl Parser {
                     && self.peek_next() == Some(&Token::LParen)
                 {
                     let call_start = self.position;
-                    let function_name = self.expect_ident("function name")?;
-                    let arguments = self.parse_call_arguments(Some(&function_name))?;
+                    let source_name = self.expect_ident("function name")?;
+                    let arguments = self.parse_call_arguments(Some(&source_name))?;
                     if self.peek() == Some(&Token::Semicolon) {
-                        return self.call_assignment_statement(name, function_name, arguments);
+                        return self.call_assignment_statement(
+                            name,
+                            self.resolve_function_name(&source_name),
+                            arguments,
+                        );
                     }
                     self.position = call_start;
                 }
@@ -8454,8 +8583,7 @@ impl Parser {
         match expression {
             C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
             C0Expression::Call { function_name, .. } => self
-                .function_declarations
-                .get(function_name)
+                .function_declaration(function_name)
                 .and_then(|function| function.return_struct_name.clone()),
             C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
             C0Expression::Field {
@@ -9134,8 +9262,7 @@ impl Parser {
                 }
                 let (mut prefix, arguments) = self.lower_call_arguments(arguments)?;
                 let return_struct_name = self
-                    .function_declarations
-                    .get(&function_name)
+                    .function_declaration(&function_name)
                     .and_then(|function| function.return_struct_name.clone());
                 if let Some(struct_name) = return_struct_name {
                     let (target, layout) = self.declare_synthesized_aggregate(&struct_name)?;
@@ -9932,7 +10059,9 @@ impl Parser {
                 && !self.variable_types.contains_key(&self.resolve_name(&name))
             {
                 self.position += 1;
-                return Ok(C0Expression::FunctionAddress(name));
+                return Ok(C0Expression::FunctionAddress(
+                    self.resolve_function_name(&name),
+                ));
             }
             let target = self.parse_unary()?;
             return Ok(C0Expression::AddressOf(Box::new(target)));
@@ -9958,7 +10087,7 @@ impl Parser {
                 Some(Token::LParen) => {
                     let call_position =
                         self.positions.get(self.position.saturating_sub(1)).copied();
-                    let function_name = match &expression {
+                    let source_name = match &expression {
                         C0Expression::Variable(name) => name.clone(),
                         _ => {
                             return Err(self.error_here(
@@ -9966,14 +10095,14 @@ impl Parser {
                             ));
                         }
                     };
-                    let arguments = self.parse_call_arguments(Some(&function_name))?;
-                    if let Some(result) =
-                        parse_float_classification_call(&function_name, &arguments)
+                    let arguments = self.parse_call_arguments(Some(&source_name))?;
+                    if let Some(result) = parse_float_classification_call(&source_name, &arguments)
                     {
                         expression = result
                             .map_err(|reason| self.error_at_position(call_position, reason))?;
                         continue;
                     }
+                    let function_name = self.resolve_function_name(&source_name);
                     expression = C0Expression::Call {
                         function_name,
                         arguments,

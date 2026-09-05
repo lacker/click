@@ -580,6 +580,7 @@ impl CFunction {
             return_type,
             return_aggregate_layout: None,
             name: name.into(),
+            inline_body: false,
             parameters,
             source_body: body.clone(),
             body,
@@ -744,6 +745,15 @@ impl CFunction {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn with_inline_body(mut self) -> Self {
+        self.inline_body = true;
+        self
+    }
+
+    pub(crate) fn has_inline_body(&self) -> bool {
+        self.inline_body
     }
 
     pub fn parameters(&self) -> &[CParameter] {
