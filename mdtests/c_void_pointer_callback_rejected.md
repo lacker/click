@@ -34,5 +34,5 @@ int32 caller(int32 *value) {
 ```
 
 ```expect
-fail: no compatible target for function pointer
+fail: callback signature mismatch
 ```
