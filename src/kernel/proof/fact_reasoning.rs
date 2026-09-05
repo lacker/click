@@ -928,13 +928,12 @@ pub(crate) fn check_pointer_alignment_arithmetic(
     goal: &Proposition,
     premises: &[Proposition],
 ) -> bool {
-    let Proposition::ConditionIs(condition, value) = goal else {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), value) = goal else {
         return false;
     };
-    let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
-        return false;
-    };
-    assumptions_from_propositions(premises).decide_pointer_alignment(pointer, alignment)
+    let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+    assumptions_from_propositions(premises)
+        .decide_pointer_word_equality_citing(left, right, &mut used)
         == Some(*value)
 }
 

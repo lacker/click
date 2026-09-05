@@ -1685,6 +1685,17 @@ impl ConditionTerm {
     }
 
     pub(crate) fn uint64_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        // A value masked by a constant is bounded by that mask, so a tag
+        // read `word & m` is below any bound above `m`.
+        if let (Bitvector32Term::UInt64BitwiseAnd(masked_left, masked_right), Some(bound)) =
+            (&left, right.uint64_as_const())
+            && let Some(mask) = masked_left
+                .uint64_as_const()
+                .or_else(|| masked_right.uint64_as_const())
+            && mask < bound
+        {
+            return Self::Constant(true);
+        }
         match (left.uint64_as_const(), right.uint64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left < right),
             _ => Self::Bitvector64UnsignedLessThan(Box::new(left), Box::new(right)),
@@ -1737,6 +1748,25 @@ impl ConditionTerm {
                 ))
             }
             _ => None,
+        }
+    }
+
+    /// The same relation with its operands swapped, for looking up a stored
+    /// fact in either orientation. Symmetric relations flip to their mirror
+    /// image; other conditions are returned unchanged.
+    pub(crate) fn flipped(&self) -> Self {
+        match self {
+            Self::Bitvector32Equal(left, right) => {
+                Self::Bitvector32Equal(right.clone(), left.clone())
+            }
+            Self::Bitvector64Equal(left, right) => {
+                Self::Bitvector64Equal(right.clone(), left.clone())
+            }
+            Self::PointerEqual(left, right) => Self::PointerEqual(right.clone(), left.clone()),
+            Self::PointerOffsetEqual(left, right) => {
+                Self::PointerOffsetEqual(right.clone(), left.clone())
+            }
+            other => other.clone(),
         }
     }
 

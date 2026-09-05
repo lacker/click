@@ -111,6 +111,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact facts an atomic pointer-word equality decision
+    /// retained.
+    pub fn pointer_word_premises(&self) -> Option<&[Proposition]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::PointerWord(evidence),
+                ..
+            } => Some(&evidence.premises),
+            _ => None,
+        }
+    }
+
     /// Return the base-alignment premise an atomic pointer-alignment
     /// decision retained; the inner `None` marks an intrinsic heap base.
     pub fn pointer_alignment_premise(&self) -> Option<Option<&Proposition>> {
@@ -844,6 +856,10 @@ impl PureFactContext {
             && std::sync::Arc::ptr_eq(
                 &self.bitvector_equality_facts,
                 &other.bitvector_equality_facts,
+            )
+            && std::sync::Arc::ptr_eq(
+                &self.bitvector64_equality_facts,
+                &other.bitvector64_equality_facts,
             )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)

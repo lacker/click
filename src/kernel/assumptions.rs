@@ -1420,6 +1420,48 @@ impl PureFactContext {
     pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
         self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.bitvector64_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+    }
+
+    fn bitvector64_equality_index(
+        &self,
+    ) -> &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>> {
+        self.bitvector64_equality_facts.get_or_init(|| {
+            let mut index: BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>> =
+                BTreeMap::new();
+            for (condition, value) in self.condition_facts.iter() {
+                let (ConditionTerm::Bitvector64Equal(left, right), true) = (condition, value)
+                else {
+                    continue;
+                };
+                index
+                    .entry(left.as_ref().clone())
+                    .or_default()
+                    .insert(right.as_ref().clone(), condition.clone());
+                index
+                    .entry(right.as_ref().clone())
+                    .or_default()
+                    .insert(left.as_ref().clone(), condition.clone());
+            }
+            index
+        })
+    }
+
+    /// The terms recorded as 64-bit equal to `term` by one exact fact, each
+    /// with the stored fact so a certificate can cite it exactly.
+    pub(in crate::kernel) fn recorded_uint64_equals(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Vec<(Bitvector32Term, ConditionTerm)> {
+        self.bitvector64_equality_index()
+            .get(term)
+            .map(|neighbors| {
+                neighbors
+                    .iter()
+                    .map(|(equal, fact)| (equal.clone(), fact.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn bitvector_equality_index(

@@ -10523,7 +10523,13 @@ impl Parser {
                 struct_name: Some(struct_name),
                 ..
             } => Some(struct_name.clone()),
-            C0Expression::Cast { expression, .. } => self.struct_pointer_name(expression),
+            // A cast to another pointer type keeps the struct identity of
+            // the pointer underneath; a cast to an integer does not, so an
+            // `(unsigned long)p + 1` is integer arithmetic, not scaled
+            // struct-pointer arithmetic.
+            C0Expression::Cast {
+                expression, c_type, ..
+            } if c_type.is_pointer() => self.struct_pointer_name(expression),
             C0Expression::Add(left, _) | C0Expression::Subtract(left, _) => {
                 self.struct_pointer_name(left)
             }

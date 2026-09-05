@@ -3335,6 +3335,29 @@ pub(super) fn plan_recorded_bitvector_equality_path(
     Some(tactics)
 }
 
+/// A pointer-word equality decision is certified by one `arithmetic using`
+/// step naming every retained fact, or by `normalize` when it used none.
+pub(super) fn plan_recorded_pointer_word(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let premises = derivation.pointer_word_premises()?;
+    if premises.is_empty() {
+        return normalizes_context_free(goal).then(|| vec![ProofTactic::Normalize]);
+    }
+    let surfaces = premises
+        .iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == premise)
+                .map(|(_, surface)| surface.clone())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(vec![ProofTactic::ArithmeticUsing(surfaces)])
+}
+
 /// A pointer-alignment decision is certified by one `arithmetic using` step
 /// naming the retained base fact, or as `normalize` when the base is a heap
 /// allocation and the alignment is intrinsic.

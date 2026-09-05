@@ -855,19 +855,22 @@ fn cast_c_value_to_type(
             CValue::UInt64(term) | CValue::Int64(term)
                 if !matches!(target_type, CType::FunctionPointer(_)) =>
             {
-                return match term {
-                    Bitvector32Term::PointerAddress(pointer) => {
-                        Ok(CValue::typed_pointer(*pointer, target_type))
-                    }
-                    term if term.uint64_as_const() == Some(0) => {
-                        Ok(CValue::typed_pointer(Pointer::null(), target_type))
-                    }
-                    _ => Err(CRuntimeError::PointerConversion(
+                if term.uint64_as_const() == Some(0) {
+                    return Ok(CValue::typed_pointer(Pointer::null(), target_type));
+                }
+                return match super::pointer_tags::cast_tagged_address_to_pointer(
+                    &term,
+                    assumptions,
+                    obligations,
+                ) {
+                    Ok(Some(pointer)) => Ok(CValue::typed_pointer(pointer, target_type)),
+                    Ok(None) => Err(CRuntimeError::PointerConversion(
                         "integer-to-pointer cast requires a value that is a recorded pointer \
                          address or zero; an integer without pointer origin cannot become a \
                          pointer"
                             .to_string(),
                     )),
+                    Err(message) => Err(CRuntimeError::PointerConversion(message)),
                 };
             }
             value => {

@@ -27,6 +27,9 @@ impl PureFactContext {
                 let (pointer, alignment) = condition.as_pointer_alignment()?;
                 self.decide_pointer_alignment(pointer, alignment)
             }
+            ConditionTerm::Bitvector64Equal(left, right) => {
+                self.decide_uint64_equality_extras(left, right)
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {
                     Some(true)

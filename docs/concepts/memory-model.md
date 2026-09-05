@@ -30,8 +30,21 @@ original block, offset, and provenance. Two addresses are equal exactly when
 their pointers are equal, an address is zero exactly when its pointer is null,
 and an address compared with an integer that has no pointer origin is not
 decided either way. Integer coincidence therefore never manufactures an
-allocation identity. Null converts to the integer zero. Tag arithmetic on an
-address is not yet modeled.
+allocation identity. Null converts to the integer zero.
+
+Tag arithmetic keeps the address form. `address(p) + t` is an exact integer
+identity, so additions track a tagged word without any obligation. A bit
+operation relies on the low address bits being zero: clearing them with
+`& ~m` keeps the address with a masked tag, reading them with `& m` yields
+the masked tag alone, and setting them with `| b` folds into the tag. Each
+such step is valid only under `aligned(p, a)` for the alignment `a` the mask
+presumes and the tag below `a`, so a tag can never carry into or read an
+address bit. Evaluation never rewrites a word; equality decisions apply these
+rules when their conditions are decided, and the cast back to a pointer
+records undecided ones as obligations, fails promptly on a refuted one, and
+additionally requires the tag proven zero, by a mask or by any other fact. A
+word whose tagged form is known only through a contract or resource equality,
+such as `node->word == address(next) + tag`, gets the same treatment.
 
 Alignment is evidence, not a property of the pointee type. `aligned(p, n)`
 holds when the address of `p` is a multiple of `n`; Click derives it from a

@@ -1636,6 +1636,21 @@ impl PureFactContext {
             .map(|evidence| {
                 AtomicPropositionDerivationEvidence::ForallInt32Instantiation(Box::new(evidence))
             });
+        let pointer_word_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), value) => {
+                let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+                self.decide_pointer_word_equality_citing(left, right, &mut used)
+                    .filter(|decided| decided == value && used.complete)
+                    .map(|_| {
+                        AtomicPropositionDerivationEvidence::PointerWord(Box::new(
+                            PointerWordEvidence {
+                                premises: used.premises,
+                            },
+                        ))
+                    })
+            }
+            _ => None,
+        };
         let pointer_alignment_evidence = match proposition {
             Proposition::ConditionIs(condition, value) => condition
                 .as_pointer_alignment()
@@ -1683,6 +1698,7 @@ impl PureFactContext {
             .or(equal_one_predecessor_is_zero_evidence)
             .or(forall_instantiation_evidence)
             .or(pointer_alignment_evidence)
+            .or(pointer_word_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1725,6 +1741,29 @@ impl PureFactContext {
         premises_id: u64,
         evidence: &AtomicPropositionDerivationEvidence,
     ) -> bool {
+        if let AtomicPropositionDerivationEvidence::PointerWord(evidence) = evidence {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), value) =
+                proposition
+            else {
+                return false;
+            };
+            if evidence
+                .premises
+                .iter()
+                .any(|premise| !self.contains_assumed_exact(premise))
+            {
+                return false;
+            }
+            let premises = evidence
+                .premises
+                .iter()
+                .fold(PureFactContext::new(), |context, premise| {
+                    context.assume_proposition(premise.clone())
+                });
+            let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+            return premises.decide_pointer_word_equality_citing(left, right, &mut used)
+                == Some(*value);
+        }
         if let AtomicPropositionDerivationEvidence::PointerAlignment(evidence) = evidence {
             let Proposition::ConditionIs(condition, value) = proposition else {
                 return false;

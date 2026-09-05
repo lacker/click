@@ -1060,7 +1060,11 @@ under the LP64 profile. It is the spec spelling of the C cast
 the exact source pointer, so `address(p) == address(q)` is decided exactly as
 `p == q`, `address(p) == 0` as `p == 0`, and a comparison with an integer that
 has no pointer origin stays undecided. Contracts use it to describe words that
-hold a pointer in integer form, such as `ensures node->word == address(next)`.
+hold a pointer in integer form, such as `ensures node->word == address(next)`
+or, for a tagged word, `requires node->word == address(next) + 1`. Tag
+operations on such words (`+`, `|`, `& ~m`, `& m`) and the cast back to a
+pointer are checked rewrites whose obligations come from `aligned`; the
+memory model describes the rules.
 
 The low-level reads and `byte_offset` are Surface Click escape hatches, not
 Kernel Click syntax. The canonical

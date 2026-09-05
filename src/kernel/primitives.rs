@@ -2610,6 +2610,15 @@ pub struct PointerAlignmentEvidence {
     pub(super) premise: Option<Proposition>,
 }
 
+/// The exact facts a pointer-word equality decision rested on: recorded
+/// address forms of words, base alignments, tag bounds, and pointer
+/// equalities. Checking the decision from exactly these facts re-derives
+/// the same value.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PointerWordEvidence {
+    pub(super) premises: Vec<Proposition>,
+}
+
 /// One exact ground-int32 equality edge retained in the orientation selected
 /// by an atomic derivation. `premise` is the exact context proposition; the
 /// source/target orientation may be the reverse of its written equality.
@@ -2811,11 +2820,18 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32LeAndNotLtImpliesEquality(Box<Int32LeAndNotLtEqualityEvidence>),
     Int32GeAndNotGtImpliesEquality(Box<Int32GeAndNotGtEqualityEvidence>),
     PointerAlignment(Box<PointerAlignmentEvidence>),
+    PointerWord(Box<PointerWordEvidence>),
     Legacy,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
+    /// True 64-bit equalities as an undirected adjacency map, derived
+    /// lazily from `condition_facts`. Pointer-tag reasoning uses it to find
+    /// the recorded address form of a word without scanning every fact.
+    pub(super) bitvector64_equality_facts: std::sync::Arc<
+        std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>>>,
+    >,
     /// The pure function definitions constant applications evaluate by.
     pub(super) pure_function_definitions: std::sync::Arc<SpecPureFunctionDefinitions>,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,

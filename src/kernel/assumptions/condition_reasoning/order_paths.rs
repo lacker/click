@@ -47,8 +47,10 @@ impl PureFactContext {
                 {
                     return self.decide(&pointer_condition);
                 }
-                let (pointer, alignment) = condition.as_pointer_alignment()?;
-                self.decide_pointer_alignment(pointer, alignment)
+                if let Some((pointer, alignment)) = condition.as_pointer_alignment() {
+                    return self.decide_pointer_alignment(pointer, alignment);
+                }
+                self.decide_uint64_equality_extras(left, right)
             }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -979,6 +981,11 @@ impl PureFactContext {
         if !alignment.is_power_of_two() {
             return None;
         }
+        // The null pointer's address is zero, which every alignment divides.
+        let null_fact = ConditionTerm::pointer_equal(pointer.clone(), Pointer::null());
+        if self.decide(&null_fact) == Some(true) {
+            return Some((true, Some(Proposition::ConditionIs(null_fact, true))));
+        }
         let (base, displacement) = split_constant_displacement(&pointer.offset);
         let premise = if matches!(pointer.block, PointerBlock::Heap(_))
             && base.as_const() == Some(0)
@@ -1003,6 +1010,163 @@ impl PureFactContext {
             }
         };
         Some((displacement.rem_euclid(alignment as i64) == 0, premise))
+    }
+}
+
+impl PureFactContext {
+    /// Equalities the address and tag structure decides beyond the plain
+    /// address rules: two tagged addresses, a tagged address against zero,
+    /// a masked tag against a value, and a masked term against zero.
+    pub(in crate::kernel) fn decide_uint64_equality_extras(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+        self.decide_uint64_equality_extras_citing(left, right, &mut used)
+    }
+
+    /// The complete pointer-word decision for a 64-bit equality, citing the
+    /// exact facts used: the address rule, the alignment rule, and the tag
+    /// extras, in that order.
+    pub(in crate::kernel) fn decide_pointer_word_equality_citing(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        used: &mut crate::kernel::eval::pointer_tags::UsedFacts,
+    ) -> Option<bool> {
+        if let Some(pointer_condition) =
+            ConditionTerm::address_equality_as_pointer_equality(left, right)
+        {
+            return self.decide_citing(&pointer_condition, used);
+        }
+        let condition =
+            ConditionTerm::Bitvector64Equal(Box::new(left.clone()), Box::new(right.clone()));
+        if let Some((pointer, alignment)) = condition.as_pointer_alignment() {
+            let (aligned, premise) = self.pointer_alignment_decision(pointer, alignment)?;
+            if let Some(premise) = premise {
+                used.premises.push(premise);
+            }
+            return Some(aligned);
+        }
+        self.decide_uint64_equality_extras_citing(left, right, used)
+    }
+
+    fn decide_uint64_equality_extras_citing(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        used: &mut crate::kernel::eval::pointer_tags::UsedFacts,
+    ) -> Option<bool> {
+        use crate::kernel::eval::pointer_tags::{masked_tag_value, tagged_address_form};
+        let left_form = tagged_address_form(left, self, used);
+        let right_form = tagged_address_form(right, self, used);
+        match (left_form, right_form) {
+            (Some(left), Some(right)) => {
+                if left.tag == right.tag {
+                    return self.decide_citing(
+                        &ConditionTerm::pointer_equal(left.pointer, right.pointer),
+                        used,
+                    );
+                }
+                if left.pointer == right.pointer {
+                    return self
+                        .decide_citing(&ConditionTerm::uint64_equal(left.tag, right.tag), used);
+                }
+                let (Some(left_tag), Some(right_tag)) =
+                    (left.tag.uint64_as_const(), right.tag.uint64_as_const())
+                else {
+                    return None;
+                };
+                let alignment = left_tag
+                    .max(right_tag)
+                    .checked_add(1)?
+                    .checked_next_power_of_two()?;
+                let distinct = self.decide_citing(
+                    &ConditionTerm::pointer_equal(left.pointer.clone(), right.pointer.clone()),
+                    used,
+                ) == Some(false);
+                let both_aligned = self.decide_citing(
+                    &ConditionTerm::pointer_aligned(left.pointer, alignment),
+                    used,
+                ) == Some(true)
+                    && self.decide_citing(
+                        &ConditionTerm::pointer_aligned(right.pointer, alignment),
+                        used,
+                    ) == Some(true);
+                // Distinct aligned bases differ by at least `alignment`, so
+                // tags below it cannot make the words coincide.
+                (distinct && both_aligned).then_some(false)
+            }
+            (Some(form), None) | (None, Some(form)) => {
+                let left_is_form =
+                    tagged_address_form(left, self, &mut Default::default()).is_some();
+                let other = if left_is_form { right } else { left };
+                if other.uint64_as_const() != Some(0) {
+                    return None;
+                }
+                let tag = form.tag.uint64_as_const()?;
+                let alignment = tag.checked_add(1)?.checked_next_power_of_two()?;
+                let nonnull = self.decide_citing(
+                    &ConditionTerm::pointer_equal(form.pointer.clone(), Pointer::null()),
+                    used,
+                ) == Some(false);
+                let aligned = self.decide_citing(
+                    &ConditionTerm::pointer_aligned(form.pointer, alignment),
+                    used,
+                ) == Some(true);
+                // A non-null base aligned to `alignment` is at least
+                // `alignment`, so adding a smaller tag cannot reach zero.
+                (nonnull && aligned).then_some(false)
+            }
+            (None, None) => {
+                if let Some(tag) = masked_tag_value(left, self, used) {
+                    return self
+                        .decide_citing(&ConditionTerm::uint64_equal(tag, right.clone()), used);
+                }
+                if let Some(tag) = masked_tag_value(right, self, used) {
+                    return self
+                        .decide_citing(&ConditionTerm::uint64_equal(left.clone(), tag), used);
+                }
+                self.decide_masked_zero(left, right, used)
+            }
+        }
+    }
+
+    /// `(x & m) == 0` holds when `x` is below the lowest set bit of `m`.
+    fn decide_masked_zero(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        used: &mut crate::kernel::eval::pointer_tags::UsedFacts,
+    ) -> Option<bool> {
+        let masked = if right.uint64_as_const() == Some(0) {
+            left
+        } else if left.uint64_as_const() == Some(0) {
+            right
+        } else {
+            return None;
+        };
+        let Bitvector32Term::UInt64BitwiseAnd(first, second) = masked else {
+            return None;
+        };
+        let (value, mask) = match (first.uint64_as_const(), second.uint64_as_const()) {
+            (None, Some(mask)) => (first, mask),
+            (Some(mask), None) => (second, mask),
+            _ => return None,
+        };
+        if mask == 0 {
+            return Some(true);
+        }
+        let bound = 1u64.checked_shl(mask.trailing_zeros())?;
+        (self.decide_citing(
+            &ConditionTerm::uint64_less_than(
+                value.as_ref().clone(),
+                Bitvector32Term::UInt64Constant(bound),
+            ),
+            used,
+        ) == Some(true))
+        .then_some(true)
     }
 }
 

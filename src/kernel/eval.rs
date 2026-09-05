@@ -3,6 +3,7 @@ use super::prelude::*;
 mod expression;
 mod memory_loads;
 mod operators;
+pub(in crate::kernel) mod pointer_tags;
 mod statements;
 
 /// Retain each sequential volatile access as a unique, kernel-certified fact.

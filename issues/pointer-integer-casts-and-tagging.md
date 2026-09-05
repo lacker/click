@@ -198,6 +198,18 @@ alignment should be recorded once at block creation), stack aggregates
 (struct locals), symbolic displacements, and derivation from struct-object
 resources.
 
+Slice 3 landed the same day: tagged words `address(p) + t` are recognized
+through exact identities and, under decided alignment and tag-bound
+conditions, through `| b`, `& ~m`, and `& m`; the cast back records
+undecided conditions as obligations and fails promptly on refuted ones; a
+word's form may come from one recorded 64-bit equality such as a contract
+or resource fact. Equalities between tagged words, against zero, and of
+masked tags are decided with a typed `PointerWord` evidence whose
+certificate is one `arithmetic() using` step naming the facts used.
+Regressions are `mdtests/tagged_pointer_*.md`. The C0 front end no longer
+carries a struct identity through a cast to an integer, so
+`(unsigned long)p + 1` is integer arithmetic.
+
 1. The provenance-carrying integer term, the pointer-to-`unsigned long`
    cast, cast-back when the term is syntactically an untagged address, and
    the equality rule. Covers `rb_link_node` and `RB_EMPTY_NODE`.
