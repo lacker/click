@@ -434,6 +434,7 @@ pub struct FunctionParameter {
     c_type: C0Type,
     name: String,
     struct_name: Option<String>,
+    function_pointer_signature: Option<syntax::C0FunctionPointerSignature>,
     constant: bool,
     pointee_constant: bool,
 }
@@ -3478,6 +3479,10 @@ impl FunctionParameter {
 
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
+    }
+
+    pub fn function_pointer_signature(&self) -> Option<&syntax::C0FunctionPointerSignature> {
+        self.function_pointer_signature.as_ref()
     }
 
     pub fn is_constant(&self) -> bool {

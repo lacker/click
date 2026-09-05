@@ -33,17 +33,20 @@ unsupported deeper indirection.
 - Loads and stores through `struct S **` preserve the stored pointer's
   provenance and update precisely one pointer-width cell.
 - Function parameters, returns where supported, function-pointer signatures,
-  contracts, and resource footprints can name the type.
+  and resource footprints can name the type; higher-order callback contracts
+  remain separately tracked.
 - Incompatible struct identities are rejected rather than collapsed to the
   existing generic `int32 **` representation at the C0 boundary. The generic
   kernel cell representation is safe only after that check has succeeded.
 - The rbtree link-walk regression and `scripts/check.sh` pass.
 
-The first implementation slices cover local, parameter, and file-scope
-`struct S **` objects, direct and nested field addresses, `*link` pointer-cell
-stores, and nominal identity across pointer-valued function returns. Callback
-signatures and function-pointer parameters remain coupled to the broader
-function-type work; they should extend this same metadata check rather than
-introduce a second pointer representation.
+The implementation slices cover local, parameter, and file-scope `struct S **`
+objects, direct and nested field addresses, `*link` pointer-cell stores, and
+nominal identity across pointer-valued function returns. Function-pointer
+parameters and locals now retain nominal struct-pointer tags in callback
+metadata, check known callback targets and indirect arguments before lowering,
+and keep the kernel's generic pointer representation. Contract effects for
+abstract callbacks remain tracked separately in
+`issues/higher-order-callback-contracts.md`.
 
 Related: [struct-model.md](struct-model.md).

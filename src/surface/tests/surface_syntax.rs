@@ -152,6 +152,7 @@ fn parses_checked_signature_and_contract_clauses() {
             c_type: C0Type::Int32Pointer,
             name: "p".to_string(),
             struct_name: None,
+            function_pointer_signature: None,
             constant: false,
             pointee_constant: false,
         }]
@@ -253,6 +254,7 @@ fn parses_pure_theorem_definition() {
             c_type: C0Type::Int32,
             name: "x".to_string(),
             struct_name: None,
+            function_pointer_signature: None,
             constant: false,
             pointee_constant: false,
         }]
@@ -1565,6 +1567,7 @@ fn parses_array_parameter_signature_as_pointer() {
             c_type: C0Type::Int32Pointer,
             name: "p".to_string(),
             struct_name: None,
+            function_pointer_signature: None,
             constant: false,
             pointee_constant: false,
         }]
@@ -1592,6 +1595,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             c_type: C0Type::Int32Pointer,
             name: "obj".to_string(),
             struct_name: Some("json_object".to_string()),
+            function_pointer_signature: None,
             constant: false,
             pointee_constant: false,
         }]
@@ -1620,6 +1624,23 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
                 ContractExpression::Field { field, .. } if field == "ref_count"
             )
     ));
+}
+
+#[test]
+fn parses_struct_pointer_callback_signature() {
+    let source = r#"
+            verifying "struct_callback.c";
+
+            int32 apply(struct node* (*callback)(struct node*), struct node* node) {
+                ensures result == result by auto;
+            }
+        "#;
+    let file = parse(source).expect("struct-pointer callback signature should parse");
+    let callback = file.function_blocks()[0].signature().parameters()[0]
+        .function_pointer_signature()
+        .expect("callback metadata");
+    assert_eq!(callback.return_struct_name(), Some("node"));
+    assert_eq!(callback.parameters()[0].struct_name(), Some("node"));
 }
 
 #[test]

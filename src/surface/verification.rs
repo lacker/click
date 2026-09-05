@@ -3042,6 +3042,7 @@ pub(in crate::surface) fn check_signature(
         if expected.c_type() != actual.c_type()
             || expected.name() != actual.name()
             || expected.struct_name() != actual.struct_name()
+            || expected.function_pointer_signature() != actual.function_pointer_signature()
         {
             return Err(ClickError::new(format!(
                 "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {} {}, C has {} {}",

@@ -1110,11 +1110,76 @@ pub struct C0Parameter {
     pointee_constant: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
+    function_pointer_signature: Option<C0FunctionPointerSignature>,
     /// The ABI width of one element when the source parameter was declared as
     /// an array of structs. The public C0 type remains the compatible
     /// struct-pointer placeholder, while the kernel uses byte addressing for
     /// the lowered indexed field accesses.
     array_element_width: Option<u32>,
+}
+
+/// The nominal part of a callback signature that the kernel's structural
+/// `CType::FunctionPointer` deliberately does not carry.  The ABI signature
+/// remains structural; these tags are checked while parsing C0 expressions so
+/// `struct left *` and `struct right *` cannot silently become interchangeable
+/// callback arguments.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0FunctionPointerParameter {
+    c_type: C0Type,
+    struct_name: Option<String>,
+}
+
+impl C0FunctionPointerParameter {
+    pub(crate) fn new(c_type: C0Type, struct_name: Option<String>) -> Self {
+        Self {
+            c_type,
+            struct_name,
+        }
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
+    }
+}
+
+/// Nominal metadata for a function-pointer type.  `c_type` and the kernel
+/// signature key still describe the ABI shape; `struct_name` retains the C
+/// spelling needed for boundary checks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0FunctionPointerSignature {
+    return_type: C0Type,
+    return_struct_name: Option<String>,
+    parameters: Vec<C0FunctionPointerParameter>,
+}
+
+impl C0FunctionPointerSignature {
+    pub(crate) fn new(
+        return_type: C0Type,
+        return_struct_name: Option<String>,
+        parameters: Vec<C0FunctionPointerParameter>,
+    ) -> Self {
+        Self {
+            return_type,
+            return_struct_name,
+            parameters,
+        }
+    }
+
+    pub fn return_type(&self) -> C0Type {
+        self.return_type
+    }
+
+    pub fn return_struct_name(&self) -> Option<&str> {
+        self.return_struct_name.as_deref()
+    }
+
+    pub fn parameters(&self) -> &[C0FunctionPointerParameter] {
+        &self.parameters
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1905,6 +1970,7 @@ impl C0Parameter {
             pointee_constant: false,
             struct_name,
             struct_layout: None,
+            function_pointer_signature: None,
             array_element_width: None,
         }
     }
@@ -1953,6 +2019,10 @@ impl C0Parameter {
 
     pub fn array_element_width(&self) -> Option<u32> {
         self.array_element_width
+    }
+
+    pub fn function_pointer_signature(&self) -> Option<&C0FunctionPointerSignature> {
+        self.function_pointer_signature.as_ref()
     }
 
     pub fn is_struct_value(&self) -> bool {
@@ -3154,6 +3224,7 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
+    variable_function_pointers: BTreeMap<String, C0FunctionPointerSignature>,
     variable_constants: BTreeSet<String>,
     variable_pointee_constants: BTreeSet<String>,
     unions: BTreeMap<String, C0UnionLayout>,
@@ -3250,6 +3321,7 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
+            variable_function_pointers: BTreeMap::new(),
             variable_constants: BTreeSet::new(),
             variable_pointee_constants: BTreeSet::new(),
             unions: BTreeMap::new(),
@@ -3291,6 +3363,7 @@ impl Parser {
             self.variable_struct_values.remove(&binding.kernel_name);
             self.variable_array_shapes.remove(&binding.kernel_name);
             self.variable_types.remove(&binding.kernel_name);
+            self.variable_function_pointers.remove(&binding.kernel_name);
             self.variable_constants.remove(&binding.kernel_name);
             self.variable_pointee_constants.remove(&binding.kernel_name);
         }
@@ -5071,11 +5144,13 @@ impl Parser {
                     "the small volatile model does not support volatile function-pointer objects",
                 ));
             }
-            if let Some((name, c_type)) =
-                self.parse_function_pointer_declarator(parsed_type.c_type)?
+            if let Some((name, c_type, signature)) =
+                self.parse_function_pointer_declarator(parsed_type.clone())?
             {
                 let kernel_name = self.declare_name(&name)?;
                 self.variable_types.insert(kernel_name.clone(), c_type);
+                self.variable_function_pointers
+                    .insert(kernel_name.clone(), signature.clone());
                 parameters.push(C0Parameter {
                     c_type,
                     name: kernel_name,
@@ -5084,6 +5159,7 @@ impl Parser {
                     constant: false,
                     pointee_constant: false,
                     struct_layout: None,
+                    function_pointer_signature: Some(signature),
                     struct_name: None,
                     array_element_width: None,
                 });
@@ -5161,6 +5237,7 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         struct_layout: struct_value_layout,
+                        function_pointer_signature: None,
                         struct_name,
                         array_element_width: None,
                     });
@@ -5190,6 +5267,7 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
+                        function_pointer_signature: None,
                         struct_name,
                         array_element_width: Some(element_width),
                     });
@@ -5211,6 +5289,7 @@ impl Parser {
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
                     .cloned(),
+                function_pointer_signature: None,
                 struct_name,
                 array_element_width: None,
             });
@@ -5400,21 +5479,31 @@ impl Parser {
     }
 
     /// Parses the parenthesized declarator in `int32 (*callback)(int32)`.
-    /// The pointed-to signature is structural, so names in the nested
-    /// parameter list are intentionally ignored.
+    /// The kernel receives a structural signature key, while the returned
+    /// metadata retains nominal struct-pointer tags for C0 boundary checks.
     fn parse_function_pointer_declarator(
         &mut self,
-        return_type: C0Type,
-    ) -> Result<Option<(String, C0Type)>, C0SyntaxError> {
+        return_type: ParsedType,
+    ) -> Result<Option<(String, C0Type, C0FunctionPointerSignature)>, C0SyntaxError> {
         if self.peek() != Some(&Token::LParen) {
             return Ok(None);
+        }
+        if return_type.struct_name.is_some() && !return_type.c_type.is_pointer() {
+            return Err(self.error_here(
+                "function-pointer return values must use modeled scalars or struct pointers",
+            ));
+        }
+        if let Some(struct_name) = &return_type.struct_name
+            && !self.structs.contains_key(struct_name)
+        {
+            return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
         }
         self.position += 1;
         self.expect(Token::Star)?;
         let name = self.expect_ident("function-pointer name")?;
         self.expect(Token::RParen)?;
         self.expect(Token::LParen)?;
-        let mut parameter_types = Vec::new();
+        let mut parameters = Vec::new();
         if self.peek() != Some(&Token::RParen) {
             loop {
                 let parsed_type = self.parse_type()?;
@@ -5423,13 +5512,28 @@ impl Parser {
                         "volatile function-pointer parameters are not supported by the small model",
                     ));
                 }
-                if parsed_type.struct_name.is_some() || parsed_type.c_type == C0Type::Void {
-                    return Err(self.error_here(
-                        "function-pointer parameters must use modeled non-struct types",
-                    ));
+                if parsed_type.c_type == C0Type::Void {
+                    return Err(
+                        self.error_here("function-pointer parameters cannot have type `void`")
+                    );
                 }
                 let parameter_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
-                parameter_types.push(parameter_type);
+                if parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32 {
+                    return Err(
+                        self.error_here("function-pointer parameters cannot pass structs by value")
+                    );
+                }
+                if let Some(struct_name) = &parsed_type.struct_name
+                    && !self.structs.contains_key(struct_name)
+                {
+                    return Err(
+                        self.error_here(format!("unknown struct declaration `{struct_name}`"))
+                    );
+                }
+                parameters.push(C0FunctionPointerParameter::new(
+                    parameter_type,
+                    parsed_type.struct_name,
+                ));
                 if matches!(self.peek(), Some(Token::Ident(_))) {
                     self.position += 1;
                 }
@@ -5449,18 +5553,17 @@ impl Parser {
             }
         }
         self.expect(Token::RParen)?;
-        if parameter_types.len() > 13 {
+        if parameters.len() > 13 {
             return Err(
                 self.error_here("function-pointer signatures support at most 13 parameters")
             );
         }
-        let parameter_types = parameter_types
+        let parameter_types = parameters
             .iter()
-            .copied()
-            .map(C0Type::to_kernel_type)
+            .map(|parameter| parameter.c_type.to_kernel_type())
             .collect::<Vec<_>>();
         let signature = crate::kernel::CType::function_pointer_signature(
-            return_type.to_kernel_type(),
+            return_type.c_type.to_kernel_type(),
             &parameter_types,
         );
         if signature == 0 {
@@ -5468,7 +5571,16 @@ impl Parser {
                 self.error_here("function-pointer signature uses an unsupported modeled type")
             );
         }
-        Ok(Some((name, C0Type::FunctionPointer(signature))))
+        let function_pointer_signature = C0FunctionPointerSignature::new(
+            return_type.c_type,
+            return_type.struct_name,
+            parameters,
+        );
+        Ok(Some((
+            name,
+            C0Type::FunctionPointer(signature),
+            function_pointer_signature,
+        )))
     }
 
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
@@ -7087,13 +7199,15 @@ impl Parser {
                     "const-qualified function-pointer declarations are not supported in this slice",
                 ));
             }
-            let Some((name, c_type)) =
-                self.parse_function_pointer_declarator(parsed_type.c_type)?
+            let Some((name, c_type, signature)) =
+                self.parse_function_pointer_declarator(parsed_type)?
             else {
                 unreachable!("function-pointer declarator starts with a parenthesis");
             };
             let kernel_name = self.declare_name(&name)?;
             self.variable_types.insert(kernel_name.clone(), c_type);
+            self.variable_function_pointers
+                .insert(kernel_name.clone(), signature.clone());
             let declaration = C0Statement::Declare {
                 c_type,
                 name: kernel_name.clone(),
@@ -7105,6 +7219,7 @@ impl Parser {
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
                 let expression = self.parse_expression()?;
+                self.validate_function_pointer_value(&signature, &expression)?;
                 C0Statement::Seq(
                     Box::new(declaration),
                     Box::new(C0Statement::Assign {
@@ -7831,6 +7946,7 @@ impl Parser {
         }
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
+        self.validate_function_pointer_assignment(&name, &expression)?;
         Ok(C0Statement::Assign { name, expression })
     }
 
@@ -7914,6 +8030,7 @@ impl Parser {
                         self.variable_pointee_is_constant(&name),
                         &expression,
                     )?;
+                    self.validate_function_pointer_assignment(&name, &expression)?;
                     expression
                 }
             }
@@ -7978,6 +8095,7 @@ impl Parser {
                 self.variable_types.get(&name).copied(),
                 &expression,
             )?;
+            self.validate_function_pointer_assignment(&name, &expression)?;
         }
         Ok(C0Statement::Assign { name, expression })
     }
@@ -9040,6 +9158,13 @@ impl Parser {
                         self.variable_structs
                             .insert(target.clone(), struct_name.clone());
                     }
+                } else if let Some(signature) = self.variable_function_pointers.get(&function_name)
+                    && let Some(struct_name) = &signature.return_struct_name
+                {
+                    self.variable_types
+                        .insert(target.clone(), signature.return_type);
+                    self.variable_structs
+                        .insert(target.clone(), struct_name.clone());
                 }
                 prefix.push(C0Statement::CallAssign {
                     target: target.clone(),
@@ -9365,6 +9490,19 @@ impl Parser {
         loop {
             let argument_index = arguments.len();
             let expression = self.parse_expression_allow_direct_aggregate()?;
+            if let Some((parameter_type, struct_name, function_pointer_signature)) =
+                self.call_parameter_metadata(function_name, argument_index)
+            {
+                if let Some(signature) = function_pointer_signature.as_ref() {
+                    self.validate_function_pointer_value(signature, &expression)?;
+                } else if let Some(struct_name) = struct_name.as_ref() {
+                    self.validate_struct_pointer_assignment(
+                        Some(struct_name),
+                        Some(parameter_type),
+                        &expression,
+                    )?;
+                }
+            }
             let known_scalar_parameter = function_name
                 .and_then(|name| self.function_declarations.get(name))
                 .and_then(|function| function.parameters.get(argument_index))
@@ -9407,6 +9545,85 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn call_parameter_metadata(
+        &self,
+        function_name: Option<&str>,
+        argument_index: usize,
+    ) -> Option<(C0Type, Option<String>, Option<C0FunctionPointerSignature>)> {
+        let function_name = function_name?;
+        if let Some(signature) = self.variable_function_pointers.get(function_name) {
+            return signature
+                .parameters
+                .get(argument_index)
+                .map(|parameter| (parameter.c_type, parameter.struct_name.clone(), None));
+        }
+        self.function_declarations
+            .get(function_name)
+            .and_then(|function| function.parameters.get(argument_index))
+            .map(|parameter| {
+                (
+                    parameter.c_type,
+                    parameter.struct_name.clone(),
+                    parameter.function_pointer_signature.clone(),
+                )
+            })
+    }
+
+    fn function_pointer_signature(
+        &self,
+        expression: &C0Expression,
+    ) -> Option<C0FunctionPointerSignature> {
+        match expression {
+            C0Expression::Variable(name) => self.variable_function_pointers.get(name).cloned(),
+            C0Expression::FunctionAddress(name) => self
+                .function_declarations
+                .get(name)
+                .map(function_pointer_signature_from_header),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_signature = self.function_pointer_signature(then_branch)?;
+                let else_signature = self.function_pointer_signature(else_branch)?;
+                (then_signature == else_signature).then_some(then_signature)
+            }
+            C0Expression::Cast { expression, .. } => self.function_pointer_signature(expression),
+            _ => None,
+        }
+    }
+
+    fn validate_function_pointer_value(
+        &self,
+        expected: &C0FunctionPointerSignature,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if matches!(expression, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        match self.function_pointer_signature(expression) {
+            Some(actual) if actual == *expected => Ok(()),
+            Some(actual) => Err(self.error_here(format!(
+                "callback signature mismatch: expected {}, got {}",
+                describe_function_pointer_signature(expected),
+                describe_function_pointer_signature(&actual)
+            ))),
+            None if matches!(expression, C0Expression::FunctionAddress(_)) => Ok(()),
+            None => Err(self.error_here("expected a compatible function pointer")),
+        }
+    }
+
+    fn validate_function_pointer_assignment(
+        &self,
+        target: &str,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        let Some(expected) = self.variable_function_pointers.get(target) else {
+            return Ok(());
+        };
+        self.validate_function_pointer_value(expected, expression)
     }
 
     fn parse_logical_or(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -10077,16 +10294,13 @@ impl Parser {
             C0Expression::Call { function_name, .. } => self
                 .function_declarations
                 .get(function_name)
-                .filter(|function| {
-                    matches!(
-                        function.return_type,
-                        C0Type::Int32Pointer
-                            | C0Type::UInt8Pointer
-                            | C0Type::Float32Pointer
-                            | C0Type::Float64Pointer
-                    )
+                .map(|function| function.return_pointer_struct_name.clone())
+                .or_else(|| {
+                    self.variable_function_pointers
+                        .get(function_name)
+                        .map(|signature| signature.return_struct_name.clone())
                 })
-                .and_then(|function| function.return_pointer_struct_name.clone()),
+                .flatten(),
             C0Expression::Field {
                 field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 field_struct_name: Some(struct_name),
@@ -10133,21 +10347,13 @@ impl Parser {
             C0Expression::Call { function_name, .. } => self
                 .function_declarations
                 .get(function_name)
-                .filter(|function| {
-                    matches!(
-                        function.return_type,
-                        C0Type::Int16PointerPointer
-                            | C0Type::UInt16PointerPointer
-                            | C0Type::Int32PointerPointer
-                            | C0Type::UInt8PointerPointer
-                            | C0Type::UInt32PointerPointer
-                            | C0Type::Int64PointerPointer
-                            | C0Type::UInt64PointerPointer
-                            | C0Type::Float32PointerPointer
-                            | C0Type::Float64PointerPointer
-                    )
+                .map(|function| function.return_pointer_struct_name.clone())
+                .or_else(|| {
+                    self.variable_function_pointers
+                        .get(function_name)
+                        .map(|signature| signature.return_struct_name.clone())
                 })
-                .and_then(|function| function.return_pointer_struct_name.clone()),
+                .flatten(),
             C0Expression::Field {
                 field_type:
                     C0Type::Int16PointerPointer
@@ -10664,6 +10870,37 @@ fn parse_integer_literal_magnitude(literal: &str) -> Result<u64, &'static str> {
         16 => "digits are not valid for a hexadecimal literal or the value is too large",
         _ => "the value is too large",
     })
+}
+
+fn function_pointer_signature_from_header(header: &C0FunctionHeader) -> C0FunctionPointerSignature {
+    C0FunctionPointerSignature::new(
+        header.return_type,
+        header.return_pointer_struct_name.clone(),
+        header
+            .parameters
+            .iter()
+            .map(|parameter| {
+                C0FunctionPointerParameter::new(parameter.c_type, parameter.struct_name.clone())
+            })
+            .collect(),
+    )
+}
+
+fn describe_function_pointer_signature(signature: &C0FunctionPointerSignature) -> String {
+    let parameters = signature
+        .parameters
+        .iter()
+        .map(|parameter| match &parameter.struct_name {
+            Some(name) => format!("struct {name}*"),
+            None => format!("{:?}", parameter.c_type),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let return_type = match &signature.return_struct_name {
+        Some(name) => format!("struct {name}*"),
+        None => format!("{:?}", signature.return_type),
+    };
+    format!("{return_type} ({parameters})")
 }
 
 fn integer_literal_parts(literal: &str) -> (&str, &str) {

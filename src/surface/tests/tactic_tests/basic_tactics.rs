@@ -285,6 +285,7 @@ fn parses_composite_resource_definition() {
             c_type: C0Type::Int32Pointer,
             name: "flag".to_string(),
             struct_name: None,
+            function_pointer_signature: None,
             constant: false,
             pointee_constant: false,
         }]

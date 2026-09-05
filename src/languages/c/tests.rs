@@ -7065,6 +7065,79 @@ fn c0_function_pointers_reject_incompatible_callback_targets() {
 }
 
 #[test]
+fn c0_function_pointer_signatures_preserve_struct_pointer_tags() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct node { int32 value; };
+
+        struct node* identity(struct node* node) {
+            return node;
+        }
+
+        int32 apply(struct node* (*callback)(struct node*), struct node* node) {
+            struct node* result;
+            result = callback(node);
+            return result->value;
+        }
+
+        int32 caller() {
+            struct node* node;
+            node = malloc(sizeof(struct node));
+            node->value = 42;
+            return apply(&identity, node);
+        }
+        "#,
+    )
+    .expect("struct-pointer callback signatures should parse");
+    let apply = functions
+        .iter()
+        .find(|function| function.name() == "apply")
+        .expect("apply function");
+    let signature = apply.parameters()[0]
+        .function_pointer_signature()
+        .expect("callback parameter metadata");
+    assert_eq!(signature.return_struct_name(), Some("node"));
+    assert_eq!(signature.parameters()[0].struct_name(), Some("node"));
+    assert_eq!(
+        signature.parameters()[0].c_type(),
+        syntax::C0Type::Int32Pointer
+    );
+    assert!(format!("{:?}", apply.body()).contains("CallAssign"));
+}
+
+#[test]
+fn c0_function_pointer_signatures_reject_nominally_wrong_struct_targets() {
+    let error = syntax::parse_functions(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+
+        struct left* identity(struct left* node) {
+            return node;
+        }
+
+        int32 apply(struct right* (*callback)(struct right*), struct right* node) {
+            struct right* result;
+            result = callback(node);
+            return result->value;
+        }
+
+        int32 caller() {
+            struct right* node;
+            node = malloc(sizeof(struct right));
+            node->value = 7;
+            return apply(&identity, node);
+        }
+        "#,
+    )
+    .expect_err("callback target with the wrong struct tag should be rejected");
+    assert!(
+        error.message().contains("callback signature mismatch"),
+        "{error}"
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_while_countdown() {
     let function = syntax::parse_function(
         r#"
