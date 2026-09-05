@@ -23,8 +23,11 @@ unsupported deeper indirection.
 
 ## Acceptance criteria
 
-- C0 and the kernel retain the complete `struct S **` type, including struct
-  identity and qualifiers.
+- C0 retains the complete `struct S **` surface type, including its struct-tag
+  metadata and qualifiers. The kernel keeps the existing eight-byte
+  pointer-cell ABI and pointer provenance; nominal struct identity is checked
+  before lowering because kernel `CType` intentionally has no aggregate-tag
+  variant.
 - Address-taking of local, global, direct-field, and nested-field
   `struct S *` lvalues produces the same typed cell pointer.
 - Loads and stores through `struct S **` preserve the stored pointer's
@@ -32,7 +35,15 @@ unsupported deeper indirection.
 - Function parameters, returns where supported, function-pointer signatures,
   contracts, and resource footprints can name the type.
 - Incompatible struct identities are rejected rather than collapsed to the
-  existing generic `int32 **` representation.
+  existing generic `int32 **` representation at the C0 boundary. The generic
+  kernel cell representation is safe only after that check has succeeded.
 - The rbtree link-walk regression and `scripts/check.sh` pass.
+
+The first implementation slice covers local and parameter `struct S **`
+objects, direct and nested field addresses, `*link` pointer-cell stores, and
+the corresponding C0/kernel execution and rejection tests. File-scope pointer
+objects and nominal identity across function-return/callback boundaries remain
+coupled to the global-object and function-type work; they should extend this
+same metadata check rather than introduce a second pointer representation.
 
 Related: [struct-model.md](struct-model.md).

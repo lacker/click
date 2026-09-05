@@ -4947,11 +4947,6 @@ impl Parser {
                     );
                 }
             };
-            if parsed.struct_name.is_some() && c_type != C0Type::Int32Pointer {
-                return Err(
-                    self.error_at_previous("pointer depth beyond `struct S*` is not supported")
-                );
-            }
             if parsed.union_name.is_some() {
                 return Err(
                     self.error_at_previous("pointers to union values are not supported yet")
@@ -6755,6 +6750,11 @@ impl Parser {
                     } else {
                         self.position = call_start;
                         let expression = self.parse_expression()?;
+                        self.validate_struct_pointer_assignment(
+                            self.variable_structs.get(&name),
+                            Some(c_type),
+                            &expression,
+                        )?;
                         C0Statement::Seq(
                             Box::new(declaration),
                             Box::new(C0Statement::Assign { name, expression }),
@@ -6762,6 +6762,11 @@ impl Parser {
                     }
                 } else {
                     let expression = self.parse_expression()?;
+                    self.validate_struct_pointer_assignment(
+                        self.variable_structs.get(&name),
+                        Some(c_type),
+                        &expression,
+                    )?;
                     C0Statement::Seq(
                         Box::new(declaration),
                         Box::new(C0Statement::Assign { name, expression }),
@@ -7365,6 +7370,13 @@ impl Parser {
                 )));
             }
         };
+        if operator == Token::Equal {
+            self.validate_struct_pointer_assignment(
+                self.variable_structs.get(&name),
+                self.variable_types.get(&name).copied(),
+                &expression,
+            )?;
+        }
         Ok(C0Statement::Assign { name, expression })
     }
 
@@ -7418,20 +7430,46 @@ impl Parser {
             }
             let value = self.parse_expression()?;
             return match target {
-                C0Expression::Load(pointer) => Ok(C0Statement::Store {
-                    pointer: *pointer,
-                    value,
-                    value_type: None,
-                }),
+                C0Expression::Load(pointer) => {
+                    if let Some(struct_name) = self.struct_pointer_pointer_name(&pointer) {
+                        self.validate_struct_pointer_value(&struct_name, &value)?;
+                    }
+                    Ok(C0Statement::Store {
+                        pointer: *pointer,
+                        value,
+                        value_type: None,
+                    })
+                }
                 C0Expression::Field {
                     pointer,
                     field_type,
+                    field_struct_name,
                     ..
-                } => Ok(C0Statement::Store {
-                    pointer: *pointer,
-                    value,
-                    value_type: Some(field_type),
-                }),
+                } => {
+                    if let Some(struct_name) = field_struct_name {
+                        if matches!(field_type, C0Type::Int32Pointer | C0Type::UInt8Pointer) {
+                            self.validate_struct_pointer_value(&struct_name, &value)?;
+                        } else if matches!(
+                            field_type,
+                            C0Type::Int16PointerPointer
+                                | C0Type::UInt16PointerPointer
+                                | C0Type::Int32PointerPointer
+                                | C0Type::UInt8PointerPointer
+                                | C0Type::UInt32PointerPointer
+                                | C0Type::Int64PointerPointer
+                                | C0Type::UInt64PointerPointer
+                                | C0Type::Float32PointerPointer
+                                | C0Type::Float64PointerPointer
+                        ) {
+                            self.validate_struct_pointer_pointer_value(&struct_name, &value)?;
+                        }
+                    }
+                    Ok(C0Statement::Store {
+                        pointer: *pointer,
+                        value,
+                        value_type: Some(field_type),
+                    })
+                }
                 C0Expression::AggregateAddress { .. } => unreachable!(
                     "aggregate assignment is handled before scalar memory lvalue matching"
                 ),
@@ -9255,6 +9293,7 @@ impl Parser {
                 field_struct_name: Some(struct_name),
                 ..
             } => Some(struct_name.clone()),
+            C0Expression::Load(pointer) => self.struct_pointer_pointer_name(pointer),
             C0Expression::AddressOf(target) => match target.as_ref() {
                 C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
                 C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
@@ -9265,6 +9304,134 @@ impl Parser {
                 self.struct_pointer_name(left)
             }
             _ => None,
+        }
+    }
+
+    fn struct_pointer_pointer_name(&self, expression: &C0Expression) -> Option<String> {
+        match expression {
+            C0Expression::Variable(name)
+                if matches!(
+                    self.variable_types.get(name),
+                    Some(
+                        C0Type::Int16PointerPointer
+                            | C0Type::UInt16PointerPointer
+                            | C0Type::Int32PointerPointer
+                            | C0Type::UInt8PointerPointer
+                            | C0Type::UInt32PointerPointer
+                            | C0Type::Int64PointerPointer
+                            | C0Type::UInt64PointerPointer
+                            | C0Type::Float32PointerPointer
+                            | C0Type::Float64PointerPointer
+                    )
+                ) =>
+            {
+                self.variable_structs.get(name).cloned()
+            }
+            C0Expression::Field {
+                field_type:
+                    C0Type::Int16PointerPointer
+                    | C0Type::UInt16PointerPointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::UInt8PointerPointer
+                    | C0Type::UInt32PointerPointer
+                    | C0Type::Int64PointerPointer
+                    | C0Type::UInt64PointerPointer
+                    | C0Type::Float32PointerPointer
+                    | C0Type::Float64PointerPointer,
+                field_struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
+            C0Expression::AddressOf(target) => match target.as_ref() {
+                C0Expression::Variable(name)
+                    if matches!(
+                        self.variable_types.get(name),
+                        Some(C0Type::Int32Pointer | C0Type::UInt8Pointer)
+                    ) =>
+                {
+                    self.variable_structs.get(name).cloned()
+                }
+                C0Expression::Field {
+                    field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
+                    field_struct_name: Some(struct_name),
+                    ..
+                } => Some(struct_name.clone()),
+                C0Expression::Load(_) => self.struct_pointer_name(target),
+                _ => None,
+            },
+            C0Expression::Cast { expression, .. } => self.struct_pointer_pointer_name(expression),
+            C0Expression::Add(left, _) | C0Expression::Subtract(left, _) => {
+                self.struct_pointer_pointer_name(left)
+            }
+            _ => None,
+        }
+    }
+
+    fn validate_struct_pointer_value(
+        &self,
+        expected_struct: &str,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if matches!(expression, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        match self.struct_pointer_name(expression) {
+            Some(actual_struct) if actual_struct == expected_struct => Ok(()),
+            Some(actual_struct) => Err(self.error_here(format!(
+                "cannot use `struct {actual_struct} *` where `struct {expected_struct} *` is required"
+            ))),
+            None => Err(self.error_here(format!(
+                "expected a pointer to `struct {expected_struct}`"
+            ))),
+        }
+    }
+
+    fn validate_struct_pointer_pointer_value(
+        &self,
+        expected_struct: &str,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if matches!(expression, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        match self.struct_pointer_pointer_name(expression) {
+            Some(actual_struct) if actual_struct == expected_struct => Ok(()),
+            Some(actual_struct) => Err(self.error_here(format!(
+                "cannot use `struct {actual_struct} **` where `struct {expected_struct} **` is required"
+            ))),
+            None => Err(self.error_here(format!(
+                "expected a pointer to a pointer to `struct {expected_struct}`"
+            ))),
+        }
+    }
+
+    fn validate_struct_pointer_assignment(
+        &self,
+        expected_struct: Option<&String>,
+        target_type: Option<C0Type>,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        let Some(expected_struct) = expected_struct else {
+            return Ok(());
+        };
+        match target_type {
+            Some(
+                C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Float32Pointer
+                | C0Type::Float64Pointer,
+            ) => self.validate_struct_pointer_value(expected_struct, expression),
+            Some(
+                C0Type::Int16PointerPointer
+                | C0Type::UInt16PointerPointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer
+                | C0Type::UInt32PointerPointer
+                | C0Type::Int64PointerPointer
+                | C0Type::UInt64PointerPointer
+                | C0Type::Float32PointerPointer
+                | C0Type::Float64PointerPointer,
+            ) => self.validate_struct_pointer_pointer_value(expected_struct, expression),
+            _ => Ok(()),
         }
     }
 
@@ -9294,7 +9461,9 @@ impl Parser {
         C0SyntaxError,
     > {
         let (struct_name, union_name) = match base {
-            C0Expression::Variable(base_name) => (self.variable_structs.get(base_name), None),
+            C0Expression::Variable(base_name) => {
+                (self.variable_structs.get(base_name).cloned(), None)
+            }
             C0Expression::Field {
                 field_struct_name, ..
             } => {
@@ -9303,14 +9472,15 @@ impl Parser {
                         "arrays of embedded structs require an index before field access",
                     ));
                 }
-                (field_struct_name.as_ref(), None)
+                (field_struct_name.clone(), None)
             }
-            C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name), None),
+            C0Expression::Load(_) => (self.struct_pointer_name(base), None),
+            C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name.clone()), None),
             C0Expression::UnionAddress { union_name, .. } => (None, Some(union_name)),
             _ => (None, None),
         };
         if let Some(struct_name) = struct_name {
-            let layout = self.structs.get(struct_name).ok_or_else(|| {
+            let layout = self.structs.get(&struct_name).ok_or_else(|| {
                 self.error_here(format!("unknown struct declaration `{struct_name}`"))
             })?;
             let field = layout.fields.get(field_name).ok_or_else(|| {

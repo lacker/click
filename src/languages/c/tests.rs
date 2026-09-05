@@ -6982,3 +6982,156 @@ fn c0_floating_point_storage_initializers_cover_static_local_arrays_and_calloc()
         crate::kernel::CType::Float32Pointer
     );
 }
+
+#[test]
+fn c0_struct_pointer_indirection_updates_one_pointer_cell() {
+    let function = syntax::parse_function(
+        r#"
+        struct node {
+            int32 key;
+            struct node* left;
+            struct node* right;
+        };
+
+        int32 replace_left(struct node* root, struct node* replacement) {
+            struct node** link = &root->left;
+            *link = replacement;
+            return (*link)->key;
+        }
+        "#,
+    )
+    .expect("struct pointer-to-pointer link walks should parse")
+    .to_kernel_function();
+
+    let root = crate::kernel::Pointer {
+        block: "root".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let replacement = crate::kernel::Pointer {
+        block: "replacement".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let left = root.offset_by_bytes(8);
+    let resources = own_memory_context(root.clone(), 2, 3).unchecked_with_fact(
+        crate::kernel::CResourceFact::own_memory(memory_range(replacement.clone(), 0, 1)),
+    );
+    let state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("root", 24)
+                .with_block("replacement", 24)
+                .store(
+                    left.clone(),
+                    crate::kernel::CValue::typed_pointer(
+                        crate::kernel::Pointer::null(),
+                        crate::kernel::CType::Int32Pointer,
+                    ),
+                )
+                .store(replacement.clone(), crate::kernel::int32(42)),
+        )
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("local:link", 8)
+                .with_block("root", 24)
+                .with_block("replacement", 24)
+                .store(
+                    crate::kernel::Pointer {
+                        block: "local:link".into(),
+                        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                    },
+                    crate::kernel::CValue::typed_pointer(
+                        root.offset_by_bytes(8),
+                        crate::kernel::CType::Int32PointerPointer,
+                    ),
+                )
+                .store(
+                    left,
+                    crate::kernel::CValue::typed_pointer(
+                        replacement.clone(),
+                        crate::kernel::CType::Int32Pointer,
+                    ),
+                )
+                .store(replacement.clone(), crate::kernel::int32(42)),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![
+        crate::kernel::c_pointer_value(root),
+        crate::kernel::c_pointer_value(replacement),
+    ];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("struct pointer-to-pointer store should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(42),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_struct_pointer_indirection_rejects_incompatible_struct_pointers() {
+    let wrong_value = syntax::parse_function(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+
+        int32 invalid(struct left* root, struct right* replacement) {
+            struct left** link = &root;
+            *link = replacement;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("a pointer-to-pointer store must retain its struct identity");
+    assert!(
+        wrong_value
+            .message()
+            .contains("cannot use `struct right *` where `struct left *` is required")
+    );
+
+    let wrong_cell = syntax::parse_function(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+
+        int32 invalid(struct left* root, struct right* other) {
+            struct left** link = &root;
+            link = &other;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("a pointer-to-pointer assignment must retain its cell identity");
+    assert!(
+        wrong_cell
+            .message()
+            .contains("cannot use `struct right **` where `struct left **` is required")
+    );
+
+    let too_deep = syntax::parse_function(
+        r#"
+        struct node { int32 value; };
+        int32 invalid(struct node*** link) { return 0; }
+        "#,
+    )
+    .expect_err("deeper pointer indirection remains outside the slice");
+    assert!(
+        too_deep
+            .message()
+            .contains("pointer depth beyond `**` is not supported")
+    );
+}
