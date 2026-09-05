@@ -4573,6 +4573,37 @@ fn c0_syntax_lowers_local_struct_array_initializers() {
 }
 
 #[test]
+fn c0_local_struct_array_designators_require_constant_in_range_indices() {
+    for (source, expected) in [
+        (
+            r#"
+            struct item { int32 value; };
+            int32 local() {
+                struct item items[2] = {[2] = {.value = 1}};
+                return 0;
+            }
+            "#,
+            "out of bounds",
+        ),
+        (
+            r#"
+            struct item { int32 value; };
+            int32 index;
+            int32 local() {
+                struct item items[2] = {[index] = {.value = 1}};
+                return 0;
+            }
+            "#,
+            "require integer literals",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("invalid local struct array designators must be rejected");
+        assert!(error.message().contains(expected), "{error}");
+    }
+}
+
+#[test]
 fn c0_syntax_struct_array_parameter_retains_abi_stride() {
     let function = syntax::parse_function(
         r#"

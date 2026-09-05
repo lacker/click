@@ -40,6 +40,9 @@ copy only the selected branch.
 Fixed-dimensional local arrays of copyable structs now accept nested
 positional element groups and recursively lower each element's fields using
 the complete ABI-sized struct stride; omitted fields and elements are
+zero-filled. Their fixed dimensions also retain C array-element designators,
+including nested designators for multidimensional local arrays; positional
+elements continue after the most recent designator and omitted elements are
 zero-filled.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
@@ -177,6 +180,12 @@ Staged mdtests, each with an unchanged C file:
     stride.~~ Covered by `mdtests/local_struct_array_initializer.md` and the
     C0 recursive-store regression. Designated array elements remain a separate
     follow-up slice.
+21. ~~A fixed-dimensional local array of copyable structs accepts integer array
+    designators at each dimension, resumes positional initialization after the
+    most recent designator, and zero-fills omitted elements.~~ Covered by
+    `mdtests/local_struct_array_designators.md` and the C0 index-boundary
+    regression. Static/file-scope designated aggregate initializers remain
+    separate.
 
 ## Acceptance criteria
 
@@ -206,8 +215,10 @@ Staged mdtests, each with an unchanged C file:
   leaf stores, preserve source declaration order and nested array shape, and
   zero-fill omitted members and elements. Designated field initializers for
   those locals may select scalar or nested embedded-struct fields in any order,
-  with omitted leaves zero-filled; array designators and static/file-scope
-  designated initializers remain explicitly rejected.
+  with omitted leaves zero-filled. Local fixed-dimensional struct arrays also
+  accept integer array-element designators at each dimension, with positional
+  continuation and zero-filled omitted elements. Static/file-scope designated
+  initializers remain a separate slice.
 - Conditional expressions over copyable structs require matching struct types,
   evaluate only the selected branch, and materialize a fresh address-backed
   aggregate before assignment, argument passing, or return. Tagged-union and

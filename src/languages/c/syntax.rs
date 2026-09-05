@@ -7057,14 +7057,32 @@ impl Parser {
         let child_count = dimensions[depth];
         self.expect(Token::LBrace)?;
         let mut stores = Vec::new();
-        let mut child_index = 0u32;
+        let mut next_child_index = 0u32;
+        let mut initialized_children = BTreeSet::new();
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                if child_index == child_count {
+                let child_index = if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    let index =
+                        self.parse_local_struct_array_designator(struct_name, depth, child_count)?;
+                    self.expect(Token::Equal)?;
+                    next_child_index = index
+                        .checked_add(1)
+                        .expect("validated local struct array designator index");
+                    index
+                } else {
+                    let index = next_child_index;
+                    next_child_index = next_child_index
+                        .checked_add(1)
+                        .expect("validated local struct array initializer index");
+                    index
+                };
+                if child_index >= child_count {
                     return Err(
                         self.error_here("too many initializers for an embedded struct array")
                     );
                 }
+                initialized_children.insert(child_index);
                 let flat_index = flat_prefix
                     .checked_mul(child_count)
                     .and_then(|index| index.checked_add(child_index))
@@ -7101,7 +7119,6 @@ impl Parser {
                         element_width,
                     )?);
                 }
-                child_index += 1;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -7126,7 +7143,10 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        while child_index < child_count {
+        for child_index in 0..child_count {
+            if initialized_children.contains(&child_index) {
+                continue;
+            }
             let flat_index = flat_prefix
                 .checked_mul(child_count)
                 .and_then(|index| index.checked_add(child_index))
@@ -7153,9 +7173,49 @@ impl Parser {
                     element_width,
                 ));
             }
-            child_index += 1;
         }
         Ok(stores)
+    }
+
+    fn parse_local_struct_array_designator(
+        &mut self,
+        struct_name: &str,
+        depth: usize,
+        length: u32,
+    ) -> Result<u32, C0SyntaxError> {
+        let index = match self.next() {
+            Some(Token::Number(number)) => {
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid local struct array designator index `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(magnitude).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "local struct array designator index `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(Token::CharLiteral(value)) => u32::from(value),
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "local struct array designators currently require integer literals, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self.error_here(
+                    "local struct array designators currently require an integer literal",
+                ));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        if index >= length {
+            return Err(self.error_here(format!(
+                "local struct array designator index `{index}` is out of bounds for `struct {struct_name}` dimension {depth} of length {length}"
+            )));
+        }
+        Ok(index)
     }
 
     fn zero_struct_initializer_level(
