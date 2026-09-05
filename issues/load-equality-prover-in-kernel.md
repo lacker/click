@@ -100,6 +100,24 @@ phase of `sort3`. This means the migration has four concrete obligations:
    consumers must reuse that retained fact; they account for 23 repeated
    answers in this census.
 
+The first consumer migration landed after this census. Fixed-state restricted
+`simp` can now follow its explicit equality rewrites with a snapshot-anchored
+surface `transport`; the input-cursor case retains that transport in its
+expanded proof and verifies again after parsing. With that bridge in place,
+`memory_loads_proven_equal` no longer falls through to
+`c_memory_load_is_unchanged`, and both fixture harnesses pass. This removes
+global framed-load reconstruction from ordinary fact matching without adding
+Click syntax.
+
+This does not complete the issue. The framed-load prover still has direct
+kernel consumers in loop checking, resource endpoint comparison, contract
+certification, and other proof/certification helpers. The load-equality depth
+guard also remains: removing it immediately still makes the surviving
+snapshot-resolution routes re-enter and causes the input-cursor regression to
+run far past its normal completion time. Those consumers and the reentrant resolution
+path need explicit evidence or exact-query guards before the prover and depth
+limit can be deleted.
+
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
 speculative calls without requiring replacement evidence. Owned-vector also
@@ -138,6 +156,9 @@ comparisons do not invoke a framed-load planner.
   certification phase, which loads the framed-load prover decided after every
   cheaper leg failed and the exact evidence the surface must record in its
   place.
+- **Partial:** fixed-state restricted `simp` retains a snapshot-anchored
+  `transport`, and fact matching no longer calls the global framed-load prover.
+  The independently re-parsed input-cursor expansion is the regression.
 - A surface tactic (transport, frame, or a completion of the call step)
   records the snapshot-equality fact the kernel needs, as a checkable
   certificate.

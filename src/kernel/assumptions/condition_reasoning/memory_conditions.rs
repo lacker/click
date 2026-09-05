@@ -90,21 +90,11 @@ impl PureFactContext {
         ) {
             return true;
         }
-        // The remaining leg is the framed-load prover. Two forms whose
-        // marker sets differ are never syntactically equal and defeat the
-        // snapshot comparison's block-set filter, but the load can still be
-        // provably unchanged across the marker delta: the framed-load prover
-        // consumes the recorded effect summaries and mutates-only facts to
-        // frame the loaded pointer across each intervening effect. Deciding
-        // the pair by that proof, instead of by form coincidence, is what
-        // keeps fact transport working once canonicalization preserves
-        // havoc markers.
-        crate::kernel::api::c_memory_load_is_unchanged(
-            left_memory,
-            right_memory,
-            left_pointer,
-            self,
-        )
+        // Fact matching stops at recorded evidence. Reconstructing a framed
+        // write history here is global proof search; a surface tactic must
+        // instead select an explicit transport whose checker can consume the
+        // recorded memory-DAG path.
+        false
     }
 
     pub(in crate::kernel) fn memory_snapshots_directly_proven_equal_for_memory_resolution(

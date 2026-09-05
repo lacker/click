@@ -10481,8 +10481,8 @@ const RESOURCE_EXAMPLE_PIPELINE_CASES: &[(&str, &str, &str, &str)] = &[
     (
         "input-cursor",
         "input_cursor.click",
-        "input_cursor_take",
-        "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
+        "input_cursor_shared_pipeline",
+        "have right->data[right->pos] == data[0] by {\n        transport(",
     ),
     (
         "owned-segmented-buffer",
@@ -10636,8 +10636,8 @@ fn resource_example_pipeline_split_covers_original_census() {
             (
                 "input-cursor",
                 "input_cursor.click",
-                "input_cursor_take",
-                "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
+                "input_cursor_shared_pipeline",
+                "have right->data[right->pos] == data[0] by {\n        transport(",
             ),
             (
                 "owned-segmented-buffer",

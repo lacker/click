@@ -2310,7 +2310,22 @@ pub(super) fn surface_smart_have_proof(
             Some(&active_surface_goal),
             &SimpEvidence::Derivation(restricted_derivation),
             &pairs,
-        )?;
+        )
+        .or_else(|original_error| {
+            plan_explicit_equality_rewrites_then(&explicit_goal, &pairs, exact, &|rewritten_goal| {
+                plan_explicit_snapshot_load_transport(
+                    rewritten_goal,
+                    exact,
+                    parameters,
+                    arguments,
+                    view,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            })
+            .ok_or(original_error)
+        })?;
         let mut tactics = unfolded_predicates
             .iter()
             .cloned()
@@ -2341,6 +2356,103 @@ pub(super) fn surface_smart_have_proof(
         )?
     };
     Ok(proof)
+}
+
+/// Builds a checked surface-level bridge between names for one load at
+/// different recorded snapshots. Candidate selection happens here; the
+/// returned proof uses only ordinary `transport` and `assumption` steps.
+#[allow(clippy::too_many_arguments)]
+fn plan_explicit_snapshot_load_transport(
+    goal: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    view: ExecutionView<'_>,
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Option<Vec<ProofTactic>> {
+    let points = view
+        .recorded_snapshots
+        .iter()
+        .rev()
+        .filter_map(|(selector, snapshot)| match selector {
+            SnapshotSelector::ProgramPoint(point) if point.kind == ProgramPointKind::Entry => {
+                Some((point.clone(), snapshot))
+            }
+            SnapshotSelector::ProgramPoint(_) | SnapshotSelector::Mark(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let target = synthesize_surface_equality_across_points(goal, parameters, arguments, &points)?;
+    let lowered_target = lower_fixed_state_proposition(
+        &target,
+        available,
+        parameters,
+        arguments,
+        view.old_reference_state(state),
+        state,
+        None,
+        view.recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    )
+    .ok()?;
+    if &lowered_target != goal {
+        return None;
+    }
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = &target
+    else {
+        return None;
+    };
+    for expression in [right, left] {
+        let source = ClickProposition::Comparison {
+            left: expression.clone(),
+            operator: ComparisonOperator::Equal,
+            right: expression.clone(),
+        };
+        let Ok(source_kernel) = lower_fixed_state_proposition(
+            &source,
+            available,
+            parameters,
+            arguments,
+            view.old_reference_state(state),
+            state,
+            None,
+            view.recorded_snapshots,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        let premises = plan_explicit_fact_transport(
+            &source,
+            &source_kernel,
+            &lowered_target,
+            available,
+            view.effect_facts,
+            parameters,
+            arguments,
+            view,
+            state,
+            predicate_environment,
+            click_function_environment,
+        );
+        if let Ok(premises) = premises {
+            return Some(vec![
+                ProofTactic::TransportUsing {
+                    source,
+                    target: target.clone(),
+                    premises,
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]

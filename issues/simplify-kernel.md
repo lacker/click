@@ -68,6 +68,14 @@ of 1,628 example queries and 27 of 1,347 mdtest queries. Those 58 decisions are
 now classified by fixture, consumer, load, and required replacement evidence
 in the dedicated issue; 23 were merely positive-memo reuses.
 
+The first load-equality migration slice is complete. Fixed-state restricted
+`simp` now retains a snapshot-anchored `transport` when equality rewrites leave
+two names for one load, and ordinary fact matching no longer invokes the
+global framed-load reconstruction fallback. The input-cursor expansion checks
+independently and both fixture harnesses pass. Direct framed-load consumers and
+the reentrant snapshot-resolution path remain, so the depth limit cannot yet
+be removed.
+
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
 distinctness fallback has been deleted. Click has no compatibility commitment
@@ -158,7 +166,8 @@ change an answer.
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
 2. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
-   framed-load fallback from `memory_loads_proven_equal`. It hit 345,653 /
+   remaining direct framed-load consumers. The fallback from
+   `memory_loads_proven_equal` is removed. It hit 345,653 /
    315,061 times in the original depth census. The later deciding-route census
    found that the fallback itself answered only 31 / 1,628 example calls and
    27 / 1,347 mdtest calls. This is owned by
