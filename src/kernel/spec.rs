@@ -2404,7 +2404,9 @@ pub(super) fn c_value_comparison_proposition(
 ) -> Option<Proposition> {
     let pointer_condition = match (left, right) {
         (CValue::Pointer(left), CValue::Pointer(right))
-            if left.c_type() == right.c_type() || left.is_null() || right.is_null() =>
+            if left.c_type().pointer_types_compatible(right.c_type())
+                || left.is_null()
+                || right.is_null() =>
         {
             match operator {
                 CComparisonOperator::Equal => Some((

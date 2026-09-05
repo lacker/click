@@ -420,6 +420,10 @@ pub enum CValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CType {
     Void,
+    /// An opaque object pointer with provenance but no modeled pointee type.
+    /// It is valid for identity-preserving casts and comparisons, but not for
+    /// dereference, indexing, or pointer arithmetic.
+    VoidPointer,
     Int16,
     Int32,
     UInt8,

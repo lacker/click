@@ -41,6 +41,20 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.name()
                 )));
             }
+            C0Type::VoidPointer => {
+                arguments.push(c_typed_pointer_value(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            1,
+                        ),
+                    },
+                    parameter.to_kernel_parameter().c_type(),
+                ));
+            }
             C0Type::FunctionPointer(_) => {
                 arguments.push(c_typed_pointer_value(
                     Pointer::symbolic_function(Variable(

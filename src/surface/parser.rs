@@ -1300,7 +1300,7 @@ impl Parser {
             object_constant = false;
             self.position += 1;
             c_type = match c_type {
-                C0Type::Void => return Err(self.error("`void *` is not supported yet")),
+                C0Type::Void => C0Type::VoidPointer,
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::UInt16 => C0Type::UInt16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,

@@ -52,7 +52,6 @@ C import and execution:
 - [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
 - [Model C `_Bool` and `bool`](c-bool.md)
 - [Preserve `const` qualification in C types](const-qualified-types.md)
-- [Model object `void *` pointers](void-pointers.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
 - [Verify provenance-preserving pointer/integer tagging](pointer-integer-casts-and-tagging.md)
 - [Widen the struct model](struct-model.md)
@@ -99,7 +98,6 @@ C language coverage:
 - [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
 - [Preserve `const` qualification in C types](const-qualified-types.md)
 - [Model C `_Bool` and `bool`](c-bool.md)
-- [Model object `void *` pointers](void-pointers.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
 - [Verify provenance-preserving pointer/integer tagging](pointer-integer-casts-and-tagging.md)
 

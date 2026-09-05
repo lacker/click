@@ -1688,11 +1688,13 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
             parameter.pointee_is_constant(),
         );
         if let CValue::Pointer(pointer) = &value {
-            let element_width = parameter
-                .c_type()
-                .pointee_type()
-                .map(CType::byte_width)
-                .unwrap_or(4);
+            let Some(element_width) = parameter.c_type().pointee_type().map(CType::byte_width)
+            else {
+                // An opaque object pointer carries identity and qualifiers,
+                // but no element width. Do not manufacture a contract view
+                // that would make an untyped dereference look loadable.
+                continue;
+            };
             state.resources = state
                 .resources
                 .unchecked_with_fact(CResourceFact::view_memory(
@@ -1788,6 +1790,7 @@ fn coerce_function_return_value(
 fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
+        CType::VoidPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
         CType::Int16 => CValue::Int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
@@ -2505,6 +2508,7 @@ fn zero_aggregate_fields(
             | CType::UInt64
             | CType::Float32
             | CType::Float64
+            | CType::VoidPointer
             | CType::Int32Pointer
             | CType::UInt8Pointer
             | CType::Float32Pointer
@@ -2547,6 +2551,7 @@ fn zero_aggregate_fields(
             | CType::Float32Array(_)
             | CType::Float64Array(_)
             | CType::Void
+            | CType::VoidPointer
             | CType::FunctionPointer(_) => {
                 continue;
             }

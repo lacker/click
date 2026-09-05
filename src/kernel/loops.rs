@@ -2316,6 +2316,9 @@ pub(super) fn havoc_loop_modified_locals(
         let c_type = *c_type;
         let value = match c_type {
             CType::Void => continue,
+            CType::VoidPointer => {
+                CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
+            }
             CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),
             CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
             CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),

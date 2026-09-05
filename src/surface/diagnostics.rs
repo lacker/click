@@ -694,6 +694,7 @@ pub(super) fn describe_pointer(
 pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter) -> i64 {
     match parameter.c_type() {
         C0Type::Void => 0,
+        C0Type::VoidPointer => 8,
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
         C0Type::Int16 | C0Type::UInt16 | C0Type::Int16Array(_) | C0Type::UInt16Array(_) => 2,
         C0Type::Int32
@@ -953,6 +954,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         } => {
             let name = match value_type {
                 CType::Void => "load_void",
+                CType::VoidPointer => "load_void_pointer",
                 CType::Int16 => "load_int16",
                 CType::Int32 => "load_int32",
                 CType::UInt8 => "load_uint8",

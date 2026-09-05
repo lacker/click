@@ -7216,6 +7216,60 @@ fn c0_function_pointer_signatures_reject_nominally_wrong_struct_targets() {
 }
 
 #[test]
+fn c0_void_pointers_are_opaque_object_views() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 compare(const void *left, const void *right) {
+            return left == right;
+        }
+
+        void *erase(int32 *value) {
+            return value;
+        }
+
+        int32 *restore(void *value) {
+            return (int32 *)value;
+        }
+        "#,
+    )
+    .expect("opaque object-pointer functions should parse");
+
+    let compare = &functions[0];
+    assert_eq!(
+        compare.parameters()[0].c_type(),
+        syntax::C0Type::VoidPointer
+    );
+    assert!(compare.parameters()[0].pointee_is_constant());
+    assert_eq!(
+        compare.parameters()[1].c_type(),
+        syntax::C0Type::VoidPointer
+    );
+    assert!(compare.parameters()[1].pointee_is_constant());
+
+    let erase = &functions[1];
+    assert_eq!(erase.return_type(), syntax::C0Type::VoidPointer);
+    assert_eq!(erase.parameters()[0].c_type(), syntax::C0Type::Int32Pointer);
+
+    let restore = &functions[2];
+    assert_eq!(
+        restore.parameters()[0].c_type(),
+        syntax::C0Type::VoidPointer
+    );
+    assert_eq!(restore.return_type(), syntax::C0Type::Int32Pointer);
+
+    assert_eq!(syntax::C0Type::VoidPointer.pointee_type(), None);
+    assert_eq!(syntax::C0Type::VoidPointer.abi_size_bytes(), 8);
+    assert!(
+        crate::kernel::CType::VoidPointer
+            .pointer_types_compatible(crate::kernel::CType::Int32Pointer)
+    );
+    assert!(
+        !crate::kernel::CType::VoidPointer
+            .pointer_types_compatible(crate::kernel::CType::FunctionPointer(1))
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_while_countdown() {
     let function = syntax::parse_function(
         r#"

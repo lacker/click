@@ -29,9 +29,11 @@ ordinary null checking and `free`. The zeroed variants are
 `calloc(count, sizeof(struct T))` for a `struct T*` target. Compatible
 external allocator declarations may describe a supported data-pointer or
 pointer-array result with `allocation(result, bytes)` and an owned result
-range. Zero sizes, arbitrary byte layouts, `size_t`, general `void *`
-conversions, unrelated custom allocator APIs, and `realloc` remain outside
-this surface description.
+range. Zero sizes, arbitrary byte layouts, `size_t`, allocator results
+declared as `void *`, unrelated custom allocator APIs, and `realloc` remain
+outside this surface description. Opaque `void *` identity conversions are
+supported, but dereference, indexing, arithmetic, and ownership through an
+untyped pointer are not.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`,
@@ -104,8 +106,8 @@ is not checked by Click and its preconditions remain caller obligations. The
 standard library includes narrow byte-oriented contracts for `memcpy`,
 `memcmp`, `memset`, and `strlen`. `click verify` reports the transitive external
 assumptions used by each verified function. These contracts still describe
-only the supported C0 types; general `void *`, `size_t`, overlap semantics,
-and unbounded string loadability remain outside the model.
+only the supported C0 types; `void *` dereference or ownership, `size_t`,
+overlap semantics, and unbounded string loadability remain outside the model.
 
 A verifying source may contain multiple function definitions and compatible
 forward prototypes. Project-local quoted includes such as

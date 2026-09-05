@@ -1292,6 +1292,11 @@ pub struct C0StructField {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     Void,
+    /// An opaque pointer to an object of unknown type. It preserves pointer
+    /// identity and provenance but deliberately has no pointee width, so it
+    /// cannot be indexed, dereferenced, or used in pointer arithmetic until
+    /// an explicit conversion supplies a modeled object type.
+    VoidPointer,
     Int16,
     Int32,
     UInt8,
@@ -1345,6 +1350,7 @@ impl CAbi {
     fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
         match (self, c_type) {
             (Self::Lp64, C0Type::Void) => (0, 1),
+            (Self::Lp64, C0Type::VoidPointer) => (8, 8),
             (Self::Lp64, C0Type::Int16) => (2, 2),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
@@ -2067,7 +2073,8 @@ impl C0Type {
     pub fn is_pointer(self) -> bool {
         matches!(
             self,
-            Self::Int32Pointer
+            Self::VoidPointer
+                | Self::Int32Pointer
                 | Self::Int16Pointer
                 | Self::UInt16Pointer
                 | Self::UInt8Pointer
@@ -2085,6 +2092,10 @@ impl C0Type {
                 | Self::Float64PointerPointer
                 | Self::FunctionPointer(_)
         )
+    }
+
+    pub fn is_object_pointer(self) -> bool {
+        self.is_pointer() && !matches!(self, Self::FunctionPointer(_))
     }
 
     fn is_scalar_pointer(self) -> bool {
@@ -2121,6 +2132,7 @@ impl C0Type {
             Self::Float32PointerPointer => Some(Self::Float32Pointer),
             Self::Float64PointerPointer => Some(Self::Float64Pointer),
             Self::Void
+            | Self::VoidPointer
             | Self::Int16
             | Self::Int32
             | Self::UInt8
@@ -2137,6 +2149,7 @@ impl C0Type {
     pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
             Self::Void => crate::kernel::CType::Void,
+            Self::VoidPointer => crate::kernel::CType::VoidPointer,
             Self::Int16 => crate::kernel::CType::Int16,
             Self::Int32 => crate::kernel::CType::Int32,
             Self::UInt8 => crate::kernel::CType::UInt8,
@@ -5530,7 +5543,12 @@ impl Parser {
                 C0Type::UInt64Pointer => C0Type::UInt64PointerPointer,
                 C0Type::Float32Pointer => C0Type::Float32PointerPointer,
                 C0Type::Float64Pointer => C0Type::Float64PointerPointer,
-                C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
+                C0Type::Void => C0Type::VoidPointer,
+                C0Type::VoidPointer => {
+                    return Err(
+                        self.error_at_previous("pointer depth beyond `**` is not supported")
+                    );
+                }
                 C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer

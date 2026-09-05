@@ -487,6 +487,7 @@ pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) ->
 pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
     match c_type {
         C0Type::Void => "void".to_string(),
+        C0Type::VoidPointer => "void*".to_string(),
         C0Type::Int16 => "int16".to_string(),
         C0Type::Int32 => "int32".to_string(),
         C0Type::UInt8 => "uint8".to_string(),
@@ -539,6 +540,13 @@ fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
         | (C0Type::Float64Array(_), C0Type::Float64Pointer)
         | (C0Type::Float64Pointer, C0Type::Float64Array(_)) => true,
         (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
+        (actual, expected)
+            if actual.is_object_pointer()
+                && expected.is_object_pointer()
+                && (actual == C0Type::VoidPointer || expected == C0Type::VoidPointer) =>
+        {
+            true
+        }
         (actual, expected) if type_is_arithmetic(actual) && type_is_arithmetic(expected) => true,
         _ => actual == expected,
     }
@@ -783,6 +791,7 @@ fn infer_c_expression_type(
             CType::UInt64 => Some(C0Type::UInt64),
             CType::Float32 => Some(C0Type::Float32),
             CType::Float64 => Some(C0Type::Float64),
+            CType::VoidPointer => Some(C0Type::VoidPointer),
             CType::Int16Pointer => Some(C0Type::Int16Pointer),
             CType::UInt16Pointer => Some(C0Type::UInt16Pointer),
             CType::UInt32Pointer => Some(C0Type::UInt32Pointer),
@@ -870,6 +879,7 @@ fn infer_c_expression_type(
         }
         CExpression::TypedLoad { value_type, .. } => Some(match value_type {
             CType::Void => return None,
+            CType::VoidPointer => C0Type::VoidPointer,
             CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,

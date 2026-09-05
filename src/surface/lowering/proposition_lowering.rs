@@ -30,7 +30,9 @@ pub(in crate::surface) fn comparison_proposition(
         ));
     }
     if let (CValue::Pointer(left), CValue::Pointer(right)) = (&left, &right)
-        && (left.c_type() == right.c_type() || left.is_null() || right.is_null())
+        && (left.c_type().pointer_types_compatible(right.c_type())
+            || left.is_null()
+            || right.is_null())
     {
         let value = match operator {
             ComparisonOperator::Equal => true,

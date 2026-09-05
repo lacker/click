@@ -2134,7 +2134,7 @@ pub(in crate::kernel) fn symbolic_load_value(
     value_type: CType,
 ) -> Option<CValue> {
     match value_type {
-        CType::Void => None,
+        CType::Void | CType::VoidPointer => None,
         CType::Int16 => Some(memory.symbolic_int16_load(pointer)),
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),

@@ -288,6 +288,18 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
         .map(|(index, parameter)| {
             let value = match parameter.c_type() {
                 C0Type::Void => unreachable!("pure theorem parameters cannot be void"),
+                C0Type::VoidPointer => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            1,
+                        ),
+                    },
+                    CType::VoidPointer,
+                ),
                 C0Type::Int16 => CValue::Int16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt32 => CValue::UInt32(Bitvector32Term::Variable(Variable(index as u64))),

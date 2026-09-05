@@ -846,7 +846,7 @@ fn cast_c_value_to_type(
     if target_type.is_pointer() {
         match value {
             CValue::Pointer(pointer) => {
-                return Ok(CValue::typed_pointer(pointer.into_pointer(), target_type));
+                return Ok(CValue::Pointer(pointer.with_type(target_type)));
             }
             // Integer-to-pointer conversion is accepted only for a 64-bit
             // value that is exactly the recorded address of an object
@@ -912,9 +912,7 @@ pub(in crate::kernel) fn coerce_c_null_pointer_constant(
 ) -> Option<CValue> {
     if target_type.accepts(&value) {
         return Some(match value {
-            CValue::Pointer(pointer) if pointer.is_null() => {
-                CValue::typed_pointer(pointer.into_pointer(), target_type)
-            }
+            CValue::Pointer(pointer) => CValue::Pointer(pointer.with_type(target_type)),
             value => value,
         });
     }

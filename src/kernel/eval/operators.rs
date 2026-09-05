@@ -28,7 +28,7 @@ fn c_type_mismatch_expression_path(
 }
 
 fn pointer_types_compatible(left: &CPointerValue, right: &CPointerValue) -> bool {
-    left.c_type() == right.c_type() || left.is_null() || right.is_null()
+    left.c_type().pointer_types_compatible(right.c_type()) || left.is_null() || right.is_null()
 }
 
 fn scalar_uses_uint32(left: &CValue, right: &CValue) -> bool {

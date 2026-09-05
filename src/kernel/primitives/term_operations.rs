@@ -2110,6 +2110,7 @@ impl CType {
         fn code(c_type: CType) -> Option<u64> {
             Some(match c_type {
                 CType::Void => 0,
+                CType::VoidPointer => 19,
                 CType::Int32 => 1,
                 CType::UInt8 => 2,
                 CType::UInt32 => 3,
@@ -2169,7 +2170,19 @@ impl CType {
     }
 
     pub fn is_pointer(self) -> bool {
-        self.pointee_type().is_some() || matches!(self, Self::FunctionPointer(_))
+        self.pointee_type().is_some()
+            || matches!(self, Self::VoidPointer | Self::FunctionPointer(_))
+    }
+
+    pub(crate) fn is_object_pointer(self) -> bool {
+        self.is_pointer() && !matches!(self, Self::FunctionPointer(_))
+    }
+
+    pub(crate) fn pointer_types_compatible(self, other: Self) -> bool {
+        self == other
+            || (self.is_object_pointer()
+                && other.is_object_pointer()
+                && (self == Self::VoidPointer || other == Self::VoidPointer))
     }
 
     pub(crate) fn pointer_to(self) -> Option<Self> {
@@ -2193,6 +2206,7 @@ impl CType {
             Self::Float32Pointer => Some(Self::Float32PointerPointer),
             Self::Float64Pointer => Some(Self::Float64PointerPointer),
             Self::Void
+            | Self::VoidPointer
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
             | Self::Int32PointerPointer
@@ -2229,7 +2243,7 @@ impl CType {
             | (Self::UInt32, CValue::UInt32(_)) => true,
             (target, CValue::Pointer(pointer)) if target.is_pointer() => {
                 pointer.is_null()
-                    || (pointer.c_type() == target
+                    || (pointer.c_type().pointer_types_compatible(target)
                         && if target.is_function_pointer() {
                             pointer.block.is_function()
                         } else {
@@ -2255,6 +2269,7 @@ impl CType {
     pub fn byte_width(self) -> u32 {
         match self {
             Self::Void => 0,
+            Self::VoidPointer => C_POINTER_BYTE_WIDTH,
             Self::Int16 => 2,
             Self::Int32 => 4,
             Self::UInt8 => 1,

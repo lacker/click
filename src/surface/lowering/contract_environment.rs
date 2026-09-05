@@ -122,9 +122,9 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
         | (CValue::UInt32(_), C0Type::UInt32)
         | (CValue::Int64(_), C0Type::Int64)
         | (CValue::UInt64(_), C0Type::UInt64) => true,
-        (CValue::Pointer(pointer), c_type) if c_type.is_pointer() => {
-            pointer.c_type() == c_type.to_kernel_type()
-        }
+        (CValue::Pointer(pointer), c_type) if c_type.is_pointer() => pointer
+            .c_type()
+            .pointer_types_compatible(c_type.to_kernel_type()),
         _ => false,
     }
 }
