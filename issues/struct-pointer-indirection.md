@@ -39,11 +39,11 @@ unsupported deeper indirection.
   kernel cell representation is safe only after that check has succeeded.
 - The rbtree link-walk regression and `scripts/check.sh` pass.
 
-The first implementation slice covers local and parameter `struct S **`
-objects, direct and nested field addresses, `*link` pointer-cell stores, and
-the corresponding C0/kernel execution and rejection tests. File-scope pointer
-objects and nominal identity across function-return/callback boundaries remain
-coupled to the global-object and function-type work; they should extend this
-same metadata check rather than introduce a second pointer representation.
+The first implementation slices cover local, parameter, and file-scope
+`struct S **` objects, direct and nested field addresses, `*link` pointer-cell
+stores, and nominal identity across pointer-valued function returns. Callback
+signatures and function-pointer parameters remain coupled to the broader
+function-type work; they should extend this same metadata check rather than
+introduce a second pointer representation.
 
 Related: [struct-model.md](struct-model.md).

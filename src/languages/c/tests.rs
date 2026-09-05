@@ -7440,3 +7440,83 @@ fn c0_struct_pointer_indirection_rejects_incompatible_struct_pointers() {
             .contains("pointer depth beyond `**` is not supported")
     );
 }
+
+#[test]
+fn c0_struct_pointer_globals_and_returns_retain_struct_identity() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct node {
+            int32 key;
+        };
+
+        struct node* current = 0;
+        struct node** current_slot;
+        static struct node* private_current;
+
+        struct node* get_current() {
+            return current;
+        }
+
+        struct node* relay_current() {
+            return get_current();
+        }
+        "#,
+    )
+    .expect("file-scope struct pointers and pointer returns should parse");
+
+    let current = &functions[0].globals()["current"];
+    assert_eq!(current.c_type(), syntax::C0Type::Int32Pointer);
+    assert_eq!(current.struct_name(), Some("node"));
+    assert_eq!(
+        current.initializer(),
+        Some(&syntax::C0Expression::Int32Literal(0))
+    );
+    let current_slot = &functions[0].globals()["current_slot"];
+    assert_eq!(current_slot.c_type(), syntax::C0Type::Int32PointerPointer);
+    assert_eq!(current_slot.struct_name(), Some("node"));
+    assert_eq!(
+        functions[0].to_kernel_function().global_variables()[0].c_type(),
+        crate::kernel::CType::Int32Pointer
+    );
+    assert_eq!(
+        functions[0].to_kernel_function().global_variables()[1].c_type(),
+        crate::kernel::CType::Int32PointerPointer
+    );
+
+    let get_current = &functions[0];
+    assert_eq!(get_current.return_pointer_struct_name(), Some("node"));
+    assert_eq!(
+        get_current.to_kernel_function().return_type(),
+        crate::kernel::CType::Int32Pointer
+    );
+    let relay_current = &functions[1];
+    assert_eq!(relay_current.return_pointer_struct_name(), Some("node"));
+    assert_eq!(
+        relay_current.to_kernel_function().return_type(),
+        crate::kernel::CType::Int32Pointer
+    );
+}
+
+#[test]
+fn c0_struct_pointer_return_boundaries_reject_incompatible_tags() {
+    let error = syntax::parse_functions(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+
+        struct left* make_left() {
+            return 0;
+        }
+
+        struct right* invalid() {
+            return make_left();
+        }
+        "#,
+    )
+    .expect_err("function pointer returns must retain their struct identity");
+    assert!(
+        error
+            .message()
+            .contains("cannot use `struct left *` where `struct right *` is required")
+    );
+}

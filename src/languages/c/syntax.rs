@@ -120,6 +120,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
 pub struct C0Function {
     return_type: C0Type,
     return_struct_name: Option<String>,
+    return_pointer_struct_name: Option<String>,
     name: String,
     parameters: Vec<C0Parameter>,
     body: C0Statement,
@@ -169,28 +170,36 @@ pub struct C0Global {
     name: String,
     kernel_name: String,
     c_type: C0Type,
+    struct_name: Option<String>,
     initializer: Option<C0Expression>,
     file_static: bool,
     volatile: bool,
 }
 
 impl C0Global {
-    fn declaration(name: String, c_type: C0Type) -> Self {
+    fn declaration(name: String, c_type: C0Type, struct_name: Option<String>) -> Self {
         Self {
             kernel_name: name.clone(),
             name,
             c_type,
+            struct_name,
             initializer: None,
             file_static: false,
             volatile: false,
         }
     }
 
-    fn definition(name: String, c_type: C0Type, initializer: C0Expression) -> Self {
+    fn definition(
+        name: String,
+        c_type: C0Type,
+        struct_name: Option<String>,
+        initializer: C0Expression,
+    ) -> Self {
         Self {
             kernel_name: name.clone(),
             name,
             c_type,
+            struct_name,
             initializer: Some(initializer),
             file_static: false,
             volatile: false,
@@ -201,12 +210,14 @@ impl C0Global {
         name: String,
         kernel_name: String,
         c_type: C0Type,
+        struct_name: Option<String>,
         initializer: C0Expression,
     ) -> Self {
         Self {
             name,
             kernel_name,
             c_type,
+            struct_name,
             initializer: Some(initializer),
             file_static: true,
             volatile: false,
@@ -223,6 +234,10 @@ impl C0Global {
 
     pub fn c_type(&self) -> C0Type {
         self.c_type
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
     }
 
     pub fn is_defined(&self) -> bool {
@@ -655,6 +670,31 @@ fn kernel_integer_literal_value(
             }
             _ => return None,
         },
+        C0Type::Int16Pointer
+        | C0Type::UInt16Pointer
+        | C0Type::Int32Pointer
+        | C0Type::UInt8Pointer
+        | C0Type::UInt32Pointer
+        | C0Type::Int64Pointer
+        | C0Type::UInt64Pointer
+        | C0Type::Float32Pointer
+        | C0Type::Float64Pointer
+        | C0Type::Int16PointerPointer
+        | C0Type::UInt16PointerPointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::UInt32PointerPointer
+        | C0Type::Int64PointerPointer
+        | C0Type::UInt64PointerPointer
+        | C0Type::Float32PointerPointer
+        | C0Type::Float64PointerPointer
+            if matches!(initializer, C0Expression::Int32Literal(0)) =>
+        {
+            crate::kernel::CValue::typed_pointer(
+                crate::kernel::Pointer::null(),
+                c_type.to_kernel_type(),
+            )
+        }
         _ => return None,
     })
 }
@@ -1464,6 +1504,7 @@ impl C0Function {
         Self {
             return_type,
             return_struct_name: None,
+            return_pointer_struct_name: None,
             name,
             parameters,
             body: C0Statement::Skip,
@@ -1496,6 +1537,10 @@ impl C0Function {
 
     pub fn return_struct_name(&self) -> Option<&str> {
         self.return_struct_name.as_deref()
+    }
+
+    pub fn return_pointer_struct_name(&self) -> Option<&str> {
+        self.return_pointer_struct_name.as_deref()
     }
 
     pub fn body(&self) -> &C0Statement {
@@ -2411,6 +2456,15 @@ fn validate_global_initializer(
             Err(parser.error_here("floating-point global initializer has the wrong type"))
         };
     }
+    if c_type.is_pointer() {
+        return if matches!(initializer, C0Expression::Int32Literal(0)) {
+            Ok(())
+        } else {
+            Err(parser.error_here(
+                "pointer global initializers currently support only the null pointer literal",
+            ))
+        };
+    }
     let bits = match initializer {
         C0Expression::Int32Literal(value) => u64::from(*value),
         C0Expression::UInt8Literal(value) => u64::from(*value),
@@ -3037,6 +3091,8 @@ struct Parser {
     source_identity: Option<String>,
     abi: CAbi,
     current_return_struct_name: Option<String>,
+    current_return_pointer_struct_name: Option<String>,
+    current_return_type: C0Type,
 }
 
 #[derive(Clone, Debug)]
@@ -3049,6 +3105,7 @@ struct ScopeBinding {
 struct C0FunctionHeader {
     return_type: C0Type,
     return_struct_name: Option<String>,
+    return_pointer_struct_name: Option<String>,
     name: String,
     parameters: Vec<C0Parameter>,
 }
@@ -3056,6 +3113,7 @@ struct C0FunctionHeader {
 fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader) -> bool {
     left.return_type == right.return_type
         && left.return_struct_name == right.return_struct_name
+        && left.return_pointer_struct_name == right.return_pointer_struct_name
         && left.parameters.len() == right.parameters.len()
         && left
             .parameters
@@ -3121,6 +3179,8 @@ impl Parser {
             source_identity: source_identity.map(str::to_string),
             abi,
             current_return_struct_name: None,
+            current_return_pointer_struct_name: None,
+            current_return_type: C0Type::Void,
         })
     }
 
@@ -3393,6 +3453,7 @@ impl Parser {
                         "`extern` function definitions are not supported; use `extern` only for prototypes",
                     ));
                 }
+                self.register_function_declaration(&header, true)?;
                 functions.push(self.finish_function_definition(header)?);
             } else {
                 if self.peek() != Some(&Token::Semicolon) {
@@ -3463,8 +3524,16 @@ impl Parser {
             &mut self.current_return_struct_name,
             header.return_struct_name.clone(),
         );
+        let previous_return_pointer_struct_name = std::mem::replace(
+            &mut self.current_return_pointer_struct_name,
+            header.return_pointer_struct_name.clone(),
+        );
+        let previous_return_type =
+            std::mem::replace(&mut self.current_return_type, header.return_type);
         let body_result = self.parse_block_statement();
         self.current_return_struct_name = previous_return_struct_name;
+        self.current_return_pointer_struct_name = previous_return_pointer_struct_name;
+        self.current_return_type = previous_return_type;
         let mut body = body_result?;
         self.pop_scope();
         validate_function_returns(&body, header.return_type)?;
@@ -3480,6 +3549,7 @@ impl Parser {
         Ok(C0Function {
             return_type: header.return_type,
             return_struct_name: header.return_struct_name,
+            return_pointer_struct_name: header.return_pointer_struct_name,
             name: header.name,
             parameters: header.parameters,
             body,
@@ -3523,6 +3593,16 @@ impl Parser {
         } else {
             None
         };
+        let return_pointer_struct_name = parsed_return_type
+            .struct_name
+            .as_ref()
+            .filter(|_| parsed_return_type.c_type.is_pointer())
+            .cloned();
+        if let Some(struct_name) = &return_pointer_struct_name
+            && !self.structs.contains_key(struct_name)
+        {
+            return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
+        }
         let return_type = if let Some(name) = &return_struct_name {
             struct_value_type(
                 self.structs
@@ -3543,6 +3623,7 @@ impl Parser {
         Ok(C0FunctionHeader {
             return_type,
             return_struct_name,
+            return_pointer_struct_name,
             name,
             parameters,
         })
@@ -3637,6 +3718,16 @@ impl Parser {
             ));
         }
         let parsed_type = self.parse_type()?;
+        let struct_pointer_name = parsed_type
+            .struct_name
+            .as_ref()
+            .filter(|_| parsed_type.c_type.is_pointer())
+            .cloned();
+        if let Some(struct_name) = &struct_pointer_name
+            && !self.structs.contains_key(struct_name)
+        {
+            return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
+        }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
             if parsed_type.is_volatile {
                 return Err(self.error_here(
@@ -3650,22 +3741,23 @@ impl Parser {
             let layout = self.scalar_struct_value_layout(&struct_name)?;
             Some((struct_name, layout))
         } else {
-            if parsed_type.struct_name.is_some()
+            if (parsed_type.struct_name.is_some() && struct_pointer_name.is_none())
                 || parsed_type.enum_name.is_some()
                 || parsed_type.union_name.is_some()
-                || !matches!(
-                    parsed_type.c_type,
-                    C0Type::Int16
-                        | C0Type::Int32
-                        | C0Type::UInt8
-                        | C0Type::UInt16
-                        | C0Type::UInt32
-                        | C0Type::Float32
-                        | C0Type::Float64
-                )
+                || (struct_pointer_name.is_none()
+                    && !matches!(
+                        parsed_type.c_type,
+                        C0Type::Int16
+                            | C0Type::Int32
+                            | C0Type::UInt8
+                            | C0Type::UInt16
+                            | C0Type::UInt32
+                            | C0Type::Float32
+                            | C0Type::Float64
+                    ))
             {
                 return Err(self.error_here(
-                    "file-scope declarations currently support only scalar integer, floating-point, or supported struct globals",
+                    "file-scope declarations currently support only scalar integer, floating-point, struct-pointer, or supported struct globals",
                 ));
             }
             None
@@ -3793,6 +3885,11 @@ impl Parser {
                 break;
             }
             let array_length = self.parse_global_array_length(&name)?;
+            if struct_pointer_name.is_some() && array_length.is_some() {
+                return Err(
+                    self.error_here("file-scope arrays of struct pointers are not supported yet")
+                );
+            }
             if parsed_type.is_volatile && array_length.is_some() {
                 return Err(self.error_here(
                     "the small volatile model supports only direct scalar integer objects",
@@ -3868,20 +3965,35 @@ impl Parser {
                                     name.clone(),
                                     kernel_name.clone(),
                                     parsed_type.c_type,
+                                    struct_pointer_name.clone(),
                                     initializer,
                                 )
                                 .with_volatile(parsed_type.is_volatile)
                             } else {
-                                C0Global::definition(name.clone(), parsed_type.c_type, initializer)
-                                    .with_volatile(parsed_type.is_volatile)
+                                C0Global::definition(
+                                    name.clone(),
+                                    parsed_type.c_type,
+                                    struct_pointer_name.clone(),
+                                    initializer,
+                                )
+                                .with_volatile(parsed_type.is_volatile)
                             }
                         })
                         .unwrap_or_else(|| {
-                            C0Global::declaration(name.clone(), parsed_type.c_type)
-                                .with_volatile(parsed_type.is_volatile)
+                            C0Global::declaration(
+                                name.clone(),
+                                parsed_type.c_type,
+                                struct_pointer_name.clone(),
+                            )
+                            .with_volatile(parsed_type.is_volatile)
                         }),
                 )?;
-                self.variable_types.insert(kernel_name, parsed_type.c_type);
+                self.variable_types
+                    .insert(kernel_name.clone(), parsed_type.c_type);
+                if let Some(struct_name) = &struct_pointer_name {
+                    self.variable_structs
+                        .insert(kernel_name, struct_name.clone());
+                }
             }
             if self.peek() != Some(&Token::Comma) {
                 break;
@@ -3999,7 +4111,7 @@ impl Parser {
             )));
         }
         if let Some(previous) = self.globals.get(&name) {
-            if previous.c_type != c_type {
+            if previous.c_type != c_type || previous.struct_name != declaration.struct_name {
                 return Err(
                     self.error_here(format!("conflicting declarations for global `{name}`"))
                 );
@@ -5511,6 +5623,11 @@ impl Parser {
                     } else {
                         self.parse_expression()?
                     };
+                    self.validate_struct_pointer_assignment(
+                        self.current_return_pointer_struct_name.as_ref(),
+                        Some(self.current_return_type),
+                        &expression,
+                    )?;
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
                 }
@@ -7678,6 +7795,17 @@ impl Parser {
             });
         }
         if !matches!(function_name.as_str(), "malloc" | "calloc") {
+            if self.function_declarations.contains_key(&function_name) {
+                self.validate_struct_pointer_assignment(
+                    self.variable_structs.get(&target),
+                    self.variable_types.get(&target).copied(),
+                    &C0Expression::Call {
+                        function_name: function_name.clone(),
+                        arguments: arguments.clone(),
+                        position: None,
+                    },
+                )?;
+            }
             return Ok(C0Statement::CallAssign {
                 target,
                 function_name,
@@ -8532,6 +8660,14 @@ impl Parser {
                     return Ok((prefix, C0Expression::Variable(target)));
                 }
                 let target = self.fresh_synthesized_call_name();
+                if let Some(function) = self.function_declarations.get(&function_name) {
+                    if let Some(struct_name) = &function.return_pointer_struct_name {
+                        self.variable_types
+                            .insert(target.clone(), function.return_type);
+                        self.variable_structs
+                            .insert(target.clone(), struct_name.clone());
+                    }
+                }
                 prefix.push(C0Statement::CallAssign {
                     target: target.clone(),
                     function_name,
@@ -9536,6 +9672,19 @@ impl Parser {
             {
                 self.variable_structs.get(name).cloned()
             }
+            C0Expression::Call { function_name, .. } => self
+                .function_declarations
+                .get(function_name)
+                .filter(|function| {
+                    matches!(
+                        function.return_type,
+                        C0Type::Int32Pointer
+                            | C0Type::UInt8Pointer
+                            | C0Type::Float32Pointer
+                            | C0Type::Float64Pointer
+                    )
+                })
+                .and_then(|function| function.return_pointer_struct_name.clone()),
             C0Expression::Field {
                 field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 field_struct_name: Some(struct_name),
@@ -9575,6 +9724,24 @@ impl Parser {
             {
                 self.variable_structs.get(name).cloned()
             }
+            C0Expression::Call { function_name, .. } => self
+                .function_declarations
+                .get(function_name)
+                .filter(|function| {
+                    matches!(
+                        function.return_type,
+                        C0Type::Int16PointerPointer
+                            | C0Type::UInt16PointerPointer
+                            | C0Type::Int32PointerPointer
+                            | C0Type::UInt8PointerPointer
+                            | C0Type::UInt32PointerPointer
+                            | C0Type::Int64PointerPointer
+                            | C0Type::UInt64PointerPointer
+                            | C0Type::Float32PointerPointer
+                            | C0Type::Float64PointerPointer
+                    )
+                })
+                .and_then(|function| function.return_pointer_struct_name.clone()),
             C0Expression::Field {
                 field_type:
                     C0Type::Int16PointerPointer
