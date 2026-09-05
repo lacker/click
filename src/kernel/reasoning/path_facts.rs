@@ -134,15 +134,7 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
         Proposition::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
         Proposition::Or(left, right) => solve_builtin_prop(left) || solve_builtin_prop(right),
-        Proposition::Not(body) => match body.as_ref() {
-            Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => {
-                actual != expected
-            }
-            Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
-                sequence_terms_definitely_distinct(left, right)
-            }
-            _ => false,
-        },
+        Proposition::Not(body) => disprove_builtin_prop(body),
         Proposition::CMemoryLoadable {
             memory,
             base,
@@ -171,6 +163,24 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             pointer,
             byte_width,
         } => memory.access_in_bounds(pointer, *byte_width),
+        _ => false,
+    }
+}
+
+fn disprove_builtin_prop(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual != expected,
+        Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
+            sequence_terms_definitely_distinct(left, right)
+        }
+        Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
+            c_values_definitely_distinct(left, right)
+        }
+        Proposition::And(left, right) => {
+            disprove_builtin_prop(left) || disprove_builtin_prop(right)
+        }
+        Proposition::Or(left, right) => disprove_builtin_prop(left) && disprove_builtin_prop(right),
+        Proposition::Not(body) => solve_builtin_prop(body),
         _ => false,
     }
 }

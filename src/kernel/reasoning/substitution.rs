@@ -4567,6 +4567,12 @@ fn substitute_pointer_variable_in_spec_proposition(
     to: &Pointer,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::SequenceMembership { element, sequence } => {
+            SpecProposition::SequenceMembership {
+                element: substitute_pointer_variable_in_spec_expression(element, from, to),
+                sequence: substitute_pointer_variable_in_spec_sequence(sequence, from, to),
+            }
+        }
         SpecProposition::SequenceComparison { left, equal, right } => {
             SpecProposition::SequenceComparison {
                 left: substitute_pointer_variable_in_spec_sequence(left, from, to),

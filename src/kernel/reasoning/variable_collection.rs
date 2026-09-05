@@ -523,6 +523,10 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
+        SpecProposition::SequenceMembership { element, sequence } => {
+            collect_spec_expression_bitvector_variables(element, variables);
+            collect_spec_sequence_bitvector_variables(sequence, variables);
+        }
         SpecProposition::SequenceComparison { left, right, .. } => {
             collect_spec_sequence_bitvector_variables(left, variables);
             collect_spec_sequence_bitvector_variables(right, variables);

@@ -39,7 +39,7 @@ documentation inventory keep the following accepted words synchronized.
 | `invariant`, `step`, `initialize`, `preserve` | Loop structural items and phase proofs. |
 | `contains`, `fact`, `if` | Composite-resource members and optional resource guard. `if` also forms expressions and proof splits. |
 | `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
-| `and`, `or`, `implies`, `not` | Proposition connectives in increasing precedence, except right-associative `implies`. |
+| `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
 | `forall`, `exists` | Universal and existential quantifiers. |
 | `all`, `any`, `fold` | Range proposition and expression methods. |
 | `defined`, `loadable`, `separate`, `aligned` | Definedness, readable-memory, resource-separation, and pointer-alignment propositions. |
@@ -128,8 +128,8 @@ Comparisons form propositions rather than contract expressions. See
 `[a, b, c]` is an immutable finite specification sequence. Its elements must
 have one compatible C scalar or data-pointer type. `[]` is the empty sequence,
 and `left ++ right` concatenates two compatible sequences without allocating C
-memory or granting memory authority. Sequence values support `==` and `!=`;
-ordering comparisons are rejected.
+memory or granting memory authority. Sequence values support `==`, `!=`, and
+the proposition `element in sequence`; ordering comparisons are rejected.
 
 Concatenation is associative and `[]` is its left and right identity. Sequence
 equality compares elements rather than concatenation-tree shape, preserving
@@ -144,8 +144,8 @@ ensures [destination[0], destination[1], destination[2]]
     == old([source[0], source[1], source[2]]);
 ```
 
-This initial slice exposes literal sequence values in equality propositions.
-Typed `seq<T>` binders, general indexing, membership, and projection of a
+This initial slice exposes literal sequence values in equality and membership
+propositions. Typed `seq<T>` binders, general indexing, and projection of a
 symbolic memory range are not yet surface forms.
 
 ## C0-expression precedence

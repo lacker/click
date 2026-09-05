@@ -172,6 +172,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "if",
     "immutable",
     "implies",
+    "in",
     "induct",
     "initialize",
     "instantiate",
@@ -272,6 +273,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "operator-ge",
     "operator-gt",
     "operator-index",
+    "operator-in",
     "operator-le",
     "operator-lt",
     "operator-minus",
@@ -1841,6 +1843,7 @@ pub enum ContractSegmentState {
 pub enum ComparisonOperator {
     Equal,
     NotEqual,
+    In,
     LessThan,
     LessEqual,
     GreaterThan,
@@ -1852,6 +1855,7 @@ impl fmt::Display for ComparisonOperator {
         let form = match self {
             Self::Equal => "==",
             Self::NotEqual => "!=",
+            Self::In => "in",
             Self::LessThan => "<",
             Self::LessEqual => "<=",
             Self::GreaterThan => ">",

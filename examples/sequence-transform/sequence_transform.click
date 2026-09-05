@@ -46,3 +46,13 @@ void sequence_reverse3(int32 values[]) {
     frame();
     simp();
 }
+
+int32 sequence_contains3(int32 values[], int32 target) {
+    views values[0..3];
+
+    ensures result != 0 implies target in old([values[0], values[1], values[2]]);
+    ensures target in old([values[0], values[1], values[2]]) implies result != 0;
+} by {
+    execute();
+    simp();
+}

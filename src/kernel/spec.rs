@@ -32,6 +32,16 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
+        SpecProposition::SequenceMembership { element, sequence } => {
+            lower_spec_sequence_membership_at_state(
+                state,
+                element,
+                sequence,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )
+        }
         SpecProposition::SequenceComparison { left, equal, right } => {
             lower_spec_sequence_comparison_at_state(
                 state,
@@ -439,6 +449,130 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                 facts: Vec::new(),
                 obligations: Vec::new(),
             }])
+        }
+    }
+}
+
+fn lower_spec_sequence_membership_at_state(
+    state: &CState,
+    element: &SpecExpression,
+    sequence: &SpecSequenceExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let mut paths = Vec::new();
+    for element_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        element,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
+        let sequence_assumptions = assumptions_with_path_context(
+            assumptions,
+            &element_path.facts,
+            &element_path.obligations,
+        );
+        for sequence_path in evaluate_spec_sequence_at_state(
+            state,
+            sequence,
+            loop_entry_state,
+            &sequence_assumptions,
+            budget,
+        )? {
+            if sequence_path
+                .value
+                .element_type
+                .is_some_and(|element_type| element_type != element_path.value.c_type())
+            {
+                continue;
+            }
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &element_path.facts,
+                &element_path.obligations,
+                &sequence_path.facts,
+                &sequence_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let comparisons = sequence_elements(&sequence_path.value)
+                .filter_map(|member| {
+                    c_value_comparison_proposition(
+                        &element_path.value,
+                        CComparisonOperator::Equal,
+                        member,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            let comparison_truth = |comparison: &Proposition| {
+                proposition_as_single_condition(comparison).and_then(|(condition, expected)| {
+                    path_assumptions
+                        .decide(&condition)
+                        .map(|actual| actual == expected)
+                })
+            };
+            let proposition = if comparisons
+                .iter()
+                .any(|comparison| comparison_truth(comparison) == Some(true))
+            {
+                Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+            } else if comparisons
+                .iter()
+                .all(|comparison| comparison_truth(comparison) == Some(false))
+            {
+                Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+            } else {
+                comparisons
+                    .into_iter()
+                    .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)))
+                    .unwrap_or(Proposition::ConditionIs(
+                        ConditionTerm::Constant(false),
+                        true,
+                    ))
+            };
+            paths.push(SpecPropositionPath {
+                proposition,
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(paths)
+}
+
+fn sequence_elements(sequence: &SequenceTerm) -> SequenceElements<'_> {
+    SequenceElements {
+        pending: vec![sequence],
+        current: None,
+    }
+}
+
+struct SequenceElements<'a> {
+    pending: Vec<&'a SequenceTerm>,
+    current: Option<std::slice::Iter<'a, CValue>>,
+}
+
+impl<'a> Iterator for SequenceElements<'a> {
+    type Item = &'a CValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(values) = &mut self.current {
+                if let Some(value) = values.next() {
+                    return Some(value);
+                }
+                self.current = None;
+            }
+            match self.pending.pop()?.node.as_ref() {
+                SequenceTermNode::Literal(values) => self.current = Some(values.iter()),
+                SequenceTermNode::Concat(left, right) => {
+                    self.pending.push(right);
+                    self.pending.push(left);
+                }
+            }
         }
     }
 }

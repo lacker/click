@@ -2185,6 +2185,7 @@ impl Parser {
             Token::GreaterEqual => Ok(ComparisonOperator::GreaterEqual),
             Token::EqualEqual => Ok(ComparisonOperator::Equal),
             Token::BangEqual => Ok(ComparisonOperator::NotEqual),
+            Token::Ident(operator) if operator == "in" => Ok(ComparisonOperator::In),
             token => Err(self.error(format!(
                 "expected comparison operator in `{clause}`, got {token:?}"
             ))),

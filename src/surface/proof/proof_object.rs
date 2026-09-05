@@ -795,6 +795,7 @@ fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickPro
                 ComparisonOperator::LessEqual => ComparisonOperator::GreaterEqual,
                 ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
                 ComparisonOperator::GreaterEqual => ComparisonOperator::LessEqual,
+                ComparisonOperator::In => return None,
             };
             Some(ClickProposition::Comparison {
                 left: right.clone(),

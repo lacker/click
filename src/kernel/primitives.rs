@@ -765,6 +765,10 @@ pub enum SpecPredicateArgument {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
+    SequenceMembership {
+        element: SpecExpression,
+        sequence: SpecSequenceExpression,
+    },
     SequenceComparison {
         left: SpecSequenceExpression,
         equal: bool,

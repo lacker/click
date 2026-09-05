@@ -8,6 +8,10 @@ pub(crate) use crate::kernel::proof::fact_reasoning::*;
 pub(super) fn negate_click_proposition(proposition: &ClickProposition) -> ClickProposition {
     match proposition {
         ClickProposition::Comparison {
+            operator: ComparisonOperator::In,
+            ..
+        } => ClickProposition::Not(Box::new(proposition.clone())),
+        ClickProposition::Comparison {
             left,
             operator,
             right,
@@ -20,6 +24,7 @@ pub(super) fn negate_click_proposition(proposition: &ClickProposition) -> ClickP
                 ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
                 ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
                 ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
+                ComparisonOperator::In => unreachable!("handled above"),
             },
             right: right.clone(),
         },

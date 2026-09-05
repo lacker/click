@@ -655,6 +655,10 @@ id = "language.word.implies"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.in"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.induct"
 path = "reference/language/grammar.md#word-index"
 
@@ -1117,6 +1121,10 @@ path = "reference/language/grammar.md#grammar-and-operators"
 
 [[item]]
 id = "language.operator-index"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-in"
 path = "reference/language/grammar.md#grammar-and-operators"
 
 [[item]]

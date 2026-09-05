@@ -362,5 +362,6 @@ pub(super) fn comparison_condition(
             },
             true,
         )),
+        ComparisonOperator::In => None,
     }
 }

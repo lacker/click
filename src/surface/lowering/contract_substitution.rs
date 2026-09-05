@@ -2267,6 +2267,7 @@ pub(in crate::surface) fn c_comparison_operator(
     match operator {
         ComparisonOperator::Equal => CComparisonOperator::Equal,
         ComparisonOperator::NotEqual => CComparisonOperator::NotEqual,
+        ComparisonOperator::In => unreachable!("membership is lowered before C comparisons"),
         ComparisonOperator::LessThan => CComparisonOperator::LessThan,
         ComparisonOperator::LessEqual => CComparisonOperator::LessEqual,
         ComparisonOperator::GreaterThan => CComparisonOperator::GreaterThan,

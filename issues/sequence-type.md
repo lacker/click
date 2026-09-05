@@ -26,9 +26,12 @@ unchanged.
 - element-wise `old(...)` and named-snapshot elaboration;
 - checked contracts for `sequence_copy3` and `sequence_concatenate2`;
 - shape-independent element-wise equality, including `++` associativity; and
-- a checked contract for in-place `sequence_reverse3`.
+- a checked contract for in-place `sequence_reverse3`;
+- proposition-level `element in sequence` membership over literals and
+  concatenations; and
+- a checked exact-result contract for `sequence_contains3`.
 
-Still open are typed `seq<T>` binders and function boundaries, membership,
+Still open are typed `seq<T>` binders and function boundaries,
 recursive-resource use, and symbolic typed-memory-range projection.
 
 ## Violated invariant

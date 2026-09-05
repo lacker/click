@@ -137,7 +137,29 @@ fn validate_comparison_expression_types(
     let left_type = infer_spec_value_type(left, variables, click_functions, context)?;
     let right_type = infer_spec_value_type(right, variables, click_functions, context)?;
     match (left_type, right_type) {
-        (SpecValueType::Scalar(_), SpecValueType::Scalar(_)) => Ok(()),
+        (SpecValueType::Scalar(element), SpecValueType::Sequence(sequence))
+            if operator == ComparisonOperator::In =>
+        {
+            if let (Some(element), Some(sequence)) = (element, sequence)
+                && element != sequence
+            {
+                return Err(ClickError::new(format!(
+                    "membership element type does not match sequence element type in {context}: {} and {}",
+                    describe_c0_type(element),
+                    describe_c0_type(sequence)
+                )));
+            }
+            Ok(())
+        }
+        (SpecValueType::Scalar(_), SpecValueType::Scalar(_)) => {
+            if operator == ComparisonOperator::In {
+                Err(ClickError::new(format!(
+                    "right operand of `in` must be a sequence in {context}"
+                )))
+            } else {
+                Ok(())
+            }
+        }
         (SpecValueType::Sequence(left), SpecValueType::Sequence(right)) => {
             if !matches!(
                 operator,
@@ -158,6 +180,9 @@ fn validate_comparison_expression_types(
             }
             Ok(())
         }
+        _ if operator == ComparisonOperator::In => Err(ClickError::new(format!(
+            "`in` requires a scalar element on the left and a sequence on the right in {context}"
+        ))),
         _ => Err(ClickError::new(format!(
             "sequence equality requires a sequence on both sides in {context}"
         ))),

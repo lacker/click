@@ -67,6 +67,9 @@ pub(in crate::surface) fn comparison_proposition(
             ComparisonOperator::LessEqual => ConditionTerm::uint64_less_equal(left, right),
             ComparisonOperator::GreaterThan => ConditionTerm::uint64_greater_than(left, right),
             ComparisonOperator::GreaterEqual => ConditionTerm::uint64_greater_equal(left, right),
+            ComparisonOperator::In => {
+                return Err(ClickError::new("membership is not a scalar comparison"));
+            }
         };
         return Ok(Proposition::ConditionIs(
             condition,
@@ -95,6 +98,9 @@ pub(in crate::surface) fn comparison_proposition(
             }
             ComparisonOperator::GreaterEqual => {
                 ConditionTerm::int64_signed_greater_equal(left, right)
+            }
+            ComparisonOperator::In => {
+                return Err(ClickError::new("membership is not a scalar comparison"));
             }
         };
         return Ok(Proposition::ConditionIs(

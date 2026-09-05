@@ -1186,6 +1186,12 @@ impl AnnotationLowerer<'_> {
                 operator,
                 right,
             } => {
+                if *operator == ComparisonOperator::In {
+                    return Ok(SpecProposition::SequenceMembership {
+                        element: self.lower_contract_expression_to_spec(left, environment)?,
+                        sequence: self.lower_contract_sequence_to_spec(right, environment)?,
+                    });
+                }
                 let has_sequence =
                     contract_expression_is_sequence(left) || contract_expression_is_sequence(right);
                 if has_sequence {

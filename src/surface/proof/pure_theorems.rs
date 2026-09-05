@@ -1952,7 +1952,9 @@ fn add_canonical_order_premise_pairs(
                 operator: ComparisonOperator::LessEqual,
                 right,
             },
-            ComparisonOperator::Equal | ComparisonOperator::NotEqual => continue,
+            ComparisonOperator::Equal | ComparisonOperator::NotEqual | ComparisonOperator::In => {
+                continue;
+            }
         };
         let kernel = lower_pure_theorem_proposition(
             claim_label,
