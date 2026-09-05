@@ -3097,3 +3097,43 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
         error.message()
     );
 }
+
+#[test]
+fn sequence_contracts_reject_mixed_and_non_equality_types() {
+    let c_source = r#"
+        void inspect(int32* words, uint8_t* bytes) {}
+    "#;
+    let cases = [
+        (
+            "[words[0]] == [bytes[0]]",
+            "sequence element types do not match",
+        ),
+        (
+            "[words[0]] == words[0]",
+            "sequence equality requires a sequence",
+        ),
+        (
+            "[words[0]] < [words[0]]",
+            "sequences support only `==` and `!=`",
+        ),
+    ];
+
+    for (claim, expected) in cases {
+        let click_source = format!(
+            r#"
+                verifying "inspect.c";
+
+                void inspect(int32 words[], uint8 bytes[]) {{
+                    ensures {claim};
+                }}
+            "#
+        );
+        let error = verify_c0_sources(&click_source, &[("inspect.c", c_source)])
+            .expect_err("ill-typed sequence contract should fail");
+        assert!(
+            error.message().contains(expected),
+            "unexpected diagnostic for `{claim}`: {}",
+            error.message()
+        );
+    }
+}

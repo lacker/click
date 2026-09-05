@@ -60,8 +60,13 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                 }
             }
             '+' => {
-                tokens.push(Token::Plus);
-                index += 1;
+                if chars.get(index + 1) == Some(&'+') {
+                    tokens.push(Token::PlusPlus);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Plus);
+                    index += 1;
+                }
             }
             '-' => {
                 if chars.get(index + 1) == Some(&'>') {

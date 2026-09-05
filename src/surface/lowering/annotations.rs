@@ -1,6 +1,18 @@
 use super::*;
+
+fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => true,
+        ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => contract_expression_is_sequence(inner),
+        _ => false,
+    }
+}
 use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
+use crate::kernel::SpecSequenceExpression;
 
 type FunctionContractSummary = (
     Vec<SpecProposition>,
@@ -1173,11 +1185,32 @@ impl AnnotationLowerer<'_> {
                 left,
                 operator,
                 right,
-            } => Ok(SpecProposition::Comparison {
-                left: self.lower_contract_expression_to_spec(left, environment)?,
-                operator: c_comparison_operator(*operator),
-                right: self.lower_contract_expression_to_spec(right, environment)?,
-            }),
+            } => {
+                let has_sequence =
+                    contract_expression_is_sequence(left) || contract_expression_is_sequence(right);
+                if has_sequence {
+                    let equal = match operator {
+                        ComparisonOperator::Equal => true,
+                        ComparisonOperator::NotEqual => false,
+                        _ => {
+                            return Err(
+                                "sequences support only `==` and `!=` comparisons".to_string()
+                            );
+                        }
+                    };
+                    Ok(SpecProposition::SequenceComparison {
+                        left: self.lower_contract_sequence_to_spec(left, environment)?,
+                        equal,
+                        right: self.lower_contract_sequence_to_spec(right, environment)?,
+                    })
+                } else {
+                    Ok(SpecProposition::Comparison {
+                        left: self.lower_contract_expression_to_spec(left, environment)?,
+                        operator: c_comparison_operator(*operator),
+                        right: self.lower_contract_expression_to_spec(right, environment)?,
+                    })
+                }
+            }
             ClickProposition::FloatClassification {
                 expression,
                 classification,
@@ -1458,6 +1491,9 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
+                Err("a sequence value is only valid as an operand of `==` or `!=`".to_string())
+            }
             ContractExpression::CFragment(expression)
             | ContractExpression::Field {
                 lowered: expression,
@@ -1698,6 +1734,53 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Call { name, arguments } => {
                 self.lower_click_function_call_to_spec(name, arguments, environment)
             }
+        }
+    }
+
+    fn lower_contract_sequence_to_spec(
+        &mut self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecSequenceExpression, String> {
+        match expression {
+            ContractExpression::SequenceLiteral(elements) => Ok(SpecSequenceExpression::Literal(
+                elements
+                    .iter()
+                    .map(|element| self.lower_contract_expression_to_spec(element, environment))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            ContractExpression::SequenceConcat(left, right) => Ok(SpecSequenceExpression::Concat(
+                Box::new(self.lower_contract_sequence_to_spec(left, environment)?),
+                Box::new(self.lower_contract_sequence_to_spec(right, environment)?),
+            )),
+            ContractExpression::Old(inner) => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_contract_sequence_to_spec(inner, &old_environment)
+            }
+            ContractExpression::At {
+                selector,
+                expression,
+            } => {
+                if let Some(snapshot) = self.snapshot_environment(selector, environment) {
+                    return self.lower_contract_sequence_to_spec(expression, &snapshot);
+                }
+                match self.resolve_visit_selector(selector)? {
+                    ResolvedProgramPoint::Current => {
+                        self.lower_contract_sequence_to_spec(expression, environment)
+                    }
+                    ResolvedProgramPoint::FunctionEntry => {
+                        let old_environment =
+                            environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                        self.lower_contract_sequence_to_spec(expression, &old_environment)
+                    }
+                    ResolvedProgramPoint::LoopEntry(_) => Err(
+                        "sequence snapshots at loop entry are not in the first sequence slice"
+                            .to_string(),
+                    ),
+                }
+            }
+            _ => Err("sequence equality requires a sequence on both sides".to_string()),
         }
     }
 

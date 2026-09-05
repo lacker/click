@@ -17,6 +17,13 @@ pub(super) struct SpecExpressionPath {
     pub(super) obligations: Vec<ProofObligation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpecSequencePath {
+    value: SequenceTerm,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+}
+
 pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     state: &CState,
     proposition: &SpecProposition,
@@ -25,6 +32,17 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
+        SpecProposition::SequenceComparison { left, equal, right } => {
+            lower_spec_sequence_comparison_at_state(
+                state,
+                left,
+                *equal,
+                right,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )
+        }
         SpecProposition::Comparison {
             left,
             operator,
@@ -422,6 +440,234 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                 obligations: Vec::new(),
             }])
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_spec_sequence_comparison_at_state(
+    state: &CState,
+    left: &SpecSequenceExpression,
+    equal: bool,
+    right: &SpecSequenceExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let mut paths = Vec::new();
+    for left_path in
+        evaluate_spec_sequence_at_state(state, left, loop_entry_state, assumptions, budget)?
+    {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_sequence_at_state(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
+            if !sequence_element_types_compatible(
+                left_path.value.element_type,
+                right_path.value.element_type,
+            ) {
+                continue;
+            }
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let equality = Proposition::Equal(
+                Term::Sequence(left_path.value.clone()),
+                Term::Sequence(right_path.value),
+            );
+            paths.push(SpecPropositionPath {
+                proposition: if equal {
+                    equality
+                } else {
+                    Proposition::Not(Box::new(equality))
+                },
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(paths)
+}
+
+fn evaluate_spec_sequence_at_state(
+    state: &CState,
+    expression: &SpecSequenceExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecSequencePath>> {
+    budget.consume_expression_step()?;
+    match expression {
+        SpecSequenceExpression::Literal(elements) => {
+            let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+            for element in elements {
+                let mut next = Vec::new();
+                for (values, facts, obligations) in paths {
+                    let path_assumptions =
+                        assumptions_with_path_context(assumptions, &facts, &obligations);
+                    for element_path in evaluate_spec_expression_paths_with_loop_entry(
+                        state,
+                        element,
+                        loop_entry_state,
+                        &path_assumptions,
+                        budget,
+                    )? {
+                        let Some((merged_facts, merged_obligations)) =
+                            merge_execution_pure_facts_and_obligations(
+                                &facts,
+                                &obligations,
+                                &element_path.facts,
+                                &element_path.obligations,
+                                assumptions,
+                            )
+                        else {
+                            continue;
+                        };
+                        let mut next_values = values.clone();
+                        next_values.push(element_path.value);
+                        next.push((next_values, merged_facts, merged_obligations));
+                    }
+                }
+                paths = next;
+            }
+            Ok(paths
+                .into_iter()
+                .filter_map(|(values, facts, obligations)| {
+                    let element_type = values.first().map(CValue::c_type);
+                    values
+                        .iter()
+                        .all(|value| Some(value.c_type()) == element_type)
+                        .then(|| SpecSequencePath {
+                            value: SequenceTerm {
+                                element_type,
+                                node: std::sync::Arc::new(SequenceTermNode::Literal(values.into())),
+                            },
+                            facts,
+                            obligations,
+                        })
+                })
+                .collect())
+        }
+        SpecSequenceExpression::Concat(left, right) => {
+            let mut paths = Vec::new();
+            for left_path in
+                evaluate_spec_sequence_at_state(state, left, loop_entry_state, assumptions, budget)?
+            {
+                let right_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &left_path.facts,
+                    &left_path.obligations,
+                );
+                for right_path in evaluate_spec_sequence_at_state(
+                    state,
+                    right,
+                    loop_entry_state,
+                    &right_assumptions,
+                    budget,
+                )? {
+                    if !sequence_element_types_compatible(
+                        left_path.value.element_type,
+                        right_path.value.element_type,
+                    ) {
+                        continue;
+                    }
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &left_path.facts,
+                        &left_path.obligations,
+                        &right_path.facts,
+                        &right_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    paths.push(SpecSequencePath {
+                        value: concatenate_sequence_terms(
+                            left_path.value.clone(),
+                            right_path.value,
+                        ),
+                        facts,
+                        obligations,
+                    });
+                }
+            }
+            Ok(paths)
+        }
+    }
+}
+
+fn sequence_element_types_compatible(left: Option<CType>, right: Option<CType>) -> bool {
+    left.is_none() || right.is_none() || left == right
+}
+
+fn concatenate_sequence_terms(left: SequenceTerm, right: SequenceTerm) -> SequenceTerm {
+    if matches!(left.node.as_ref(), SequenceTermNode::Literal(values) if values.is_empty()) {
+        return right;
+    }
+    if matches!(right.node.as_ref(), SequenceTermNode::Literal(values) if values.is_empty()) {
+        return left;
+    }
+    SequenceTerm {
+        element_type: left.element_type.or(right.element_type),
+        node: std::sync::Arc::new(SequenceTermNode::Concat(left, right)),
+    }
+}
+
+#[cfg(test)]
+mod sequence_term_tests {
+    use super::*;
+
+    fn singleton(value: u32) -> SequenceTerm {
+        SequenceTerm {
+            element_type: Some(CType::Int32),
+            node: std::sync::Arc::new(SequenceTermNode::Literal(vec![int32(value)].into())),
+        }
+    }
+
+    #[test]
+    fn repeated_concatenation_shares_the_existing_root() {
+        for size in [8usize, 64, 512] {
+            let mut sequence = singleton(0);
+            for value in 1..size {
+                let previous_root = sequence.node.clone();
+                sequence = concatenate_sequence_terms(sequence, singleton(value as u32));
+                let SequenceTermNode::Concat(left, _) = sequence.node.as_ref() else {
+                    panic!("nonempty concatenation should retain a rope node");
+                };
+                assert!(
+                    std::sync::Arc::ptr_eq(&left.node, &previous_root),
+                    "concatenating size {value} copied the existing sequence"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_concatenation_reuses_the_nonempty_root() {
+        let empty = SequenceTerm {
+            element_type: None,
+            node: std::sync::Arc::new(SequenceTermNode::Literal(Vec::new().into())),
+        };
+        let value = singleton(7);
+        let root = value.node.clone();
+
+        assert!(std::sync::Arc::ptr_eq(
+            &concatenate_sequence_terms(empty.clone(), value.clone()).node,
+            &root,
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &concatenate_sequence_terms(value, empty).node,
+            &root,
+        ));
     }
 }
 

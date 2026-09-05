@@ -957,6 +957,9 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
+        ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => Err(
+            ClickError::new("declared resource arguments do not yet accept sequence values"),
+        ),
         ContractExpression::CFragment(expression) => Ok(expression.clone()),
         ContractExpression::Field { lowered, .. } => Ok(lowered.clone()),
         ContractExpression::CBinding(name) => Ok(CExpression::Variable(name.clone())),

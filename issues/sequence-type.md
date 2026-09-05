@@ -15,8 +15,20 @@ array, vector, linked list, or tree.
 
 The fixed synthetic C scaffold for the first nonrecursive uses lives in
 [`examples/sequence-transform`](../examples/sequence-transform/README.md).
-Its sidecar currently imports the implementation without claiming the missing
-sequence specifications.
+Its sidecar verifies the first literal/equality slice while keeping the C
+unchanged.
+
+## Implemented first slice
+
+- finite homogeneous literals, including `[]`;
+- persistent `++` terms with constant-time root sharing and empty identity;
+- `==` and `!=` lowering to typed kernel sequence terms;
+- element-wise `old(...)` and named-snapshot elaboration; and
+- checked contracts for `sequence_copy3` and `sequence_concatenate2`.
+
+Still open are typed `seq<T>` binders and function boundaries, general
+associativity reasoning, membership, reversal support, recursive-resource use,
+and symbolic typed-memory-range projection.
 
 ## Violated invariant
 

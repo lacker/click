@@ -1106,6 +1106,40 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                collect_resource_fact_reads_from_contract_expression(
+                    element,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            collect_resource_fact_reads_from_contract_expression(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_fact_reads_from_contract_expression(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
         ContractExpression::CFragment(expression)
         | ContractExpression::Field {
             lowered: expression,

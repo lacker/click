@@ -1982,6 +1982,15 @@ fn click_function_applications(
         applications: &mut Vec<ClickFunctionApplication>,
     ) {
         match term {
+            ContractExpression::SequenceLiteral(elements) => {
+                for element in elements {
+                    expression(element, known_facts, applications);
+                }
+            }
+            ContractExpression::SequenceConcat(left, right) => {
+                expression(left, known_facts, applications);
+                expression(right, known_facts, applications);
+            }
             ContractExpression::Call { name, arguments } => {
                 let application = ClickFunctionApplication {
                     name: name.clone(),

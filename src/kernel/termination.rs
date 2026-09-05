@@ -1604,6 +1604,7 @@ fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpre
 
 fn spec_proposition_to_c_expression(proposition: &SpecProposition) -> Option<CExpression> {
     match proposition {
+        SpecProposition::SequenceComparison { .. } => None,
         SpecProposition::Comparison {
             left,
             operator,

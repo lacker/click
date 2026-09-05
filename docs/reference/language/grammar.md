@@ -109,18 +109,40 @@ From lowest to highest precedence:
 
 | Precedence | Operators or forms | Associativity |
 | --- | --- | --- |
-| 1 | `\|` | Left |
-| 2 | `^` | Left |
-| 3 | `&` | Left |
-| 4 | `<<`, `>>` | Left |
-| 5 | `+`, `-` | Left |
-| 6 | `*`, `/`, `%` | Left |
-| 7 | unary `-`, `~`, dereference `*` | Prefix |
-| 8 | indexing `[]`, field access `->` | Left, postfix |
-| 9 | literals, names, calls, ranges, conditionals, folds | Not applicable |
+| 1 | sequence concatenation `++` | Left |
+| 2 | `\|` | Left |
+| 3 | `^` | Left |
+| 4 | `&` | Left |
+| 5 | `<<`, `>>` | Left |
+| 6 | `+`, `-` | Left |
+| 7 | `*`, `/`, `%` | Left |
+| 8 | unary `-`, `~`, dereference `*` | Prefix |
+| 9 | indexing `[]`, field access `->` | Left, postfix |
+| 10 | literals, names, calls, ranges, conditionals, folds | Not applicable |
 
 Comparisons form propositions rather than contract expressions. See
 [Propositions](index.md#propositions) for their syntax and typing rules.
+
+## Specification sequences
+
+`[a, b, c]` is an immutable finite specification sequence. Its elements must
+have one compatible C scalar or data-pointer type. `[]` is the empty sequence,
+and `left ++ right` concatenates two compatible sequences without allocating C
+memory or granting memory authority. Sequence values support `==` and `!=`;
+ordering comparisons are rejected.
+
+`old(...)` and proof snapshots evaluate every element in the selected state,
+so a contract can relate current array cells to their exact entry order:
+
+<!-- verified-example: mdtests/sequence_literals.md -->
+```click
+ensures [destination[0], destination[1], destination[2]]
+    == old([source[0], source[1], source[2]]);
+```
+
+This initial slice exposes literal sequence values in equality propositions.
+Typed `seq<T>` binders, general indexing, membership, and projection of a
+symbolic memory range are not yet surface forms.
 
 ## C0-expression precedence
 

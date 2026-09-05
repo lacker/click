@@ -30,11 +30,18 @@ pub(super) fn validate_proposition_expression_types(
     context: &str,
 ) -> Result<(), ClickError> {
     match proposition {
-        ClickProposition::Comparison { left, right, .. } => {
-            let _ = infer_contract_expression_type(left, variables, click_functions, context)?;
-            let _ = infer_contract_expression_type(right, variables, click_functions, context)?;
-            Ok(())
-        }
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => validate_comparison_expression_types(
+            left,
+            *operator,
+            right,
+            variables,
+            click_functions,
+            context,
+        ),
         ClickProposition::FloatClassification { expression, .. } => {
             let actual =
                 infer_contract_expression_type(expression, variables, click_functions, context)?;
@@ -111,6 +118,139 @@ pub(super) fn validate_proposition_expression_types(
             Ok(())
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpecValueType {
+    Scalar(Option<C0Type>),
+    Sequence(Option<C0Type>),
+}
+
+fn validate_comparison_expression_types(
+    left: &ContractExpression,
+    operator: ComparisonOperator,
+    right: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let left_type = infer_spec_value_type(left, variables, click_functions, context)?;
+    let right_type = infer_spec_value_type(right, variables, click_functions, context)?;
+    match (left_type, right_type) {
+        (SpecValueType::Scalar(_), SpecValueType::Scalar(_)) => Ok(()),
+        (SpecValueType::Sequence(left), SpecValueType::Sequence(right)) => {
+            if !matches!(
+                operator,
+                ComparisonOperator::Equal | ComparisonOperator::NotEqual
+            ) {
+                return Err(ClickError::new(format!(
+                    "sequences support only `==` and `!=` comparisons in {context}"
+                )));
+            }
+            if let (Some(left), Some(right)) = (left, right)
+                && left != right
+            {
+                return Err(ClickError::new(format!(
+                    "sequence element types do not match in {context}: {} and {}",
+                    describe_c0_type(left),
+                    describe_c0_type(right)
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(ClickError::new(format!(
+            "sequence equality requires a sequence on both sides in {context}"
+        ))),
+    }
+}
+
+fn infer_spec_value_type(
+    expression: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<SpecValueType, ClickError> {
+    match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            let mut element_type = None;
+            for element in elements {
+                let actual =
+                    infer_contract_expression_type(element, variables, click_functions, context)?;
+                if let Some(actual) = actual
+                    && !sequence_element_type_supported(actual)
+                {
+                    return Err(ClickError::new(format!(
+                        "{} is not a supported sequence element type in {context}",
+                        describe_c0_type(actual)
+                    )));
+                }
+                if let (Some(expected), Some(actual)) = (element_type, actual)
+                    && actual != expected
+                {
+                    return Err(ClickError::new(format!(
+                        "sequence literal mixes {} and {} elements in {context}",
+                        describe_c0_type(expected),
+                        describe_c0_type(actual)
+                    )));
+                }
+                element_type = element_type.or(actual);
+            }
+            Ok(SpecValueType::Sequence(element_type))
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            let SpecValueType::Sequence(left) =
+                infer_spec_value_type(left, variables, click_functions, context)?
+            else {
+                return Err(ClickError::new(format!(
+                    "left operand of `++` is not a sequence in {context}"
+                )));
+            };
+            let SpecValueType::Sequence(right) =
+                infer_spec_value_type(right, variables, click_functions, context)?
+            else {
+                return Err(ClickError::new(format!(
+                    "right operand of `++` is not a sequence in {context}"
+                )));
+            };
+            if let (Some(left), Some(right)) = (left, right)
+                && left != right
+            {
+                return Err(ClickError::new(format!(
+                    "`++` element types do not match in {context}: {} and {}",
+                    describe_c0_type(left),
+                    describe_c0_type(right)
+                )));
+            }
+            Ok(SpecValueType::Sequence(left.or(right)))
+        }
+        ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => infer_spec_value_type(inner, variables, click_functions, context),
+        _ => Ok(SpecValueType::Scalar(infer_contract_expression_type(
+            expression,
+            variables,
+            click_functions,
+            context,
+        )?)),
+    }
+}
+
+fn sequence_element_type_supported(c_type: C0Type) -> bool {
+    !matches!(
+        c_type,
+        C0Type::Void
+            | C0Type::FunctionPointer(_)
+            | C0Type::Int32Array(_)
+            | C0Type::UInt8Array(_)
+            | C0Type::Int16Array(_)
+            | C0Type::UInt16Array(_)
+            | C0Type::UInt32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_)
+            | C0Type::Float32Array(_)
+            | C0Type::Float64Array(_)
+    )
 }
 
 fn validate_resource_subject_expression_types(
@@ -450,6 +590,11 @@ fn infer_contract_expression_type(
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
     match expression {
+        ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
+            Err(ClickError::new(format!(
+                "sequence values are only valid as operands of `==` or `!=` in {context}"
+            )))
+        }
         ContractExpression::CFragment(expression)
         | ContractExpression::Field {
             lowered: expression,
@@ -1194,6 +1339,16 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                validate_contract_expression_calls(element, click_functions, context)?;
+            }
+            Ok(())
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            validate_contract_expression_calls(left, click_functions, context)?;
+            validate_contract_expression_calls(right, click_functions, context)
+        }
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => {

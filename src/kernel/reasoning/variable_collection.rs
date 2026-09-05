@@ -237,6 +237,7 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
             collect_pointer_offset_bitvector_variables(offset, variables)
         }
         Term::CValue(value) => collect_c_value_bitvector_variables(value, variables),
+        Term::Sequence(sequence) => collect_sequence_bitvector_variables(sequence, variables),
         Term::CExpressionOutcome(outcome) => {
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
@@ -248,6 +249,23 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
         }
         Term::CMemory(memory) => collect_memory_bitvector_variables(memory, variables),
         Term::CState(state) => collect_c_state_bitvector_variables(state, variables),
+    }
+}
+
+fn collect_sequence_bitvector_variables(
+    sequence: &SequenceTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => {
+            for value in values.iter() {
+                collect_c_value_bitvector_variables(value, variables);
+            }
+        }
+        SequenceTermNode::Concat(left, right) => {
+            collect_sequence_bitvector_variables(left, variables);
+            collect_sequence_bitvector_variables(right, variables);
+        }
     }
 }
 
@@ -505,6 +523,10 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
+        SpecProposition::SequenceComparison { left, right, .. } => {
+            collect_spec_sequence_bitvector_variables(left, variables);
+            collect_spec_sequence_bitvector_variables(right, variables);
+        }
         SpecProposition::Comparison { left, right, .. } => {
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
@@ -562,6 +584,23 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
         }
         SpecProposition::Defined(expression) => {
             collect_spec_expression_bitvector_variables(expression, variables);
+        }
+    }
+}
+
+fn collect_spec_sequence_bitvector_variables(
+    sequence: &SpecSequenceExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => {
+            for element in elements {
+                collect_spec_expression_bitvector_variables(element, variables);
+            }
+        }
+        SpecSequenceExpression::Concat(left, right) => {
+            collect_spec_sequence_bitvector_variables(left, variables);
+            collect_spec_sequence_bitvector_variables(right, variables);
         }
     }
 }

@@ -5622,6 +5622,13 @@ pub(super) fn contract_expression_mentions_c_local(
     parameter_names: &BTreeSet<&str>,
 ) -> bool {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => elements
+            .iter()
+            .any(|element| contract_expression_mentions_c_local(element, parameter_names)),
+        ContractExpression::SequenceConcat(left, right) => {
+            contract_expression_mentions_c_local(left, parameter_names)
+                || contract_expression_mentions_c_local(right, parameter_names)
+        }
         ContractExpression::CBinding(_) | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => arguments

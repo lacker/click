@@ -573,6 +573,15 @@ fn collect_contract_expression_binding_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                collect_contract_expression_binding_names(element, names);
+            }
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            collect_contract_expression_binding_names(left, names);
+            collect_contract_expression_binding_names(right, names);
+        }
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => {}
@@ -987,6 +996,25 @@ fn rewrite_contract_expression_exact(
         (left, right, left_changed || right_changed)
     };
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            let mut changed = false;
+            let elements = elements
+                .iter()
+                .map(|element| {
+                    let (element, element_changed) = unary(element);
+                    changed |= element_changed;
+                    element
+                })
+                .collect();
+            (ContractExpression::SequenceLiteral(elements), changed)
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            let (left, right, changed) = binary(left, right);
+            (
+                ContractExpression::SequenceConcat(Box::new(left), Box::new(right)),
+                changed,
+            )
+        }
         ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
         | ContractExpression::CBinding(_)
@@ -1611,6 +1639,15 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                collect_contract_expression_referenced_names(element, names);
+            }
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            collect_contract_expression_referenced_names(left, names);
+            collect_contract_expression_referenced_names(right, names);
+        }
         ContractExpression::CFragment(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
@@ -1779,6 +1816,16 @@ pub(in crate::surface) fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => Ok(ContractExpression::SequenceLiteral(
+            elements
+                .iter()
+                .map(|element| substitute_contract_expression(element, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        ContractExpression::SequenceConcat(left, right) => Ok(ContractExpression::SequenceConcat(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
         ContractExpression::CBinding(_) => Ok(expression.clone()),
         ContractExpression::ResourceWildcard => Ok(expression.clone()),
         ContractExpression::ResourceCount(resource) => {
@@ -2152,6 +2199,7 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
@@ -2230,6 +2278,7 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),

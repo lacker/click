@@ -75,6 +75,7 @@ pub enum Sort {
     CInt64,
     CPointer(CType),
     CValue,
+    Sequence(Option<CType>),
     CMemory,
     CState,
     CStatementOutcome,
@@ -744,6 +745,12 @@ pub enum SpecExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecSequenceExpression {
+    Literal(Vec<SpecExpression>),
+    Concat(Box<SpecSequenceExpression>, Box<SpecSequenceExpression>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecPredicateArgument {
     Value(SpecExpression),
     ArrayRef {
@@ -754,6 +761,11 @@ pub enum SpecPredicateArgument {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
+    SequenceComparison {
+        left: SpecSequenceExpression,
+        equal: bool,
+        right: SpecSequenceExpression,
+    },
     Comparison {
         left: SpecExpression,
         operator: CComparisonOperator,
@@ -809,6 +821,18 @@ pub enum SpecProposition {
         element_width: u32,
     },
     Defined(SpecExpression),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SequenceTerm {
+    pub element_type: Option<CType>,
+    pub node: std::sync::Arc<SequenceTermNode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SequenceTermNode {
+    Literal(std::sync::Arc<[CValue]>),
+    Concat(SequenceTerm, SequenceTerm),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2394,6 +2418,7 @@ pub enum Term {
     Bitvector32(Bitvector32Term),
     PointerOffset(PointerOffsetTerm),
     CValue(CValue),
+    Sequence(SequenceTerm),
     CExpressionOutcome(CExpressionOutcome),
     CStatementOutcome(CStatementOutcome),
     CFunctionOutcome(CFunctionOutcome),

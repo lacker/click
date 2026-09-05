@@ -804,6 +804,15 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                collect_current_contract_expression_variables(element, names);
+            }
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            collect_current_contract_expression_variables(left, names);
+            collect_current_contract_expression_variables(right, names);
+        }
         ContractExpression::CFragment(expression) => {
             collect_c_expression_variables(expression, names);
         }
@@ -1225,6 +1234,13 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    /// An immutable, finite specification sequence. Elements remain ordinary
+    /// scalar contract expressions and are evaluated at the surrounding
+    /// snapshot.
+    SequenceLiteral(Vec<ContractExpression>),
+    /// Persistent sequence concatenation. This is specification syntax only;
+    /// it does not denote C pointer arithmetic or allocate C memory.
+    SequenceConcat(Box<ContractExpression>, Box<ContractExpression>),
     /// A C0 expression fragment appearing inside Surface Click.
     CFragment(CExpression),
     /// A source-level struct field place paired with its lowered C expression.

@@ -1906,3 +1906,35 @@ fn parses_block_by_clause() {
 
     assert!(ensure.proof().is_auto_tactic());
 }
+
+#[test]
+fn parses_sequence_literals_snapshots_and_concatenation() {
+    let source = r#"
+        verifying "join.c";
+
+        void join(int32 dst[], int32 left[], int32 right[]) {
+            ensures [dst[0], dst[1]] ++ [dst[2]]
+                == old([left[0], left[1]] ++ [right[0]]);
+        }
+    "#;
+    let file = parse(source).expect("sequence contract should parse");
+    let Ensure::Proposition(ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    }) = file.function_blocks()[0].ensures()[0].ensure()
+    else {
+        panic!("expected sequence equality");
+    };
+
+    assert!(matches!(left, ContractExpression::SequenceConcat(_, _)));
+    assert!(matches!(
+        right,
+        ContractExpression::Old(inner)
+            if matches!(inner.as_ref(), ContractExpression::SequenceConcat(_, _))
+    ));
+    assert_eq!(
+        describe_contract_expression(left),
+        "([dst[0], dst[1]] ++ [dst[2]])"
+    );
+}

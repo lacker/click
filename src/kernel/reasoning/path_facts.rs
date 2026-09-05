@@ -135,6 +135,9 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => {
                 actual != expected
             }
+            Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
+                sequence_terms_definitely_distinct(left, right)
+            }
             _ => false,
         },
         Proposition::CMemoryLoadable {
@@ -165,6 +168,60 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             pointer,
             byte_width,
         } => memory.access_in_bounds(pointer, *byte_width),
+        _ => false,
+    }
+}
+
+fn sequence_terms_definitely_distinct(left: &SequenceTerm, right: &SequenceTerm) -> bool {
+    if let (Some(left_type), Some(right_type)) = (left.element_type, right.element_type)
+        && left_type != right_type
+    {
+        return true;
+    }
+    let left = sequence_elements(left);
+    let right = sequence_elements(right);
+    left.len() != right.len()
+        || left
+            .iter()
+            .zip(right)
+            .any(|(left, right)| c_values_definitely_distinct(left, right))
+}
+
+fn sequence_elements(sequence: &SequenceTerm) -> Vec<&CValue> {
+    let mut elements = Vec::new();
+    let mut pending = vec![sequence];
+    while let Some(sequence) = pending.pop() {
+        match sequence.node.as_ref() {
+            SequenceTermNode::Literal(values) => elements.extend(values.iter()),
+            SequenceTermNode::Concat(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+        }
+    }
+    elements
+}
+
+fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
+    fn constant(bits: &Bitvector32Term) -> Option<u64> {
+        match bits {
+            Bitvector32Term::Constant(value) => Some(u64::from(*value)),
+            Bitvector32Term::Int64Constant(value) => Some(*value as u64),
+            Bitvector32Term::UInt64Constant(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    match (left, right) {
+        (CValue::Int16(left), CValue::Int16(right))
+        | (CValue::Int32(left), CValue::Int32(right))
+        | (CValue::UInt8(left), CValue::UInt8(right))
+        | (CValue::UInt16(left), CValue::UInt16(right))
+        | (CValue::UInt32(left), CValue::UInt32(right))
+        | (CValue::Int64(left), CValue::Int64(right))
+        | (CValue::UInt64(left), CValue::UInt64(right)) => {
+            matches!((constant(left), constant(right)), (Some(left), Some(right)) if left != right)
+        }
         _ => false,
     }
 }

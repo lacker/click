@@ -57,6 +57,12 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
 
 pub(in crate::surface) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            elements.iter().any(contains_old_expression)
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            contains_old_expression(left) || contains_old_expression(right)
+        }
         ContractExpression::Old(_) => true,
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
@@ -113,6 +119,12 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
 
 pub(in crate::surface) fn contains_resource_count(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            elements.iter().any(contains_resource_count)
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            contains_resource_count(left) || contains_resource_count(right)
+        }
         ContractExpression::ResourceCount(_) => true,
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
@@ -213,6 +225,15 @@ pub(in crate::surface) fn collect_resource_count_families(
 ) {
     fn collect_expression(expression: &ContractExpression, families: &mut BTreeSet<String>) {
         match expression {
+            ContractExpression::SequenceLiteral(elements) => {
+                for element in elements {
+                    collect_expression(element, families);
+                }
+            }
+            ContractExpression::SequenceConcat(left, right) => {
+                collect_expression(left, families);
+                collect_expression(right, families);
+            }
             ContractExpression::ResourceCount(resource) => {
                 if let ResourceClause::Declared {
                     name, arguments, ..
@@ -428,6 +449,12 @@ pub(in crate::surface) fn proposition_contains_old_expression(
 
 pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            elements.iter().any(contains_at_expression)
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            contains_at_expression(left) || contains_at_expression(right)
+        }
         ContractExpression::At { .. } => true,
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
@@ -548,6 +575,15 @@ pub(in crate::surface) fn collect_click_function_calls(
     calls: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                collect_click_function_calls(element, calls);
+            }
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            collect_click_function_calls(left, calls);
+            collect_click_function_calls(right, calls);
+        }
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => {}
@@ -907,6 +943,16 @@ fn validate_recursive_calls_in_expression(
         )
     };
     match expression {
+        ContractExpression::SequenceLiteral(elements) => {
+            for element in elements {
+                recurse(element, lower_bounds)?;
+            }
+            Ok(())
+        }
+        ContractExpression::SequenceConcat(left, right) => {
+            recurse(left, lower_bounds)?;
+            recurse(right, lower_bounds)
+        }
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => Ok(()),

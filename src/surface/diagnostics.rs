@@ -1019,6 +1019,17 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
+        ContractExpression::SequenceLiteral(elements) => format!(
+            "[{}]",
+            elements
+                .iter()
+                .map(describe_contract_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ContractExpression::SequenceConcat(left, right) => {
+            describe_binary_contract_expression(left, "++", right)
+        }
         ContractExpression::CFragment(expression) => describe_c_expression(expression),
         ContractExpression::Field { base, field, .. } => {
             format!("{}->{field}", describe_contract_expression(base))

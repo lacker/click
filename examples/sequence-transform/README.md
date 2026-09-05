@@ -18,6 +18,8 @@ multiset, while copying preserves both. The concatenation function exercises
 the associative sequence operation that later tree models will use to define
 in-order traversal.
 
-`sequence_transform.click` currently imports the C but intentionally declares
-no function proof. The missing specification feature is tracked by
+`sequence_transform.click` now verifies the first sequence slice without
+changing the C: exact three-cell copying and the fixed two-by-two
+concatenation. The remaining reverse, membership, symbolic range projection,
+and general sequence algebra work is tracked by
 [`sequence-type.md`](../../issues/sequence-type.md).

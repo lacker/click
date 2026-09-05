@@ -72,6 +72,7 @@ enum Token {
     GreaterEqual,
     ShiftRight,
     Plus,
+    PlusPlus,
     Minus,
     Star,
     Slash,
@@ -133,6 +134,7 @@ impl Token {
             Self::GreaterEqual => ">=",
             Self::ShiftRight => ">>",
             Self::Plus => "+",
+            Self::PlusPlus => "++",
             Self::Minus => "-",
             Self::Star => "*",
             Self::Slash => "/",
@@ -2781,7 +2783,17 @@ impl Parser {
     }
 
     fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
-        self.parse_contract_bitwise_or()
+        self.parse_contract_concat()
+    }
+
+    fn parse_contract_concat(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_bitwise_or()?;
+        while self.peek() == Some(&Token::PlusPlus) {
+            self.position += 1;
+            let right = self.parse_contract_bitwise_or()?;
+            expression = ContractExpression::SequenceConcat(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn parse_termination_measure(&mut self) -> Result<TerminationMeasure, ClickError> {
@@ -3982,6 +3994,20 @@ impl Parser {
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let mut elements = Vec::new();
+            if self.peek() != Some(&Token::RBracket) {
+                elements.push(self.parse_contract_expression()?);
+                while self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    elements.push(self.parse_contract_expression()?);
+                }
+            }
+            self.expect(Token::RBracket)?;
+            return Ok(ContractExpression::SequenceLiteral(elements));
+        }
+
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
             let bytes = if self.peek_ident() == Some("struct") {

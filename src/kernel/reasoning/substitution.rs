@@ -677,6 +677,7 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         Term::Bitvector32(bits) => collect_bitvector_bound_variables(bits, variables),
         Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
         Term::CValue(value) => collect_c_value_bound_variables(value, variables),
+        Term::Sequence(sequence) => collect_sequence_bound_variables(sequence, variables),
         Term::CExpressionOutcome(outcome) => {
             collect_expression_outcome_bound_variables(outcome, variables)
         }
@@ -688,6 +689,20 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         }
         Term::CState(state) => collect_c_state_bound_variables(state, variables),
         Term::CMemory(memory) => collect_memory_bound_variables(memory, variables),
+    }
+}
+
+fn collect_sequence_bound_variables(sequence: &SequenceTerm, variables: &mut BTreeSet<Variable>) {
+    match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => {
+            for value in values.iter() {
+                collect_c_value_bound_variables(value, variables);
+            }
+        }
+        SequenceTermNode::Concat(left, right) => {
+            collect_sequence_bound_variables(left, variables);
+            collect_sequence_bound_variables(right, variables);
+        }
     }
 }
 
@@ -1222,6 +1237,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::CValue(value) => {
             Term::CValue(substitute_bitvector_variable_in_c_value(value, from, to))
         }
+        Term::Sequence(sequence) => Term::Sequence(substitute_bitvector_variable_in_sequence(
+            sequence, from, to,
+        )),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
         ),
@@ -1237,6 +1255,30 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::CState(state) => {
             Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
         }
+    }
+}
+
+fn substitute_bitvector_variable_in_sequence(
+    sequence: &SequenceTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SequenceTerm {
+    let node = match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => SequenceTermNode::Literal(
+            values
+                .iter()
+                .map(|value| substitute_bitvector_variable_in_c_value(value, from, to))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        SequenceTermNode::Concat(left, right) => SequenceTermNode::Concat(
+            substitute_bitvector_variable_in_sequence(left, from, to),
+            substitute_bitvector_variable_in_sequence(right, from, to),
+        ),
+    };
+    SequenceTerm {
+        element_type: sequence.element_type,
+        node: std::sync::Arc::new(node),
     }
 }
 
@@ -1868,6 +1910,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
     to: &Bitvector32Term,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::SequenceComparison { left, equal, right } => {
+            SpecProposition::SequenceComparison {
+                left: substitute_bitvector_variable_in_spec_sequence(left, from, to),
+                equal: *equal,
+                right: substitute_bitvector_variable_in_spec_sequence(right, from, to),
+            }
+        }
         SpecProposition::Comparison {
             left,
             operator,
@@ -1993,6 +2042,29 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             element_width: *element_width,
         },
         proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_spec_sequence(
+    sequence: &SpecSequenceExpression,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecSequenceExpression {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => SpecSequenceExpression::Literal(
+            elements
+                .iter()
+                .map(|element| substitute_bitvector_variable_in_spec_expression(element, from, to))
+                .collect(),
+        ),
+        SpecSequenceExpression::Concat(left, right) => SpecSequenceExpression::Concat(
+            Box::new(substitute_bitvector_variable_in_spec_sequence(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_sequence(
+                right, from, to,
+            )),
+        ),
     }
 }
 
@@ -3534,6 +3606,9 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::CValue(value) => {
             Term::CValue(substitute_pointer_variable_in_c_value(value, from, to))
         }
+        Term::Sequence(sequence) => {
+            Term::Sequence(substitute_pointer_variable_in_sequence(sequence, from, to))
+        }
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_pointer_variable_in_c_expression_outcome(outcome, from, to),
         ),
@@ -3549,6 +3624,30 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::CState(state) => {
             Term::CState(substitute_pointer_variable_in_c_state(state, from, to))
         }
+    }
+}
+
+fn substitute_pointer_variable_in_sequence(
+    sequence: &SequenceTerm,
+    from: Variable,
+    to: &Pointer,
+) -> SequenceTerm {
+    let node = match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => SequenceTermNode::Literal(
+            values
+                .iter()
+                .map(|value| substitute_pointer_variable_in_c_value(value, from, to))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        SequenceTermNode::Concat(left, right) => SequenceTermNode::Concat(
+            substitute_pointer_variable_in_sequence(left, from, to),
+            substitute_pointer_variable_in_sequence(right, from, to),
+        ),
+    };
+    SequenceTerm {
+        element_type: sequence.element_type,
+        node: std::sync::Arc::new(node),
     }
 }
 
@@ -4467,6 +4566,13 @@ fn substitute_pointer_variable_in_spec_proposition(
     to: &Pointer,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::SequenceComparison { left, equal, right } => {
+            SpecProposition::SequenceComparison {
+                left: substitute_pointer_variable_in_spec_sequence(left, from, to),
+                equal: *equal,
+                right: substitute_pointer_variable_in_spec_sequence(right, from, to),
+            }
+        }
         SpecProposition::Comparison {
             left,
             operator,
@@ -4600,6 +4706,27 @@ fn substitute_pointer_variable_in_spec_proposition(
         },
         SpecProposition::Defined(expression) => SpecProposition::Defined(
             substitute_pointer_variable_in_spec_expression(expression, from, to),
+        ),
+    }
+}
+
+fn substitute_pointer_variable_in_spec_sequence(
+    sequence: &SpecSequenceExpression,
+    from: Variable,
+    to: &Pointer,
+) -> SpecSequenceExpression {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => SpecSequenceExpression::Literal(
+            elements
+                .iter()
+                .map(|element| substitute_pointer_variable_in_spec_expression(element, from, to))
+                .collect(),
+        ),
+        SpecSequenceExpression::Concat(left, right) => SpecSequenceExpression::Concat(
+            Box::new(substitute_pointer_variable_in_spec_sequence(left, from, to)),
+            Box::new(substitute_pointer_variable_in_spec_sequence(
+                right, from, to,
+            )),
         ),
     }
 }
