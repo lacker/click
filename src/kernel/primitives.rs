@@ -697,6 +697,10 @@ pub enum SpecProposition {
         operator: CComparisonOperator,
         right: SpecExpression,
     },
+    FloatClassification {
+        expression: SpecExpression,
+        classification: CFloatClassification,
+    },
     And(Box<SpecProposition>, Box<SpecProposition>),
     Or(Box<SpecProposition>, Box<SpecProposition>),
     Not(Box<SpecProposition>),

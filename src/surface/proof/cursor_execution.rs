@@ -1258,6 +1258,13 @@ fn annotate_surface_at_snapshot(
                 operator: *operator,
                 right: expression_at_snapshot(right),
             },
+            ClickProposition::FloatClassification {
+                expression,
+                classification,
+            } => ClickProposition::FloatClassification {
+                expression: expression_at_snapshot(expression),
+                classification: *classification,
+            },
             ClickProposition::Defined { .. } => ClickProposition::At {
                 selector: selector.clone(),
                 proposition: Box::new(proposition.clone()),
@@ -1369,6 +1376,7 @@ pub(super) fn surface_snapshot_selector(surface: &ClickProposition) -> Option<Sn
         ClickProposition::Comparison { left, right, .. } => {
             expression_site(left).or_else(|| expression_site(right))
         }
+        ClickProposition::FloatClassification { expression, .. } => expression_site(expression),
         ClickProposition::At { selector, .. } => Some(selector.clone()),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)

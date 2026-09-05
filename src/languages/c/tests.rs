@@ -2801,6 +2801,56 @@ fn c0_syntax_targets_kernel_struct_field_load() {
 }
 
 #[test]
+fn c0_syntax_targets_kernel_float64_struct_field_load() {
+    let function = syntax::parse_function(
+        r#"
+        struct json_object {
+            double value;
+        };
+
+        double json_object_get_double(struct json_object* obj) {
+            return obj->value;
+        }
+        "#,
+    )
+    .expect("float64 struct getter should parse");
+
+    let pointer = crate::kernel::Pointer {
+        block: "object".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let value = crate::kernel::float64(crate::kernel::Bitvector32Term::UInt64Constant(
+        1.25f64.to_bits(),
+    ));
+    let statement = function.body_kernel_statement();
+    let memory = crate::kernel::CMemory::new()
+        .with_block("object", 8)
+        .store(pointer.clone(), value.clone());
+    let initial = crate::kernel::CState::new()
+        .with_local("obj", crate::kernel::CValue::pointer(pointer.clone()))
+        .with_memory(memory)
+        .with_resource_context(view_memory_context(pointer, 0, 2));
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        initial.clone(),
+        statement.clone(),
+        Default::default(),
+    )
+    .expect("float64 struct getter should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CStatementExecutes {
+            state: initial.clone(),
+            statement,
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value,
+                state: initial,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_struct_field_store() {
     let function = syntax::parse_function(
         r#"
@@ -6007,6 +6057,55 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
                 state: final_state,
             },
         }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_kernel_float_argument_conversion() {
+    let widen = syntax::parse_function(
+        r#"
+        double widen(double value) {
+            return value;
+        }
+        "#,
+    )
+    .expect("floating-point helper should parse")
+    .to_kernel_function();
+    let caller = syntax::parse_function(
+        r#"
+        double caller() {
+            double result;
+            result = widen(1);
+            return result;
+        }
+        "#,
+    )
+    .expect("integer-to-double call argument should parse")
+    .to_kernel_function();
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller,
+        Vec::new(),
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new().with_function(widen),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("integer-to-double call argument should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Float64(value),
+                ..
+            },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("integer-to-double call argument should return a double");
+    };
+    assert_eq!(
+        value,
+        &crate::kernel::Bitvector32Term::UInt64Constant(1.0f64.to_bits())
     );
 }
 

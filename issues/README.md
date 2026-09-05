@@ -26,7 +26,7 @@ when evidence exposes one.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 15
+## Functionality gaps: 14
 
 C language coverage:
 
@@ -35,7 +35,6 @@ C language coverage:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)
-- [Model floating-point values](floating-point.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model sequential scalar volatile objects](volatile-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)

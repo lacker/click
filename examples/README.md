@@ -42,6 +42,8 @@ Current projects:
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
   a small object.
+- `jsonc-numeric/` verifies synthetic json-c-shaped `double` field reads and
+  mixed integer/double scaling through pointer contracts and memory resources.
 - `jsonc-existing-source/` preserves the upstream json-c version helper and
   reports its checked parser-only qualification.
 - `owned-string/` verifies a length-tracked string with a trailing terminator

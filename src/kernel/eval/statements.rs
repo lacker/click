@@ -129,10 +129,18 @@ fn execute_c_lvalue_update_paths(
             });
             continue;
         };
-        if !matches!(
+        let supported_integer_update = matches!(
             lvalue.value_type,
             CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
-        ) {
+        );
+        let supported_float_update = matches!(
+            (lvalue.value_type, operator),
+            (CType::Float32 | CType::Float64, CUpdateOperator::Add)
+                | (CType::Float32 | CType::Float64, CUpdateOperator::Subtract)
+                | (CType::Float32 | CType::Float64, CUpdateOperator::Multiply)
+                | (CType::Float32 | CType::Float64, CUpdateOperator::Divide)
+        );
+        if !supported_integer_update && !supported_float_update {
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,

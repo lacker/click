@@ -1879,6 +1879,17 @@ impl Parser {
         {
             let start = self.position;
             let (name, arguments) = self.parse_call_arguments("predicate or function name")?;
+            if let Some(classification) = float_classification_from_name(&name) {
+                let [expression] = arguments.as_slice() else {
+                    return Err(self.error(format!(
+                        "floating-point classification `{name}` expects one argument"
+                    )));
+                };
+                return Ok(ClickProposition::FloatClassification {
+                    expression: expression.clone(),
+                    classification,
+                });
+            }
             match self.peek() {
                 Some(
                     Token::EqualEqual
@@ -3263,6 +3274,8 @@ impl Parser {
             C0Type::UInt8 => 1,
             C0Type::Int16 | C0Type::UInt16 => 2,
             C0Type::Int64 | C0Type::UInt64 => 8,
+            C0Type::Float32 => 4,
+            C0Type::Float64 => 8,
             _ => 4,
         };
         let start = field.offset_bytes / element_width;
@@ -3274,9 +3287,9 @@ impl Parser {
             end: CExpression::Value(int32(end)),
             surface: ContractSegmentSurface::Field {
                 name: field_name.to_string(),
-                // Non-array fields use int32-aligned slot units except for
-                // 16-bit fields, whose two-byte ABI alignment uses two-byte
-                // slot units.
+                // Non-array fields use their ABI width as the resource slot
+                // width. Smaller integer fields retain their natural
+                // two-byte/one-byte units so a typed load is covered exactly.
                 element_width: Some(element_width),
                 element_type: Some(field.c_type.to_kernel_type()),
             },
@@ -4451,6 +4464,17 @@ impl Parser {
 
     fn error(&self, message: impl Into<String>) -> ClickError {
         self.error_at(self.here(), message)
+    }
+}
+
+fn float_classification_from_name(name: &str) -> Option<syntax::C0FloatClassification> {
+    match name {
+        "isfinite" => Some(syntax::C0FloatClassification::Finite),
+        "isinf" => Some(syntax::C0FloatClassification::Infinite),
+        "iszero" => Some(syntax::C0FloatClassification::Zero),
+        "issubnormal" => Some(syntax::C0FloatClassification::Subnormal),
+        "isnan" => Some(syntax::C0FloatClassification::Nan),
+        _ => None,
     }
 }
 

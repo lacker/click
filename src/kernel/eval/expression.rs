@@ -255,6 +255,205 @@ fn float64_to_integer_value(bits: u64, target_type: CType) -> Option<CValue> {
     float_to_integer_value(negative, magnitude, target_type)
 }
 
+fn integer_to_float_value(value: CValue, target_type: CType) -> Option<CValue> {
+    let (source_name, term) = match &value {
+        CValue::Int16(term) => ("int16", term),
+        CValue::Int32(term) => ("int32", term),
+        CValue::UInt8(term) => ("uint8", term),
+        CValue::UInt16(term) => ("uint16", term),
+        CValue::UInt32(term) => ("uint32", term),
+        CValue::Int64(term) => ("int64", term),
+        CValue::UInt64(term) => ("uint64", term),
+        CValue::Void | CValue::Float32(_) | CValue::Float64(_) | CValue::Pointer(_) => return None,
+    };
+    let target_name = match target_type {
+        CType::Float32 => "float32",
+        CType::Float64 => "float64",
+        _ => return None,
+    };
+    if let Some((negative, magnitude)) = integer_constant_as_sign_magnitude(&value) {
+        return Some(match target_type {
+            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(integer_to_float32_bits(
+                negative, magnitude,
+            ))),
+            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(
+                integer_to_float64_bits(negative, magnitude),
+            )),
+            _ => unreachable!(),
+        });
+    }
+    let term = Bitvector32Term::opaque_conversion(
+        format!("c_{source_name}_to_{target_name}"),
+        term.clone(),
+    );
+    Some(match target_type {
+        CType::Float32 => CValue::Float32(term),
+        CType::Float64 => CValue::Float64(term),
+        _ => unreachable!(),
+    })
+}
+
+fn float_integer_bound_bits(
+    source_type: CType,
+    exponent: u32,
+    negative: bool,
+) -> Option<Bitvector32Term> {
+    let magnitude = 1u128.checked_shl(exponent)?;
+    Some(match source_type {
+        CType::Float32 => Bitvector32Term::Constant(integer_to_float32_bits(negative, magnitude)),
+        CType::Float64 => {
+            Bitvector32Term::UInt64Constant(integer_to_float64_bits(negative, magnitude))
+        }
+        _ => return None,
+    })
+}
+
+fn add_float_to_integer_obligations(
+    value: &Bitvector32Term,
+    source_type: CType,
+    target_type: CType,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<()> {
+    let (signed, bits) = match target_type {
+        CType::Int16 => (true, 16),
+        CType::Int32 => (true, 32),
+        CType::Int64 => (true, 64),
+        CType::UInt8 => (false, 8),
+        CType::UInt16 => (false, 16),
+        CType::UInt32 => (false, 32),
+        CType::UInt64 => (false, 64),
+        _ => return None,
+    };
+    let finite = match source_type {
+        CType::Float32 => {
+            ConditionTerm::float32_classification(value.clone(), CFloatClassification::Finite)
+        }
+        CType::Float64 => {
+            ConditionTerm::float64_classification(value.clone(), CFloatClassification::Finite)
+        }
+        _ => return None,
+    };
+    add_proof_obligation(
+        obligations,
+        assumptions,
+        Proposition::ConditionIs(finite, true),
+    )?;
+
+    if signed {
+        let lower = float_integer_bound_bits(source_type, bits - 1, true)?;
+        let upper = float_integer_bound_bits(source_type, bits - 1, false)?;
+        let lower = match source_type {
+            CType::Float32 => ConditionTerm::float32_compare(
+                value.clone(),
+                lower,
+                CComparisonOperator::GreaterEqual,
+            ),
+            CType::Float64 => ConditionTerm::float64_compare(
+                value.clone(),
+                lower,
+                CComparisonOperator::GreaterEqual,
+            ),
+            _ => unreachable!(),
+        };
+        let upper = match source_type {
+            CType::Float32 => {
+                ConditionTerm::float32_compare(value.clone(), upper, CComparisonOperator::LessThan)
+            }
+            CType::Float64 => {
+                ConditionTerm::float64_compare(value.clone(), upper, CComparisonOperator::LessThan)
+            }
+            _ => unreachable!(),
+        };
+        add_proof_obligation(
+            obligations,
+            assumptions,
+            Proposition::ConditionIs(lower, true),
+        )?;
+        add_proof_obligation(
+            obligations,
+            assumptions,
+            Proposition::ConditionIs(upper, true),
+        )?;
+    } else {
+        let lower = match source_type {
+            CType::Float32 => ConditionTerm::float32_compare(
+                value.clone(),
+                Bitvector32Term::Constant(0),
+                CComparisonOperator::GreaterEqual,
+            ),
+            CType::Float64 => ConditionTerm::float64_compare(
+                value.clone(),
+                Bitvector32Term::UInt64Constant(0),
+                CComparisonOperator::GreaterEqual,
+            ),
+            _ => unreachable!(),
+        };
+        let upper_bits = float_integer_bound_bits(source_type, bits, false)?;
+        let upper = match source_type {
+            CType::Float32 => ConditionTerm::float32_compare(
+                value.clone(),
+                upper_bits,
+                CComparisonOperator::LessThan,
+            ),
+            CType::Float64 => ConditionTerm::float64_compare(
+                value.clone(),
+                upper_bits,
+                CComparisonOperator::LessThan,
+            ),
+            _ => unreachable!(),
+        };
+        add_proof_obligation(
+            obligations,
+            assumptions,
+            Proposition::ConditionIs(lower, true),
+        )?;
+        add_proof_obligation(
+            obligations,
+            assumptions,
+            Proposition::ConditionIs(upper, true),
+        )?;
+    }
+    Some(())
+}
+
+fn float_to_integer_conversion_value(
+    value: Bitvector32Term,
+    source_type: CType,
+    target_type: CType,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    add_float_to_integer_obligations(&value, source_type, target_type, obligations, assumptions)?;
+    let source_name = match source_type {
+        CType::Float32 => "float32",
+        CType::Float64 => "float64",
+        _ => return None,
+    };
+    let target_name = match target_type {
+        CType::Int16 => "int16",
+        CType::Int32 => "int32",
+        CType::UInt8 => "uint8",
+        CType::UInt16 => "uint16",
+        CType::UInt32 => "uint32",
+        CType::Int64 => "int64",
+        CType::UInt64 => "uint64",
+        _ => return None,
+    };
+    let term =
+        Bitvector32Term::opaque_conversion(format!("c_{source_name}_to_{target_name}"), value);
+    Some(match target_type {
+        CType::Int16 => CValue::Int16(term),
+        CType::Int32 => CValue::Int32(term),
+        CType::UInt8 => CValue::UInt8(term),
+        CType::UInt16 => CValue::UInt16(term),
+        CType::UInt32 => CValue::UInt32(term),
+        CType::Int64 => CValue::Int64(term),
+        CType::UInt64 => CValue::UInt64(term),
+        _ => unreachable!(),
+    })
+}
+
 pub(in crate::kernel) fn evaluate_c_expression(
     state: &CState,
     expression: &CExpression,
@@ -515,13 +714,25 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             Some(CValue::UInt64(Bitvector32Term::uint64_from_32(value)))
         }
         (CType::Float32, CValue::Float32(value)) => Some(CValue::Float32(value)),
-        (CType::Float32, CValue::Float64(value)) => Some(CValue::Float32(
-            Bitvector32Term::Constant(float64_to_float32_bits(value.uint64_as_const()?)),
-        )),
+        (CType::Float32, CValue::Float64(value)) => {
+            let converted = value
+                .float64_as_const()
+                .map(|value| Bitvector32Term::Constant(float64_to_float32_bits(value)))
+                .unwrap_or_else(|| {
+                    Bitvector32Term::opaque_conversion("c_float64_to_float32", value)
+                });
+            Some(CValue::Float32(converted))
+        }
         (CType::Float64, CValue::Float64(value)) => Some(CValue::Float64(value)),
-        (CType::Float64, CValue::Float32(value)) => Some(CValue::Float64(
-            Bitvector32Term::UInt64Constant(float32_to_float64_bits(value.as_const()?)),
-        )),
+        (CType::Float64, CValue::Float32(value)) => {
+            let converted = value
+                .float32_as_const()
+                .map(|value| Bitvector32Term::UInt64Constant(float32_to_float64_bits(value)))
+                .unwrap_or_else(|| {
+                    Bitvector32Term::opaque_conversion("c_float32_to_float64", value)
+                });
+            Some(CValue::Float64(converted))
+        }
         (
             target @ (CType::Float32 | CType::Float64),
             value @ (CValue::Int16(_)
@@ -531,18 +742,7 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             | CValue::UInt32(_)
             | CValue::Int64(_)
             | CValue::UInt64(_)),
-        ) => {
-            let (negative, magnitude) = integer_constant_as_sign_magnitude(&value)?;
-            Some(match target {
-                CType::Float32 => CValue::Float32(Bitvector32Term::Constant(
-                    integer_to_float32_bits(negative, magnitude),
-                )),
-                CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(
-                    integer_to_float64_bits(negative, magnitude),
-                )),
-                _ => unreachable!(),
-            })
-        }
+        ) => integer_to_float_value(value, target),
         (
             target @ (CType::Int16
             | CType::Int32
@@ -552,7 +752,19 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             | CType::Int64
             | CType::UInt64),
             CValue::Float32(value),
-        ) => float32_to_integer_value(value.as_const()?, target),
+        ) => {
+            if let Some(bits) = value.float32_as_const() {
+                float32_to_integer_value(bits, target)
+            } else {
+                float_to_integer_conversion_value(
+                    value,
+                    CType::Float32,
+                    target,
+                    obligations,
+                    assumptions,
+                )
+            }
+        }
         (
             target @ (CType::Int16
             | CType::Int32
@@ -562,7 +774,19 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             | CType::Int64
             | CType::UInt64),
             CValue::Float64(value),
-        ) => float64_to_integer_value(value.uint64_as_const()?, target),
+        ) => {
+            if let Some(bits) = value.float64_as_const() {
+                float64_to_integer_value(bits, target)
+            } else {
+                float_to_integer_conversion_value(
+                    value,
+                    CType::Float64,
+                    target,
+                    obligations,
+                    assumptions,
+                )
+            }
+        }
         _ => None,
     }
 }

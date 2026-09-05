@@ -175,8 +175,17 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             continue;
         }
 
-        let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
-        else {
+        let path_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
+            function,
+            &arguments_path.values,
+            &arguments_path.obligations,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                     "{}",
@@ -187,11 +196,23 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             });
             continue;
         };
+        let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "{}",
+                    argument_binding_error(function, &argument_values)
+                ))),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
+            });
+            continue;
+        };
 
         let body_assumptions = assumptions_with_path_context(
             assumptions,
             &arguments_path.facts,
-            &arguments_path.obligations,
+            &argument_obligations,
         );
         let (callee_state, resource_transfer) = if prepare_contract_resources {
             let resource_transfer = match prepare_function_resource_transfer(
@@ -207,7 +228,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                     paths.push(CFunctionPath {
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts: arguments_path.facts,
-                        obligations: arguments_path.obligations,
+                        obligations: argument_obligations,
                     });
                     continue;
                 }
@@ -229,7 +250,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         )? {
             let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
-                &arguments_path.obligations,
+                &argument_obligations,
                 &body_path.facts,
                 &body_path.obligations,
                 assumptions,
@@ -247,7 +268,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                         obligations,
                         &return_assumptions,
                         resource_transfer,
-                        &arguments_path.values,
+                        &argument_values,
                         true,
                         budget,
                     )?
@@ -258,7 +279,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                         complete_void_fallthrough(function, body_path.outcome),
                         obligations,
                         &return_assumptions,
-                        &arguments_path.values,
+                        &argument_values,
                         budget,
                     )?
                 } else {
@@ -335,8 +356,17 @@ pub(super) fn execute_c_function_verification_paths(
             continue;
         }
 
-        let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
-        else {
+        let path_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
+            function,
+            &arguments_path.values,
+            &arguments_path.obligations,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                     "{}",
@@ -347,11 +377,23 @@ pub(super) fn execute_c_function_verification_paths(
             });
             continue;
         };
+        let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "{}",
+                    argument_binding_error(function, &argument_values)
+                ))),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
+            });
+            continue;
+        };
 
         let body_assumptions = assumptions_with_path_context(
             assumptions,
             &arguments_path.facts,
-            &arguments_path.obligations,
+            &argument_obligations,
         );
         let (callee_state, resource_transfer) = if prepare_contract_resources {
             let resource_transfer = match prepare_function_resource_transfer(
@@ -367,7 +409,7 @@ pub(super) fn execute_c_function_verification_paths(
                     paths.push(CFunctionPath {
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts: arguments_path.facts,
-                        obligations: arguments_path.obligations,
+                        obligations: argument_obligations,
                     });
                     continue;
                 }
@@ -403,7 +445,7 @@ pub(super) fn execute_c_function_verification_paths(
                 || {
                     merge_execution_pure_facts_and_obligations(
                         &arguments_path.facts,
-                        &arguments_path.obligations,
+                        &argument_obligations,
                         &body_path.facts,
                         &body_path.obligations,
                         assumptions,
@@ -423,7 +465,7 @@ pub(super) fn execute_c_function_verification_paths(
                         obligations,
                         &return_assumptions,
                         resource_transfer,
-                        &arguments_path.values,
+                        &argument_values,
                         true,
                         budget,
                     )?
@@ -434,7 +476,7 @@ pub(super) fn execute_c_function_verification_paths(
                         complete_void_fallthrough(function, body_path.outcome),
                         obligations,
                         &return_assumptions,
-                        &arguments_path.values,
+                        &argument_values,
                         budget,
                     )?
                 } else {
@@ -548,9 +590,17 @@ pub(super) fn execute_c_function_call_paths(
             continue;
         }
 
-        let Some(callee_state) =
-            bind_c_function_arguments(caller_state, function, &arguments_path.values)
-        else {
+        let path_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
+            function,
+            &arguments_path.values,
+            &arguments_path.obligations,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                     "{}",
@@ -561,11 +611,24 @@ pub(super) fn execute_c_function_call_paths(
             });
             continue;
         };
+        let Some(callee_state) =
+            bind_c_function_arguments(caller_state, function, &argument_values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "{}",
+                    argument_binding_error(function, &argument_values)
+                ))),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
+            });
+            continue;
+        };
 
         let body_assumptions = assumptions_with_path_context(
             assumptions,
             &arguments_path.facts,
-            &arguments_path.obligations,
+            &argument_obligations,
         );
         let resource_transfer = match prepare_function_resource_transfer(
             caller_state,
@@ -580,7 +643,7 @@ pub(super) fn execute_c_function_call_paths(
                 paths.push(CFunctionPath {
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts: arguments_path.facts,
-                    obligations: arguments_path.obligations,
+                    obligations: argument_obligations,
                 });
                 continue;
             }
@@ -597,7 +660,7 @@ pub(super) fn execute_c_function_call_paths(
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
-                &arguments_path.obligations,
+                &argument_obligations,
                 &body_path.facts,
                 &body_path.obligations,
                 assumptions,
@@ -613,7 +676,7 @@ pub(super) fn execute_c_function_call_paths(
                 obligations,
                 &return_assumptions,
                 &resource_transfer,
-                &arguments_path.values,
+                &argument_values,
                 true,
                 budget,
             )?;
@@ -676,9 +739,17 @@ fn execute_verified_function_rule(
             });
             continue;
         }
-        let Some(mut entry_state) =
-            bind_c_function_arguments(caller_state, function, &arguments_path.values)
-        else {
+        let path_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
+            function,
+            &arguments_path.values,
+            &arguments_path.obligations,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                     "{}",
@@ -689,10 +760,23 @@ fn execute_verified_function_rule(
             });
             continue;
         };
+        let Some(mut entry_state) =
+            bind_c_function_arguments(caller_state, function, &argument_values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "{}",
+                    argument_binding_error(function, &argument_values)
+                ))),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
+            });
+            continue;
+        };
         let path_assumptions = assumptions_with_path_context(
             assumptions,
             &arguments_path.facts,
-            &arguments_path.obligations,
+            &argument_obligations,
         );
         let transfer = match crate::instrumentation::measure_operation(
             function.name(),
@@ -714,16 +798,16 @@ fn execute_verified_function_rule(
                 paths.push(CFunctionPath {
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts: arguments_path.facts,
-                    obligations: arguments_path.obligations,
+                    obligations: argument_obligations,
                 });
                 continue;
             }
         };
         entry_state.resources = transfer.callee_resources.clone();
         let entry_contract_state =
-            with_contract_argument_views(&entry_state, function, &arguments_path.values);
+            with_contract_argument_views(&entry_state, function, &argument_values);
 
-        let mut obligations = arguments_path.obligations;
+        let mut obligations = argument_obligations;
         let mut facts = arguments_path.facts;
         let mut established_requirements = Vec::new();
         let requirement_timing = crate::instrumentation::OperationTiming::new(
@@ -946,7 +1030,7 @@ fn execute_verified_function_rule(
             caller_state,
             &mut transition_state,
             function,
-            &arguments_path.values,
+            &argument_values,
             &effective_assumptions,
             true,
             true,
@@ -994,7 +1078,7 @@ fn execute_verified_function_rule(
             };
         post_state.resources = caller_resources_after_requirements.clone();
         let output_resource_state =
-            with_contract_argument_views(&post_state, function, &arguments_path.values);
+            with_contract_argument_views(&post_state, function, &argument_values);
 
         let return_resource_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
@@ -1028,7 +1112,7 @@ fn execute_verified_function_rule(
         // successor; it is not an execution-path split.
         post_state.resources = return_resources.clone();
         let provisional_post_contract_state =
-            with_contract_argument_views(&post_state, function, &arguments_path.values);
+            with_contract_argument_views(&post_state, function, &argument_values);
         let mut provisional_facts = facts.clone();
         let provisional_ensure_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
@@ -1077,7 +1161,7 @@ fn execute_verified_function_rule(
         facts.extend(allocation_effects);
         post_state.memory = memory;
         let post_contract_state =
-            with_contract_argument_views(&post_state, function, &arguments_path.values);
+            with_contract_argument_views(&post_state, function, &argument_values);
 
         let ensure_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
@@ -1556,7 +1640,7 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // caller's int32 `0`, but the callee parameter is a pointer.  Using
         // the raw caller value would overwrite the correctly coerced binding
         // and make pointer preconditions impossible to lower.
-        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())
+        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())
             .expect("function arguments were type-checked before building contract views");
         state.locals.set_typed_volatile(
             parameter.name().to_string(),
@@ -1904,7 +1988,13 @@ pub(super) fn bind_c_function_arguments(
             (address_taken.contains(parameter.name()) || parameter.is_volatile())
                 && matches!(
                     parameter.c_type(),
-                    CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+                    CType::Int16
+                        | CType::Int32
+                        | CType::UInt8
+                        | CType::UInt16
+                        | CType::UInt32
+                        | CType::Float32
+                        | CType::Float64
                 )
         })
         .map(|parameter| parameter.name())
@@ -1952,7 +2042,7 @@ pub(super) fn bind_c_function_arguments(
             );
             continue;
         }
-        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
+        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())?;
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             callee_state.memory = callee_state
@@ -1976,6 +2066,46 @@ pub(super) fn bind_c_function_arguments(
         }
     }
     Some(callee_state)
+}
+
+fn coerce_c_function_argument_without_obligations(
+    value: &CValue,
+    target_type: CType,
+) -> Option<CValue> {
+    let mut obligations = Vec::new();
+    let value = coerce_c_value_to_type(
+        value.clone(),
+        target_type,
+        &mut obligations,
+        &PureFactContext::new(),
+    )?;
+    obligations.is_empty().then_some(value)
+}
+
+fn coerce_c_function_arguments(
+    function: &CFunction,
+    values: &[CValue],
+    existing_obligations: &[ProofObligation],
+    assumptions: &PureFactContext,
+) -> Option<(Vec<CValue>, Vec<ProofObligation>)> {
+    if values.len() != function.parameters().len() {
+        return None;
+    }
+    let mut obligations = existing_obligations.to_vec();
+    let mut coerced = Vec::with_capacity(values.len());
+    for (parameter, value) in function.parameters().iter().zip(values) {
+        if parameter.aggregate_layout().is_some() {
+            coerced.push(value.clone());
+        } else {
+            coerced.push(coerce_c_value_to_type(
+                value.clone(),
+                parameter.c_type(),
+                &mut obligations,
+                assumptions,
+            )?);
+        }
+    }
+    Some((coerced, obligations))
 }
 
 /// Installs the stable global and static-local bindings needed by a function's
@@ -2172,7 +2302,9 @@ pub(super) fn copy_aggregate_fields(
             | CType::UInt16
             | CType::UInt32
             | CType::Int64
-            | CType::UInt64 => (field.c_type(), 1),
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Int32Pointer
@@ -2208,6 +2340,8 @@ pub(super) fn copy_aggregate_fields(
                         CType::UInt32 => Some(uint32(0)),
                         CType::Int64 => Some(CValue::Int64(Bitvector32Term::Constant(0))),
                         CType::UInt64 => Some(CValue::UInt64(Bitvector32Term::Constant(0))),
+                        CType::Float32 => Some(CValue::Float32(Bitvector32Term::Constant(0))),
+                        CType::Float64 => Some(CValue::Float64(Bitvector32Term::UInt64Constant(0))),
                         _ => None,
                     };
                 }
@@ -2263,6 +2397,14 @@ pub(super) fn copy_aggregate_fields(
                         source_field,
                     ))),
                     CType::UInt64 => Some(CValue::UInt64(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::Float32 => Some(CValue::Float32(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
+                    CType::Float64 => Some(CValue::Float64(crate::kernel::canonical_form_of_load(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
                     ))),

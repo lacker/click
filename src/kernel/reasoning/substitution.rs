@@ -4424,6 +4424,13 @@ fn substitute_pointer_variable_in_spec_proposition(
             operator: *operator,
             right: substitute_pointer_variable_in_spec_expression(right, from, to),
         },
+        SpecProposition::FloatClassification {
+            expression,
+            classification,
+        } => SpecProposition::FloatClassification {
+            expression: substitute_pointer_variable_in_spec_expression(expression, from, to),
+            classification: *classification,
+        },
         SpecProposition::And(left, right) => SpecProposition::And(
             Box::new(substitute_pointer_variable_in_spec_proposition(
                 left, from, to,

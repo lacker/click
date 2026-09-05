@@ -490,6 +490,105 @@ fn symbolic_floating_arithmetic_remains_typed_and_opaque() {
 }
 
 #[test]
+fn mixed_floating_arithmetic_promotes_to_the_wider_or_present_float_type() {
+    let state = CState::new();
+    let evaluate = |expression| {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression)
+            .expect("mixed floating arithmetic should evaluate");
+        match theorem.proposition() {
+            Proposition::CExpressionEvaluates { outcome, .. } => outcome.clone(),
+            proposition => panic!("unexpected mixed floating theorem {proposition:?}"),
+        }
+    };
+
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(1.5f32.to_bits()),
+            c_float64_literal(2.0f64.to_bits()),
+        )),
+        CExpressionOutcome::Value(CValue::Float64(Bitvector32Term::UInt64Constant(
+            3.5f64.to_bits(),
+        )))
+    );
+    assert_eq!(
+        evaluate(c_add(
+            c_float32_literal(1.5f32.to_bits()),
+            c_int32_literal(2)
+        )),
+        CExpressionOutcome::Value(CValue::Float32(
+            Bitvector32Term::Constant(3.5f32.to_bits(),)
+        ))
+    );
+    assert_eq!(
+        evaluate(c_less_than(
+            c_float64_literal(1.0f64.to_bits()),
+            c_int32_literal(2),
+        )),
+        CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(1)))
+    );
+}
+
+#[test]
+fn symbolic_float_conversions_remain_typed_and_float_to_integer_is_guarded() {
+    let f32_variable = Variable(903);
+    let f64_variable = Variable(904);
+    let integer_variable = Variable(905);
+    let state = CState::new()
+        .with_local("f32", float32(Bitvector32Term::Variable(f32_variable)))
+        .with_local("f64", float64(Bitvector32Term::Variable(f64_variable)))
+        .with_local(
+            "integer",
+            int32(Bitvector32Term::Variable(integer_variable)),
+        );
+
+    let theorem =
+        prove_c_expression_evaluation(state.clone(), c_cast(c_variable("integer"), CType::Float64))
+            .expect("symbolic integer-to-float conversion should evaluate");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(CValue::Float64(term)),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("symbolic integer-to-float conversion should produce a double");
+    };
+    assert!(matches!(
+        term,
+        Bitvector32Term::PureFunctionApplication { .. }
+    ));
+
+    let theorem =
+        prove_c_expression_evaluation(state.clone(), c_cast(c_variable("f32"), CType::Float64))
+            .expect("symbolic float widening conversion should evaluate");
+    let Proposition::CExpressionEvaluates {
+        outcome: CExpressionOutcome::Value(CValue::Float64(term)),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("symbolic float widening conversion should produce a double");
+    };
+    assert!(matches!(
+        term,
+        Bitvector32Term::PureFunctionApplication { .. }
+    ));
+
+    let paths = evaluate_c_expression_paths(
+        &state,
+        &c_cast(c_variable("f64"), CType::Int32),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("symbolic float-to-integer conversion should retain its guard");
+    assert_eq!(paths.len(), 1);
+    assert!(matches!(
+        paths[0].outcome,
+        CExpressionOutcome::Value(CValue::Int32(
+            Bitvector32Term::PureFunctionApplication { .. }
+        ))
+    ));
+    assert_eq!(paths[0].obligations.len(), 3);
+}
+
+#[test]
 fn signed_add_overflow_is_native_undefined_behavior() {
     let state = CState::new();
     let theorem = prove_c_expression_evaluation(
@@ -866,6 +965,30 @@ fn spec_pointer_equality_lowers_to_a_pure_fact() {
             &CValue::Int32(Bitvector32Term::Constant(0)),
         ),
         None,
+    );
+}
+
+#[test]
+fn finite_float_context_proves_reflexive_comparisons() {
+    let value = Bitvector32Term::Variable(Variable(22_102));
+    let finite = ConditionTerm::float64_classification(value.clone(), CFloatClassification::Finite);
+    let assumptions = PureFactContext::new().assume_condition(finite, true);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::float64_compare(
+            value.clone(),
+            value.clone(),
+            CComparisonOperator::Equal,
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::float64_compare(
+            value.clone(),
+            value,
+            CComparisonOperator::NotEqual,
+        )),
+        Some(false)
     );
 }
 

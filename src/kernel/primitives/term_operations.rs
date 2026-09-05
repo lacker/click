@@ -63,6 +63,13 @@ fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
 }
 
 impl Bitvector32Term {
+    pub(crate) fn opaque_conversion(name: impl Into<String>, value: Self) -> Self {
+        Self::PureFunctionApplication {
+            name: name.into(),
+            arguments: vec![value],
+        }
+    }
+
     pub(crate) fn float32_as_const(&self) -> Option<u32> {
         float32_bits_as_const(self)
     }

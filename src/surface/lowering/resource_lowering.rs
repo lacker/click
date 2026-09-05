@@ -524,6 +524,11 @@ pub(in crate::surface) fn requirement_definedness_surfaces(
                     expressions.push(right);
                 }
             }
+            ClickProposition::FloatClassification { expression, .. } => {
+                if contains_partial_arithmetic(expression) {
+                    expressions.push(expression);
+                }
+            }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)
             | ClickProposition::Implies(left, right) => {
@@ -1463,6 +1468,8 @@ fn symbolic_value_from_load(
         CType::UInt32 => CValue::UInt32(load),
         CType::Int64 => CValue::Int64(load),
         CType::UInt64 => CValue::UInt64(load),
+        CType::Float32 => CValue::Float32(load),
+        CType::Float64 => CValue::Float64(load),
         c_type if c_type.is_pointer() => CValue::typed_pointer(
             Pointer {
                 block: pointer.block.clone(),

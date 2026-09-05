@@ -1141,6 +1141,20 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_contract_expression(left),
             describe_contract_expression(right)
         ),
+        ClickProposition::FloatClassification {
+            expression,
+            classification,
+        } => format!(
+            "{}({})",
+            match classification {
+                syntax::C0FloatClassification::Finite => "isfinite",
+                syntax::C0FloatClassification::Infinite => "isinf",
+                syntax::C0FloatClassification::Zero => "iszero",
+                syntax::C0FloatClassification::Subnormal => "issubnormal",
+                syntax::C0FloatClassification::Nan => "isnan",
+            },
+            describe_contract_expression(expression)
+        ),
         ClickProposition::Separate { left, right } => format!(
             "separate({}, {})",
             describe_resource_subject(left),

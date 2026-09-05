@@ -1,6 +1,7 @@
 //! Smart closure search and linear script interpretation.
 
 use super::*;
+use crate::kernel::{CFloatClassification, CFloatCondition};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 impl<'a> Proof<'a> {
@@ -2367,6 +2368,41 @@ impl<'a> Proof<'a> {
                     &recorded,
                     fixed_state_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let finite_premises = premise_pairs
+                    .iter()
+                    .filter(|(premise, _)| {
+                        matches!(
+                            premise,
+                            Proposition::ConditionIs(
+                                ConditionTerm::Float32(CFloatCondition::Classification {
+                                    classification: CFloatClassification::Finite,
+                                    ..
+                                }) | ConditionTerm::Float64(CFloatCondition::Classification {
+                                    classification: CFloatClassification::Finite,
+                                    ..
+                                }),
+                                true
+                            )
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let kernels = finite_premises
+                    .iter()
+                    .map(|(premise, _)| premise.clone())
+                    .collect::<Vec<_>>();
+                crate::kernel::proof::fact_reasoning::check_float_reflexive_comparison(
+                    goal, &kernels,
+                )
+                .then(|| {
+                    vec![ProofTactic::ArithmeticUsing(
+                        finite_premises
+                            .into_iter()
+                            .map(|(_, surface)| surface.clone())
+                            .collect(),
+                    )]
+                })
             })?;
         // The planner selects only Surface-expressible explicit operations.
         // Apply those through the same recursive Proof driver used by

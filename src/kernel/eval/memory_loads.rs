@@ -399,6 +399,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             CType::UInt32 => CValue::UInt32(Bitvector32Term::Constant(0)),
             CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
             CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
+            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
+            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
             _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {

@@ -415,6 +415,7 @@ fn surface_predicate_call_name(proposition: &ClickProposition) -> Option<&str> {
             surface_predicate_call_name(left).or_else(|| surface_predicate_call_name(right))
         }
         ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }

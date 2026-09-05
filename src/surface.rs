@@ -578,6 +578,10 @@ pub enum ClickProposition {
         operator: ComparisonOperator,
         right: ContractExpression,
     },
+    FloatClassification {
+        expression: ContractExpression,
+        classification: syntax::C0FloatClassification,
+    },
     Separate {
         left: ResourceSubject,
         right: ResourceSubject,
@@ -867,6 +871,9 @@ fn collect_current_proposition_variables(
         ClickProposition::Comparison { left, right, .. } => {
             collect_current_contract_expression_variables(left, names);
             collect_current_contract_expression_variables(right, names);
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_current_contract_expression_variables(expression, names);
         }
         ClickProposition::Separate { left, right }
         | ClickProposition::Contains {

@@ -509,6 +509,9 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
         }
+        SpecProposition::FloatClassification { expression, .. } => {
+            collect_spec_expression_bitvector_variables(expression, variables);
+        }
         SpecProposition::And(left, right)
         | SpecProposition::Or(left, right)
         | SpecProposition::Implies(left, right) => {

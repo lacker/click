@@ -61,6 +61,13 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             operator: *operator,
             right: right.clone(),
         }),
+        ClickProposition::FloatClassification {
+            expression,
+            classification,
+        } => Ok(ClickProposition::FloatClassification {
+            expression: expression.clone(),
+            classification: *classification,
+        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: left.clone(),
             right: right.clone(),
@@ -233,6 +240,13 @@ pub(in crate::surface) fn substitute_click_proposition(
             left: substitute_contract_expression(left, substitutions)?,
             operator: *operator,
             right: substitute_contract_expression(right, substitutions)?,
+        }),
+        ClickProposition::FloatClassification {
+            expression,
+            classification,
+        } => Ok(ClickProposition::FloatClassification {
+            expression: substitute_contract_expression(expression, substitutions)?,
+            classification: *classification,
         }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: substitute_resource_subject(left, substitutions)?,
@@ -498,6 +512,9 @@ fn collect_click_proposition_binding_names(
             collect_contract_expression_binding_names(left, names);
             collect_contract_expression_binding_names(right, names);
         }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_contract_expression_binding_names(expression, names);
+        }
         ClickProposition::Separate { left, right } => {
             collect_resource_subject_binding_names(left, names);
             collect_resource_subject_binding_names(right, names);
@@ -713,6 +730,19 @@ fn rewrite_click_proposition_expression(
                     right,
                 },
                 left_changed || right_changed,
+            )
+        }
+        ClickProposition::FloatClassification {
+            expression: value,
+            classification,
+        } => {
+            let (value, changed) = expression(value);
+            (
+                ClickProposition::FloatClassification {
+                    expression: value,
+                    classification: *classification,
+                },
+                changed,
             )
         }
         ClickProposition::Separate { left, right } => {
@@ -1371,6 +1401,13 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
             operator,
             right: apply_contract_lets_to_expression(right, bindings)?,
         }),
+        ClickProposition::FloatClassification {
+            expression,
+            classification,
+        } => Ok(ClickProposition::FloatClassification {
+            expression: apply_contract_lets_to_expression(expression, bindings)?,
+            classification,
+        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: apply_contract_lets_to_resource_subject(left, bindings)?,
             right: apply_contract_lets_to_resource_subject(right, bindings)?,
@@ -1662,6 +1699,9 @@ pub(in crate::surface) fn collect_click_proposition_referenced_names(
         ClickProposition::Comparison { left, right, .. } => {
             collect_contract_expression_referenced_names(left, names);
             collect_contract_expression_referenced_names(right, names);
+        }
+        ClickProposition::FloatClassification { expression, .. } => {
+            collect_contract_expression_referenced_names(expression, names);
         }
         ClickProposition::Separate { left, right } => {
             collect_resource_subject_referenced_names(left, names);

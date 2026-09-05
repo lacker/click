@@ -358,7 +358,7 @@ the supported LP64 host ABI.
 ## Floating-point semantic boundary
 
 The kernel models `float` and `double` as typed IEEE-754 payloads in `CType`
-and `CValue`. Slices 1 through 4 carry those payloads through parameters, locals,
+and `CValue`. Slices 1 through 5 carry those payloads through parameters, locals,
 structs, arrays, allocation, typed memory loads/stores, and copies at their
 declared widths. Constant casts use integer-space round-to-nearest,
 ties-to-even conversion, and unary negation is a sign-bit operation. Same-width
@@ -394,14 +394,17 @@ classification folds by IEEE bit rules; symbolic classification remains a
 checked condition suitable for path assumptions and contracts. Constant
 float-to-integer conversion is accepted only for finite, representable values;
 other float-to-integer casts remain explicit unsupported/type-error outcomes
-until definedness checks are carried into the symbolic model.
+when their definedness checks are not established; symbolic conversions carry
+those checks as proof obligations.
 
 Unsupported floating-point syntax must remain an actionable, source-positioned
 frontend diagnostic. Slice 1 accepts decimal literals only as typed payloads;
 hexadecimal literals and unsupported suffixes remain rejected. The evaluator
 does not delegate symbolic semantics to host `f32` or `f64`; the operation term,
 integer-space evaluator, and certificate checker agree on the exact width,
-rounding, exceptional values, and conversion rules.
+rounding, exceptional values, and conversion rules. Symbolic float-to-integer
+conversions retain finite and range obligations at function, assignment, and
+return boundaries.
 
 Named unions are represented on the C0 side as address-backed layouts. Every
 modeled member has offset zero, and a member read lowers to a kernel typed load
