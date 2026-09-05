@@ -303,15 +303,15 @@ pub(super) fn lower_surface_atomic_derivation(
         .and_then(|pairs| {
             plan_recorded_bitvector_equality_path(&lowered_conclusion, derivation, pairs)
         });
-    let typed_equality_rewrite_paths =
-        recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs);
-    let typed_equality_rewrite_plan = typed_equality_rewrite_paths
+    let typed_load_address_paths =
+        recorded_load_address_congruence_path_pairs(derivation, &premise_pairs);
+    let typed_load_address_plan = typed_load_address_paths
         .as_ref()
         .filter(|paths| {
             availability_kind(&paths.iter().flatten().cloned().collect::<Vec<_>>()).is_some()
         })
         .and_then(|paths| {
-            plan_recorded_bitvector_equality_rewrite_paths(&lowered_conclusion, derivation, paths)
+            plan_recorded_load_address_congruence(&lowered_conclusion, derivation, paths)
         });
     let typed_increment_pairs =
         recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs);
@@ -639,7 +639,7 @@ pub(super) fn lower_surface_atomic_derivation(
         });
     let typed_path_written = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
-        || typed_equality_rewrite_plan.is_some()
+        || typed_load_address_plan.is_some()
         || typed_increment_plan.is_some()
         || typed_increment_constant_upper_plan.is_some()
         || typed_strict_increment_plan.is_some()
@@ -672,9 +672,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_equality_plan.is_some() {
         premise_pairs =
             typed_equality_pairs.expect("a typed equality plan retains its path premises");
-    } else if typed_equality_rewrite_plan.is_some() {
-        premise_pairs = typed_equality_rewrite_paths
-            .expect("a typed equality-rewrite plan retains its exact path premises")
+    } else if typed_load_address_plan.is_some() {
+        premise_pairs = typed_load_address_paths
+            .expect("a typed load-address plan retains its exact path premises")
             .into_iter()
             .flatten()
             .collect();
@@ -801,10 +801,10 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
-    if let Some(tactics) = typed_equality_rewrite_plan {
+    if let Some(tactics) = typed_load_address_plan {
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
-                "recorded bitvector equality-rewrite paths produced a non-simple expansion: {error:?}"
+                "recorded load-address congruence produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -1477,6 +1477,60 @@ pub(super) fn plan_explicit_forall_instantiation(
                 ProofTactic::Assumption,
             ];
             return Some(tactics);
+        }
+    }
+    None
+}
+
+pub(super) fn plan_explicit_forall_instantiation_transport(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    extra_arguments: &[(Bitvector32Term, ContractExpression)],
+    conclusion_gate: &dyn Fn(&Proposition) -> bool,
+) -> Option<Vec<ProofTactic>> {
+    for (index, (kernel, surface)) in premise_pairs.iter().enumerate() {
+        let Proposition::ForAll { sort, .. } = kernel else {
+            continue;
+        };
+        if *sort != Sort::CInt32 {
+            continue;
+        }
+        let discharge_kernels = premise_pairs
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, (kernel, _))| kernel.clone())
+            .collect::<Vec<_>>();
+        let using_surfaces = premise_pairs
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, (_, surface))| surface.clone())
+            .collect::<Vec<_>>();
+        let mut arguments = extra_arguments.to_vec();
+        arguments.extend(
+            crate::kernel::forall_instantiation_candidate_values(kernel, goal)
+                .into_iter()
+                .filter_map(|value| {
+                    contract_expression_for_instantiation_value(&value)
+                        .map(|argument| (value, argument))
+                }),
+        );
+        for (value, argument) in arguments {
+            if let Some(tactics) = plan_explicit_universal_conclusion_discharge(
+                kernel,
+                surface,
+                value,
+                &argument,
+                goal,
+                surface_goal,
+                &discharge_kernels,
+                &using_surfaces,
+                Some(conclusion_gate),
+            ) {
+                return Some(tactics);
+            }
         }
     }
     None
@@ -3231,12 +3285,12 @@ fn recorded_bitvector_equality_pairs(
         .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
 }
 
-pub(super) fn recorded_bitvector_equality_rewrite_path_pairs(
+pub(super) fn recorded_load_address_congruence_path_pairs(
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<Vec<(Proposition, ClickProposition)>>> {
     derivation
-        .bitvector_equality_rewrite_paths()?
+        .load_address_congruence_paths()?
         .iter()
         .map(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
         .collect()
@@ -3281,15 +3335,16 @@ pub(super) fn plan_recorded_bitvector_equality_path(
     Some(tactics)
 }
 
-/// Transcribe the exact equality paths retained for variables occurring
-/// inside a larger atomic goal. Each path is applied in kernel-selected order;
-/// the rewritten proposition must then normalize without context.
-pub(super) fn plan_recorded_bitvector_equality_rewrite_paths(
+/// Expand registered-load address congruence into the ordinary exact
+/// equality rewrites that establish it. `rewrite` descends through the
+/// registered load origins, while `normalize` checks that the resulting
+/// memory epoch and complete pointer are identical.
+pub(super) fn plan_recorded_load_address_congruence(
     goal: &Proposition,
     derivation: &PropositionDerivation,
     premise_paths: &[Vec<(Proposition, ClickProposition)>],
 ) -> Option<Vec<ProofTactic>> {
-    let paths = derivation.bitvector_equality_rewrite_paths()?;
+    let paths = derivation.load_address_congruence_paths()?;
     if paths.len() != premise_paths.len() {
         return None;
     }
@@ -3703,12 +3758,16 @@ fn plan_explicit_not_strict_implies_greater_equal(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right),
-        true,
-    ) = goal
-    else {
-        return None;
+    let (goal_left, goal_right, reversed_less_equal) = match goal {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+            true,
+        ) => (left, right, false),
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(lower, greater),
+            true,
+        ) => (greater, lower, true),
+        _ => return None,
     };
     for (kernel, surface) in premise_pairs {
         let matches = match kernel {
@@ -3732,16 +3791,30 @@ fn plan_explicit_not_strict_implies_greater_equal(
             continue;
         };
         let (surface_left, surface_right) = surface_strict_parts(inner)?;
-        return Some(vec![
-            ProofTactic::ApplyTheoremUsing {
+        let greater_equal = ClickProposition::Comparison {
+            left: surface_left.clone(),
+            operator: ComparisonOperator::GreaterEqual,
+            right: surface_right.clone(),
+        };
+        let mut tactics = vec![ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_not_lt_implies_ge".to_string(),
+                arguments: vec![surface_left.clone(), surface_right.clone()],
+            },
+            premises: vec![surface.clone()],
+        }];
+        if reversed_less_equal {
+            tactics.push(ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
-                    name: "int32_not_lt_implies_ge".to_string(),
+                    name: "int32_ge_implies_reversed_le".to_string(),
                     arguments: vec![surface_left, surface_right],
                 },
-                premises: vec![surface.clone()],
-            },
-            ProofTactic::Assumption,
-        ]);
+                premises: vec![greater_equal],
+            });
+        } else {
+            tactics.push(ProofTactic::Assumption);
+        }
+        return Some(tactics);
     }
     None
 }

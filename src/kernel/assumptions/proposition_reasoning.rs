@@ -712,9 +712,6 @@ impl PureFactContext {
         if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
         }
-        if let Some(rule) = self.derive_by_upper_bound_split(proposition, for_simp) {
-            return Some(proposition_derivation(proposition, rule));
-        }
         self.derive_by_disjunction_cases(proposition, for_simp)
             .map(|rule| proposition_derivation(proposition, rule))
     }
@@ -1151,6 +1148,12 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let load_address_congruence_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => self
+                .load_address_congruence_evidence(left, right)
+                .map(AtomicPropositionDerivationEvidence::LoadAddressCongruence),
+            _ => None,
+        };
         let signed_order_evidence = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 condition_as_order_fact(condition, *value)
@@ -1166,29 +1169,6 @@ impl PureFactContext {
                 .exact_bitvector_equality_path_evidence(left, right)
                 .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
             _ => None,
-        };
-        let equality_rewrite_paths_evidence = {
-            let mut variables = BTreeSet::new();
-            collect_proposition_bitvector_variables(proposition, &mut variables);
-            let mut rewritten = proposition.clone();
-            let mut paths = Vec::new();
-            for variable in variables {
-                let source = Bitvector32Term::Variable(variable);
-                let target = self.lower_bitvector_via_recorded_equalities(&source);
-                if target == source {
-                    continue;
-                }
-                let Some(path) = self.exact_bitvector_equality_path_evidence(&source, &target)
-                else {
-                    continue;
-                };
-                rewritten =
-                    substitute_bitvector_variable_in_proposition(&rewritten, variable, &target);
-                paths.push(path);
-            }
-            (!paths.is_empty() && solve_builtin_prop(&rewritten)).then_some(
-                AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths),
-            )
         };
         let le_and_not_lt_equality_evidence = match proposition {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
@@ -1657,6 +1637,7 @@ impl PureFactContext {
                 AtomicPropositionDerivationEvidence::ForallInt32Instantiation(Box::new(evidence))
             });
         let result = memory_evidence
+            .or(load_address_congruence_evidence)
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
             .or(ge_and_not_gt_equality_evidence)
@@ -1687,7 +1668,6 @@ impl PureFactContext {
             .or(one_le_predecessor_strictly_decreases_evidence)
             .or(equal_one_predecessor_is_zero_evidence)
             .or(forall_instantiation_evidence)
-            .or(equality_rewrite_paths_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1733,6 +1713,9 @@ impl PureFactContext {
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
             return evidence.checks(proposition, self);
         }
+        if let AtomicPropositionDerivationEvidence::LoadAddressCongruence(evidence) = evidence {
+            return evidence.checks(proposition, self);
+        }
         if let AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag(evidence) = evidence {
             let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
                 proposition
@@ -1748,27 +1731,6 @@ impl PureFactContext {
                 return false;
             };
             return self.checks_exact_bitvector_equality_path(path, left, right);
-        }
-        if let AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths) = evidence
-        {
-            let mut rewritten = proposition.clone();
-            for path in paths {
-                let (Some(first), Some(last)) = (path.first(), path.last()) else {
-                    return false;
-                };
-                let Bitvector32Term::Variable(variable) = first.source else {
-                    return false;
-                };
-                if !self.checks_exact_bitvector_equality_path(path, &first.source, &last.target) {
-                    return false;
-                }
-                rewritten = substitute_bitvector_variable_in_proposition(
-                    &rewritten,
-                    variable,
-                    &last.target,
-                );
-            }
-            return solve_builtin_prop(&rewritten);
         }
         if let AtomicPropositionDerivationEvidence::ForallInt32Instantiation(selected) = evidence {
             let Proposition::ForAll {
@@ -2508,7 +2470,7 @@ impl PureFactContext {
             })
     }
 
-    fn checks_exact_bitvector_equality_path(
+    pub(in crate::kernel) fn checks_exact_bitvector_equality_path(
         &self,
         path: &[BitvectorEqualityDerivationStep],
         left: &Bitvector32Term,
@@ -2879,121 +2841,6 @@ impl PureFactContext {
             premises: self.clone(),
             instances,
         })
-    }
-
-    /// Case analysis on an assumed upper bound over a goal variable.
-    ///
-    /// A loop back edge asks the closer to re-prove `forall k < b + 1, P(k)`
-    /// from an invariant that says `forall k < b, P(k)`. The gap is one index:
-    /// `k` is either below `b` — where the invariant applies directly — or
-    /// equal to `b`, where the body's own effect discharges it. Neither half
-    /// needs a new theory; the split does.
-    ///
-    /// It is stated as a *goal-side* split rather than as a rule that extends
-    /// a quantified fact's bound, which is what makes it cheap here: the
-    /// earlier attempt on `claude/forall-extension-wip` had to re-prove the
-    /// final index against a fact written at another snapshot and drowned in
-    /// form drift, while each half of this split is derived in the
-    /// ordinary way against whatever facts are actually present.
-    ///
-    /// Sound at both bound shapes, including the wrapping edge: `k <= b`
-    /// obviously splits, and `k < b + 1` either splits the same way or — when
-    /// `b` is `INT_MAX` and `b + 1` wraps — is unsatisfiable, so the split's
-    /// disjunction follows vacuously.
-    fn derive_by_upper_bound_split(
-        &self,
-        proposition: &Proposition,
-        for_simp: bool,
-    ) -> Option<PropositionDerivationRule> {
-        // Each half re-enters the whole search with one more fact, and the
-        // bound that licensed the split survives into both halves, so this
-        // recurses without a guard. One split is all the corpus needs — two
-        // nested loops still close at this limit — and raising it to 2 cost
-        // `bubble_sort3_two_pass_sorted` 20 s for nothing.
-        const UPPER_BOUND_SPLIT_DEPTH_LIMIT: usize = 1;
-        thread_local! {
-            static UPPER_BOUND_SPLIT_DEPTH: Cell<usize> = const { Cell::new(0) };
-        }
-        if UPPER_BOUND_SPLIT_DEPTH.with(Cell::get) >= UPPER_BOUND_SPLIT_DEPTH_LIMIT {
-            return None;
-        }
-        // Splitting a connective duplicates the work its own rule already
-        // does on the way down; by the time the split can help, the guards
-        // have been assumed and only the leaf is left.
-        if matches!(
-            proposition,
-            Proposition::And(_, _)
-                | Proposition::Or(_, _)
-                | Proposition::Implies(_, _)
-                | Proposition::ForAll { .. }
-                | Proposition::Exists { .. }
-        ) {
-            return None;
-        }
-        let mut goal_variables = BTreeSet::new();
-        collect_proposition_bitvector_variables(proposition, &mut goal_variables);
-        if goal_variables.is_empty() {
-            return None;
-        }
-        let candidates = self
-            .condition_facts
-            .iter()
-            .filter(|(_, value)| **value)
-            .filter_map(|(condition, _)| {
-                let (variable, pivot) = upper_bound_split_candidate(condition)?;
-                if !goal_variables.contains(&variable) {
-                    return None;
-                }
-                let mut pivot_variables = BTreeSet::new();
-                collect_bitvector_variables(pivot, &mut pivot_variables);
-                if pivot_variables.contains(&variable) {
-                    return None;
-                }
-                // Nothing to split once the context already knows which side
-                // of the pivot the variable is on — and this is what stops the
-                // halves, which each learn exactly that, from re-splitting.
-                if self
-                    .decide(&ConditionTerm::signed_less_than(
-                        Bitvector32Term::Variable(variable),
-                        pivot.clone(),
-                    ))
-                    .is_some()
-                {
-                    return None;
-                }
-                Some((condition.clone(), variable, pivot.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (bound, variable, pivot) in candidates {
-            let term = Bitvector32Term::Variable(variable);
-            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() + 1));
-            let halves = [
-                ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
-                ConditionTerm::equal(term.clone(), pivot.clone()),
-            ]
-            .into_iter()
-            .map(|case| {
-                self.clone()
-                    .assume_condition(case, true)
-                    .derive_proposition_using(proposition, for_simp)
-            })
-            .collect::<Option<Vec<_>>>();
-            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() - 1));
-            let Some(halves) = halves else {
-                continue;
-            };
-            let [below, at]: [PropositionDerivation; 2] = halves
-                .try_into()
-                .expect("the split derives exactly two halves");
-            return Some(PropositionDerivationRule::UpperBoundSplit {
-                bound,
-                variable,
-                pivot,
-                below: Box::new(below),
-                at: Box::new(at),
-            });
-        }
-        None
     }
 
     fn derive_by_disjunction_cases(
@@ -4180,107 +4027,168 @@ impl PureFactContext {
             "context inconsistency: order equality classes",
         );
 
-        const ORDER_ENDPOINT_BUCKET_KEY_DEPTH: usize = 6;
-
-        /// Depth-bounded bucket key for one order endpoint: loads
-        /// resolve to their determined values, constants fold, addends sort,
-        /// an unresolved load keeps its canonical memory, and a sum that
-        /// collapses to one addend becomes that addend. Everything here is
-        /// justified by a kernel equality (resolution, bitvector addition,
-        /// canonical-form equality for loads), so terms sharing a key are
-        /// provably equal. The converse is not promised: the depth bound can
-        /// put equal endpoints in different buckets.
-        fn order_endpoint_bucket_key(
-            assumptions: &PureFactContext,
+        /// Flatten one additive form without using the Rust call stack.
+        fn collect_order_index_add_terms(
             term: &Bitvector32Term,
-            depth: usize,
-        ) -> Bitvector32Term {
-            crate::instrumentation::record_deterministic_work(1);
-            if depth == 0 {
-                return term.clone();
-            }
-            match term {
-                Bitvector32Term::MemoryLoad(_, _) => {
-                    if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
-                        return order_endpoint_bucket_key(assumptions, &resolved, depth - 1);
+            terms: &mut Vec<Bitvector32Term>,
+            constant: &mut u32,
+        ) {
+            let mut pending = vec![term];
+            while let Some(term) = pending.pop() {
+                crate::instrumentation::record_deterministic_work(1);
+                match term {
+                    Bitvector32Term::Add(left, right) => {
+                        pending.push(right);
+                        pending.push(left);
                     }
-                    equality_graph_term_key(term)
+                    Bitvector32Term::Constant(value) => {
+                        *constant = constant.wrapping_add(*value);
+                    }
+                    term => terms.push(term.clone()),
                 }
-                Bitvector32Term::Variable(variable)
-                    if crate::kernel::is_load_variable(variable) =>
-                {
-                    if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
-                        return order_endpoint_bucket_key(assumptions, &resolved, depth - 1);
-                    }
-                    term.clone()
-                }
-                Bitvector32Term::Add(_, _) => {
-                    let mut raw = Vec::new();
-                    let mut constant = 0u32;
-                    collect_bitvector_add_terms(term, &mut raw, &mut constant);
-                    let mut addends = Vec::new();
-                    for addend in raw {
-                        let key = order_endpoint_bucket_key(assumptions, &addend, depth - 1);
-                        collect_bitvector_add_terms(&key, &mut addends, &mut constant);
-                    }
-                    addends.sort();
-                    let mut written = if constant == 0 && !addends.is_empty() {
-                        None
-                    } else {
-                        Some(Bitvector32Term::Constant(constant))
-                    };
-                    for addend in addends.into_iter().rev() {
-                        written = Some(match written {
-                            Some(rest) => Bitvector32Term::add(addend, rest),
-                            None => addend,
-                        });
-                    }
-                    written.expect("an add form always has at least one part")
-                }
-                Bitvector32Term::If {
-                    condition,
-                    then_term,
-                    else_term,
-                } => Bitvector32Term::If {
-                    condition: condition.clone(),
-                    then_term: Box::new(order_endpoint_bucket_key(
-                        assumptions,
-                        then_term,
-                        depth - 1,
-                    )),
-                    else_term: Box::new(order_endpoint_bucket_key(
-                        assumptions,
-                        else_term,
-                        depth - 1,
-                    )),
-                },
-                _ => term.clone(),
             }
         }
 
+        /// Complete purpose-specific key normalization for one order
+        /// endpoint. Loads resolve to their determined values, constants
+        /// fold, addends sort, an unresolved load keeps its context-free
+        /// form, and a sum that collapses to one addend becomes that addend.
+        ///
+        /// Each rewrite is justified by a kernel equality (resolution,
+        /// bitvector addition, or context-free equality for loads), so terms
+        /// sharing a key are provably equal. This is an index key rather than
+        /// global canonical form: it consults this exact assumption context.
+        /// The explicit worklist traverses every finite input node and every
+        /// finite load-resolution hop without a logical depth cutoff.
+        fn normalized_order_endpoint_index_key(
+            assumptions: &PureFactContext,
+            term: &Bitvector32Term,
+        ) -> Bitvector32Term {
+            enum Task {
+                Visit(Bitvector32Term),
+                RebuildAdd { count: usize, constant: u32 },
+                RebuildIf(ConditionTerm),
+            }
+
+            let mut tasks = vec![Task::Visit(term.clone())];
+            let mut results = Vec::<Bitvector32Term>::new();
+            while let Some(task) = tasks.pop() {
+                match task {
+                    Task::Visit(term) => {
+                        crate::instrumentation::record_deterministic_work(1);
+                        match term {
+                            term @ Bitvector32Term::MemoryLoad(_, _) => {
+                                if let Some(resolved) = assumptions.resolve_memory_load_term(&term)
+                                {
+                                    tasks.push(Task::Visit(resolved));
+                                } else {
+                                    results.push(equality_graph_term_key(&term));
+                                }
+                            }
+                            term @ Bitvector32Term::Variable(variable)
+                                if crate::kernel::is_load_variable(&variable) =>
+                            {
+                                if let Some(resolved) = assumptions.resolve_memory_load_term(&term)
+                                {
+                                    tasks.push(Task::Visit(resolved));
+                                } else {
+                                    results.push(term);
+                                }
+                            }
+                            term @ Bitvector32Term::Add(_, _) => {
+                                let mut raw = Vec::new();
+                                let mut constant = 0u32;
+                                collect_order_index_add_terms(&term, &mut raw, &mut constant);
+                                tasks.push(Task::RebuildAdd {
+                                    count: raw.len(),
+                                    constant,
+                                });
+                                tasks.extend(raw.into_iter().rev().map(Task::Visit));
+                            }
+                            Bitvector32Term::If {
+                                condition,
+                                then_term,
+                                else_term,
+                            } => {
+                                tasks.push(Task::RebuildIf(*condition));
+                                tasks.push(Task::Visit(*else_term));
+                                tasks.push(Task::Visit(*then_term));
+                            }
+                            term => results.push(term),
+                        }
+                    }
+                    Task::RebuildAdd {
+                        count,
+                        mut constant,
+                    } => {
+                        let split = results.len().checked_sub(count).expect("visited addends");
+                        let normalized = results.split_off(split);
+                        let mut addends = Vec::new();
+                        for addend in normalized {
+                            collect_order_index_add_terms(&addend, &mut addends, &mut constant);
+                        }
+                        addends.sort();
+                        let mut written = if constant == 0 && !addends.is_empty() {
+                            None
+                        } else {
+                            Some(Bitvector32Term::Constant(constant))
+                        };
+                        for addend in addends.into_iter().rev() {
+                            written = Some(match written {
+                                Some(rest) => Bitvector32Term::add(addend, rest),
+                                None => addend,
+                            });
+                        }
+                        results.push(written.expect("an add form always has at least one part"));
+                    }
+                    Task::RebuildIf(condition) => {
+                        let else_term = results.pop().expect("visited else endpoint");
+                        let then_term = results.pop().expect("visited then endpoint");
+                        results.push(Bitvector32Term::If {
+                            condition: Box::new(condition),
+                            then_term: Box::new(then_term),
+                            else_term: Box::new(else_term),
+                        });
+                    }
+                }
+            }
+            let result = results
+                .pop()
+                .expect("endpoint normalization produces one key");
+            debug_assert!(results.is_empty());
+            result
+        }
+
         /// Whether deep pairwise comparison can tell this endpoint anything
-        /// the canonical classes cannot: it contains a load, conditional, or
-        /// fold (whose equalities can depend on assumptions), or it is a sum
-        /// with an addend the equality graph can rewrite inside the add rule.
+        /// the indexed equality classes cannot: it contains a load,
+        /// conditional, or fold (whose equalities can depend on assumptions),
+        /// or it is a sum with an addend the equality graph can rewrite inside
+        /// the add rule.
         fn order_endpoint_is_theory_sensitive(
             term: &Bitvector32Term,
             equality_index: &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>,
         ) -> bool {
-            match term {
-                Bitvector32Term::MemoryLoad(_, _)
-                | Bitvector32Term::If { .. }
-                | Bitvector32Term::RangeFold { .. } => true,
-                Bitvector32Term::Add(_, _) => {
-                    let mut addends = Vec::new();
-                    let mut constant = 0u32;
-                    collect_bitvector_add_terms(term, &mut addends, &mut constant);
-                    addends.iter().any(|addend| {
-                        order_endpoint_is_theory_sensitive(addend, equality_index)
-                            || equality_index.contains_key(&equality_graph_term_key(addend))
-                    })
+            let mut pending = vec![term.clone()];
+            while let Some(term) = pending.pop() {
+                match term {
+                    Bitvector32Term::MemoryLoad(_, _)
+                    | Bitvector32Term::If { .. }
+                    | Bitvector32Term::RangeFold { .. } => return true,
+                    term @ Bitvector32Term::Add(_, _) => {
+                        let mut addends = Vec::new();
+                        let mut constant = 0u32;
+                        collect_order_index_add_terms(&term, &mut addends, &mut constant);
+                        for addend in addends {
+                            if equality_index.contains_key(&equality_graph_term_key(&addend)) {
+                                return true;
+                            }
+                            pending.push(addend);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => false,
             }
+            false
         }
 
         type ResidueBucket = (u8, usize, u32);
@@ -4296,46 +4204,55 @@ impl PureFactContext {
         /// fold forms with fold forms or fold splits. Two endpoints
         /// with disjoint bucket sets are rejected by the rules themselves, so
         /// skipping their comparison cannot lose a conclusion.
-        fn residue_bucket_keys(
+        fn order_endpoint_residue_bucket_keys(
             assumptions: &PureFactContext,
             term: &Bitvector32Term,
-            depth: usize,
             keys: &mut BTreeSet<ResidueBucket>,
         ) {
-            match term {
-                Bitvector32Term::MemoryLoad(_, _) => {
-                    keys.insert(LOAD_BUCKET);
-                    if depth > 0
-                        && let Some(resolved) = assumptions.resolve_memory_load_term(term)
-                    {
-                        residue_bucket_keys(assumptions, &resolved, depth - 1, keys);
+            let mut pending = vec![term.clone()];
+            while let Some(term) = pending.pop() {
+                crate::instrumentation::record_deterministic_work(1);
+                match term {
+                    term @ Bitvector32Term::MemoryLoad(_, _) => {
+                        keys.insert(LOAD_BUCKET);
+                        if let Some(resolved) = assumptions.resolve_memory_load_term(&term) {
+                            pending.push(resolved);
+                        }
                     }
-                }
-                Bitvector32Term::Add(_, _) => {
-                    let mut addends = Vec::new();
-                    let mut constant = 0u32;
-                    collect_bitvector_add_terms(term, &mut addends, &mut constant);
-                    keys.insert((2, addends.len(), constant));
-                    if addends
-                        .iter()
-                        .any(|addend| matches!(addend, Bitvector32Term::RangeFold { .. }))
+                    term @ Bitvector32Term::Variable(variable)
+                        if crate::kernel::is_load_variable(&variable) =>
                     {
+                        keys.insert(LOAD_BUCKET);
+                        if let Some(resolved) = assumptions.resolve_memory_load_term(&term) {
+                            pending.push(resolved);
+                        }
+                    }
+                    term @ Bitvector32Term::Add(_, _) => {
+                        let mut addends = Vec::new();
+                        let mut constant = 0u32;
+                        collect_order_index_add_terms(&term, &mut addends, &mut constant);
+                        keys.insert((2, addends.len(), constant));
+                        if addends
+                            .iter()
+                            .any(|addend| matches!(addend, Bitvector32Term::RangeFold { .. }))
+                        {
+                            keys.insert(FOLD_BUCKET);
+                        }
+                        // The add rule accepts a non-sum opposite side exactly
+                        // when this sum has one addend and no constant, so such
+                        // a sum also participates wherever its addend can.
+                        if addends.len() == 1 && constant == 0 {
+                            pending.push(addends.pop().expect("one additive residue"));
+                        }
+                    }
+                    Bitvector32Term::If { .. } => {
+                        keys.insert(IF_BUCKET);
+                    }
+                    Bitvector32Term::RangeFold { .. } => {
                         keys.insert(FOLD_BUCKET);
                     }
-                    // The add rule accepts a non-sum opposite side exactly
-                    // when this sum has one addend and no constant, so such a
-                    // sum also participates wherever its addend can.
-                    if addends.len() == 1 && constant == 0 && depth > 0 {
-                        residue_bucket_keys(assumptions, &addends[0], depth - 1, keys);
-                    }
+                    _ => {}
                 }
-                Bitvector32Term::If { .. } => {
-                    keys.insert(IF_BUCKET);
-                }
-                Bitvector32Term::RangeFold { .. } => {
-                    keys.insert(FOLD_BUCKET);
-                }
-                _ => {}
             }
         }
 
@@ -4408,8 +4325,7 @@ impl PureFactContext {
                     continue;
                 }
                 crate::instrumentation::record_deterministic_work(1);
-                let bucket_key =
-                    order_endpoint_bucket_key(self, term, ORDER_ENDPOINT_BUCKET_KEY_DEPTH);
+                let bucket_key = normalized_order_endpoint_index_key(self, term);
                 let graph_component = key_component(
                     equality_graph_term_key(term),
                     equality_index,
@@ -4426,7 +4342,7 @@ impl PureFactContext {
                 registered.insert(term.clone(), bucket_component);
                 if order_endpoint_is_theory_sensitive(term, equality_index) {
                     let mut keys = BTreeSet::new();
-                    residue_bucket_keys(self, term, ORDER_ENDPOINT_BUCKET_KEY_DEPTH, &mut keys);
+                    order_endpoint_residue_bucket_keys(self, term, &mut keys);
                     sensitive_keys.insert(term.clone(), keys);
                 }
             }
@@ -4471,7 +4387,7 @@ impl PureFactContext {
         }
 
         // Deep pairwise comparison is reserved for endpoint pairs where an
-        // assumptions-dependent theory rule could exceed the canonical
+        // assumptions-dependent theory rule could exceed the indexed equality
         // classes, and candidates come from bucket indexes rather than a scan
         // of every other fact. Every comparison still uses the unchanged
         // `terms_equal` authority.

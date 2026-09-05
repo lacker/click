@@ -86,11 +86,17 @@ Likely additions:
 - Basic ASCII string literal support now lowers to null-terminated, read-only
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
-- Remaining static-storage work: aggregate static objects, other linkage forms,
-  immutable global tables, and initialization ordering. Fixed-size
+- Remaining static-storage work: other linkage forms, immutable global tables,
+  and initialization ordering. Static scalar-field aggregates now accept
+  out-of-order `.field = literal` designators, and their fixed-size
+  one-dimensional arrays accept `[literal] = {...}` element designators with
+  static zero fill. Fixed-size
   one-dimensional scalar global arrays now use stable cross-translation-unit
   or translation-unit-private storage with literal/zero element
-  initialization; aggregate and multidimensional tables remain open.
+  initialization. Fixed-size one-dimensional arrays of supported scalar-field
+  aggregates now use the same stable linkage and ABI-sized element storage;
+  non-literal designators, incomplete, multidimensional, and dynamically
+  initialized aggregate tables remain open.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use
@@ -99,7 +105,9 @@ Likely additions:
   literal/zero initialization and explicit contract footprints. Fixed-size
   one-dimensional scalar arrays are also supported for function-local statics;
   aggregate, multidimensional, incomplete, and dynamic-initialization cases
-  remain open.
+  remain open; zero-initialized and positional compile-time initialized
+  scalar-field aggregate globals, aggregate arrays, and function-local statics
+  now use the same stable typed-field storage model.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded
@@ -120,8 +128,15 @@ Likely additions:
   the same recursive typed leaf-copy machinery without a runtime aggregate
   value. Pointer-backed aggregate returns also support field-wise relational
   postconditions over mixed-width and nested fields while preserving fresh
-  return storage.
-  Bitfields and other compiler-dependent layout rules are tracked in the
+  return storage. Positional initializers for copyable struct-valued locals
+  recursively write typed leaves and zero-fill omitted members, including
+  nested structs and fixed-dimensional scalar or embedded-struct arrays.
+  Fixed-dimensional local arrays of copyable structs now accept nested
+  positional element groups and zero-fill omitted fields and elements using
+  the complete ABI-sized element stride.
+  Conditional expressions over copyable struct values now use fresh
+  address-backed temporaries and branch-local recursive copies; mixed-struct
+  and union conditionals remain outside the model. Bitfields and other compiler-dependent layout rules are tracked in the
   multiple-compiler issue. Named
   enum fields
   and constants are supported, but enum parameters, returns, locals, arrays,

@@ -147,6 +147,22 @@ theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
+### `int32_lt_successor_implies_le`
+
+```click
+theorem int32_lt_successor_implies_le(value: int32, upper: int32) {
+    requires value < upper + 1;
+
+    ensures value <= upper;
+}
+```
+
+**Meaning:** Given its listed requirement, proves `value <= upper`. If `upper + 1` wraps, the strict requirement is unsatisfiable, so the implication remains valid.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
 ### `int32_positive_is_nonnegative`
 
 ```click
@@ -174,6 +190,22 @@ theorem int32_lt_implies_le(left: int32, right: int32) {
 ```
 
 **Meaning:** Given its listed requirements, proves `left <= right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_lt_implies_neq`
+
+```click
+theorem int32_lt_implies_neq(left: int32, right: int32) {
+    requires left < right;
+
+    ensures left != right;
+}
+```
+
+**Meaning:** Given its listed requirement, proves `left != right`.
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 

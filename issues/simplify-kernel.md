@@ -81,6 +81,21 @@ unbounded quantifier walk. The indexed walk has a multi-size deterministic-work
 regression, and the unindexed fallback has a regression beyond the former
 depth limit.
 
+Upper-bound splitting now also lives in the surface smart closer. It selects a
+recorded bound and emits an ordinary checked proof `if`, with explicit theorem
+applications deriving the terminal equality arm. The kernel split rule, its
+whole-context derivation payload, and `UPPER_BOUND_SPLIT_DEPTH_LIMIT` are
+deleted. The two bound-universal bubble fixtures verify both the smart proof
+and its independently parsed expansion, including the emitted branch.
+
+The resource-invariant theorem constructors no longer call the general
+proposition prover. They now issue authority only for an exact recorded
+context fact, retained as the explicit identity implication `fact -> fact`.
+Derived count and nonnegativity facts must therefore be planned and recorded
+by the surface before theorem construction; a regression rejects a merely
+transitive contextual consequence. This completes the
+`theorem_from_contextual_proof` part of the authoritative-caller audit.
+
 The arithmetic interval depth was removed from this structural-cleanup queue
 after reviewing the abstraction around it. `arithmetic()` is a nominally simple
 tactic whose kernel operation reconstructs an affine and interval derivation
@@ -90,12 +105,15 @@ procedure iterative. That migration, including `ARITHMETIC_INTERVAL_DEPTH`, is
 tracked in `issues/arithmetic.md` and is deliberately deferred here.
 
 The three canonicalization-related cuts were also found to share a deeper
-abstraction problem. Assumption-free, idempotent `canonical_term` is currently
-conflated with context-dependent footprint lowering and theory-aware endpoint
-keying. Their limits, separation, caller audit, and possible use of an e-graph
-for context-local equality indexing are now owned by
-`issues/fix-canonicalization.md`; replacing the fixed rounds with an unbounded
-loop is explicitly not the intended fix.
+abstraction problem. The completed canonicalization migration separates
+assumption-free, idempotent `canonical_term` from contextual proof vocabulary:
+verified calls retain canonical footprints, exact `frame using` operations
+carry proof-local endpoint evidence, and target-directed load-address
+congruence replaces the former implicit representative walk. The alternating
+round limit and the deep-term canonicalization preflight are gone. The final
+theory-aware order-endpoint cutoff is now gone too: complete input-sized key
+and residue walks preserve indexed candidate selection without introducing an
+unbounded search.
 
 ## Current inventory
 
@@ -108,15 +126,14 @@ These are not surface-search migrations. Replace each cut with work bounded by
 the complete named structure, plus an exact cycle check or an iterative walk as
 needed.
 
-The alternating contextual-lowering rounds, order-endpoint key depth, and
-deep-term canonicalization preflight are tracked together in
-`issues/fix-canonicalization.md` rather than as three independent mechanical
-walk conversions.
+Removal of the order-endpoint key depth is complete, along with its former
+sibling cuts: the alternating contextual-lowering rounds and deep-term
+canonicalization preflight.
 
 There are no remaining structural or fixed-point cuts owned directly by this
 issue. Nested quantified-binder comparison is complete and lives in the
-surface generation path. The canonicalization family and arithmetic interval
-work remain in their separately owned issues as described above.
+surface generation path. The canonicalization family is complete; arithmetic
+interval work remains separately owned as described above.
 
 `ATOMIC_PREMISE_MINIMIZATION_DEPTH` (`src/kernel/assumptions.rs`) and
 `VERIFICATION_SESSION_DEPTH` (`src/kernel/mod.rs`) are nesting-state flags, not
@@ -126,13 +143,7 @@ change an answer.
 
 ### Search and tiering
 
-1. **The upper-bound split**, `UPPER_BOUND_SPLIT_DEPTH_LIMIT = 1` in
-   `derive_by_upper_bound_split`. Fired 11 / 46. It chooses an ambient upper
-   bound, splits `k < b` versus `k == b`, and re-enters the whole prover in both
-   branches. A surface smart closer should select the bound and emit a checked
-   proof `if k < b`; the other arm obtains equality from the recorded bound and
-   `not(k < b)`. The kernel already checks complementary proof-`if` branches.
-2. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
+1. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
    `src/kernel/reasoning/order_reasoning.rs`, used by proposition reasoning and
    its derivation checker. Fired 8 / 840; an earlier census found it deciding
    0 / 20 goals. A surface planner may emit nested proof `if x == value`
@@ -140,7 +151,7 @@ change an answer.
    in the listed cases. The certificate must name only the range evidence and
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
-3. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
+2. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
    framed-load fallback from `memory_loads_proven_equal`. It hit 345,653 /
    315,061 times in its census. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover every
@@ -148,7 +159,7 @@ change an answer.
    effect/DAG route, and a typed certificate records the route and per-edge
    framing evidence for linear checking. The existing surface `transport`
    checker still calls global load equality and is not yet that boundary.
-4. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
+3. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
    `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
@@ -174,11 +185,13 @@ change an answer.
    two split rules does not by itself establish "the kernel does not search."
    `verify_lowered_invariant_path` in `src/kernel/loops.rs` calls
    `derive_proposition_without_premise_minimization`, and
-   `theorem_from_contextual_proof` in `src/kernel/api.rs` searches for a
-   derivation and issues a theorem from its selected premises. Inventory the
-   remaining callers and either move their planning to the surface, replace
-   them with named checked evidence, or explicitly narrow this issue's claimed
-   invariant. Contract certification's existing ban on
+   the remaining loop and effect-certification paths still construct
+   derivations from ambient facts. The former
+   `theorem_from_contextual_proof` resource path is complete: its constructors
+   now accept only exact recorded facts and perform no proof search. Inventory
+   the remaining callers and either move their planning to the surface,
+   replace them with named checked evidence, or explicitly narrow this issue's
+   claimed invariant. Contract certification's existing ban on
    `PureFactContext::proves` is necessary but not a complete authority audit.
 
 ## Pointer-distinctness disposition
@@ -204,11 +217,11 @@ comparison now use only that narrower predicate for distinctness.
 3. **Complete:** replace the directly owned structural and fixed-point cuts
    with complete input-sized walks, landing a scaling regression with each
    change. Exact-load traversal, havoc write-set identity, and nested-binder
-   comparison are complete. The canonicalization family is owned by
-   `issues/fix-canonicalization.md`; the arithmetic depth cut is separately
-   deferred to the smart-tactic migration in `issues/arithmetic.md`.
-4. Move upper-bound split selection to a surface planner that emits checked
-   proof branches.
+   comparison and the canonicalization family are complete. The arithmetic
+   depth cut is separately deferred to the smart-tactic migration in
+   `issues/arithmetic.md`.
+4. **Complete:** move upper-bound split selection to a surface planner that
+   emits checked proof branches; delete the kernel rule and depth limit.
 5. Move finite context splitting to explicit surface branches/certificates and
    remove the whole-context derivation payload.
 6. Complete the separately measured load-equality certificate migration.
@@ -216,7 +229,9 @@ comparison now use only that narrower predicate for distinctness.
    and negative-memo gating; then delete or accurately rename the incompleteness
    epoch.
 8. Finish the authoritative general-prover caller audit, or narrow the stated
-   invariant with an explicit rationale for any retained kernel planner.
+   invariant with an explicit rationale for any retained kernel planner. The
+   resource-invariant theorem constructors are complete; loop and effect
+   certification callers remain.
 
 Each numbered step should be a coherent green change. A later step must not be
 used to excuse an opaque bound introduced by an earlier one.

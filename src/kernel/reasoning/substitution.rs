@@ -1486,10 +1486,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             name,
             c_type,
             volatile,
+            pointee_volatile,
         } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,
             volatile: *volatile,
+            pointee_volatile: *pointee_volatile,
         },
         CStatement::DeclareAggregate { name, layout } => CStatement::DeclareAggregate {
             name: name.clone(),
@@ -2127,29 +2129,35 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::Object {
                         value: substitute_bitvector_variable_in_c_value(value, from, to),
                         c_type: *c_type,
                         slot: slot.clone(),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::UninitializedObject {
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::UninitializedObject {
                         c_type: *c_type,
                         slot: slot.clone(),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::GlobalObject {
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::GlobalObject {
                         c_type: *c_type,
                         slot: slot.clone(),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::ArrayObject {
                         element_type,
@@ -2359,7 +2367,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),
-        static_arrays: function.static_arrays.clone(),
+        static_storage: function.static_storage.clone(),
         string_literals: function.string_literals.clone(),
     }
 }
@@ -3953,29 +3961,35 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::Object {
                         value: substitute_pointer_variable_in_c_value(value, from, to),
                         c_type: *c_type,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::UninitializedObject {
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::UninitializedObject {
                         c_type: *c_type,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::GlobalObject {
                         c_type,
                         slot,
                         volatile,
+                        pointee_volatile,
                     } => CLocalBinding::GlobalObject {
                         c_type: *c_type,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
                         volatile: *volatile,
+                        pointee_volatile: *pointee_volatile,
                     },
                     CLocalBinding::ArrayObject {
                         element_type,
@@ -4684,7 +4698,7 @@ fn substitute_pointer_variable_in_c_function(
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),
-        static_arrays: function.static_arrays.clone(),
+        static_storage: function.static_storage.clone(),
         string_literals: function.string_literals.clone(),
     }
 }

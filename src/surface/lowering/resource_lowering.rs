@@ -303,7 +303,9 @@ fn materialize_access_segment_cells(
     arguments: &[CExpression],
 ) -> Result<CMemory, ClickError> {
     let state = CState::new().with_memory(memory.clone());
-    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
+    let source_segment = segment;
+    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, source_segment)
+    else {
         return Ok(memory);
     };
     let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
@@ -317,7 +319,7 @@ fn materialize_access_segment_cells(
         )));
     }
 
-    if let Some(layout) = contract_expression_struct_layout(parameters, &segment.source.base) {
+    if let Some(layout) = contract_segment_struct_layout(parameters, source_segment) {
         let base_memory = memory.clone();
         for index in *start..*end {
             let element_pointer = offset_pointer_by_elements(
@@ -1172,7 +1174,9 @@ pub(in crate::surface) fn concrete_loadable_block(
     match requirement.inner() {
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
-            let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
+            let source_segment = segment;
+            let Ok(segment) =
+                evaluate_requirement_segment(parameters, arguments, &state, source_segment)
             else {
                 return Ok(None);
             };
@@ -1199,11 +1203,8 @@ pub(in crate::surface) fn concrete_loadable_block(
                         &segment.source.base,
                     ))
                     .then(|| contract_segment_element_type(parameters, &segment.source)),
-                    struct_layout: contract_expression_struct_layout(
-                        parameters,
-                        &segment.source.base,
-                    )
-                    .cloned(),
+                    struct_layout: contract_segment_struct_layout(parameters, source_segment)
+                        .cloned(),
                 },
             )))
         }
@@ -1230,7 +1231,9 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
     let mut result = Vec::new();
     for segment in segments {
         let state = CState::new();
-        let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
+        let source_segment = segment;
+        let Ok(segment) =
+            evaluate_requirement_segment(parameters, arguments, &state, source_segment)
         else {
             continue;
         };
@@ -1260,8 +1263,7 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
                     &segment.source.base,
                 ))
                 .then(|| contract_segment_element_type(parameters, &segment.source)),
-                struct_layout: contract_expression_struct_layout(parameters, &segment.source.base)
-                    .cloned(),
+                struct_layout: contract_segment_struct_layout(parameters, source_segment).cloned(),
             },
         ));
     }
@@ -1374,6 +1376,19 @@ fn contract_expression_struct_layout<'a>(
         CExpression::Subtract(left, _) => contract_expression_struct_layout(parameters, left),
         _ => None,
     }
+}
+
+fn contract_segment_struct_layout<'a>(
+    parameters: &'a [syntax::C0Parameter],
+    segment: &ContractSegment,
+) -> Option<&'a syntax::C0StructLayout> {
+    // A field segment already carries the leaf's physical type and width.
+    // Treating its base as an aggregate range would expand every struct field
+    // at the leaf's address, which can install a different typed cell there.
+    if segment.field_element_type().is_some() {
+        return None;
+    }
+    contract_expression_struct_layout(parameters, &segment.base)
 }
 
 fn contract_expression_element_type(

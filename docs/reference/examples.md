@@ -142,6 +142,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/local_array_loop_frame.md`: local array frame behavior.
 - `mdtests/local_array_decays_to_helper.md`: array-to-pointer function call.
 - `mdtests/local_array_rejects_assignment.md`: direct array assignment fails.
+- `mdtests/local_struct_array_initializer.md`: positional initialization of
+  local arrays of structs, including nested fields and zero-filled omissions.
 
 ## Structs
 
@@ -172,6 +174,13 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/struct_multidimensional_scalar_array.md`: fixed multidimensional
   scalar-array fields preserve shape, element width, row-major indexing, and
   by-value copy behavior.
+- `mdtests/struct_aggregate_initializer.md`: positional struct initializers
+  recursively initialize nested fields and arrays, including zero-filled
+  omitted members.
+- `mdtests/struct_designated_initializer.md`: designated struct initializers
+  select fields out of declaration order, including nested embedded fields.
+- `mdtests/struct_conditional_value.md`: conditional expressions over
+  copyable structs lazily copy only the selected branch into fresh storage.
 
 ## Byte values and buffers
 

@@ -165,9 +165,10 @@ The replacement gives terms one canonical identity and makes state changes
 explicit:
 
 - **Stratified derivation edges.** A snapshot's derivation is described in
-  its parent's vocabulary; call-havoc footprints are canonicalized at
-  recording so later frame queries match entry-vocabulary facts
-  syntactically.
+  its parent's vocabulary; call-havoc footprints are recorded in
+  assumption-free canonical form. A later frame proof that needs another
+  vocabulary supplies an explicit `frame using` restatement rather than
+  changing the stored footprint.
 - **Canonicalize at creation.** A memory load becomes the load variable for
   its cell epoch where lowering or symbolic execution creates it. Condition-fact
   availability is therefore exact canonical-form lookup; it never searches
@@ -195,19 +196,24 @@ work runs only where a theory rule's own first-line requirements say a pair
 could relate.
 
 Context inconsistency labels the equality graph's connected components once
-per check and extends them with depth-bounded canonical endpoint forms:
-resolved loads, folded constants, sorted addends, collapsed single-addend
-sums, and canonical memories for unresolved loads. Each canonicalization step
-is justified by a kernel equality, so a strict order edge inside one class, or
-a reverse edge between two classes, is a contradiction found by map lookup.
-The remaining deep comparisons are bucketed by rule requirements — loads with
-loads, sums under equal folded constants and addend counts, conditionals with
-conditionals, folds with fold splits — and every performed comparison uses the
-unchanged proof-aware equality. Pin regressions fix each preserved reach:
-additive commutativity, load resolution, cross-snapshot canonical forms, and
-graph-equal addends inside the add rule. Same-bucket contexts are still compared
-pairwise; that width is bounded by rule-relevant facts, not by the ambient
-context.
+per check and extends them with a complete, context-local order-endpoint index
+key: it follows every finite resolved-load hop, folds constants, sorts
+addends, collapses single-addend sums, and uses the assumption-free form for
+unresolved loads. This is purpose-specific indexing, not canonical identity.
+Each key transformation is justified by a kernel equality, so a strict order
+edge inside one class, or a reverse edge between two classes, is a
+contradiction found by map lookup.
+
+The remaining deep comparisons are selected by complete necessary-condition
+residues — loads with loads, sums under equal folded constants and addend
+counts, conditionals with conditionals, folds with fold splits — and every
+performed comparison uses the unchanged proof-aware equality. Residues may
+admit extra candidates but cannot omit a pair accepted by a theory rule. Pin
+regressions fix each preserved reach: additive commutativity, finite load
+resolution chains beyond the former depth-six cutoff, cross-snapshot
+canonical forms, and graph-equal addends inside the add rule. Same-residue
+contexts are still compared pairwise; that width is bounded by rule-relevant
+facts, not by the ambient context.
 
 Condition premise search tries single candidates, then candidate pairs that
 some derivation could connect: two facts sharing a bitvector variable

@@ -897,10 +897,20 @@ pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
 }
 
 pub fn c_declare_volatile(name: impl Into<String>, c_type: CType, volatile: bool) -> CStatement {
+    c_declare_qualified(name, c_type, volatile, false)
+}
+
+pub fn c_declare_qualified(
+    name: impl Into<String>,
+    c_type: CType,
+    volatile: bool,
+    pointee_volatile: bool,
+) -> CStatement {
     CStatement::Declare {
         name: name.into(),
         c_type,
         volatile,
+        pointee_volatile,
     }
 }
 
@@ -2780,22 +2790,18 @@ pub fn pure_fact_context_is_inconsistent(assumptions: &PureFactContext) -> bool 
     assumptions.is_inconsistent()
 }
 
-/// Reifies a contextual proof as a theorem that keeps the exact ambient facts
-/// selected by its derivation as implication premises. Kernel theorem objects
-/// may outlive the context that produced them, so dropping those premises
-/// would turn a path-local consequence into an unconditional axiom.
-fn theorem_from_contextual_proof(
+/// Reifies one exact context fact as the explicit identity implication
+/// `fact -> fact`. This is intentionally not a general proposition prover:
+/// callers that want a derived resource invariant must plan and record that
+/// derivation before asking the kernel to issue theorem authority.
+fn theorem_from_exact_context_fact(
     assumptions: &PureFactContext,
     conclusion: Proposition,
 ) -> Option<Theorem> {
-    let derivation = assumptions.derive_proposition(&conclusion)?;
-    let proposition = derivation
-        .context_premises()
-        .into_iter()
-        .rev()
-        .fold(conclusion, |body, premise| {
-            Proposition::Implies(Box::new(premise), Box::new(body))
-        });
+    if !assumptions.proves_exact(&conclusion) {
+        return None;
+    }
+    let proposition = Proposition::Implies(Box::new(conclusion.clone()), Box::new(conclusion));
     Some(Theorem::new(proposition))
 }
 
@@ -2846,7 +2852,7 @@ pub fn prove_owned_resource_count_lower_bound(
     if claimed != &conclusion {
         return None;
     }
-    theorem_from_contextual_proof(assumptions, conclusion)
+    theorem_from_exact_context_fact(assumptions, conclusion)
 }
 
 /// Certifies the nonnegativity invariant carried by an owned declared-resource
@@ -2868,7 +2874,7 @@ pub fn prove_owned_resource_quantity_nonnegative(
     if claimed != &conclusion {
         return None;
     }
-    theorem_from_contextual_proof(assumptions, conclusion)
+    theorem_from_exact_context_fact(assumptions, conclusion)
 }
 
 /// Re-expresses a checked execution from a definitionally equal ghost-resource
@@ -4124,6 +4130,25 @@ pub fn prove_int32_successor_le_implies_lt(
     ))
 }
 
+/// A signed int32 value strictly below another value's successor is no
+/// greater than that value. This remains valid when the successor wraps:
+/// then the strict premise is unsatisfiable.
+pub fn prove_int32_lt_successor_implies_le(
+    value: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let successor = Bitvector32Term::add(upper.clone(), Bitvector32Term::Constant(1));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), successor),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(value, upper), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Two signed int32 values are equal when the first is no greater than the
 /// second and is not strictly less than it.
 pub fn prove_int32_le_antisymmetric(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
@@ -4247,6 +4272,22 @@ pub fn prove_int32_lt_implies_le(left: Bitvector32Term, right: Bitvector32Term) 
         true,
     );
     let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(left, right), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Strict signed int32 order implies disequality.
+pub fn prove_int32_lt_implies_neq(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        false,
+    );
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),

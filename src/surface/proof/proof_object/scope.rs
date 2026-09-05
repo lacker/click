@@ -884,6 +884,21 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    pub(in crate::surface::proof) fn try_simp_closure_with_surfaces(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self
+            .body
+            .try_simp_closure_with_surfaces(introduced_surfaces)?
+        else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     /// Runs one supported source script inside the owned nested body and
     /// retains its already-checked descendant.
     pub(in crate::surface::proof) fn try_linear_script(

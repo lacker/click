@@ -2546,13 +2546,10 @@ fn separation_refutes_an_alias_guard_exactly_when_the_index_is_in_range() {
     );
 }
 
-/// A loop back edge re-proves `forall k < b + 1, P(k)` from an invariant that
-/// only covers `k < b`. The missing step is one case split, not a theory: `k`
-/// is below `b` or equal to it, and the two halves are discharged by facts
-/// that are already present. Check must accept the same split and must reject
-/// it when the bound that licensed it is gone.
+/// Upper-bound case selection belongs to the Surface planner. The kernel's
+/// proposition search must not silently create that control flow.
 #[test]
-fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
+fn an_assumed_upper_bound_does_not_split_inside_kernel_search() {
     let bound = Bitvector32Term::Variable(Variable(811));
     let index = Bitvector32Term::Variable(Variable(812));
     // Holds strictly below the bound (by the quantified fact) and at it (by
@@ -2569,18 +2566,7 @@ fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
         true,
     );
 
-    let derivation = context
-        .derive_proposition(&goal)
-        .expect("the split closes the goal");
-    assert!(matches!(
-        derivation.rule,
-        PropositionDerivationRule::UpperBoundSplit { .. }
-    ));
-    assert!(derivation.check(&context));
-    // Without the bound there is no split to license and nothing to prove.
-    let unbounded = PureFactContext::new();
-    assert!(!derivation.check(&unbounded));
-    assert!(unbounded.derive_proposition(&goal).is_none());
+    assert!(context.derive_proposition(&goal).is_none());
 }
 
 #[test]

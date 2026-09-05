@@ -1068,6 +1068,44 @@ fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_lt_successor_implies_le_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_032));
+    let upper = Bitvector32Term::Variable(Variable(90_033));
+    let theorem = prove_int32_lt_successor_implies_le(value.clone(), upper.clone());
+    let successor = Bitvector32Term::add(upper.clone(), Bitvector32Term::Constant(1));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), successor),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(value, upper), true);
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
+fn int32_lt_implies_neq_axiom_has_the_exact_implication() {
+    let left = Bitvector32Term::Variable(Variable(90_034));
+    let right = Bitvector32Term::Variable(Variable(90_035));
+    let theorem = prove_int32_lt_implies_neq(left.clone(), right.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        false,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_le_and_not_lt_implies_eq_axiom_has_the_exact_implications() {
     let left = Bitvector32Term::Variable(Variable(90_032));
     let right = Bitvector32Term::Variable(Variable(90_033));
@@ -1974,7 +2012,7 @@ fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
 }
 
 #[test]
-fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
+fn arithmetic_normalization_does_not_select_contextual_representatives() {
     let left = Bitvector32Term::Variable(Variable(218));
     let right = Bitvector32Term::Variable(Variable(219));
     let one = Bitvector32Term::Constant(1);
@@ -1993,21 +2031,10 @@ fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
         .assume_proposition(left_is_one.clone())
         .assume_proposition(right_is_one.clone());
 
-    let derivation = assumptions
-        .derive_simp_proposition(&goal)
-        .expect("the two selected equalities should normalize the arithmetic goal");
-    let paths = derivation
-        .bitvector_equality_rewrite_paths()
-        .expect("the atomic decision should retain both rewrite paths");
-    assert_eq!(paths.len(), 2);
-    assert_eq!(paths[0][0].source(), &left);
-    assert_eq!(paths[0][0].target(), &one);
-    assert_eq!(paths[0][0].premise(), &left_is_one);
-    assert_eq!(paths[1][0].source(), &right);
-    assert_eq!(paths[1][0].target(), &one);
-    assert_eq!(paths[1][0].premise(), &right_is_one);
-    assert!(derivation.check(&assumptions));
-    assert!(!derivation.check(&PureFactContext::new().assume_proposition(left_is_one)));
+    assert!(
+        assumptions.derive_simp_proposition(&goal).is_none(),
+        "the kernel must not choose equality-class representatives to make an arithmetic goal normalize"
+    );
 }
 
 #[test]
@@ -4492,6 +4519,70 @@ fn derived_order_contradiction_uses_theory_equal_endpoints() {
         assumptions.is_inconsistent(),
         "`x + y < middle` and `middle < y + x` contradict through additive equality"
     );
+}
+
+/// An order endpoint may resolve through any finite chain of context-equal
+/// stored addresses. Contradiction indexing must follow the complete chain:
+/// a depth cutoff can otherwise miss `load < middle < resolved(load)`.
+#[test]
+fn deep_contextual_load_order_contradiction_has_no_index_depth_cutoff() {
+    fn contextual_load_chain(
+        length: usize,
+        terminal: Bitvector32Term,
+    ) -> (Bitvector32Term, PureFactContext) {
+        let mut next = terminal;
+        let mut assumptions = PureFactContext::new();
+        for index in (0..length).rev() {
+            let stored_index = Bitvector32Term::Variable(Variable(98_000 + index as u64 * 2));
+            let query_index = Bitvector32Term::Variable(Variable(98_001 + index as u64 * 2));
+            let block = format!("deep-order-resolution-{index}");
+            let stored_pointer = Pointer {
+                block: block.clone().into(),
+                offset: PointerOffsetTerm::scale_int32(stored_index.clone(), 4),
+            };
+            let query_pointer = Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::scale_int32(query_index.clone(), 4),
+            };
+            let memory = CMemory::new().store(stored_pointer, CValue::Int32(next));
+            next = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory),
+                Box::new(query_pointer),
+            );
+            assumptions =
+                assumptions.assume_condition(ConditionTerm::equal(stored_index, query_index), true);
+        }
+        (next, assumptions)
+    }
+
+    let samples = [6usize, 8, 16, 32]
+        .into_iter()
+        .map(|length| {
+            let terminal = Bitvector32Term::Variable(Variable(99_000));
+            let middle = Bitvector32Term::Variable(Variable(99_001));
+            let (load, assumptions) = contextual_load_chain(length, terminal.clone());
+            let assumptions = assumptions
+                .assume_condition(ConditionTerm::signed_less_than(load, middle.clone()), true)
+                .assume_condition(
+                    ConditionTerm::signed_less_than(middle.clone(), terminal.clone()),
+                    true,
+                );
+            let (inconsistent, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.is_inconsistent()
+            });
+            assert!(
+                inconsistent,
+                "a contextual load chain of length {length} must close the strict cycle"
+            );
+            (length, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "deep endpoint contradiction indexing is superlinear: {samples:?}"
+        );
+    }
 }
 
 /// The issue-named fixed-arithmetic curve: one overflow decision whose

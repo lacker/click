@@ -1288,15 +1288,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .function_block
         .structural_clauses()
         .iter()
-        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .into_iter()
-        .flat_map(|clause| {
-            clause
-                .items()
-                .iter()
-                .filter(|item| item.kind() == StructuralItemKind::Invariant)
-                .filter_map(StructuralItem::proposition)
-        });
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .flat_map(StructuralClause::items)
+        .filter(|item| item.kind() == StructuralItemKind::Invariant)
+        .filter_map(StructuralItem::proposition);
     {
         let surfaces = if do_while {
             invariant_surfaces
@@ -1382,6 +1377,27 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .flat_map(|clause| clause.items().iter().enumerate())
         .filter(|(_, item)| item.is_effect_kind())
         .collect::<Vec<_>>();
+    let invariant_surfaces = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .flat_map(StructuralClause::items)
+        .filter(|item| item.kind() == StructuralItemKind::Invariant)
+        .filter_map(|item| item.proposition().cloned())
+        .collect::<Vec<_>>();
+    let invariant_premise_surfaces = invariant_surfaces
+        .iter()
+        .map(|surface| {
+            surface_at_snapshot(
+                surface,
+                &ProgramPointRef {
+                    region: CodeRegionRef::Statement(loop_body_statement_index),
+                    kind: ProgramPointKind::Entry,
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     // Resource-backed function frames add a kernel-only whole-loop effect
     // check even when the source has no structural `mutable` item. The
     // source-indexed checks still appear first, so only a deficit is an
@@ -1471,6 +1487,34 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             }
         });
         let bundle_checkpoint = leaf.checkpoint();
+        // A region-level `simp` is a Surface planner. Establish each named
+        // invariant through the checked proposition Proof before asking the
+        // kernel to close the bundle. In particular, upper-bound extension
+        // now becomes a nested proof `if` here instead of recursive search in
+        // proposition reasoning.
+        let mut leaf = leaf;
+        if region_simp.is_some() {
+            if invariant_surfaces.len() != invariant_checks.len() {
+                return Err(leaf.step_error(
+                    "surface invariants do not align with the lowered invariant bundle",
+                ));
+            }
+            for (index, invariant) in invariant_surfaces.iter().enumerate() {
+                if leaf.legacy_loop_invariant_prefix_holds(
+                    preservation.loop_entry_state(),
+                    &invariant_checks[..=index],
+                )? {
+                    continue;
+                }
+                let scope = leaf.begin_have(invariant.clone())?;
+                let Some(proved) =
+                    scope.try_simp_closure_with_surfaces(&invariant_premise_surfaces[..=index])?
+                else {
+                    continue;
+                };
+                leaf = proved.join()?;
+            }
+        }
         let checked = if invariant_checks.is_empty() {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
@@ -1490,6 +1534,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 preservation.loop_entry_state(),
                 condition,
                 invariant_checks,
+                &invariant_surfaces,
                 environment.function.composite_resource_definitions(),
                 do_while,
             )

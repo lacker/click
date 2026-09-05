@@ -1479,6 +1479,7 @@ fn pointer_offset_by_elements_paths(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let pointer_type = pointer.c_type();
+    let pointee_volatile = pointer.pointee_volatile();
     let pointer = pointer.into_pointer();
     let result = pointer.offset_by_typed_elements(offset.clone(), byte_width, unsigned, wide);
     let mut guards = Vec::new();
@@ -1511,6 +1512,7 @@ fn pointer_offset_by_elements_paths(
     apply_pointer_formation_guards(
         result,
         pointer_type,
+        pointee_volatile,
         guards,
         facts,
         obligations,
@@ -1527,6 +1529,7 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let pointer_type = pointer.c_type();
+    let pointee_volatile = pointer.pointee_volatile();
     let pointer = pointer.into_pointer();
     if pointer.block.is_function() && bytes != 0 {
         return vec![CExpressionPath {
@@ -1540,6 +1543,7 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     apply_pointer_formation_guards(
         result,
         pointer_type,
+        pointee_volatile,
         guards,
         facts,
         obligations,
@@ -1703,16 +1707,44 @@ fn pointer_index_from_base(
     }
 }
 
+/// Resolve one recorded equality-class hop before checking signed-add
+/// overflow. The normal simplifier handles direct equalities and recursively
+/// simplifies a term's children, but it deliberately does not search through
+/// a whole equality closure. A returned aggregate can expose a result
+/// variable equal to a short expression whose leaves are direct constants;
+/// checking that one class is enough to recognize the concrete value without
+/// reintroducing an unbounded contextual-lowering search.
+fn simplify_c_int32_add_operand(
+    assumptions: &PureFactContext,
+    term: &Bitvector32Term,
+) -> Bitvector32Term {
+    let simplified = assumptions.simplify_bitvector_under_assumptions(term);
+    if simplified.as_const().is_some() {
+        return simplified;
+    }
+    assumptions
+        .recorded_equality_class(term)
+        .into_iter()
+        .map(|member| assumptions.simplify_bitvector_under_assumptions(&member))
+        .find(|member| member.as_const().is_some())
+        .unwrap_or(simplified)
+}
+
 fn apply_pointer_formation_guards(
     pointer: Pointer,
     pointer_type: CType,
+    pointee_volatile: bool,
     guards: Vec<PointerFormationGuard>,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let mut normal = vec![CExpressionPath {
-        outcome: CExpressionOutcome::Value(CValue::typed_pointer(pointer, pointer_type)),
+        outcome: CExpressionOutcome::Value(CValue::typed_pointer_with_pointee_volatile(
+            pointer,
+            pointer_type,
+            pointee_volatile,
+        )),
         facts,
         obligations,
     }];
@@ -1778,13 +1810,17 @@ pub(in crate::kernel) fn apply_c_int32_add(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
-    let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
-    match crate::instrumentation::measure_operation(
+    let overflow = ConditionTerm::signed_add_overflows(
+        simplify_c_int32_add_operand(assumptions, &left),
+        simplify_c_int32_add_operand(assumptions, &right),
+    );
+    let decision = crate::instrumentation::measure_operation(
         "kernel",
         "independent kernel execution",
         "int32 add overflow decision",
         || decide_with_facts(assumptions, &facts, &overflow),
-    ) {
+    );
+    match decision {
         Some(true) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             facts,

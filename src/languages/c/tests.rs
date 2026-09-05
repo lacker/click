@@ -85,18 +85,8 @@ fn c0_small_volatile_model_preserves_metadata_and_access_facts() {
 }
 
 #[test]
-fn c0_small_volatile_model_rejects_pointer_aliases() {
+fn c0_small_volatile_model_rejects_unsupported_pointer_depth() {
     for (source, expected) in [
-        (
-            r#"
-            int32 alias() {
-                volatile int32 value;
-                int32 *pointer = &value;
-                return *pointer;
-            }
-            "#,
-            "taking a volatile object's address",
-        ),
         (
             r#"
             int32 array() {
@@ -109,11 +99,11 @@ fn c0_small_volatile_model_rejects_pointer_aliases() {
         (
             r#"
             int32 pointer() {
-                volatile int32 *value;
+                volatile int32 **value;
                 return 0;
             }
             "#,
-            "only direct scalar integer objects",
+            "supports scalar objects and pointers to scalar objects",
         ),
         (
             r#"
@@ -131,6 +121,57 @@ fn c0_small_volatile_model_rejects_pointer_aliases() {
             .expect_err("unsupported volatile shapes must remain rejected");
         assert!(error.message().contains(expected), "{}", error.message());
     }
+}
+
+#[test]
+fn c0_pointer_volatile_accesses_preserve_pointee_metadata_and_order() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 pointer_access() {
+            volatile int32 value = 4;
+            volatile int32 *pointer = &value;
+            *pointer = *pointer + 1;
+            return value;
+        }
+
+        int32 pointer_parameter(volatile int32 *pointer) {
+            return *pointer;
+        }
+        "#,
+    )
+    .expect("pointer-qualified volatile scalars should parse");
+
+    let pointer_parameter = &functions[1].parameters()[0];
+    assert!(!pointer_parameter.is_volatile());
+    assert!(pointer_parameter.pointee_is_volatile());
+    let kernel_parameter = functions[1].to_kernel_function().parameters()[0].clone();
+    assert!(!kernel_parameter.is_volatile());
+    assert!(kernel_parameter.pointee_is_volatile());
+
+    let execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[0].to_kernel_function(),
+        Vec::new(),
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(execution.paths().len(), 1);
+    let accesses = execution.paths()[0]
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            crate::kernel::Proposition::Predicate { name, .. }
+                if name.starts_with("__click_volatile_") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 4);
+    assert!(accesses[0].starts_with("__click_volatile_write_"));
+    assert!(accesses[1].starts_with("__click_volatile_read_"));
+    assert!(accesses[2].starts_with("__click_volatile_write_"));
+    assert!(accesses[3].starts_with("__click_volatile_read_"));
 }
 
 #[test]
@@ -212,6 +253,353 @@ fn c0_collects_file_scope_scalar_arrays() {
 }
 
 #[test]
+fn c0_collects_file_scope_struct_aggregates() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared;
+
+        int32 read_shared() {
+            return shared.value;
+        }
+        "#,
+    )
+    .expect("file-scope struct aggregates should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read_shared")
+        .expect("reader function");
+    let aggregate = &function.global_aggregates()["shared"];
+    assert!(aggregate.is_defined());
+    assert!(!aggregate.is_file_static());
+    assert_eq!(aggregate.name(), "shared");
+    assert_eq!(aggregate.struct_name(), "state");
+    assert_eq!(aggregate.layout().field("value").unwrap().offset_bytes(), 0);
+    assert_eq!(aggregate.layout().field("ready").unwrap().offset_bytes(), 4);
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_aggregate = kernel_function
+        .global_aggregates()
+        .iter()
+        .find(|aggregate| aggregate.source_name() == "shared")
+        .expect("kernel aggregate metadata");
+    assert_eq!(kernel_aggregate.kernel_name(), "shared");
+    assert_eq!(
+        kernel_aggregate.layout().size_bytes(),
+        aggregate.layout().size_bytes()
+    );
+    assert_eq!(kernel_aggregate.layout().fields().len(), 2);
+}
+
+#[test]
+fn c0_collects_static_struct_aggregates_with_stable_kernel_names() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+        };
+
+        int32 increment() {
+            static struct state state;
+            state.value = state.value + 1;
+            return state.value;
+        }
+        "#,
+    )
+    .expect("function-local struct statics should parse");
+
+    let function = &functions[0];
+    let aggregate = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("static aggregate metadata");
+    assert_eq!(aggregate.name(), "state");
+    assert_eq!(aggregate.struct_name(), "state");
+    assert_ne!(aggregate.kernel_name(), aggregate.name());
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_aggregate = kernel_function
+        .static_aggregates()
+        .iter()
+        .next()
+        .expect("kernel static aggregate metadata");
+    assert_eq!(kernel_aggregate.source_name(), "state");
+    assert_eq!(kernel_aggregate.kernel_name(), aggregate.kernel_name());
+    assert_eq!(kernel_aggregate.layout().fields().len(), 1);
+}
+
+#[test]
+fn c0_collects_aggregate_static_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared = {7, 1};
+
+        int32 read() {
+            static struct state local = {3};
+            return shared.value + shared.ready + local.value + local.ready;
+        }
+        "#,
+    )
+    .expect("aggregate static initializers should parse");
+
+    let function = &functions[0];
+    let global = &function.global_aggregates()["shared"];
+    let global_initializers = global.initializer().expect("global initializer");
+    assert_eq!(global_initializers.len(), 2);
+    assert_eq!(global_initializers[0].offset_bytes(), 0);
+    assert_eq!(global_initializers[0].c_type(), syntax::C0Type::Int32);
+    assert!(matches!(
+        global_initializers[0].value(),
+        syntax::C0Expression::Int32Literal(7)
+    ));
+    assert_eq!(global_initializers[1].offset_bytes(), 4);
+    assert!(matches!(
+        global_initializers[1].value(),
+        syntax::C0Expression::Int32Literal(1)
+    ));
+
+    let static_aggregate = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("static aggregate initializer");
+    assert_eq!(static_aggregate.initializer().len(), 1);
+    assert_eq!(static_aggregate.initializer()[0].offset_bytes(), 0);
+    assert!(matches!(
+        static_aggregate.initializer()[0].value(),
+        syntax::C0Expression::Int32Literal(3)
+    ));
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_global = kernel_function
+        .global_aggregates()
+        .iter()
+        .next()
+        .expect("kernel global aggregate initializer");
+    assert_eq!(kernel_global.initializers().len(), 2);
+    assert_eq!(kernel_global.initializers()[0].offset_bytes(), 0);
+    assert_eq!(kernel_global.initializers()[1].offset_bytes(), 4);
+    let kernel_static = kernel_function
+        .static_aggregates()
+        .iter()
+        .next()
+        .expect("kernel static aggregate initializer");
+    assert_eq!(kernel_static.initializers().len(), 1);
+    assert_eq!(kernel_static.initializers()[0].offset_bytes(), 0);
+}
+
+#[test]
+fn c0_collects_aggregate_arrays() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct entry {
+            int32 value;
+            uint8 ready;
+        };
+
+        static struct entry private_table[2] = {{4, 1}, {5}};
+        struct entry shared_table[2] = {{7, 1}, {3}};
+
+        int32 read() {
+            static struct entry local_table[2] = {{2}, {6, 1}};
+            return private_table[1].value + shared_table[0].value
+                + local_table[1].ready;
+        }
+        "#,
+        "aggregate_arrays.c",
+    )
+    .expect("aggregate arrays should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("aggregate-array reader function");
+
+    let global = &function.global_aggregate_arrays()["shared_table"];
+    assert!(global.is_defined());
+    assert!(global.is_file_static() == false);
+    assert_eq!(global.length(), 2);
+    assert_eq!(global.c_type(), syntax::C0Type::UInt8Array(16));
+    let global_initializers = global.initializer().expect("global array initializer");
+    assert_eq!(global_initializers.len(), 3);
+    assert_eq!(global_initializers[0].offset_bytes(), 0);
+    assert_eq!(global_initializers[1].offset_bytes(), 4);
+    assert_eq!(global_initializers[2].offset_bytes(), 8);
+
+    let private = &function.global_aggregate_arrays()["private_table"];
+    assert!(private.is_file_static());
+    assert_ne!(private.kernel_name(), private.name());
+    assert_eq!(private.initializer().unwrap().len(), 3);
+
+    let local = function
+        .static_aggregate_arrays()
+        .values()
+        .next()
+        .expect("local aggregate array metadata");
+    assert_eq!(local.name(), "local_table");
+    assert_eq!(local.length(), 2);
+    assert_eq!(local.c_type(), syntax::C0Type::UInt8Array(16));
+    assert_eq!(local.initializer().len(), 3);
+
+    let kernel_function = function.to_kernel_function();
+    let kernel_global = kernel_function
+        .global_aggregate_arrays()
+        .iter()
+        .find(|array| array.source_name() == "shared_table")
+        .expect("kernel global aggregate array metadata");
+    assert_eq!(kernel_global.kernel_name(), "shared_table");
+    assert_eq!(kernel_global.length(), 2);
+    assert_eq!(kernel_global.initializers().len(), 3);
+    let kernel_local = kernel_function
+        .static_aggregate_arrays()
+        .iter()
+        .next()
+        .expect("kernel local aggregate array metadata");
+    assert_eq!(kernel_local.source_name(), "local_table");
+    assert_eq!(kernel_local.kernel_name(), local.kernel_name());
+    assert_eq!(kernel_local.initializers().len(), 3);
+}
+
+#[test]
+fn c0_collects_designated_static_aggregate_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared = {.ready = 1, .value = 7};
+        struct state table[3] = {
+            [2] = {.value = 9},
+            [0] = {.ready = 1}
+        };
+
+        int32 read() {
+            static struct state local = {.value = 3};
+            static struct state entries[3] = {
+                [1] = {.ready = 1, .value = 4}
+            };
+            return shared.value + table[0].ready + table[2].value
+                + local.value + entries[1].value;
+        }
+        "#,
+    )
+    .expect("designated static aggregate initializers should parse");
+
+    let function = &functions[0];
+    let global = &function.global_aggregates()["shared"];
+    let global_initializers = global.initializer().expect("global initializer");
+    assert_eq!(global_initializers.len(), 2);
+    assert_eq!(global_initializers[0].offset_bytes(), 4);
+    assert_eq!(global_initializers[1].offset_bytes(), 0);
+
+    let array = &function.global_aggregate_arrays()["table"];
+    let array_initializers = array.initializer().expect("global array initializer");
+    assert_eq!(array_initializers.len(), 2);
+    assert_eq!(array_initializers[0].offset_bytes(), 16);
+    assert_eq!(array_initializers[1].offset_bytes(), 4);
+
+    let local = function
+        .static_aggregates()
+        .values()
+        .next()
+        .expect("local aggregate initializer");
+    assert_eq!(local.initializer().len(), 1);
+    assert_eq!(local.initializer()[0].offset_bytes(), 0);
+
+    let local_array = function
+        .static_aggregate_arrays()
+        .values()
+        .next()
+        .expect("local aggregate array initializer");
+    assert_eq!(local_array.initializer().len(), 2);
+    assert_eq!(local_array.initializer()[0].offset_bytes(), 12);
+    assert_eq!(local_array.initializer()[1].offset_bytes(), 8);
+}
+
+#[test]
+fn c0_rejects_unsupported_static_aggregate_designators() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; struct state shared = {.missing = 1}; int32 read() { return 0; }",
+            "unknown field `missing`",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[2] = {1}}; int32 read() { return 0; }",
+            "out of bounds",
+        ),
+        (
+            "int32 index; struct state { int32 value; }; struct state shared[2] = {[index] = {1}}; int32 read() { return 0; }",
+            "require integer literals",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {[0] = {[0] = 1}}; int32 read() { return 0; }",
+            "only field designators",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported static aggregate designators must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
+fn c0_rejects_unsupported_aggregate_array_initializers() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; struct state shared[2][2];",
+            "multidimensional file-scope arrays",
+        ),
+        (
+            "struct state { int32 value; }; struct state shared[2] = {1};",
+            "aggregate array elements require nested",
+        ),
+        (
+            "struct state { int32 value; }; int32 seed; struct state shared = {seed}; int32 f() { return 0; }",
+            "aggregate initializers currently support only integer, floating-point, or null-pointer literals",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported aggregate static shapes must remain rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
+fn c0_struct_designated_initializers_reject_unsupported_designators() {
+    for (source, expected) in [
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {[0] = 1}; return 0; }",
+            "array designators in struct initializers are not supported",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {.missing = 1}; return 0; }",
+            "struct `state` has no field `missing`",
+        ),
+        (
+            "struct state { int32 value; }; int32 f() { struct state state = {.value.more = 1}; return 0; }",
+            "nested field designators require an embedded struct field",
+        ),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unsupported struct initializer designators must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_file_static_arrays_are_qualified_by_translation_unit() {
     let alpha = syntax::parse_functions_for_source(
         "static int32 values[2] = {1, 2}; int32 read_alpha() { return values[0]; }",
@@ -273,6 +661,30 @@ fn c0_file_static_globals_are_qualified_by_translation_unit() {
     assert_ne!(
         alpha[0].to_kernel_function().global_variables()[0].kernel_name(),
         beta[0].to_kernel_function().global_variables()[0].kernel_name()
+    );
+}
+
+#[test]
+fn c0_file_static_struct_aggregates_are_qualified_by_translation_unit() {
+    let alpha = syntax::parse_functions_for_source(
+        "struct state { int32 value; }; static struct state state; int32 read_alpha() { return state.value; }",
+        "alpha.c",
+    )
+    .expect("file-scope static struct aggregates should parse");
+    let beta = syntax::parse_functions_for_source(
+        "struct state { int32 value; }; static struct state state; int32 read_beta() { return state.value; }",
+        "beta.c",
+    )
+    .expect("file-scope static struct aggregates should parse");
+
+    let alpha_aggregate = &alpha[0].global_aggregates()["state"];
+    let beta_aggregate = &beta[0].global_aggregates()["state"];
+    assert!(alpha_aggregate.is_file_static());
+    assert!(beta_aggregate.is_file_static());
+    assert_ne!(alpha_aggregate.kernel_name(), beta_aggregate.kernel_name());
+    assert_ne!(
+        alpha[0].to_kernel_function().global_aggregates()[0].kernel_name(),
+        beta[0].to_kernel_function().global_aggregates()[0].kernel_name()
     );
 }
 
@@ -3846,6 +4258,134 @@ fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
 }
 
 #[test]
+fn c0_syntax_lowers_local_struct_array_initializers() {
+    let function = syntax::parse_function(
+        r#"
+        struct inner {
+            int32 value;
+            uint8 enabled;
+        };
+
+        struct item {
+            uint8 tag;
+            struct inner inner;
+            int32 values[2];
+        };
+
+        int32 local_struct_array_initializer() {
+            struct item items[2] = {
+                {1, {10, 1}, {2}},
+                {2, {20}, {3, 4}}
+            };
+            return items[0].tag + items[0].inner.value
+                + items[0].inner.enabled + items[0].values[0]
+                + items[0].values[1] + items[1].tag
+                + items[1].inner.value + items[1].inner.enabled
+                + items[1].values[0] + items[1].values[1];
+        }
+        "#,
+    )
+    .expect("local struct array initializers should parse")
+    .to_kernel_function();
+
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:items", 40)
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                },
+                crate::kernel::uint8(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(4),
+                },
+                crate::kernel::int32(10),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(8),
+                },
+                crate::kernel::uint8(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(12),
+                },
+                crate::kernel::int32(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(16),
+                },
+                crate::kernel::int32(0),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(20),
+                },
+                crate::kernel::uint8(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(24),
+                },
+                crate::kernel::int32(20),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(28),
+                },
+                crate::kernel::uint8(0),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(32),
+                },
+                crate::kernel::int32(3),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:items".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(36),
+                },
+                crate::kernel::int32(4),
+            ),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local struct array initializers should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(43),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_struct_array_parameter_retains_abi_stride() {
     let function = syntax::parse_function(
         r#"
@@ -4638,6 +5178,45 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
             .message()
             .contains("contains a function pointer, an unsupported field shape, or a union field")
     );
+}
+
+#[test]
+fn c0_rejects_unsupported_static_aggregate_initializer_forms() {
+    for (source, expected) in [
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
+
+            struct packet packets[2] = {.value = 1};
+
+            int32 read() {
+                return packets[0].value;
+            }
+            "#,
+            "only array index designators",
+        ),
+        (
+            r#"
+            struct packet {
+                int32 value;
+            };
+
+            int32 index;
+
+            int32 read() {
+                static struct packet packets[2] = {[index] = {.value = 1}};
+                return packets[0].value;
+            }
+            "#,
+            "require integer literals",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported static aggregate initializer forms must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
 }
 
 #[test]
@@ -6159,6 +6738,35 @@ fn c0_syntax_lowers_calls_in_conditional_expression_branches() {
         debug.contains("Declare { c_type: Int32"),
         "the conditional result has a stack binding before either arm"
     );
+}
+
+#[test]
+fn c0_syntax_lowers_aggregate_conditional_call_argument() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct inner { int32 value; uint8 enabled; };
+        struct packet { uint8 tag; struct inner inner; int32 tail; };
+        int32 sum_packet(struct packet packet) {
+            return packet.tag + packet.inner.value + packet.inner.enabled + packet.tail;
+        }
+        int32 caller() {
+            struct packet left = {3, {4, 1}, 5};
+            struct packet right = {20, {30, 2}, 40};
+            int32 result = sum_packet(0 ? left : right);
+            return result;
+        }
+        "#,
+    )
+    .expect("aggregate conditional input parses");
+    let caller = functions
+        .iter()
+        .find(|function| function.name() == "caller")
+        .expect("caller");
+    let debug = format!("{:?}", caller.body());
+    assert!(debug.contains("DeclareStructValue"));
+    assert!(debug.contains("If {"));
+    assert!(debug.contains("CallAssign"));
+    assert!(!debug.contains("Conditional {"));
 }
 
 #[test]

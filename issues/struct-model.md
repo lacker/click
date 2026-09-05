@@ -31,8 +31,16 @@ leaf accesses. Resource clauses may name an embedded aggregate directly; the
 surface parser expands that place into typed leaf ranges while preserving each
 leaf's field metadata. Direct whole-struct lvalue loads and copies now use the
 same address-backed typed leaf semantics, including aggregate arguments and
-returns; aggregate initializers and conditional aggregate expressions remain
-unsupported.
+returns. Positional aggregate initializers for copyable struct-valued locals
+now use the same recursive typed leaf stores, including nested structs,
+fixed-dimensional scalar arrays, fixed-dimensional embedded-struct arrays, and
+zero-fill for omitted members. Conditional aggregate expressions over
+copyable structs now lower lazily to a fresh address-backed temporary and
+copy only the selected branch.
+Fixed-dimensional local arrays of copyable structs now accept nested
+positional element groups and recursively lower each element's fields using
+the complete ABI-sized struct stride; omitted fields and elements are
+zero-filled.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
 complete ABI stride. Union
@@ -146,6 +154,29 @@ Staged mdtests, each with an unchanged C file:
     `mdtests/struct_aggregate_return_postcondition.md`; the return boundary
     retags the source's internal pointer view, materializes a fresh recursive
     copy, and proves field equality without treating the source as an alias.
+17. ~~A copyable struct-valued local accepts a positional aggregate initializer
+    with nested structs, fixed-dimensional scalar arrays, embedded-struct
+    arrays, pointer fields, and omitted members that become zero.~~ Covered by
+    `mdtests/struct_aggregate_initializer.md`. Designated array elements and
+    designated initializers for static/file-scope aggregates remain separate
+    follow-up slices.
+18. ~~A conditional expression over two copyable struct values evaluates its
+    condition first, copies only the selected branch into fresh storage, and
+    supports assignment, aggregate arguments, and aggregate returns.~~ Covered
+    by `mdtests/struct_conditional_value.md` and the C0 conditional-lowering
+    regression. Mixed struct types and tagged-union conditionals remain
+    rejected.
+19. ~~A copyable struct-valued local accepts field designators in any order,
+    including nested embedded-struct designators, while omitted members remain
+    zero.~~ Covered by `mdtests/struct_designated_initializer.md`. Array
+    designators and designated initializers for static/file-scope aggregates
+    remain separate follow-up slices.
+20. ~~A fixed-dimensional local array of copyable structs accepts nested
+    positional element groups, recursively initializes nested fields, and
+    zero-fills omitted fields and elements using the complete ABI struct
+    stride.~~ Covered by `mdtests/local_struct_array_initializer.md` and the
+    C0 recursive-store regression. Designated array elements remain a separate
+    follow-up slice.
 
 ## Acceptance criteria
 
@@ -170,6 +201,17 @@ Staged mdtests, each with an unchanged C file:
 - Pointer-backed aggregate returns expose field-wise relational postconditions
   across mixed-width and nested fields, while ordinary pointer-return type
   checking remains unchanged and the returned object remains fresh.
+- Positional aggregate initializers for copyable struct-valued locals and
+  fixed-dimensional local arrays of those structs lower to recursive typed
+  leaf stores, preserve source declaration order and nested array shape, and
+  zero-fill omitted members and elements. Designated field initializers for
+  those locals may select scalar or nested embedded-struct fields in any order,
+  with omitted leaves zero-filled; array designators and static/file-scope
+  designated initializers remain explicitly rejected.
+- Conditional expressions over copyable structs require matching struct types,
+  evaluate only the selected branch, and materialize a fresh address-backed
+  aggregate before assignment, argument passing, or return. Tagged-union and
+  mixed-struct conditionals remain rejected.
 - `scripts/check.sh` passes.
 
 Related: [c-type-spellings.md](c-type-spellings.md) for `typedef`;

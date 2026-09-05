@@ -804,14 +804,7 @@ impl CLocalEnvironment {
     }
 
     pub fn set_typed(&mut self, name: impl Into<String>, value: CValue, c_type: CType) {
-        let name = name.into();
-        let slot = self
-            .bindings
-            .get(&name)
-            .map(CLocalBinding::slot)
-            .cloned()
-            .unwrap_or_else(|| CMemory::local_pointer(&name));
-        self.set_typed_at(name, value.retag_pointer(c_type), c_type, slot);
+        self.set_typed_with_qualifiers(name, value, c_type, false, false);
     }
 
     pub(in crate::kernel) fn set_typed_volatile(
@@ -821,14 +814,7 @@ impl CLocalEnvironment {
         c_type: CType,
         volatile: bool,
     ) {
-        let name = name.into();
-        let slot = self
-            .bindings
-            .get(&name)
-            .map(CLocalBinding::slot)
-            .cloned()
-            .unwrap_or_else(|| CMemory::local_pointer(&name));
-        self.set_typed_volatile_at(name, value.retag_pointer(c_type), c_type, slot, volatile);
+        self.set_typed_with_qualifiers(name, value, c_type, volatile, false);
     }
 
     pub(in crate::kernel) fn set_typed_at(
@@ -838,7 +824,53 @@ impl CLocalEnvironment {
         c_type: CType,
         slot: Pointer,
     ) {
-        self.set_typed_volatile_at(name, value, c_type, slot, false);
+        self.set_typed_qualified(name, value, c_type, slot, false, false);
+    }
+
+    pub(in crate::kernel) fn set_typed_with_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        volatile: bool,
+        pointee_volatile: bool,
+    ) {
+        let name = name.into();
+        let slot = self
+            .bindings
+            .get(&name)
+            .map(CLocalBinding::slot)
+            .cloned()
+            .unwrap_or_else(|| CMemory::local_pointer(&name));
+        self.set_typed_qualified(
+            name,
+            value.retag_pointer(c_type),
+            c_type,
+            slot,
+            volatile,
+            pointee_volatile,
+        );
+    }
+
+    pub(in crate::kernel) fn set_typed_qualified(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        pointee_volatile: bool,
+    ) {
+        self.insert_binding(
+            name.into(),
+            CLocalBinding::Object {
+                value: value.with_pointer_pointee_volatile(pointee_volatile),
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+            },
+        );
     }
 
     pub(in crate::kernel) fn set_typed_volatile_at(
@@ -849,15 +881,7 @@ impl CLocalEnvironment {
         slot: Pointer,
         volatile: bool,
     ) {
-        self.insert_binding(
-            name.into(),
-            CLocalBinding::Object {
-                value,
-                c_type,
-                slot,
-                volatile,
-            },
-        );
+        self.set_typed_qualified(name, value, c_type, slot, volatile, false);
     }
 
     pub(in crate::kernel) fn set_global_at(
@@ -873,6 +897,7 @@ impl CLocalEnvironment {
                 c_type,
                 slot,
                 volatile,
+                pointee_volatile: false,
             },
         );
     }
@@ -889,12 +914,24 @@ impl CLocalEnvironment {
         slot: Pointer,
         volatile: bool,
     ) {
+        self.set_uninitialized_qualified_at(name, c_type, slot, volatile, false);
+    }
+
+    pub(in crate::kernel) fn set_uninitialized_qualified_at(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        pointee_volatile: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::UninitializedObject {
                 c_type,
                 slot,
                 volatile,
+                pointee_volatile,
             },
         );
     }

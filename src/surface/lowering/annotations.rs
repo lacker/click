@@ -263,6 +263,20 @@ pub(in crate::surface) fn annotated_function(
                 .filter_map(syntax::C0GlobalArray::to_kernel_global_array)
                 .collect(),
         )
+        .with_global_aggregates(
+            parsed_function
+                .global_aggregates()
+                .values()
+                .filter_map(syntax::C0GlobalAggregate::to_kernel_global_aggregate)
+                .collect(),
+        )
+        .with_global_aggregate_arrays(
+            parsed_function
+                .global_aggregate_arrays()
+                .values()
+                .filter_map(syntax::C0GlobalAggregateArray::to_kernel_global_aggregate_array)
+                .collect(),
+        )
         .with_static_variables(
             parsed_function
                 .static_locals()
@@ -275,6 +289,20 @@ pub(in crate::surface) fn annotated_function(
                 .static_arrays()
                 .values()
                 .filter_map(syntax::C0StaticArray::to_kernel_static_array)
+                .collect(),
+        )
+        .with_static_aggregates(
+            parsed_function
+                .static_aggregates()
+                .values()
+                .map(syntax::C0StaticAggregate::to_kernel_static_aggregate)
+                .collect(),
+        )
+        .with_static_aggregate_arrays(
+            parsed_function
+                .static_aggregate_arrays()
+                .values()
+                .map(syntax::C0StaticAggregateArray::to_kernel_static_aggregate_array)
                 .collect(),
         )
         .with_string_literals(

@@ -324,6 +324,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     let mut facts = facts;
     let is_volatile = lvalue.is_volatile();
     let value_type = lvalue.value_type;
+    let pointee_volatile = lvalue.pointee_is_volatile();
+    let value = value.with_pointer_pointee_volatile(pointee_volatile);
     let volatile_pointer = is_volatile.then(|| lvalue.pointer(state)).flatten();
     if lvalue.value_type == CType::Int32 {
         let range_result = match &value {
@@ -368,9 +370,13 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     value.clone(),
                 ));
             }
-            state
-                .locals
-                .set_typed_volatile(name, value, value_type, is_volatile);
+            state.locals.set_typed_with_qualifiers(
+                name,
+                value,
+                value_type,
+                is_volatile,
+                pointee_volatile,
+            );
             vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
@@ -1751,11 +1757,18 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             name,
             c_type,
             volatile,
+            pointee_volatile,
         } => {
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
             } else {
-                CStatementOutcome::Normal(declare_local(state, name, *c_type, *volatile))
+                CStatementOutcome::Normal(declare_local(
+                    state,
+                    name,
+                    *c_type,
+                    *volatile,
+                    *pointee_volatile,
+                ))
             };
             vec![CStatementExecutionPath {
                 outcome,
@@ -2488,6 +2501,7 @@ pub(in crate::kernel) fn declare_local(
     name: &str,
     c_type: CType,
     volatile: bool,
+    pointee_volatile: bool,
 ) -> CState {
     let mut state = state.clone();
     let byte_width = match c_type {
@@ -2608,11 +2622,21 @@ pub(in crate::kernel) fn declare_local(
     let pointer = CMemory::local_pointer(name);
     state.memory = state.memory.with_block(pointer.block.clone(), byte_width);
     if volatile {
-        state
-            .locals
-            .set_uninitialized_at(name.to_string(), c_type, pointer, true);
+        state.locals.set_uninitialized_qualified_at(
+            name.to_string(),
+            c_type,
+            pointer,
+            true,
+            pointee_volatile,
+        );
     } else {
-        state.locals.set_uninitialized(name.to_string(), c_type);
+        state.locals.set_uninitialized_qualified_at(
+            name.to_string(),
+            c_type,
+            pointer,
+            false,
+            pointee_volatile,
+        );
     }
     state
 }

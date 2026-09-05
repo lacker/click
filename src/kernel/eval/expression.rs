@@ -1410,26 +1410,35 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
         CExpression::Variable(name) => vec![CLValuePath {
             outcome: match state.locals.binding(name) {
                 Some(CLocalBinding::Object {
-                    c_type, volatile, ..
+                    c_type,
+                    volatile,
+                    pointee_volatile,
+                    ..
                 })
                 | Some(CLocalBinding::UninitializedObject {
-                    c_type, volatile, ..
+                    c_type,
+                    volatile,
+                    pointee_volatile,
+                    ..
                 }) => {
-                    let lvalue = if *volatile {
-                        CLValue::local_with_volatile(name.clone(), *c_type, true)
-                    } else {
-                        CLValue::local(name.clone(), *c_type)
-                    };
+                    let lvalue = CLValue::local_with_qualifiers(
+                        name.clone(),
+                        *c_type,
+                        *volatile,
+                        *pointee_volatile,
+                    );
                     CLValueOutcome::LValue(lvalue)
                 }
                 Some(CLocalBinding::GlobalObject {
                     c_type,
                     slot,
                     volatile,
-                }) => CLValueOutcome::LValue(CLValue::memory_with_volatile(
+                    pointee_volatile,
+                }) => CLValueOutcome::LValue(CLValue::memory_with_qualifiers(
                     slot.clone(),
                     *c_type,
                     *volatile,
+                    *pointee_volatile,
                 )),
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
@@ -1456,9 +1465,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
                             pointer.pointer().clone(),
                             value_type,
+                            pointer.pointee_volatile(),
                         )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -1492,9 +1502,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
                             pointer.pointer().clone(),
                             *value_type,
+                            pointer.pointee_volatile(),
                         )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -1530,9 +1541,10 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
-                        outcome: CLValueOutcome::LValue(CLValue::memory(
+                        outcome: CLValueOutcome::LValue(CLValue::memory_with_volatile(
                             pointer.pointer().clone(),
                             value_type,
+                            pointer.pointee_volatile(),
                         )),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -1599,9 +1611,11 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
             CLValueStorage::Local { name } => {
                 let outcome = match state.locals.get(name) {
-                    Some(value) if lvalue.value_type.accepts(value) => {
-                        CExpressionOutcome::Value(value.clone())
-                    }
+                    Some(value) if lvalue.value_type.accepts(value) => CExpressionOutcome::Value(
+                        value
+                            .clone()
+                            .with_pointer_pointee_volatile(lvalue.pointee_is_volatile()),
+                    ),
                     Some(_) => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     None if matches!(
                         state.locals.binding(name),
@@ -1737,10 +1751,13 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
                 Some(pointer) => match lvalue.value_type().pointer_to() {
                     Some(pointer_type) => CExpressionPath {
-                        outcome: CExpressionOutcome::Value(CValue::typed_pointer(
-                            pointer,
-                            pointer_type,
-                        )),
+                        outcome: CExpressionOutcome::Value(
+                            CValue::typed_pointer_with_pointee_volatile(
+                                pointer,
+                                pointer_type,
+                                lvalue.is_volatile(),
+                            ),
+                        ),
                         facts: lvalue_path.facts,
                         obligations: lvalue_path.obligations,
                     },

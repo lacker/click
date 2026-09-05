@@ -64,9 +64,16 @@ are lowered to typed leaf copies; aggregate arguments and returns use the same
 address-backed representation. Pointer-backed aggregate returns can state
 field-wise postconditions over mixed-width and nested fields; the returned
 aggregate is still a fresh copy rather than an alias of the source.
-Function-pointer fields, unions,
-aggregate initializers, conditional aggregate expressions, packed layout, or
-address-taking of union members remain unsupported. Address-taking of modeled
+Positional aggregate initializers for copyable struct-valued locals and
+fixed-dimensional local arrays of those structs support nested structs,
+fixed-dimensional scalar arrays, embedded-struct arrays, nested element groups,
+and zero-filled omitted members and elements. Designated field initializers for
+those locals support scalar and nested embedded-struct fields; static/file-scope
+designated initializers and array designators remain unsupported. Function-pointer fields, unions,
+conditional expressions over copyable structs require matching branch types
+and copy only the selected branch into fresh address-backed storage.
+Function-pointer fields, unions, packed layout, or address-taking of union
+members remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and
 allocation provenance; pointer forms for unsupported scalar widths remain

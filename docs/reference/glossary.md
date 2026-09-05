@@ -87,9 +87,10 @@ allocation.
 ### Availability
 
 Whether a fact or resource can be selected in the current proof context. Exact
-availability is indexed membership after canonicalization. A fact needed at a
-different state requires a checked transport or another documented rule that
-records the necessary evidence.
+availability is indexed membership after assumption-free canonicalization. A
+fact needed at a different state requires a checked transport or another
+documented rule that records the necessary evidence; contextual equality does
+not change the canonical key.
 
 ### Axiom
 

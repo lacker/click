@@ -128,8 +128,12 @@ pub struct C0Function {
     unions: BTreeMap<String, C0UnionLayout>,
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
+    global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
+    static_aggregates: BTreeMap<String, C0StaticAggregate>,
+    static_aggregate_arrays: BTreeMap<String, C0StaticAggregateArray>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -370,6 +374,217 @@ impl C0GlobalArray {
     }
 }
 
+/// A file-scope object with a supported struct layout. Aggregate values are
+/// represented by their stable address-backed layout rather than a scalar
+/// initializer value. `initializer` contains only explicitly initialized
+/// scalar leaves; omitted leaves are zero-initialized by the kernel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0GlobalAggregate {
+    name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    initializer: Option<Vec<C0AggregateInitializer>>,
+    defined: bool,
+    file_static: bool,
+}
+
+/// A fixed-size one-dimensional file-scope array of supported struct
+/// aggregates. The initializer offsets are relative to the beginning of the
+/// complete array block; omitted elements and fields are zero-initialized by
+/// the kernel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0GlobalAggregateArray {
+    name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    length: u32,
+    initializer: Option<Vec<C0AggregateInitializer>>,
+    file_static: bool,
+}
+
+impl C0GlobalAggregateArray {
+    fn declaration(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer: None,
+            file_static,
+        }
+    }
+
+    fn definition(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        initializer: Vec<C0AggregateInitializer>,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer: Some(initializer),
+            file_static,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        C0Type::UInt8Array(
+            self.length
+                .checked_mul(self.layout.size_bytes())
+                .expect("validated aggregate array size"),
+        )
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.initializer.is_some()
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
+    }
+
+    pub fn initializer(&self) -> Option<&[C0AggregateInitializer]> {
+        self.initializer.as_deref()
+    }
+
+    pub(crate) fn to_kernel_global_aggregate_array(
+        &self,
+    ) -> Option<crate::kernel::CGlobalAggregateArray> {
+        let initializer = self.initializer.as_ref()?;
+        let initializers = initializer
+            .iter()
+            .map(C0AggregateInitializer::to_kernel)
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::kernel::CGlobalAggregateArray::new(
+            self.name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+            self.length,
+            initializers,
+        ))
+    }
+}
+
+impl C0GlobalAggregate {
+    fn declaration(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            initializer: None,
+            defined: false,
+            file_static,
+        }
+    }
+
+    fn definition(
+        name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        initializer: Vec<C0AggregateInitializer>,
+        file_static: bool,
+    ) -> Self {
+        Self {
+            name,
+            kernel_name,
+            struct_name,
+            layout,
+            initializer: Some(initializer),
+            defined: true,
+            file_static,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.defined
+    }
+
+    pub fn is_file_static(&self) -> bool {
+        self.file_static
+    }
+
+    pub fn initializer(&self) -> Option<&[C0AggregateInitializer]> {
+        self.initializer.as_deref()
+    }
+
+    pub(crate) fn to_kernel_global_aggregate(&self) -> Option<crate::kernel::CGlobalAggregate> {
+        let initializer = self.initializer.as_ref()?;
+        let initializers = initializer
+            .iter()
+            .map(C0AggregateInitializer::to_kernel)
+            .collect::<Option<Vec<_>>>()?;
+        self.defined.then(|| {
+            crate::kernel::CGlobalAggregate::new(
+                self.name.clone(),
+                self.kernel_name.clone(),
+                self.layout.to_kernel_aggregate_layout(),
+                initializers,
+            )
+        })
+    }
+}
+
 fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
     Some(match element_type {
         C0Type::Int16 => C0Type::Int16Array(length),
@@ -407,8 +622,74 @@ fn kernel_integer_literal_value(
         C0Type::UInt8 => crate::kernel::uint8(initializer_integer_bits(initializer)?),
         C0Type::UInt16 => crate::kernel::uint16(initializer_integer_bits(initializer)?),
         C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(initializer)?),
+        C0Type::Int64 => match initializer {
+            C0Expression::Int64Literal(value) => {
+                crate::kernel::int64(crate::kernel::Bitvector32Term::Int64Constant(*value))
+            }
+            C0Expression::Int32Literal(value) => {
+                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(*value))
+            }
+            C0Expression::UInt8Literal(value) => {
+                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(u32::from(*value)))
+            }
+            C0Expression::UInt32Literal(value) => {
+                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(*value))
+            }
+            _ => return None,
+        },
+        C0Type::UInt64 => match initializer {
+            C0Expression::UInt64Literal(value) => {
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::UInt64Constant(*value))
+            }
+            C0Expression::Int64Literal(value) if *value >= 0 => crate::kernel::uint64(
+                crate::kernel::Bitvector32Term::UInt64Constant(*value as u64),
+            ),
+            C0Expression::Int32Literal(value) => {
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(*value))
+            }
+            C0Expression::UInt8Literal(value) => {
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(u32::from(*value)))
+            }
+            C0Expression::UInt32Literal(value) => {
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(*value))
+            }
+            _ => return None,
+        },
         _ => return None,
     })
+}
+
+fn kernel_aggregate_initializer_value(
+    c_type: C0Type,
+    initializer: &C0Expression,
+) -> Option<crate::kernel::CValue> {
+    match c_type {
+        C0Type::Int32Pointer
+        | C0Type::UInt8Pointer
+        | C0Type::Float32Pointer
+        | C0Type::Float64Pointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::Float32PointerPointer
+        | C0Type::Float64PointerPointer
+            if matches!(initializer, C0Expression::Int32Literal(0)) =>
+        {
+            Some(crate::kernel::CValue::typed_pointer(
+                crate::kernel::Pointer::null(),
+                c_type.to_kernel_type(),
+            ))
+        }
+        C0Type::Int16
+        | C0Type::Int32
+        | C0Type::UInt8
+        | C0Type::UInt16
+        | C0Type::UInt32
+        | C0Type::Int64
+        | C0Type::UInt64
+        | C0Type::Float32
+        | C0Type::Float64 => kernel_integer_literal_value(c_type, initializer),
+        _ => None,
+    }
 }
 
 /// A function-local scalar with static storage duration. The source name is
@@ -584,11 +865,153 @@ fn zero_initializer(c_type: C0Type) -> C0Expression {
     }
 }
 
+/// A function-local aggregate with stable storage shared by every invocation
+/// of its owning function.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticAggregate {
+    source_name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    initializer: Vec<C0AggregateInitializer>,
+}
+
+/// A fixed-size one-dimensional function-local static array of supported
+/// struct aggregates. Its storage is qualified by the owning function and is
+/// initialized once for the whole symbolic execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0StaticAggregateArray {
+    source_name: String,
+    kernel_name: String,
+    struct_name: String,
+    layout: C0StructLayout,
+    length: u32,
+    initializer: Vec<C0AggregateInitializer>,
+}
+
+impl C0StaticAggregateArray {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        length: u32,
+        initializer: Vec<C0AggregateInitializer>,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            struct_name,
+            layout,
+            length,
+            initializer,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        C0Type::UInt8Array(
+            self.length
+                .checked_mul(self.layout.size_bytes())
+                .expect("validated static aggregate array size"),
+        )
+    }
+
+    pub fn initializer(&self) -> &[C0AggregateInitializer] {
+        &self.initializer
+    }
+
+    pub(crate) fn to_kernel_static_aggregate_array(&self) -> crate::kernel::CStaticAggregateArray {
+        crate::kernel::CStaticAggregateArray::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+            self.length,
+            self.initializer
+                .iter()
+                .map(C0AggregateInitializer::to_kernel)
+                .collect::<Option<Vec<_>>>()
+                .expect("validated static aggregate array initializer"),
+        )
+    }
+}
+
+impl C0StaticAggregate {
+    fn new(
+        source_name: String,
+        kernel_name: String,
+        struct_name: String,
+        layout: C0StructLayout,
+        initializer: Vec<C0AggregateInitializer>,
+    ) -> Self {
+        Self {
+            source_name,
+            kernel_name,
+            struct_name,
+            layout,
+            initializer,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn kernel_name(&self) -> &str {
+        &self.kernel_name
+    }
+
+    pub fn struct_name(&self) -> &str {
+        &self.struct_name
+    }
+
+    pub fn layout(&self) -> &C0StructLayout {
+        &self.layout
+    }
+
+    pub fn initializer(&self) -> &[C0AggregateInitializer] {
+        &self.initializer
+    }
+
+    pub(crate) fn to_kernel_static_aggregate(&self) -> crate::kernel::CStaticAggregate {
+        crate::kernel::CStaticAggregate::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.layout.to_kernel_aggregate_layout(),
+            self.initializer
+                .iter()
+                .map(C0AggregateInitializer::to_kernel)
+                .collect::<Option<Vec<_>>>()
+                .expect("validated static aggregate initializer"),
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Parameter {
     c_type: C0Type,
     name: String,
     volatile: bool,
+    pointee_volatile: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
     /// The ABI width of one element when the source parameter was declared as
@@ -623,6 +1046,45 @@ struct C0AggregateField {
     name: String,
     offset_bytes: u32,
     c_type: C0Type,
+}
+
+/// One explicitly initialized scalar leaf in a static-storage aggregate.
+/// Offsets are relative to the aggregate's base address; omitted leaves are
+/// supplied by static zero initialization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0AggregateInitializer {
+    offset_bytes: u32,
+    c_type: C0Type,
+    value: C0Expression,
+}
+
+impl C0AggregateInitializer {
+    fn new(offset_bytes: u32, c_type: C0Type, value: C0Expression) -> Self {
+        Self {
+            offset_bytes,
+            c_type,
+            value,
+        }
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn value(&self) -> &C0Expression {
+        &self.value
+    }
+
+    fn to_kernel(&self) -> Option<crate::kernel::CAggregateInitializer> {
+        Some(crate::kernel::CAggregateInitializer::new(
+            self.offset_bytes,
+            kernel_aggregate_initializer_value(self.c_type, &self.value)?,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -795,6 +1257,7 @@ pub enum C0Statement {
         c_type: C0Type,
         name: String,
         volatile: bool,
+        pointee_volatile: bool,
     },
     DeclareStructValue {
         name: String,
@@ -1009,8 +1472,12 @@ impl C0Function {
             unions: BTreeMap::new(),
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
+            global_aggregates: BTreeMap::new(),
+            global_aggregate_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
+            static_aggregates: BTreeMap::new(),
+            static_aggregate_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -1055,12 +1522,28 @@ impl C0Function {
         &self.global_arrays
     }
 
+    pub fn global_aggregates(&self) -> &BTreeMap<String, C0GlobalAggregate> {
+        &self.global_aggregates
+    }
+
+    pub fn global_aggregate_arrays(&self) -> &BTreeMap<String, C0GlobalAggregateArray> {
+        &self.global_aggregate_arrays
+    }
+
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
     }
 
     pub fn static_arrays(&self) -> &BTreeMap<String, C0StaticArray> {
         &self.static_arrays
+    }
+
+    pub fn static_aggregates(&self) -> &BTreeMap<String, C0StaticAggregate> {
+        &self.static_aggregates
+    }
+
+    pub fn static_aggregate_arrays(&self) -> &BTreeMap<String, C0StaticAggregateArray> {
+        &self.static_aggregate_arrays
     }
 
     pub fn string_literals(&self) -> &[C0StringLiteral] {
@@ -1077,6 +1560,22 @@ impl C0Function {
         global_arrays: BTreeMap<String, C0GlobalArray>,
     ) -> Self {
         self.global_arrays = global_arrays;
+        self
+    }
+
+    pub(crate) fn with_global_aggregates(
+        mut self,
+        global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    ) -> Self {
+        self.global_aggregates = global_aggregates;
+        self
+    }
+
+    pub(crate) fn with_global_aggregate_arrays(
+        mut self,
+        global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
+    ) -> Self {
+        self.global_aggregate_arrays = global_aggregate_arrays;
         self
     }
 
@@ -1119,6 +1618,18 @@ impl C0Function {
                     .filter_map(C0GlobalArray::to_kernel_global_array)
                     .collect(),
             )
+            .with_global_aggregates(
+                self.global_aggregates
+                    .values()
+                    .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
+                    .collect(),
+            )
+            .with_global_aggregate_arrays(
+                self.global_aggregate_arrays
+                    .values()
+                    .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
+                    .collect(),
+            )
             .with_static_variables(
                 self.static_locals
                     .values()
@@ -1129,6 +1640,18 @@ impl C0Function {
                 self.static_arrays
                     .values()
                     .filter_map(C0StaticArray::to_kernel_static_array)
+                    .collect(),
+            )
+            .with_static_aggregates(
+                self.static_aggregates
+                    .values()
+                    .map(C0StaticAggregate::to_kernel_static_aggregate)
+                    .collect(),
+            )
+            .with_static_aggregate_arrays(
+                self.static_aggregate_arrays
+                    .values()
+                    .map(C0StaticAggregateArray::to_kernel_static_aggregate_array)
                     .collect(),
             )
             .with_string_literals(
@@ -1269,6 +1792,7 @@ impl C0Parameter {
             c_type,
             name,
             volatile: false,
+            pointee_volatile: false,
             struct_name,
             struct_layout: None,
             array_element_width: None,
@@ -1285,6 +1809,10 @@ impl C0Parameter {
 
     pub fn is_volatile(&self) -> bool {
         self.volatile
+    }
+
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
     }
 
     pub fn struct_name(&self) -> Option<&str> {
@@ -1315,13 +1843,16 @@ impl C0Parameter {
                 crate::kernel::CType::UInt8Pointer,
                 layout,
             )
-            .with_volatile(self.is_volatile());
+            .with_volatile(self.is_volatile())
+            .with_pointee_volatile(self.pointee_is_volatile());
         }
         let c_type = self
             .array_element_width
             .map(|_| crate::kernel::CType::UInt8Pointer)
             .unwrap_or_else(|| self.c_type.to_kernel_type());
-        crate::kernel::c_parameter(self.name.clone(), c_type).with_volatile(self.is_volatile())
+        crate::kernel::c_parameter(self.name.clone(), c_type)
+            .with_volatile(self.is_volatile())
+            .with_pointee_volatile(self.pointee_is_volatile())
     }
 }
 
@@ -1346,6 +1877,19 @@ impl C0Type {
                 | Self::Float32PointerPointer
                 | Self::Float64PointerPointer
                 | Self::FunctionPointer(_)
+        )
+    }
+
+    fn is_scalar_pointer(self) -> bool {
+        matches!(
+            self,
+            Self::Int16Pointer
+                | Self::Int32Pointer
+                | Self::UInt8Pointer
+                | Self::UInt16Pointer
+                | Self::UInt32Pointer
+                | Self::Int64Pointer
+                | Self::UInt64Pointer
         )
     }
 
@@ -1437,9 +1981,13 @@ impl C0Statement {
                 c_type,
                 name,
                 volatile,
-            } => {
-                crate::kernel::c_declare_volatile(name.clone(), c_type.to_kernel_type(), *volatile)
-            }
+                pointee_volatile,
+            } => crate::kernel::c_declare_qualified(
+                name.clone(),
+                c_type.to_kernel_type(),
+                *volatile,
+                *pointee_volatile,
+            ),
             Self::DeclareStructValue { name, layout } => crate::kernel::c_declare_aggregate(
                 name.clone(),
                 layout.to_kernel_aggregate_layout(),
@@ -1933,6 +2481,72 @@ fn validate_static_initializer(
     }
 }
 
+fn validate_aggregate_initializer(
+    parser: &Parser,
+    c_type: C0Type,
+    initializer: &C0Expression,
+) -> Result<(), C0SyntaxError> {
+    match c_type {
+        C0Type::Int64 => {
+            if matches!(
+                initializer,
+                C0Expression::Int32Literal(_)
+                    | C0Expression::UInt8Literal(_)
+                    | C0Expression::UInt32Literal(_)
+                    | C0Expression::Int64Literal(_)
+            ) {
+                Ok(())
+            } else {
+                Err(parser.error_here(
+                    "aggregate initializers currently support only integer, floating-point, or null-pointer literals",
+                ))
+            }
+        }
+        C0Type::UInt64 => {
+            let valid = match initializer {
+                C0Expression::Int32Literal(_)
+                | C0Expression::UInt8Literal(_)
+                | C0Expression::UInt32Literal(_)
+                | C0Expression::UInt64Literal(_) => true,
+                C0Expression::Int64Literal(value) => *value >= 0,
+                _ => false,
+            };
+            if valid {
+                Ok(())
+            } else {
+                Err(parser.error_here(
+                    "aggregate initializers currently support only integer, floating-point, or null-pointer literals",
+                ))
+            }
+        }
+        C0Type::Int32Pointer
+        | C0Type::UInt8Pointer
+        | C0Type::Float32Pointer
+        | C0Type::Float64Pointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::Float32PointerPointer
+        | C0Type::Float64PointerPointer => {
+            if matches!(initializer, C0Expression::Int32Literal(0)) {
+                Ok(())
+            } else {
+                Err(parser.error_here(
+                    "aggregate pointer initializers currently support only the null pointer literal",
+                ))
+            }
+        }
+        _ => validate_global_initializer(parser, c_type, initializer).map_err(|error| {
+            if error.message().contains("out of range") {
+                error
+            } else {
+                parser.error_here(
+                    "aggregate initializers currently support only integer, floating-point, or null-pointer literals",
+                )
+            }
+        }),
+    }
+}
+
 fn align_up(offset: u32, alignment: u32) -> Option<u32> {
     debug_assert!(alignment.is_power_of_two());
     offset
@@ -1952,6 +2566,48 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
 
 fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
+}
+
+fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
+    let (element_type, length) = match field.c_type {
+        C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::UInt8Array(length) => (C0Type::UInt8, length),
+        _ => return None,
+    };
+    if field.struct_name.is_some() {
+        return None;
+    }
+    Some((
+        element_type,
+        field.array_shape.clone().unwrap_or_else(|| vec![length]),
+    ))
+}
+
+fn zero_initializer_value(c_type: C0Type) -> C0Expression {
+    match c_type {
+        C0Type::UInt8 => C0Expression::UInt8Literal(0),
+        C0Type::UInt32 => C0Expression::UInt32Literal(0),
+        C0Type::Int64 => C0Expression::Int64Literal(0),
+        C0Type::UInt64 => C0Expression::UInt64Literal(0),
+        C0Type::Int16
+        | C0Type::Int32
+        | C0Type::UInt16
+        | C0Type::Int16Pointer
+        | C0Type::UInt16Pointer
+        | C0Type::Int32Pointer
+        | C0Type::UInt8Pointer
+        | C0Type::UInt32Pointer
+        | C0Type::Int64Pointer
+        | C0Type::UInt64Pointer
+        | C0Type::Int16PointerPointer
+        | C0Type::UInt16PointerPointer
+        | C0Type::Int32PointerPointer
+        | C0Type::UInt8PointerPointer
+        | C0Type::UInt32PointerPointer
+        | C0Type::Int64PointerPointer
+        | C0Type::UInt64PointerPointer => C0Expression::Int32Literal(0),
+        _ => unreachable!("zero initializer called for non-scalar field type"),
+    }
 }
 
 fn flatten_aggregate_fields(
@@ -2353,7 +3009,6 @@ struct Parser {
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
-    variable_volatiles: BTreeSet<String>,
     unions: BTreeMap<String, C0UnionLayout>,
     /// The names declared in each open lexical scope, innermost last. The
     /// source name is retained for lookup, while `kernel_name` is the
@@ -2364,14 +3019,19 @@ struct Parser {
     scopes: Vec<Vec<ScopeBinding>>,
     next_scoped_name: u32,
     next_synthesized_call: u32,
+    next_synthesized_aggregate: u32,
     next_string_literal: u32,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
+    global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
+    static_aggregates: BTreeMap<String, C0StaticAggregate>,
+    static_aggregate_arrays: BTreeMap<String, C0StaticAggregateArray>,
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
@@ -2439,19 +3099,23 @@ impl Parser {
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
-            variable_volatiles: BTreeSet::new(),
             unions: BTreeMap::new(),
             scopes: Vec::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
+            next_synthesized_aggregate: 0,
             next_string_literal: 0,
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
+            global_aggregates: BTreeMap::new(),
+            global_aggregate_arrays: BTreeMap::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
+            static_aggregates: BTreeMap::new(),
+            static_aggregate_arrays: BTreeMap::new(),
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
@@ -2472,18 +3136,7 @@ impl Parser {
             self.variable_struct_values.remove(&binding.kernel_name);
             self.variable_array_shapes.remove(&binding.kernel_name);
             self.variable_types.remove(&binding.kernel_name);
-            self.variable_volatiles.remove(&binding.kernel_name);
         }
-    }
-
-    fn is_volatile_object_name(&self, source_name: &str) -> bool {
-        let kernel_name = self.resolve_name(source_name);
-        self.variable_volatiles.contains(source_name)
-            || self.variable_volatiles.contains(&kernel_name)
-            || self
-                .globals
-                .get(source_name)
-                .is_some_and(C0Global::is_volatile)
     }
 
     fn resolve_name(&self, source_name: &str) -> String {
@@ -2500,6 +3153,16 @@ impl Parser {
             })
             .or_else(|| {
                 self.global_arrays
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
+            .or_else(|| {
+                self.global_aggregates
+                    .get(source_name)
+                    .map(|global| global.kernel_name().to_string())
+            })
+            .or_else(|| {
+                self.global_aggregate_arrays
                     .get(source_name)
                     .map(|global| global.kernel_name().to_string())
             })
@@ -2803,7 +3466,6 @@ impl Parser {
         let body_result = self.parse_block_statement();
         self.current_return_struct_name = previous_return_struct_name;
         let mut body = body_result?;
-        body = self.lower_call_expressions(body)?;
         self.pop_scope();
         validate_function_returns(&body, header.return_type)?;
         if header.return_type == C0Type::Void {
@@ -2826,8 +3488,12 @@ impl Parser {
             unions: self.unions.clone(),
             globals: self.globals.clone(),
             global_arrays: self.global_arrays.clone(),
+            global_aggregates: self.global_aggregates.clone(),
+            global_aggregate_arrays: self.global_aggregate_arrays.clone(),
             static_locals,
             static_arrays: std::mem::take(&mut self.static_arrays),
+            static_aggregates: std::mem::take(&mut self.static_aggregates),
+            static_aggregate_arrays: std::mem::take(&mut self.static_aggregate_arrays),
             string_literals,
         })
     }
@@ -2887,7 +3553,10 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
-        if self.globals.contains_key(&header.name) || self.global_arrays.contains_key(&header.name)
+        if self.globals.contains_key(&header.name)
+            || self.global_arrays.contains_key(&header.name)
+            || self.global_aggregates.contains_key(&header.name)
+            || self.global_aggregate_arrays.contains_key(&header.name)
         {
             return Err(self.error_here(format!(
                 "function `{}` conflicts with a global declaration",
@@ -2968,24 +3637,39 @@ impl Parser {
             ));
         }
         let parsed_type = self.parse_type()?;
-        if parsed_type.struct_name.is_some()
-            || parsed_type.enum_name.is_some()
-            || parsed_type.union_name.is_some()
-            || !matches!(
-                parsed_type.c_type,
-                C0Type::Int16
-                    | C0Type::Int32
-                    | C0Type::UInt8
-                    | C0Type::UInt16
-                    | C0Type::UInt32
-                    | C0Type::Float32
-                    | C0Type::Float64
-            )
-        {
-            return Err(self.error_here(
-                "file-scope declarations currently support only scalar integer and floating-point globals",
-            ));
-        }
+        let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_volatile {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile aggregate globals",
+                ));
+            }
+            let struct_name = parsed_type
+                .struct_name
+                .clone()
+                .expect("plain struct global carries a struct name");
+            let layout = self.scalar_struct_value_layout(&struct_name)?;
+            Some((struct_name, layout))
+        } else {
+            if parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || !matches!(
+                    parsed_type.c_type,
+                    C0Type::Int16
+                        | C0Type::Int32
+                        | C0Type::UInt8
+                        | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Float32
+                        | C0Type::Float64
+                )
+            {
+                return Err(self.error_here(
+                    "file-scope declarations currently support only scalar integer, floating-point, or supported struct globals",
+                ));
+            }
+            None
+        };
         if self.header_mode && !is_extern {
             return Err(self.error_here(
                 "C headers may declare globals only with `extern`; put the definition in a source file",
@@ -2999,6 +3683,115 @@ impl Parser {
             } else {
                 name.clone()
             };
+            if let Some((struct_name, layout)) = &aggregate_struct {
+                if self.peek() == Some(&Token::LBracket) {
+                    let length = self
+                        .parse_global_array_length(&name)?
+                        .expect("aggregate array has an array suffix");
+                    let initializer = if self.peek() == Some(&Token::Equal) {
+                        if is_extern {
+                            return Err(self.error_here(
+                                "`extern` aggregate global array declarations may not have an initializer",
+                            ));
+                        }
+                        self.position += 1;
+                        Some(self.parse_aggregate_array_initializer(
+                            &name,
+                            struct_name,
+                            layout,
+                            length,
+                        )?)
+                    } else if is_extern {
+                        None
+                    } else {
+                        Some(Vec::new())
+                    };
+                    let declaration = initializer
+                        .map(|initializer| {
+                            C0GlobalAggregateArray::definition(
+                                name.clone(),
+                                kernel_name.clone(),
+                                struct_name.clone(),
+                                layout.clone(),
+                                length,
+                                initializer,
+                                is_file_static,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            C0GlobalAggregateArray::declaration(
+                                name.clone(),
+                                kernel_name.clone(),
+                                struct_name.clone(),
+                                layout.clone(),
+                                length,
+                                is_file_static,
+                            )
+                        });
+                    self.register_global_aggregate_array_declaration(name.clone(), declaration)?;
+                    let bytes = length
+                        .checked_mul(layout.size_bytes())
+                        .expect("validated aggregate global array size");
+                    self.variable_types
+                        .insert(kernel_name.clone(), C0Type::UInt8Array(bytes));
+                    self.variable_array_shapes
+                        .insert(kernel_name.clone(), vec![length]);
+                    self.variable_structs
+                        .insert(kernel_name.clone(), struct_name.clone());
+                    if self.peek() == Some(&Token::Comma) {
+                        self.position += 1;
+                        continue;
+                    }
+                    break;
+                }
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    if is_extern {
+                        return Err(self.error_here(
+                            "`extern` aggregate global declarations may not have an initializer",
+                        ));
+                    }
+                    self.position += 1;
+                    Some(self.parse_aggregate_initializer(&name, struct_name)?)
+                } else if is_extern {
+                    None
+                } else {
+                    Some(Vec::new())
+                };
+                let declaration = if let Some(initializer) = initializer {
+                    C0GlobalAggregate::definition(
+                        name.clone(),
+                        kernel_name.clone(),
+                        struct_name.clone(),
+                        layout.clone(),
+                        initializer,
+                        is_file_static,
+                    )
+                } else {
+                    C0GlobalAggregate::declaration(
+                        name.clone(),
+                        kernel_name.clone(),
+                        struct_name.clone(),
+                        layout.clone(),
+                        is_file_static,
+                    )
+                };
+                self.register_global_aggregate_declaration(name.clone(), declaration)?;
+                self.variable_types
+                    .insert(name.clone(), struct_value_type(layout));
+                self.variable_structs
+                    .insert(name.clone(), struct_name.clone());
+                if kernel_name != name {
+                    self.variable_types
+                        .insert(kernel_name.clone(), struct_value_type(layout));
+                    self.variable_structs
+                        .insert(kernel_name, struct_name.clone());
+                }
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    continue;
+                }
+                break;
+            }
             let array_length = self.parse_global_array_length(&name)?;
             if parsed_type.is_volatile && array_length.is_some() {
                 return Err(self.error_here(
@@ -3196,7 +3989,10 @@ impl Parser {
         c_type: C0Type,
         declaration: C0Global,
     ) -> Result<(), C0SyntaxError> {
-        if self.function_declarations.contains_key(&name) || self.global_arrays.contains_key(&name)
+        if self.function_declarations.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
         {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or array declaration"
@@ -3238,7 +4034,11 @@ impl Parser {
         length: u32,
         declaration: C0GlobalArray,
     ) -> Result<(), C0SyntaxError> {
-        if self.function_declarations.contains_key(&name) || self.globals.contains_key(&name) {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
+        {
             return Err(self.error_here(format!(
                 "global `{name}` conflicts with a function or scalar global declaration"
             )));
@@ -3266,6 +4066,94 @@ impl Parser {
             _ => declaration,
         };
         self.global_arrays.insert(name, merged);
+        Ok(())
+    }
+
+    fn register_global_aggregate_declaration(
+        &mut self,
+        name: String,
+        declaration: C0GlobalAggregate,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+            || self.global_aggregate_arrays.contains_key(&name)
+        {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function or scalar declaration"
+            )));
+        }
+        if let Some(previous) = self.global_aggregates.get(&name) {
+            if previous.struct_name() != declaration.struct_name()
+                || previous.layout() != declaration.layout()
+            {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for aggregate global `{name}`"
+                )));
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for aggregate global `{name}`"
+                )));
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(
+                    self.error_here(format!("duplicate definition of aggregate global `{name}`"))
+                );
+            }
+        }
+        let merged = match (self.global_aggregates.get(&name), declaration.is_defined()) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.global_aggregates.insert(name, merged);
+        Ok(())
+    }
+
+    fn register_global_aggregate_array_declaration(
+        &mut self,
+        name: String,
+        declaration: C0GlobalAggregateArray,
+    ) -> Result<(), C0SyntaxError> {
+        if self.function_declarations.contains_key(&name)
+            || self.globals.contains_key(&name)
+            || self.global_arrays.contains_key(&name)
+            || self.global_aggregates.contains_key(&name)
+        {
+            return Err(self.error_here(format!(
+                "global `{name}` conflicts with a function or non-array declaration"
+            )));
+        }
+        if let Some(previous) = self.global_aggregate_arrays.get(&name) {
+            if previous.struct_name() != declaration.struct_name()
+                || previous.layout() != declaration.layout()
+                || previous.length() != declaration.length()
+            {
+                return Err(self.error_here(format!(
+                    "conflicting declarations for aggregate global array `{name}`"
+                )));
+            }
+            if previous.is_file_static() != declaration.is_file_static() {
+                return Err(self.error_here(format!(
+                    "conflicting linkage declarations for aggregate global array `{name}`"
+                )));
+            }
+            if previous.is_defined() && declaration.is_defined() {
+                return Err(self.error_here(format!(
+                    "duplicate definition of aggregate global array `{name}`"
+                )));
+            }
+        }
+        let merged = match (
+            self.global_aggregate_arrays.get(&name),
+            declaration.is_defined(),
+        ) {
+            (Some(previous), true) if !previous.is_defined() => declaration,
+            (Some(previous), false) => previous.clone(),
+            _ => declaration,
+        };
+        self.global_aggregate_arrays.insert(name, merged);
         Ok(())
     }
 
@@ -3828,10 +4716,13 @@ impl Parser {
                 ));
             }
             if parsed_type.is_volatile
-                && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+                && (parsed_type.struct_name.is_some()
+                    || parsed_type.enum_name.is_some()
+                    || parsed_type.union_name.is_some()
+                    || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
             {
                 return Err(self.error_here(
-                    "the small volatile model supports only direct scalar integer objects",
+                    "the sequential volatile model supports scalar objects and pointers to scalar objects",
                 ));
             }
             if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
@@ -3848,6 +4739,7 @@ impl Parser {
                     c_type,
                     name: kernel_name,
                     volatile: false,
+                    pointee_volatile: false,
                     struct_layout: None,
                     struct_name: None,
                     array_element_width: None,
@@ -3887,10 +4779,9 @@ impl Parser {
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
+            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
+            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
             self.variable_types.insert(kernel_name.clone(), c_type);
-            if parsed_type.is_volatile {
-                self.variable_volatiles.insert(kernel_name.clone());
-            }
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array && !struct_value {
@@ -3907,7 +4798,8 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
-                        volatile: parsed_type.is_volatile,
+                        volatile: object_volatile,
+                        pointee_volatile,
                         struct_layout: struct_value_layout,
                         struct_name,
                         array_element_width: None,
@@ -3933,7 +4825,8 @@ impl Parser {
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
-                        volatile: parsed_type.is_volatile,
+                        volatile: object_volatile,
+                        pointee_volatile,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         struct_name,
                         array_element_width: Some(element_width),
@@ -3948,7 +4841,8 @@ impl Parser {
             parameters.push(C0Parameter {
                 c_type,
                 name: kernel_name,
-                volatile: parsed_type.is_volatile,
+                volatile: object_volatile,
+                pointee_volatile,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
@@ -4428,9 +5322,11 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
         self.expect(Token::RBrace)?;
+        let body = balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip);
+        let body = self.lower_call_expressions(body)?;
         self.pop_scope();
 
-        Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
+        Ok(body)
     }
 
     /// Parses the first supported C `switch` shape: a compound statement whose
@@ -4788,6 +5684,33 @@ impl Parser {
         Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
     }
 
+    fn parse_local_struct_array_initializer(
+        &mut self,
+        name: &str,
+        struct_name: &str,
+        array_shape: &[u32],
+    ) -> Result<C0Statement, C0SyntaxError> {
+        if self.peek() != Some(&Token::LBrace) {
+            return Err(self.error_here(
+                "local struct array elements require nested `{...}` initializer groups",
+            ));
+        }
+        let element_width = self
+            .structs
+            .get(struct_name)
+            .expect("validated local struct array has a layout")
+            .size_bytes;
+        let stores = self.parse_embedded_struct_array_initializer_level(
+            C0Expression::Variable(name.to_string()),
+            struct_name,
+            array_shape,
+            0,
+            0,
+            element_width,
+        )?;
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
     fn parse_array_initializer_level(
         &mut self,
         name: &str,
@@ -4860,6 +5783,867 @@ impl Parser {
         Ok(())
     }
 
+    fn parse_aggregate_initializer(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        self.parse_aggregate_initializer_level(object_name, struct_name, 0)
+    }
+
+    fn parse_aggregate_array_initializer(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+        layout: &C0StructLayout,
+        length: u32,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let mut initializers = Vec::new();
+        let mut next_element_index = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                let element_index = if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    let index = self.parse_aggregate_array_designator(object_name, length)?;
+                    self.expect(Token::Equal)?;
+                    next_element_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate array designator index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::Dot) {
+                        return Err(self.error_here(
+                            "aggregate array initializers support only array index designators",
+                        ));
+                    }
+                    let index = next_element_index;
+                    next_element_index = next_element_index
+                        .checked_add(1)
+                        .expect("validated aggregate array initializer index");
+                    index
+                };
+                if element_index >= length {
+                    return Err(self.error_here(format!(
+                        "too many initializers for aggregate array `{object_name}[{length}]`"
+                    )));
+                }
+                if self.peek() != Some(&Token::LBrace) {
+                    return Err(self.error_here(
+                        "aggregate array elements require nested `{...}` initializer groups",
+                    ));
+                }
+                let base_offset = element_index
+                    .checked_mul(layout.size_bytes())
+                    .expect("validated aggregate array initializer offset");
+                initializers.extend(self.parse_aggregate_initializer_level(
+                    object_name,
+                    struct_name,
+                    base_offset,
+                )?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate array initializer for `{object_name}`, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate array initializer for `{object_name}`, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(initializers)
+    }
+
+    fn parse_aggregate_array_designator(
+        &mut self,
+        object_name: &str,
+        length: u32,
+    ) -> Result<u32, C0SyntaxError> {
+        let index = match self.next() {
+            Some(Token::Number(number)) => {
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid aggregate array designator index `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(magnitude).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "aggregate array designator index `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(Token::CharLiteral(value)) => u32::from(value),
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "aggregate array designators currently require integer literals, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self.error_here(
+                    "aggregate array designators currently require an integer literal",
+                ));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        if index >= length {
+            return Err(self.error_here(format!(
+                "aggregate array designator index `{index}` is out of bounds for `{object_name}[{length}]`"
+            )));
+        }
+        Ok(index)
+    }
+
+    fn parse_aggregate_initializer_level(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+        base_offset: u32,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        let mut fields = self
+            .structs
+            .get(struct_name)
+            .expect("validated aggregate initializer has a layout")
+            .fields
+            .iter()
+            .map(|(name, field)| (name.clone(), field.clone()))
+            .collect::<Vec<_>>();
+        fields.sort_by_key(|(_, field)| field.offset_bytes);
+
+        self.expect(Token::LBrace)?;
+        let mut initializers = Vec::new();
+        let mut next_field_index = 0usize;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                let field_index = if self.peek() == Some(&Token::Dot) {
+                    self.position += 1;
+                    let field_name = self.expect_ident("aggregate field name")?;
+                    self.expect(Token::Equal)?;
+                    let Some(index) = fields.iter().position(|(name, _)| name == &field_name)
+                    else {
+                        return Err(self.error_here(format!(
+                            "unknown field `{field_name}` in `struct {struct_name}` initializer"
+                        )));
+                    };
+                    next_field_index = index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                } else {
+                    if self.peek() == Some(&Token::LBracket) {
+                        return Err(self.error_here(
+                            "struct aggregate initializers support only field designators",
+                        ));
+                    }
+                    let index = next_field_index;
+                    next_field_index = next_field_index
+                        .checked_add(1)
+                        .expect("validated aggregate field index");
+                    index
+                };
+                let Some((_, field)) = fields.get(field_index) else {
+                    return Err(self
+                        .error_here(format!("too many initializers for `struct {struct_name}`")));
+                };
+                initializers.extend(self.parse_aggregate_initializer_field(
+                    object_name,
+                    base_offset,
+                    field,
+                )?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate initializer for `{object_name}`, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in aggregate initializer for `{object_name}`, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(initializers)
+    }
+
+    fn parse_aggregate_initializer_field(
+        &mut self,
+        object_name: &str,
+        base_offset: u32,
+        field: &C0StructField,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        let field_offset = base_offset
+            .checked_add(field.offset_bytes)
+            .expect("validated aggregate initializer field offset");
+        if let Some(element_width) = field.array_element_width {
+            let nested_name = field
+                .struct_name
+                .as_deref()
+                .expect("embedded struct array has a struct name");
+            let dimensions = field
+                .array_shape
+                .as_deref()
+                .expect("embedded struct array has a shape");
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "embedded struct array initializers require nested `{...}` groups",
+                ));
+            }
+            return self.parse_embedded_struct_array_aggregate_initializer_level(
+                object_name,
+                nested_name,
+                dimensions,
+                0,
+                0,
+                field_offset,
+                element_width,
+            );
+        }
+        if field.c_type == C0Type::Int32 {
+            if let Some(nested_name) = field.struct_name.as_deref() {
+                if self.peek() != Some(&Token::LBrace) {
+                    return Err(self.error_here(
+                        "embedded struct initializers require a nested `{...}` group",
+                    ));
+                }
+                return self.parse_aggregate_initializer_level(
+                    object_name,
+                    nested_name,
+                    field_offset,
+                );
+            }
+        }
+
+        if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "inline scalar array initializers require a nested `{...}` group",
+                ));
+            }
+            let zero = zero_initializer(element_type);
+            let mut values = Vec::new();
+            self.parse_array_initializer_level(
+                "aggregate field",
+                &dimensions,
+                0,
+                &mut values,
+                &zero,
+            )?;
+            let mut initializers = Vec::with_capacity(values.len());
+            for (index, value) in values.into_iter().enumerate() {
+                validate_aggregate_initializer(self, element_type, &value)?;
+                let offset = field_offset
+                    .checked_add(
+                        u32::try_from(index)
+                            .expect("validated aggregate initializer index")
+                            .checked_mul(element_type.abi_size_bytes())
+                            .expect("validated aggregate initializer offset"),
+                    )
+                    .expect("validated aggregate initializer offset");
+                initializers.push(C0AggregateInitializer::new(offset, element_type, value));
+            }
+            return Ok(initializers);
+        }
+
+        let value = self.parse_expression()?;
+        validate_aggregate_initializer(self, field.c_type, &value)?;
+        Ok(vec![C0AggregateInitializer::new(
+            field_offset,
+            field.c_type,
+            value,
+        )])
+    }
+
+    fn parse_embedded_struct_array_aggregate_initializer_level(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        flat_prefix: u32,
+        element_offset: u32,
+        element_width: u32,
+    ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        let child_count = dimensions[depth];
+        let child_width = dimensions[depth + 1..]
+            .iter()
+            .copied()
+            .fold(1u32, |width, dimension| {
+                width
+                    .checked_mul(dimension)
+                    .expect("validated embedded struct array initializer width")
+            });
+        self.expect(Token::LBrace)?;
+        let mut initializers = Vec::new();
+        let mut child_index = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if child_index == child_count {
+                    return Err(
+                        self.error_here("too many initializers for an embedded struct array")
+                    );
+                }
+                let flat_index = flat_prefix
+                    .checked_add(
+                        child_index
+                            .checked_mul(child_width)
+                            .expect("validated embedded struct array initializer index"),
+                    )
+                    .expect("validated embedded struct array initializer index");
+                let child_offset = element_offset
+                    .checked_add(
+                        flat_index
+                            .checked_mul(element_width)
+                            .expect("validated embedded struct array initializer offset"),
+                    )
+                    .expect("validated embedded struct array initializer offset");
+                if depth + 1 == dimensions.len() {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "embedded struct array elements require nested `{...}` groups",
+                        ));
+                    }
+                    initializers.extend(self.parse_aggregate_initializer_level(
+                        object_name,
+                        struct_name,
+                        child_offset,
+                    )?);
+                } else {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "nested embedded struct array initializers require `{...}` groups",
+                        ));
+                    }
+                    initializers.extend(
+                        self.parse_embedded_struct_array_aggregate_initializer_level(
+                            object_name,
+                            struct_name,
+                            dimensions,
+                            depth + 1,
+                            flat_index,
+                            element_offset,
+                            element_width,
+                        )?,
+                    );
+                }
+                child_index += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in embedded struct array initializer for `{object_name}`, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in embedded struct array initializer for `{object_name}`, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(initializers)
+    }
+
+    fn parse_struct_value_initializer(
+        &mut self,
+        target: &str,
+        struct_name: &str,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let stores = self.parse_struct_initializer_level(
+            C0Expression::Variable(target.to_string()),
+            struct_name,
+        )?;
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_struct_initializer_level(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let mut fields = self
+            .structs
+            .get(struct_name)
+            .expect("validated struct initializer has a layout")
+            .fields
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        // `fields` is a BTreeMap for name lookup, but C initializer order is
+        // declaration order. ABI offsets are already assigned in declaration
+        // order, so they provide the stable source-order key here.
+        fields.sort_by_key(|field| field.offset_bytes);
+
+        self.expect(Token::LBrace)?;
+        let mut stores = Vec::new();
+        let mut field_index = 0usize;
+        let mut has_designated_initializer = false;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if self.peek() == Some(&Token::Dot) {
+                    has_designated_initializer = true;
+                    let (designated_index, parent_pointer, field) = self
+                        .parse_struct_field_designator(
+                            target_pointer.clone(),
+                            struct_name,
+                            &fields,
+                        )?;
+                    stores.extend(self.parse_struct_initializer_field(parent_pointer, &field)?);
+                    // C continues positional initialization after the
+                    // top-level field selected by a designator. Nested field
+                    // designators therefore advance past their outer field.
+                    field_index = designated_index + 1;
+                } else {
+                    if self.peek() == Some(&Token::LBracket) {
+                        return Err(self.error_here(
+                            "array designators in struct initializers are not supported",
+                        ));
+                    }
+                    let Some(field) = fields.get(field_index) else {
+                        return Err(self.error_here(format!(
+                            "too many initializers for `struct {struct_name}`"
+                        )));
+                    };
+                    stores.extend(
+                        self.parse_struct_initializer_field(target_pointer.clone(), field)?,
+                    );
+                    field_index += 1;
+                }
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `struct {struct_name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `struct {struct_name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        if has_designated_initializer {
+            // A designated initializer may arrive out of declaration order or
+            // initialize only a nested leaf. Start from a complete zero value
+            // so every omitted member has the same semantics as a positional
+            // initializer, then apply explicit stores in source order.
+            let mut zero_stores =
+                self.zero_struct_initializer_level(target_pointer.clone(), struct_name);
+            zero_stores.extend(stores);
+            stores = zero_stores;
+        } else {
+            for field in fields.iter().skip(field_index) {
+                stores.extend(self.zero_struct_initializer_field(target_pointer.clone(), field));
+            }
+        }
+        Ok(stores)
+    }
+
+    /// Parses one or more `.field` designators for a struct initializer. The
+    /// returned pointer addresses the parent of the final field, so the
+    /// ordinary field initializer path can retain all of its nested aggregate
+    /// and scalar-array handling.
+    fn parse_struct_field_designator(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        root_fields: &[C0StructField],
+    ) -> Result<(usize, C0Expression, C0StructField), C0SyntaxError> {
+        let mut current_struct_name = struct_name.to_string();
+        let mut parent_pointer = target_pointer;
+        let mut root_index = None;
+
+        loop {
+            self.expect(Token::Dot)?;
+            let field_name = self.expect_ident("struct field designator")?;
+            let layout = self.structs.get(&current_struct_name).ok_or_else(|| {
+                self.error_here(format!(
+                    "unknown struct declaration `{current_struct_name}`"
+                ))
+            })?;
+            let field = layout.fields.get(&field_name).cloned().ok_or_else(|| {
+                self.error_here(format!(
+                    "struct `{current_struct_name}` has no field `{field_name}`"
+                ))
+            })?;
+
+            if root_index.is_none() {
+                root_index = root_fields
+                    .iter()
+                    .position(|candidate| candidate.offset_bytes == field.offset_bytes);
+            }
+
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("array designators in struct initializers are not supported")
+                );
+            }
+            if self.peek() == Some(&Token::Dot) {
+                if field.array_element_width.is_some()
+                    || field.c_type != C0Type::Int32
+                    || field.struct_name.is_none()
+                {
+                    return Err(self
+                        .error_here("nested field designators require an embedded struct field"));
+                }
+                parent_pointer = offset_field_pointer(parent_pointer, field.offset_bytes);
+                current_struct_name = field
+                    .struct_name
+                    .expect("embedded struct designator has a struct name");
+                continue;
+            }
+
+            self.expect(Token::Equal)?;
+            let root_index = root_index.expect("root field designator belongs to the root layout");
+            return Ok((root_index, parent_pointer, field));
+        }
+    }
+
+    fn parse_struct_initializer_field(
+        &mut self,
+        target_pointer: C0Expression,
+        field: &C0StructField,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        if let Some(element_width) = field.array_element_width {
+            let struct_name = field
+                .struct_name
+                .as_deref()
+                .expect("embedded struct array has a struct name");
+            let shape = field
+                .array_shape
+                .as_deref()
+                .expect("embedded struct array has a shape");
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "embedded struct array initializers require nested `{...}` groups",
+                ));
+            }
+            return self.parse_embedded_struct_array_initializer_level(
+                field_pointer,
+                struct_name,
+                shape,
+                0,
+                0,
+                element_width,
+            );
+        }
+        if field.c_type == C0Type::Int32 {
+            if let Some(struct_name) = field.struct_name.as_deref() {
+                if self.peek() != Some(&Token::LBrace) {
+                    return Err(self.error_here(
+                        "embedded struct initializers require a nested `{...}` group",
+                    ));
+                }
+                return self.parse_struct_initializer_level(field_pointer, struct_name);
+            }
+        }
+
+        if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(
+                    "inline scalar array initializers require a nested `{...}` group",
+                ));
+            }
+            let mut values = Vec::new();
+            let zero = zero_initializer(element_type);
+            self.parse_array_initializer_level("struct field", &dimensions, 0, &mut values, &zero)?;
+            return Ok(values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| C0Statement::Store {
+                    pointer: offset_field_pointer(
+                        field_pointer.clone(),
+                        u32::try_from(index)
+                            .expect("validated struct array initializer index")
+                            .checked_mul(element_type.abi_size_bytes())
+                            .expect("validated struct array initializer offset"),
+                    ),
+                    value,
+                    value_type: Some(element_type),
+                })
+                .collect());
+        }
+
+        let value = self.parse_expression()?;
+        Ok(vec![C0Statement::Store {
+            pointer: field_pointer,
+            value,
+            value_type: Some(field.c_type),
+        }])
+    }
+
+    fn parse_embedded_struct_array_initializer_level(
+        &mut self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        flat_prefix: u32,
+        element_width: u32,
+    ) -> Result<Vec<C0Statement>, C0SyntaxError> {
+        let child_count = dimensions[depth];
+        self.expect(Token::LBrace)?;
+        let mut stores = Vec::new();
+        let mut child_index = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if child_index == child_count {
+                    return Err(
+                        self.error_here("too many initializers for an embedded struct array")
+                    );
+                }
+                let flat_index = flat_prefix
+                    .checked_mul(child_count)
+                    .and_then(|index| index.checked_add(child_index))
+                    .expect("validated embedded struct array initializer index");
+                if depth + 1 == dimensions.len() {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "embedded struct array elements require nested `{...}` groups",
+                        ));
+                    }
+                    stores.extend(
+                        self.parse_struct_initializer_level(
+                            offset_field_pointer(
+                                target_pointer.clone(),
+                                flat_index
+                                    .checked_mul(element_width)
+                                    .expect("validated embedded struct array initializer offset"),
+                            ),
+                            struct_name,
+                        )?,
+                    );
+                } else {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(
+                            "nested embedded struct array initializers require `{...}` groups",
+                        ));
+                    }
+                    stores.extend(self.parse_embedded_struct_array_initializer_level(
+                        target_pointer.clone(),
+                        struct_name,
+                        dimensions,
+                        depth + 1,
+                        flat_index,
+                        element_width,
+                    )?);
+                }
+                child_index += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in embedded struct array initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(
+                            "expected `,` or `}` in embedded struct array initializer, got end of input",
+                        ));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        while child_index < child_count {
+            let flat_index = flat_prefix
+                .checked_mul(child_count)
+                .and_then(|index| index.checked_add(child_index))
+                .expect("validated embedded struct array initializer index");
+            if depth + 1 == dimensions.len() {
+                stores.extend(
+                    self.zero_struct_initializer_level(
+                        offset_field_pointer(
+                            target_pointer.clone(),
+                            flat_index
+                                .checked_mul(element_width)
+                                .expect("validated embedded struct array initializer offset"),
+                        ),
+                        struct_name,
+                    ),
+                );
+            } else {
+                stores.extend(self.zero_embedded_struct_array_initializer_level(
+                    target_pointer.clone(),
+                    struct_name,
+                    dimensions,
+                    depth + 1,
+                    flat_index,
+                    element_width,
+                ));
+            }
+            child_index += 1;
+        }
+        Ok(stores)
+    }
+
+    fn zero_struct_initializer_level(
+        &self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+    ) -> Vec<C0Statement> {
+        let mut fields = self
+            .structs
+            .get(struct_name)
+            .expect("validated struct initializer has a layout")
+            .fields
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        fields.sort_by_key(|field| field.offset_bytes);
+        fields
+            .iter()
+            .flat_map(|field| self.zero_struct_initializer_field(target_pointer.clone(), field))
+            .collect()
+    }
+
+    fn zero_struct_initializer_field(
+        &self,
+        target_pointer: C0Expression,
+        field: &C0StructField,
+    ) -> Vec<C0Statement> {
+        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        if let Some(element_width) = field.array_element_width {
+            let struct_name = field
+                .struct_name
+                .as_deref()
+                .expect("embedded struct array has a struct name");
+            let shape = field
+                .array_shape
+                .as_deref()
+                .expect("embedded struct array has a shape");
+            return self.zero_embedded_struct_array_initializer_level(
+                field_pointer,
+                struct_name,
+                shape,
+                0,
+                0,
+                element_width,
+            );
+        }
+        if field.c_type == C0Type::Int32 {
+            if let Some(struct_name) = field.struct_name.as_deref() {
+                return self.zero_struct_initializer_level(field_pointer, struct_name);
+            }
+        }
+
+        if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            let element_count = dimensions.iter().product::<u32>();
+            return (0..element_count)
+                .map(|index| C0Statement::Store {
+                    pointer: offset_field_pointer(
+                        field_pointer.clone(),
+                        index
+                            .checked_mul(element_type.abi_size_bytes())
+                            .expect("validated struct array initializer offset"),
+                    ),
+                    value: zero_initializer_value(element_type),
+                    value_type: Some(element_type),
+                })
+                .collect();
+        }
+
+        vec![C0Statement::Store {
+            pointer: field_pointer,
+            value: zero_initializer_value(field.c_type),
+            value_type: Some(field.c_type),
+        }]
+    }
+
+    fn zero_embedded_struct_array_initializer_level(
+        &self,
+        target_pointer: C0Expression,
+        struct_name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        flat_prefix: u32,
+        element_width: u32,
+    ) -> Vec<C0Statement> {
+        let child_count = dimensions[depth];
+        let mut stores = Vec::new();
+        for child_index in 0..child_count {
+            let flat_index = flat_prefix
+                .checked_mul(child_count)
+                .and_then(|index| index.checked_add(child_index))
+                .expect("validated embedded struct array initializer index");
+            if depth + 1 == dimensions.len() {
+                stores.extend(
+                    self.zero_struct_initializer_level(
+                        offset_field_pointer(
+                            target_pointer.clone(),
+                            flat_index
+                                .checked_mul(element_width)
+                                .expect("validated embedded struct array initializer offset"),
+                        ),
+                        struct_name,
+                    ),
+                );
+            } else {
+                stores.extend(self.zero_embedded_struct_array_initializer_level(
+                    target_pointer.clone(),
+                    struct_name,
+                    dimensions,
+                    depth + 1,
+                    flat_index,
+                    element_width,
+                ));
+            }
+        }
+        stores
+    }
+
     fn parse_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let parsed_type = self.parse_type()?;
         if parsed_type.union_name.is_some() {
@@ -4876,10 +6660,13 @@ impl Parser {
             ));
         }
         if parsed_type.is_volatile
-            && (parsed_type.struct_name.is_some() || parsed_type.c_type.is_pointer())
+            && (parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
         {
             return Err(self.error_here(
-                "the small volatile model supports only direct scalar integer objects",
+                "the sequential volatile model supports scalar objects and pointers to scalar objects",
             ));
         }
         if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
@@ -4899,6 +6686,7 @@ impl Parser {
                 c_type,
                 name: kernel_name.clone(),
                 volatile: false,
+                pointee_volatile: false,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -4945,14 +6733,18 @@ impl Parser {
                 self.variable_structs
                     .insert(name.clone(), struct_name.clone());
                 self.variable_struct_values
-                    .insert(name.clone(), struct_name);
+                    .insert(name.clone(), struct_name.clone());
                 let declaration = C0Statement::DeclareStructValue {
                     name: name.clone(),
                     layout: layout.clone(),
                 };
                 let statement = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
-                    if matches!(self.peek(), Some(Token::Ident(_)))
+                    if self.peek() == Some(&Token::LBrace) {
+                        let initializer =
+                            self.parse_struct_value_initializer(&name, &struct_name)?;
+                        C0Statement::Seq(Box::new(declaration), Box::new(initializer))
+                    } else if matches!(self.peek(), Some(Token::Ident(_)))
                         && self.peek_next() == Some(&Token::LParen)
                     {
                         let function_name = self.expect_ident("function name")?;
@@ -5016,9 +6808,8 @@ impl Parser {
                 c_type = C0Type::UInt8Pointer;
             }
             self.variable_types.insert(name.clone(), c_type);
-            if parsed_type.is_volatile {
-                self.variable_volatiles.insert(name.clone());
-            }
+            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
+            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
             }
@@ -5042,7 +6833,8 @@ impl Parser {
             let declaration = C0Statement::Declare {
                 c_type,
                 name: name.clone(),
-                volatile: parsed_type.is_volatile,
+                volatile: object_volatile,
+                pointee_volatile,
             };
             let statement = if self.peek() == Some(&Token::Equal) {
                 self.position += 1;
@@ -5053,13 +6845,15 @@ impl Parser {
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
                 ) {
-                    if parsed_type.struct_name.is_some() {
-                        return Err(self.error_here(
-                            "local array initializers for struct arrays are not supported",
-                        ));
-                    }
-                    let initializer =
-                        self.parse_local_array_initializer(&name, c_type, array_shape.as_deref())?;
+                    let initializer = if let Some(struct_name) = parsed_type.struct_name.as_deref()
+                    {
+                        let dimensions = array_shape.as_deref().expect(
+                            "local struct array initializers retain their declared dimensions",
+                        );
+                        self.parse_local_struct_array_initializer(&name, struct_name, dimensions)?
+                    } else {
+                        self.parse_local_array_initializer(&name, c_type, array_shape.as_deref())?
+                    };
                     C0Statement::Seq(Box::new(declaration), Box::new(initializer))
                 } else if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
@@ -5102,33 +6896,119 @@ impl Parser {
     fn parse_static_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect_ident_spelling("static")?;
         let parsed_type = self.parse_type()?;
-        if parsed_type.is_volatile && parsed_type.c_type.is_pointer() {
-            return Err(self.error_here(
-                "the small volatile model supports only direct scalar integer objects",
-            ));
-        }
-        if parsed_type.struct_name.is_some()
-            || parsed_type.enum_name.is_some()
-            || parsed_type.union_name.is_some()
-            || !matches!(
-                parsed_type.c_type,
-                C0Type::Int16
-                    | C0Type::Int32
-                    | C0Type::UInt8
-                    | C0Type::UInt16
-                    | C0Type::UInt32
-                    | C0Type::Float32
-                    | C0Type::Float64
-            )
+        if parsed_type.is_volatile
+            && (parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
         {
             return Err(self.error_here(
-                "function-local `static` declarations currently support only scalar integer and floating-point types",
+                "the sequential volatile model supports scalar objects and pointers to scalar objects",
             ));
         }
+        let aggregate_struct = if is_plain_struct_type(&parsed_type) {
+            if parsed_type.is_volatile {
+                return Err(self.error_here(
+                    "the small volatile model does not support volatile aggregate statics",
+                ));
+            }
+            let struct_name = parsed_type
+                .struct_name
+                .clone()
+                .expect("plain static aggregate carries a struct name");
+            let layout = self.scalar_struct_value_layout(&struct_name)?;
+            Some((struct_name, layout))
+        } else {
+            if parsed_type.struct_name.is_some()
+                || parsed_type.enum_name.is_some()
+                || parsed_type.union_name.is_some()
+                || !matches!(
+                    parsed_type.c_type,
+                    C0Type::Int16
+                        | C0Type::Int32
+                        | C0Type::UInt8
+                        | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Float32
+                        | C0Type::Float64
+                )
+            {
+                return Err(self.error_here(
+                    "function-local `static` declarations currently support scalar integer, floating-point, or supported structs",
+                ));
+            }
+            None
+        };
 
         loop {
             let source_name = self.expect_ident("static local name")?;
             let kernel_name = self.declare_static_name(&source_name)?;
+            if let Some((struct_name, layout)) = &aggregate_struct {
+                if self.peek() == Some(&Token::LBracket) {
+                    let length = self.parse_static_array_length(&source_name)?;
+                    let initializer = if self.peek() == Some(&Token::Equal) {
+                        self.position += 1;
+                        self.parse_aggregate_array_initializer(
+                            &source_name,
+                            struct_name,
+                            layout,
+                            length,
+                        )?
+                    } else {
+                        Vec::new()
+                    };
+                    let bytes = length
+                        .checked_mul(layout.size_bytes())
+                        .expect("validated static aggregate array size");
+                    self.variable_types
+                        .insert(kernel_name.clone(), C0Type::UInt8Array(bytes));
+                    self.variable_array_shapes
+                        .insert(kernel_name.clone(), vec![length]);
+                    self.variable_structs
+                        .insert(kernel_name.clone(), struct_name.clone());
+                    self.static_aggregate_arrays.insert(
+                        kernel_name.clone(),
+                        C0StaticAggregateArray::new(
+                            source_name,
+                            kernel_name,
+                            struct_name.clone(),
+                            layout.clone(),
+                            length,
+                            initializer,
+                        ),
+                    );
+                    if self.peek() != Some(&Token::Comma) {
+                        break;
+                    }
+                    self.position += 1;
+                    continue;
+                }
+                let initializer = if self.peek() == Some(&Token::Equal) {
+                    self.position += 1;
+                    self.parse_aggregate_initializer(&source_name, struct_name)?
+                } else {
+                    Vec::new()
+                };
+                self.variable_types
+                    .insert(kernel_name.clone(), struct_value_type(layout));
+                self.variable_structs
+                    .insert(kernel_name.clone(), struct_name.clone());
+                self.static_aggregates.insert(
+                    kernel_name.clone(),
+                    C0StaticAggregate::new(
+                        source_name,
+                        kernel_name,
+                        struct_name.clone(),
+                        layout.clone(),
+                        initializer,
+                    ),
+                );
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+                continue;
+            }
             if self.peek() == Some(&Token::LBracket) {
                 if parsed_type.is_volatile {
                     return Err(
@@ -5160,9 +7040,6 @@ impl Parser {
             } else {
                 self.variable_types
                     .insert(kernel_name.clone(), parsed_type.c_type);
-                if parsed_type.is_volatile {
-                    self.variable_volatiles.insert(kernel_name.clone());
-                }
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
                     let initializer = self.parse_expression()?;
@@ -5276,7 +7153,7 @@ impl Parser {
     }
 
     fn struct_value_copy_statement(
-        &self,
+        &mut self,
         target: &str,
         expression: C0Expression,
     ) -> Result<C0Statement, C0SyntaxError> {
@@ -5293,6 +7170,17 @@ impl Parser {
     }
 
     fn aggregate_copy_statement(
+        &mut self,
+        target_pointer: C0Expression,
+        target_struct: &str,
+        expression: C0Expression,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let (prefix, expression) = self.lower_expression_calls(expression)?;
+        let copy = self.aggregate_copy_statement_raw(target_pointer, target_struct, expression)?;
+        Ok(prepend_statements(prefix, copy))
+    }
+
+    fn aggregate_copy_statement_raw(
         &self,
         target_pointer: C0Expression,
         target_struct: &str,
@@ -5431,6 +7319,9 @@ impl Parser {
             let source_name = self.expect_ident("for-loop local name")?;
             let name = self.declare_name(&source_name)?;
             self.variable_types.insert(name.clone(), parsed_type.c_type);
+            let object_volatile = parsed_type.is_volatile && !parsed_type.c_type.is_pointer();
+            let pointee_volatile =
+                parsed_type.is_volatile && parsed_type.c_type.is_scalar_pointer();
             if self.peek() != Some(&Token::Equal) {
                 return Err(self.error_here("for-loop declarations require an initializer"));
             }
@@ -5440,7 +7331,8 @@ impl Parser {
                 Box::new(C0Statement::Declare {
                     c_type: parsed_type.c_type,
                     name: name.clone(),
-                    volatile: parsed_type.is_volatile,
+                    volatile: object_volatile,
+                    pointee_volatile,
                 }),
                 Box::new(C0Statement::Assign { name, expression }),
             ));
@@ -5879,7 +7771,7 @@ impl Parser {
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let expression = self.parse_conditional()?;
-        if contains_aggregate_value(&expression) {
+        if self.expression_contains_aggregate(&expression) {
             return Err(self.aggregate_expression_error());
         }
         Ok(expression)
@@ -5887,8 +7779,8 @@ impl Parser {
 
     fn parse_expression_allow_direct_aggregate(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let expression = self.parse_conditional()?;
-        if contains_aggregate_value(&expression)
-            && !matches!(expression, C0Expression::AggregateAddress { .. })
+        if self.expression_contains_aggregate(&expression)
+            && self.aggregate_struct_name(&expression).is_none()
         {
             return Err(self.aggregate_expression_error());
         }
@@ -5899,6 +7791,144 @@ impl Parser {
         self.error_here(
             "embedded struct fields are only supported through member access or whole-struct lvalue copies; struct values are not scalar expressions, and tagged union values are not runtime aggregates",
         )
+    }
+
+    fn aggregate_struct_name(&self, expression: &C0Expression) -> Option<String> {
+        match expression {
+            C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
+            C0Expression::Call { function_name, .. } => self
+                .function_declarations
+                .get(function_name)
+                .and_then(|function| function.return_struct_name.clone()),
+            C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
+            C0Expression::Field {
+                field_type: C0Type::Int32,
+                field_struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
+            C0Expression::Field { .. } => None,
+            C0Expression::Load(pointer) => self.struct_pointer_name(pointer),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_struct = self.aggregate_struct_name(then_branch);
+                let else_struct = self.aggregate_struct_name(else_branch);
+                (then_struct == else_struct)
+                    .then_some(then_struct)
+                    .flatten()
+            }
+            C0Expression::UnionAddress { .. }
+            | C0Expression::UnionField { .. }
+            | C0Expression::Void
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::Cast { .. }
+            | C0Expression::FloatNegate(_)
+            | C0Expression::FloatClassification { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::LessThan(_, _)
+            | C0Expression::LessEqual(_, _)
+            | C0Expression::GreaterThan(_, _)
+            | C0Expression::GreaterEqual(_, _)
+            | C0Expression::Equal(_, _)
+            | C0Expression::NotEqual(_, _)
+            | C0Expression::Not(_)
+            | C0Expression::And(_, _)
+            | C0Expression::Or(_, _)
+            | C0Expression::Add(_, _)
+            | C0Expression::Subtract(_, _)
+            | C0Expression::Multiply(_, _)
+            | C0Expression::Divide(_, _)
+            | C0Expression::Remainder(_, _)
+            | C0Expression::ShiftLeft(_, _)
+            | C0Expression::ShiftRight(_, _)
+            | C0Expression::BitwiseAnd(_, _)
+            | C0Expression::BitwiseOr(_, _)
+            | C0Expression::BitwiseXor(_, _)
+            | C0Expression::BitwiseNot(_)
+            | C0Expression::Index(_, _) => None,
+        }
+    }
+
+    fn expression_contains_aggregate(&self, expression: &C0Expression) -> bool {
+        if contains_aggregate_value(expression) || self.aggregate_struct_name(expression).is_some()
+        {
+            return true;
+        }
+        match expression {
+            C0Expression::Call { .. }
+            | C0Expression::AddressOf(_)
+            | C0Expression::Void
+            | C0Expression::Variable(_)
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. }
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. }
+            | C0Expression::UnionField { .. } => false,
+            C0Expression::Cast { expression, .. }
+            | C0Expression::FloatNegate(expression)
+            | C0Expression::FloatClassification { expression, .. }
+            | C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | C0Expression::Not(expression)
+            | C0Expression::BitwiseNot(expression)
+            | C0Expression::Load(expression) => self.expression_contains_aggregate(expression),
+            C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression_contains_aggregate(condition)
+                    || self.expression_contains_aggregate(then_branch)
+                    || self.expression_contains_aggregate(else_branch)
+            }
+            C0Expression::Field { .. } => false,
+            C0Expression::LessThan(left, right)
+            | C0Expression::LessEqual(left, right)
+            | C0Expression::GreaterThan(left, right)
+            | C0Expression::GreaterEqual(left, right)
+            | C0Expression::Equal(left, right)
+            | C0Expression::NotEqual(left, right)
+            | C0Expression::And(left, right)
+            | C0Expression::Or(left, right)
+            | C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right)
+            | C0Expression::Remainder(left, right)
+            | C0Expression::ShiftLeft(left, right)
+            | C0Expression::ShiftRight(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right)
+            | C0Expression::Index(left, right) => {
+                self.expression_contains_aggregate(left)
+                    || self.expression_contains_aggregate(right)
+            }
+        }
     }
 
     fn fresh_synthesized_call_name(&mut self) -> String {
@@ -5914,6 +7944,45 @@ impl Parser {
                 return name;
             }
         }
+    }
+
+    fn fresh_synthesized_aggregate_name(&mut self) -> String {
+        loop {
+            let name = format!(
+                "__click_aggregate_result{}",
+                self.next_synthesized_aggregate
+            );
+            self.next_synthesized_aggregate = self.next_synthesized_aggregate.saturating_add(1);
+            let already_used = self.variable_types.contains_key(&name)
+                || self
+                    .scopes
+                    .iter()
+                    .any(|scope| scope.iter().any(|binding| binding.kernel_name == name));
+            if !already_used {
+                return name;
+            }
+        }
+    }
+
+    fn declare_synthesized_aggregate(
+        &mut self,
+        struct_name: &str,
+    ) -> Result<(String, C0StructLayout), C0SyntaxError> {
+        let layout = self.structs.get(struct_name).cloned().ok_or_else(|| {
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        let name = self.fresh_synthesized_aggregate_name();
+        // This name is a lowering artifact, not a C declaration. Keep its
+        // layout metadata in the parser-wide table so later lowering passes
+        // can still recognize the generated aggregate expression after the
+        // source block that introduced it has closed.
+        self.variable_types
+            .insert(name.clone(), struct_value_type(&layout));
+        self.variable_structs
+            .insert(name.clone(), struct_name.to_string());
+        self.variable_struct_values
+            .insert(name.clone(), struct_name.to_string());
+        Ok((name, layout))
     }
 
     fn fresh_string_literal_name(&mut self, bytes: Vec<u8>) -> String {
@@ -5947,10 +8016,179 @@ impl Parser {
         &mut self,
         statement: C0Statement,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if !statement_contains_embedded_call(&statement) {
+        if !self.statement_contains_lowerable_expression(&statement) {
             return Ok(statement);
         }
         self.lower_statement_calls(statement)
+    }
+
+    /// Keep the common no-call path iterative. The parser deliberately
+    /// represents long straight-line blocks as deeply nested sequences, so a
+    /// recursive lowering walk here would consume the small parser stack even
+    /// when there is nothing to lower.
+    fn statement_contains_lowerable_expression(&self, statement: &C0Statement) -> bool {
+        let mut statements = vec![statement];
+        while let Some(statement) = statements.pop() {
+            match statement {
+                C0Statement::Assign { expression, .. }
+                | C0Statement::HeapAllocate {
+                    bytes: expression, ..
+                }
+                | C0Statement::HeapFree {
+                    pointer: expression,
+                }
+                | C0Statement::Return(expression) => {
+                    if self.expression_contains_lowerable_expression(expression) {
+                        return true;
+                    }
+                }
+                C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
+                    if arguments
+                        .iter()
+                        .any(|expression| self.expression_contains_lowerable_expression(expression))
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Store { pointer, value, .. } => {
+                    if self.expression_contains_lowerable_expression(pointer)
+                        || self.expression_contains_lowerable_expression(value)
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Update {
+                    target, operand, ..
+                } => {
+                    if self.expression_contains_lowerable_expression(target)
+                        || self.expression_contains_lowerable_expression(operand)
+                    {
+                        return true;
+                    }
+                }
+                C0Statement::Seq(first, second) => {
+                    statements.push(first);
+                    statements.push(second);
+                }
+                C0Statement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(then_branch);
+                    statements.push(else_branch);
+                }
+                C0Statement::While { condition, body }
+                | C0Statement::DoWhile { condition, body } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(body);
+                }
+                C0Statement::For {
+                    initializer,
+                    condition,
+                    step,
+                    body,
+                } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                    statements.push(initializer);
+                    statements.push(step);
+                    statements.push(body);
+                }
+                C0Statement::Switch { expression, cases } => {
+                    if self.expression_contains_lowerable_expression(expression) {
+                        return true;
+                    }
+                    for case in cases {
+                        statements.push(&case.body);
+                    }
+                }
+                C0Statement::Skip
+                | C0Statement::Break
+                | C0Statement::Continue
+                | C0Statement::Declare { .. }
+                | C0Statement::DeclareStructValue { .. } => {}
+            }
+        }
+        false
+    }
+
+    fn expression_contains_lowerable_expression(&self, expression: &C0Expression) -> bool {
+        let mut expressions = vec![expression];
+        while let Some(expression) = expressions.pop() {
+            if self.aggregate_struct_name(expression).is_some() {
+                return true;
+            }
+            match expression {
+                C0Expression::Call { .. } => return true,
+                C0Expression::Cast { expression, .. }
+                | C0Expression::FloatNegate(expression)
+                | C0Expression::FloatClassification { expression, .. }
+                | C0Expression::AddressOf(expression)
+                | C0Expression::PointerOffsetBytes {
+                    pointer: expression,
+                    ..
+                }
+                | C0Expression::Not(expression)
+                | C0Expression::BitwiseNot(expression)
+                | C0Expression::Load(expression) => expressions.push(expression),
+                C0Expression::AggregateAddress { pointer, .. }
+                | C0Expression::UnionAddress { pointer, .. }
+                | C0Expression::Field { pointer, .. }
+                | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
+                C0Expression::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    expressions.push(condition);
+                    expressions.push(then_branch);
+                    expressions.push(else_branch);
+                }
+                C0Expression::LessThan(left, right)
+                | C0Expression::LessEqual(left, right)
+                | C0Expression::GreaterThan(left, right)
+                | C0Expression::GreaterEqual(left, right)
+                | C0Expression::Equal(left, right)
+                | C0Expression::NotEqual(left, right)
+                | C0Expression::And(left, right)
+                | C0Expression::Or(left, right)
+                | C0Expression::Add(left, right)
+                | C0Expression::Subtract(left, right)
+                | C0Expression::Multiply(left, right)
+                | C0Expression::Divide(left, right)
+                | C0Expression::Remainder(left, right)
+                | C0Expression::ShiftLeft(left, right)
+                | C0Expression::ShiftRight(left, right)
+                | C0Expression::BitwiseAnd(left, right)
+                | C0Expression::BitwiseOr(left, right)
+                | C0Expression::BitwiseXor(left, right)
+                | C0Expression::Index(left, right) => {
+                    expressions.push(left);
+                    expressions.push(right);
+                }
+                C0Expression::Void
+                | C0Expression::Variable(_)
+                | C0Expression::FunctionAddress(_)
+                | C0Expression::Int32Literal(_)
+                | C0Expression::UInt8Literal(_)
+                | C0Expression::UInt32Literal(_)
+                | C0Expression::Int64Literal(_)
+                | C0Expression::UInt64Literal(_)
+                | C0Expression::Float32Literal(_)
+                | C0Expression::Float64Literal(_)
+                | C0Expression::SizeOfStruct { .. }
+                | C0Expression::SizeOfUnion { .. }
+                | C0Expression::SizeOfType { .. } => {}
+            }
+        }
+        false
     }
 
     fn lower_statement_calls(
@@ -6238,6 +8476,23 @@ impl Parser {
                     ));
                 }
                 let (mut prefix, arguments) = self.lower_call_arguments(arguments)?;
+                let return_struct_name = self
+                    .function_declarations
+                    .get(&function_name)
+                    .and_then(|function| function.return_struct_name.clone());
+                if let Some(struct_name) = return_struct_name {
+                    let (target, layout) = self.declare_synthesized_aggregate(&struct_name)?;
+                    prefix.push(C0Statement::DeclareStructValue {
+                        name: target.clone(),
+                        layout,
+                    });
+                    prefix.push(C0Statement::CallAssign {
+                        target: target.clone(),
+                        function_name,
+                        arguments,
+                    });
+                    return Ok((prefix, C0Expression::Variable(target)));
+                }
                 let target = self.fresh_synthesized_call_name();
                 prefix.push(C0Statement::CallAssign {
                     target: target.clone(),
@@ -6264,6 +8519,38 @@ impl Parser {
                 let (mut prefix, condition) = self.lower_expression_calls(*condition)?;
                 let (then_prefix, then_branch) = self.lower_expression_calls(*then_branch)?;
                 let (else_prefix, else_branch) = self.lower_expression_calls(*else_branch)?;
+                let then_struct = self.aggregate_struct_name(&then_branch);
+                let else_struct = self.aggregate_struct_name(&else_branch);
+                if then_struct != else_struct && (then_struct.is_some() || else_struct.is_some()) {
+                    return Err(self.error_here(
+                        "conditional aggregate branches must have the same struct type",
+                    ));
+                }
+                if let Some(struct_name) = then_struct {
+                    let (target, layout) = self.declare_synthesized_aggregate(&struct_name)?;
+                    let then_copy = self.aggregate_copy_statement_raw(
+                        C0Expression::Variable(target.clone()),
+                        &struct_name,
+                        then_branch,
+                    )?;
+                    let else_copy = self.aggregate_copy_statement_raw(
+                        C0Expression::Variable(target.clone()),
+                        &struct_name,
+                        else_branch,
+                    )?;
+                    let then_statement = prepend_statements(then_prefix, then_copy);
+                    let else_statement = prepend_statements(else_prefix, else_copy);
+                    prefix.push(C0Statement::DeclareStructValue {
+                        name: target.clone(),
+                        layout,
+                    });
+                    prefix.push(C0Statement::If {
+                        condition,
+                        then_branch: Box::new(then_statement),
+                        else_branch: Box::new(else_statement),
+                    });
+                    return Ok((prefix, C0Expression::Variable(target)));
+                }
                 if then_prefix.is_empty() && else_prefix.is_empty() {
                     return Ok((
                         prefix,
@@ -6298,6 +8585,7 @@ impl Parser {
                     c_type: C0Type::Int32,
                     name: target.clone(),
                     volatile: false,
+                    pointee_volatile: false,
                 });
                 prefix.push(C0Statement::If {
                     condition,
@@ -6488,10 +8776,20 @@ impl Parser {
         if self.peek() != Some(&Token::Question) {
             return Ok(condition);
         }
+        if self.expression_contains_aggregate(&condition) {
+            return Err(self.aggregate_expression_error());
+        }
         self.position += 1;
-        let then_branch = self.parse_expression()?;
+        let then_branch = self.parse_expression_allow_direct_aggregate()?;
         self.expect(Token::Colon)?;
-        let else_branch = self.parse_conditional()?;
+        let else_branch = self.parse_expression_allow_direct_aggregate()?;
+        let then_struct = self.aggregate_struct_name(&then_branch);
+        let else_struct = self.aggregate_struct_name(&else_branch);
+        if then_struct != else_struct && (then_struct.is_some() || else_struct.is_some()) {
+            return Err(
+                self.error_here("conditional aggregate branches must have the same struct type")
+            );
+        }
         Ok(C0Expression::Conditional {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
@@ -6517,10 +8815,10 @@ impl Parser {
                 .and_then(|name| self.function_declarations.get(name))
                 .and_then(|function| function.parameters.get(argument_index))
                 .is_some_and(|parameter| !parameter.is_struct_value());
-            if known_scalar_parameter && contains_aggregate_value(&expression) {
+            if known_scalar_parameter && self.expression_contains_aggregate(&expression) {
                 return Err(self.aggregate_expression_error());
             }
-            if function_name == Some("free") && contains_aggregate_value(&expression) {
+            if function_name == Some("free") && self.expression_contains_aggregate(&expression) {
                 return Err(self.error_here("`free` requires a pointer, not an aggregate value"));
             }
             arguments.push(expression);
@@ -6845,13 +9143,6 @@ impl Parser {
                 return Ok(C0Expression::FunctionAddress(name));
             }
             let target = self.parse_unary()?;
-            if let C0Expression::Variable(name) = &target
-                && self.is_volatile_object_name(name)
-            {
-                return Err(self.error_here(
-                    "the small volatile model does not support taking a volatile object's address",
-                ));
-            }
             return Ok(C0Expression::AddressOf(Box::new(target)));
         }
 
@@ -7041,6 +9332,11 @@ impl Parser {
                                 &expression,
                                 C0Expression::Variable(name)
                                     if self.variable_struct_values.contains_key(name)
+                                        || (self.variable_structs.contains_key(name)
+                                            && matches!(
+                                                self.variable_types.get(name),
+                                                Some(C0Type::UInt8Array(_))
+                                            ))
                             );
                             if struct_value
                                 || matches!(&expression, C0Expression::UnionAddress { .. })
@@ -8109,95 +10405,6 @@ fn prepend_condition_check_before_loop_continues(
     }
 }
 
-fn statement_contains_embedded_call(statement: &C0Statement) -> bool {
-    let mut statements = vec![statement];
-    while let Some(statement) = statements.pop() {
-        match statement {
-            C0Statement::Assign { expression, .. }
-            | C0Statement::HeapAllocate {
-                bytes: expression, ..
-            }
-            | C0Statement::HeapFree {
-                pointer: expression,
-            }
-            | C0Statement::Return(expression) => {
-                if expression_contains_embedded_call(expression) {
-                    return true;
-                }
-            }
-            C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
-                if arguments.iter().any(expression_contains_embedded_call) {
-                    return true;
-                }
-            }
-            C0Statement::Store { pointer, value, .. } => {
-                if expression_contains_embedded_call(pointer)
-                    || expression_contains_embedded_call(value)
-                {
-                    return true;
-                }
-            }
-            C0Statement::Update {
-                target, operand, ..
-            } => {
-                if expression_contains_embedded_call(target)
-                    || expression_contains_embedded_call(operand)
-                {
-                    return true;
-                }
-            }
-            C0Statement::Seq(first, second) => {
-                statements.push(first);
-                statements.push(second);
-            }
-            C0Statement::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(then_branch);
-                statements.push(else_branch);
-            }
-            C0Statement::While { condition, body } | C0Statement::DoWhile { condition, body } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(body);
-            }
-            C0Statement::For {
-                initializer,
-                condition,
-                step,
-                body,
-            } => {
-                if expression_contains_embedded_call(condition) {
-                    return true;
-                }
-                statements.push(initializer);
-                statements.push(step);
-                statements.push(body);
-            }
-            C0Statement::Switch { expression, cases } => {
-                if expression_contains_embedded_call(expression) {
-                    return true;
-                }
-                for case in cases {
-                    statements.push(&case.body);
-                }
-            }
-            C0Statement::Skip
-            | C0Statement::Break
-            | C0Statement::Continue
-            | C0Statement::Declare { .. }
-            | C0Statement::DeclareStructValue { .. } => {}
-        }
-    }
-    false
-}
-
 fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosition> {
     match expression {
         C0Expression::Call {
@@ -8262,75 +10469,6 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
     }
-}
-
-fn expression_contains_embedded_call(expression: &C0Expression) -> bool {
-    let mut expressions = vec![expression];
-    while let Some(expression) = expressions.pop() {
-        match expression {
-            C0Expression::Call { .. } => return true,
-            C0Expression::Cast { expression, .. }
-            | C0Expression::FloatNegate(expression)
-            | C0Expression::FloatClassification { expression, .. }
-            | C0Expression::AddressOf(expression)
-            | C0Expression::PointerOffsetBytes {
-                pointer: expression,
-                ..
-            }
-            | C0Expression::Not(expression)
-            | C0Expression::BitwiseNot(expression)
-            | C0Expression::Load(expression) => expressions.push(expression),
-            C0Expression::AggregateAddress { pointer, .. }
-            | C0Expression::UnionAddress { pointer, .. }
-            | C0Expression::Field { pointer, .. }
-            | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
-            C0Expression::Conditional {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                expressions.push(condition);
-                expressions.push(then_branch);
-                expressions.push(else_branch);
-            }
-            C0Expression::LessThan(left, right)
-            | C0Expression::LessEqual(left, right)
-            | C0Expression::GreaterThan(left, right)
-            | C0Expression::GreaterEqual(left, right)
-            | C0Expression::Equal(left, right)
-            | C0Expression::NotEqual(left, right)
-            | C0Expression::And(left, right)
-            | C0Expression::Or(left, right)
-            | C0Expression::Add(left, right)
-            | C0Expression::Subtract(left, right)
-            | C0Expression::Multiply(left, right)
-            | C0Expression::Divide(left, right)
-            | C0Expression::Remainder(left, right)
-            | C0Expression::ShiftLeft(left, right)
-            | C0Expression::ShiftRight(left, right)
-            | C0Expression::BitwiseAnd(left, right)
-            | C0Expression::BitwiseOr(left, right)
-            | C0Expression::BitwiseXor(left, right)
-            | C0Expression::Index(left, right) => {
-                expressions.push(left);
-                expressions.push(right);
-            }
-            C0Expression::Void
-            | C0Expression::Variable(_)
-            | C0Expression::FunctionAddress(_)
-            | C0Expression::Int32Literal(_)
-            | C0Expression::UInt8Literal(_)
-            | C0Expression::UInt32Literal(_)
-            | C0Expression::Int64Literal(_)
-            | C0Expression::UInt64Literal(_)
-            | C0Expression::Float32Literal(_)
-            | C0Expression::Float64Literal(_)
-            | C0Expression::SizeOfStruct { .. }
-            | C0Expression::SizeOfUnion { .. }
-            | C0Expression::SizeOfType { .. } => {}
-        }
-    }
-    false
 }
 
 fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {

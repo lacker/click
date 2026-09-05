@@ -34,6 +34,10 @@ records the current C0 boundary.
 
 Current projects:
 
+- `modeled-binary-tree/` fixes a plain binary-tree implementation for the
+  heap-derived in-order sequence model, membership, rotation-preservation, and
+  structural-termination work required by MVR; its sidecar currently imports
+  the C without claiming those proofs.
 - `arena/` fixes the C0 implementation boundary for a first-fit allocator
   whose regions will exercise user-defined suballocation and lifetime
   ownership; its current sidecar is a parser-only scaffold tracked by the

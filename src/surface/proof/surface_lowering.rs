@@ -319,6 +319,32 @@ impl<'a> Proof<'a> {
         })
     }
 
+    pub(super) fn substitute_goal_surface_bindings_in_expression(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
+        let Some(goal) = self.proposition_obligation() else {
+            return Ok(expression.clone());
+        };
+        let substitutions = contract_expression_referenced_names(expression)
+            .into_iter()
+            .filter_map(|name| {
+                goal.surface_bindings
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect::<BTreeMap<_, _>>();
+        if substitutions.is_empty() {
+            return Ok(expression.clone());
+        }
+        substitute_contract_expression(expression, &substitutions).map_err(|message| {
+            self.step_error(format!(
+                "could not substitute expression-goal binders: {message}"
+            ))
+        })
+    }
+
     pub(super) fn substitute_fixed_state_locals_in_expression(
         &self,
         expression: &ContractExpression,

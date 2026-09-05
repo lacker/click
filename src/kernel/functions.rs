@@ -20,11 +20,16 @@ enum AllocationContinuity {
     Inconsistent,
 }
 
-fn lower_memory_range_under_assumptions(
-    range: CMemoryRange,
-    assumptions: &PureFactContext,
-) -> CMemoryRange {
-    assumptions.lower_memory_range_under_assumptions(&range)
+fn canonical_memory_range(range: CMemoryRange) -> CMemoryRange {
+    let base = Pointer {
+        block: range.base().block.clone(),
+        offset: crate::kernel::eval::canonical_offset_term(&range.base().offset),
+    };
+    range.with_bounds(
+        base,
+        crate::kernel::eval::canonical_term(range.start()),
+        crate::kernel::eval::canonical_term(range.end()),
+    )
 }
 
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
@@ -959,21 +964,17 @@ fn execute_verified_function_rule(
                     }
                     effective_assumptions =
                         assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
-                    // Lower the recorded footprint while its defining
-                    // equalities (earlier callees' ensures, path facts) are
-                    // in scope: every later frame query against this range
-                    // then matches entry-vocabulary facts syntactically
-                    // instead of re-proving the lowering per query. See the
-                    // creation-time lowering design in
-                    // issues/indexed-resource-algebra-avoids-pairwise-context-work.md.
-                    mutable_ranges.push(lower_memory_range_under_assumptions(
+                    // The call derivation and its effect summary share one
+                    // assumption-free canonical footprint. Proof-specific
+                    // vocabulary belongs in an explicit derived view, not in
+                    // the stored identity of the call.
+                    mutable_ranges.push(canonical_memory_range(
                         CMemoryRange::new_with_element_width(
                             segment.base,
                             segment.start,
                             segment.end,
                             element_width,
                         ),
-                        &effective_assumptions,
                     ))
                 }
                 Err(message) => {
@@ -1241,6 +1242,30 @@ fn add_verified_function_ensure_facts(
                 &ensure_path.facts,
                 &[],
             )));
+            let mut specialized_assumptions = assumptions_with_path_context(
+                &ensure_assumptions,
+                &ensure_path.facts,
+                &ensure_path.obligations,
+            );
+            let mut specialized = ensure_path.proposition.clone();
+            let mut specialized_any_premise = false;
+            while let Proposition::Implies(premise, body) = specialized {
+                if !specialized_assumptions.proves(&premise) {
+                    specialized = Proposition::Implies(premise, body);
+                    break;
+                }
+                specialized_assumptions =
+                    specialized_assumptions.assume_proposition((*premise).clone());
+                specialized = *body;
+                specialized_any_premise = true;
+            }
+            if specialized_any_premise {
+                facts.push(ExecutionPureFact::certified(wrap_path_context(
+                    specialized,
+                    &ensure_path.facts,
+                    &[],
+                )));
+            }
             add_normalized_verified_ensure_facts(
                 facts,
                 &ensure_path.proposition,
@@ -1642,11 +1667,13 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // and make pointer preconditions impossible to lower.
         let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())
             .expect("function arguments were type-checked before building contract views");
-        state.locals.set_typed_volatile(
+        let value = value.with_pointer_pointee_volatile(parameter.pointee_is_volatile());
+        state.locals.set_typed_with_qualifiers(
             parameter.name().to_string(),
             value.clone(),
             parameter.c_type(),
             parameter.is_volatile(),
+            parameter.pointee_is_volatile(),
         );
         if let CValue::Pointer(pointer) = &value {
             let element_width = parameter
@@ -2042,26 +2069,29 @@ pub(super) fn bind_c_function_arguments(
             );
             continue;
         }
-        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())?;
+        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())?
+            .with_pointer_pointee_volatile(parameter.pointee_is_volatile());
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             callee_state.memory = callee_state
                 .memory
                 .with_block(slot.block.clone(), value.byte_width())
                 .store(slot.clone(), value.clone());
-            callee_state.locals.set_typed_volatile_at(
+            callee_state.locals.set_typed_qualified(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 slot,
                 parameter.is_volatile(),
+                parameter.pointee_is_volatile(),
             );
         } else {
-            callee_state.locals.set_typed_volatile(
+            callee_state.locals.set_typed_with_qualifiers(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
                 parameter.is_volatile(),
+                parameter.pointee_is_volatile(),
             );
         }
     }
@@ -2213,6 +2243,74 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for global_aggregate in function.global_aggregates() {
+        let slot = CMemory::global_pointer(global_aggregate.kernel_name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .with_block(slot.block.clone(), global_aggregate.layout().size_bytes());
+            state.memory =
+                zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate.initializers(),
+            );
+        }
+        state.locals.set_aggregate_object_at(
+            global_aggregate.kernel_name().to_string(),
+            global_aggregate.layout().clone(),
+            slot.clone(),
+        );
+        if global_aggregate.kernel_name() != global_aggregate.source_name()
+            && !state.locals.contains_name(global_aggregate.source_name())
+        {
+            state.locals.set_aggregate_object_at(
+                global_aggregate.source_name().to_string(),
+                global_aggregate.layout().clone(),
+                slot,
+            );
+        }
+    }
+    for global_aggregate_array in function.global_aggregate_arrays() {
+        let slot = CMemory::global_pointer(global_aggregate_array.kernel_name());
+        let bytes = global_aggregate_array
+            .length()
+            .checked_mul(global_aggregate_array.layout().size_bytes())
+            .expect("validated C global aggregate array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = zero_aggregate_array_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate_array.layout(),
+                global_aggregate_array.length(),
+            );
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                global_aggregate_array.initializers(),
+            );
+        }
+        state.locals.set_array_object_at(
+            global_aggregate_array.kernel_name().to_string(),
+            CType::UInt8,
+            bytes,
+            slot.clone(),
+        );
+        if global_aggregate_array.kernel_name() != global_aggregate_array.source_name()
+            && !state
+                .locals
+                .contains_name(global_aggregate_array.source_name())
+        {
+            state.locals.set_array_object_at(
+                global_aggregate_array.source_name().to_string(),
+                CType::UInt8,
+                bytes,
+                slot,
+            );
+        }
+    }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         if !state.memory.has_block(&slot.block) {
@@ -2278,7 +2376,194 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             );
         }
     }
+    for static_aggregate in function.static_aggregates() {
+        let slot = CMemory::static_pointer(function.name(), static_aggregate.kernel_name());
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state
+                .memory
+                .clone()
+                .with_block(slot.block.clone(), static_aggregate.layout().size_bytes());
+            state.memory =
+                zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate.initializers(),
+            );
+        }
+        state.locals.set_aggregate_object_at(
+            static_aggregate.kernel_name().to_string(),
+            static_aggregate.layout().clone(),
+            slot.clone(),
+        );
+        if static_aggregate.kernel_name() != static_aggregate.source_name()
+            && !state.locals.contains_name(static_aggregate.source_name())
+        {
+            state.locals.set_aggregate_object_at(
+                static_aggregate.source_name().to_string(),
+                static_aggregate.layout().clone(),
+                slot,
+            );
+        }
+    }
+    for static_aggregate_array in function.static_aggregate_arrays() {
+        let slot = CMemory::static_pointer(function.name(), static_aggregate_array.kernel_name());
+        let bytes = static_aggregate_array
+            .length()
+            .checked_mul(static_aggregate_array.layout().size_bytes())
+            .expect("validated C static aggregate array size");
+        if !state.memory.has_block(&slot.block) {
+            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = zero_aggregate_array_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate_array.layout(),
+                static_aggregate_array.length(),
+            );
+            state.memory = initialize_aggregate_fields(
+                state.memory.clone(),
+                &slot,
+                static_aggregate_array.initializers(),
+            );
+        }
+        state.locals.set_array_object_at(
+            static_aggregate_array.kernel_name().to_string(),
+            CType::UInt8,
+            bytes,
+            slot.clone(),
+        );
+        if static_aggregate_array.kernel_name() != static_aggregate_array.source_name()
+            && !state
+                .locals
+                .contains_name(static_aggregate_array.source_name())
+        {
+            state.locals.set_array_object_at(
+                static_aggregate_array.source_name().to_string(),
+                CType::UInt8,
+                bytes,
+                slot,
+            );
+        }
+    }
     state
+}
+
+fn zero_aggregate_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+) -> CMemory {
+    for field in layout.fields() {
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64
+            | CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Float32Pointer
+            | CType::Float64Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer
+            | CType::Float32PointerPointer
+            | CType::Float64PointerPointer => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Float32Array(length) => (CType::Float32, length),
+            CType::Float64Array(length) => (CType::Float64, length),
+            _ => continue,
+        };
+        let zero = match element_type {
+            CType::Int16 => int16(0),
+            CType::Int32 => int32(0),
+            CType::UInt8 => uint8(0),
+            CType::UInt16 => uint16(0),
+            CType::UInt32 => uint32(0),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Constant(0)),
+            CType::UInt64 => CValue::UInt64(Bitvector32Term::Constant(0)),
+            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
+            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Float32Pointer
+            | CType::Float64Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer
+            | CType::Float32PointerPointer
+            | CType::Float64PointerPointer => CValue::typed_pointer(Pointer::null(), element_type),
+            CType::Int16Array(_)
+            | CType::Int32Array(_)
+            | CType::UInt8Array(_)
+            | CType::UInt16Array(_)
+            | CType::UInt32Array(_)
+            | CType::Int64Array(_)
+            | CType::UInt64Array(_)
+            | CType::Float32Array(_)
+            | CType::Float64Array(_)
+            | CType::Void
+            | CType::FunctionPointer(_) => {
+                continue;
+            }
+            CType::Int16Pointer
+            | CType::UInt16Pointer
+            | CType::UInt32Pointer
+            | CType::Int64Pointer
+            | CType::UInt64Pointer
+            | CType::Int16PointerPointer
+            | CType::UInt16PointerPointer
+            | CType::UInt32PointerPointer
+            | CType::Int64PointerPointer
+            | CType::UInt64PointerPointer => continue,
+        };
+        for index in 0..element_count {
+            let offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate zero field offset"),
+                )
+                .expect("validated aggregate zero field offset");
+            memory = memory.store(base.offset_by_bytes(offset), zero.clone());
+        }
+    }
+    memory
+}
+
+fn initialize_aggregate_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    initializers: &[CAggregateInitializer],
+) -> CMemory {
+    for initializer in initializers {
+        memory = memory.store(
+            base.offset_by_bytes(initializer.offset_bytes()),
+            initializer.value().clone(),
+        );
+    }
+    memory
+}
+
+fn zero_aggregate_array_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+    length: u32,
+) -> CMemory {
+    for index in 0..length {
+        let element_base = base.offset_by_bytes(
+            index
+                .checked_mul(layout.size_bytes())
+                .expect("validated aggregate array zero offset"),
+        );
+        memory = zero_aggregate_fields(memory, &element_base, layout);
+    }
+    memory
 }
 
 /// Copy the modeled cells of an address-backed aggregate into a distinct
@@ -2622,7 +2907,7 @@ fn prepare_function_resource_transfer(
             resource,
             CResourceFact::View(CResource::Memory(range))
                 if range.base().block.starts_with("local:")
-                    && caller_state.memory().has_block(&range.base().block)
+                    && callee_state.memory().has_block(&range.base().block)
         ) {
             continue;
         }

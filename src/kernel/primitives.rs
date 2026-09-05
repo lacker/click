@@ -235,6 +235,7 @@ pub struct Pointer {
 pub struct CPointerValue {
     pointer: Pointer,
     c_type: CType,
+    pointee_volatile: bool,
 }
 
 impl CPointerValue {
@@ -243,7 +244,11 @@ impl CPointerValue {
             c_type.is_pointer(),
             "C pointer values require a pointer type"
         );
-        Self { pointer, c_type }
+        Self {
+            pointer,
+            c_type,
+            pointee_volatile: false,
+        }
     }
 
     pub(crate) fn pointer(&self) -> &Pointer {
@@ -258,8 +263,21 @@ impl CPointerValue {
         self.c_type
     }
 
+    pub(crate) fn pointee_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
     pub(crate) fn with_type(self, c_type: CType) -> Self {
-        Self::new(self.pointer, c_type)
+        Self {
+            pointer: self.pointer,
+            c_type,
+            pointee_volatile: self.pointee_volatile,
+        }
+    }
+
+    pub(crate) fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
+        self
     }
 
     pub(crate) fn replace_pointer(&mut self, pointer: Pointer) {
@@ -404,6 +422,7 @@ pub struct CLValue {
     pub(super) storage: CLValueStorage,
     pub(super) value_type: CType,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -790,6 +809,7 @@ pub enum CStatement {
         name: String,
         c_type: CType,
         volatile: bool,
+        pointee_volatile: bool,
     },
     /// Declare an address-backed scalar-only aggregate. Aggregate values are
     /// not runtime `CValue`s; their local binding exposes the block base so
@@ -926,6 +946,7 @@ pub struct CParameter {
     pub(super) c_type: CType,
     pub(super) aggregate_layout: Option<CAggregateLayout>,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
 }
 
 /// A linked file-scope scalar. Globals use one stable memory block across all
@@ -949,6 +970,29 @@ pub struct CGlobalArray {
     pub(super) initial_values: Vec<CValue>,
 }
 
+/// A linked file-scope aggregate. The layout describes the typed leaf cells
+/// that occupy the stable global block; aggregate values themselves have no
+/// scalar `CValue` representation.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobalAggregate {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
+/// A linked file-scope array of supported struct aggregates. Initializer
+/// offsets are relative to the complete array block; omitted cells are
+/// zero-filled when the block is first materialized.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CGlobalAggregateArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) length: u32,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CStaticLocal {
     pub(super) source_name: String,
@@ -965,6 +1009,38 @@ pub struct CStaticArray {
     pub(super) element_type: CType,
     pub(super) length: u32,
     pub(super) initial_values: Vec<CValue>,
+}
+
+/// A function-local aggregate with one stable function-qualified block.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticAggregate {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
+/// A function-local static array of supported struct aggregates.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CStaticAggregateArray {
+    pub(super) source_name: String,
+    pub(super) kernel_name: String,
+    pub(super) layout: CAggregateLayout,
+    pub(super) length: u32,
+    pub(super) initializers: Vec<CAggregateInitializer>,
+}
+
+/// Static-storage metadata shared by all copies of a function descriptor.
+/// Keeping the collections behind the existing static-storage pointer avoids
+/// increasing the size of the recursive `Proposition` enum's
+/// function-execution variants.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CFunctionStaticStorage {
+    pub(super) static_arrays: Vec<CStaticArray>,
+    pub(super) global_aggregates: Vec<CGlobalAggregate>,
+    pub(super) global_aggregate_arrays: Vec<CGlobalAggregateArray>,
+    pub(super) static_aggregates: Vec<CStaticAggregate>,
+    pub(super) static_aggregate_arrays: Vec<CStaticAggregateArray>,
 }
 
 /// A function's embedded C string constant. The bytes include the trailing
@@ -1001,6 +1077,32 @@ impl CAggregateField {
 
     pub fn c_type(&self) -> CType {
         self.c_type
+    }
+}
+
+/// One explicitly initialized scalar cell in a static-storage aggregate.
+/// The aggregate materializer zero-fills the complete layout first, then
+/// applies these entries at their ABI-relative offsets.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateInitializer {
+    pub(super) offset_bytes: u32,
+    pub(super) value: CValue,
+}
+
+impl CAggregateInitializer {
+    pub fn new(offset_bytes: u32, value: CValue) -> Self {
+        Self {
+            offset_bytes,
+            value,
+        }
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn value(&self) -> &CValue {
+        &self.value
     }
 }
 
@@ -1051,7 +1153,7 @@ pub struct CFunction {
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) global_arrays: Vec<CGlobalArray>,
     pub(super) static_variables: Vec<CStaticLocal>,
-    pub(super) static_arrays: std::sync::Arc<Vec<CStaticArray>>,
+    pub(super) static_storage: std::sync::Arc<CFunctionStaticStorage>,
     pub(super) string_literals: Vec<CStringLiteral>,
 }
 
@@ -1413,16 +1515,19 @@ pub(super) enum CLocalBinding {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     UninitializedObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     GlobalObject {
         c_type: CType,
         slot: Pointer,
         volatile: bool,
+        pointee_volatile: bool,
     },
     ArrayObject {
         element_type: CType,
@@ -2413,6 +2518,41 @@ pub struct BitvectorEqualityDerivationStep {
     pub(super) premise: Proposition,
 }
 
+/// Target-directed evidence that two pointer offsets are equal by structural
+/// congruence and exact ground-int32 equality premises.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PointerOffsetCongruenceEvidence {
+    Exact,
+    Add {
+        first: Box<PointerOffsetCongruenceEvidence>,
+        second: Box<PointerOffsetCongruenceEvidence>,
+        swapped: bool,
+    },
+    Int32Scaled {
+        byte_width: i64,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+    Int64Scaled {
+        byte_width: i64,
+        unsigned: bool,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+    ElementIndex {
+        byte_width: u32,
+        path: Vec<BitvectorEqualityDerivationStep>,
+    },
+}
+
+/// Evidence that two load variables name one cell because their
+/// registered origins have the same memory epoch and block and congruent
+/// offsets. The original variables remain distinct context-free names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LoadAddressCongruenceEvidence {
+    pub(super) left_pointer: Pointer,
+    pub(super) right_pointer: Pointer,
+    pub(super) offset: PointerOffsetCongruenceEvidence,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PropositionDerivationRule {
     ContextFree,
@@ -2476,16 +2616,6 @@ pub(super) enum PropositionDerivationRule {
         disjunction: Proposition,
         cases: Vec<PropositionDerivation>,
     },
-    /// Case analysis on an assumed upper bound: `variable <= pivot` splits
-    /// into `variable < pivot` and `variable == pivot`. `bound` is the exact
-    /// assumed condition that licenses the split.
-    UpperBoundSplit {
-        bound: ConditionTerm,
-        variable: Variable,
-        pivot: Bitvector32Term,
-        below: Box<PropositionDerivation>,
-        at: Box<PropositionDerivation>,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2546,9 +2676,9 @@ pub(super) struct ForallInt32InstantiationEvidence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
+    LoadAddressCongruence(LoadAddressCongruenceEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
-    BitvectorEqualityRewritePaths(Vec<Vec<BitvectorEqualityDerivationStep>>),
     ForallInt32Instantiation(Box<ForallInt32InstantiationEvidence>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Int32IncrementUpperBound(SignedOrderDerivationStep),

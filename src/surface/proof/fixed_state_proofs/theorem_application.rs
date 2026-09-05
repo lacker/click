@@ -10,25 +10,21 @@ use super::*;
 /// shapes outside that index retain the old exact comparison semantics, but
 /// walk every leading quantifier instead of stopping at an opaque depth.
 fn nested_quantified_candidate_equivalent(left: &Proposition, right: &Proposition) -> bool {
-    // The alpha-invariant index is complete for its supported quantified
-    // fragment. Check it before the legacy one-binder substitution: besides
-    // avoiding needless work, this keeps deeply nested candidates off the
-    // recursive substitution path.
-    let left_key = quantified_equivalence_index_key(left);
-    let right_key = quantified_equivalence_index_key(right);
-    if let (Some(left_key), Some(right_key)) = (&left_key, &right_key) {
-        return left_key == right_key;
+    let indexed = (
+        quantified_equivalence_index_key(left),
+        quantified_equivalence_index_key(right),
+    );
+    if let (Some(left), Some(right)) = &indexed {
+        return left == right;
     }
-
-    // Preserve the old common-case behavior for shapes that are not
-    // represented by the index.
+    // Preserve the old common-case cost: most candidates differ in at most
+    // their outer binder and need only one exact substitution.
     if quantified_binder_equivalent(left, right) {
-        true
-    } else {
-        match (left_key, right_key) {
-            (None, None) => nested_quantified_exact_fallback(left, right),
-            _ => false,
-        }
+        return true;
+    }
+    match indexed {
+        (None, None) => nested_quantified_exact_fallback(left, right),
+        _ => false,
     }
 }
 

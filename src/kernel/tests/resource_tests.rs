@@ -158,6 +158,42 @@ fn owned_resource_invariant_theorems_retain_context_premises() {
 }
 
 #[test]
+fn owned_resource_invariant_theorems_do_not_search_the_context() {
+    let quantity = Bitvector32Term::Variable(Variable(912_010));
+    let middle = Bitvector32Term::Variable(Variable(912_011));
+    let count = Bitvector32Term::Variable(Variable(912_012));
+    let resource = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "symbolic_no_search".to_string(),
+            arguments: vec![int32(7)],
+        },
+        quantity.clone(),
+    );
+    let state = CState::new()
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(resource.clone()))
+        .with_counted_population("symbolic_no_search", vec![int32(7)], count.clone());
+    let claim = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(quantity.clone(), count.clone()),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(quantity, middle.clone()),
+            true,
+        ))
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(middle, count),
+            true,
+        ));
+
+    assert!(assumptions.proves(&claim));
+    assert!(
+        prove_owned_resource_count_lower_bound(&state, &resource, &claim, &assumptions).is_none(),
+        "a resource theorem constructor must not turn an unrecorded contextual search into authority"
+    );
+}
+
+#[test]
 fn resource_context_fork_updates_are_persistent_and_logarithmic() {
     for size in [16_usize, 64, 256, 1024, 4096] {
         let context = unrelated_token_context(size);

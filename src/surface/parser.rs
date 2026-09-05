@@ -14,12 +14,21 @@ pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
 
-pub(super) fn parse_with_layouts(
+pub(super) fn parse_with_layouts_and_aggregate_objects(
     source: &str,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
+    aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
 ) -> Result<ClickFile, ClickError> {
-    Parser::new_with_layouts(source, struct_layouts, union_layouts)?.parse_file()
+    Parser::new_with_layouts_and_aggregate_objects(
+        source,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects_by_function,
+        aggregate_array_objects_by_function,
+    )?
+    .parse_file()
 }
 
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
@@ -144,6 +153,9 @@ struct Parser {
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
+    aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+    current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
 }
 
@@ -257,6 +269,22 @@ impl Parser {
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
         union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     ) -> Result<Self, ClickError> {
+        Self::new_with_layouts_and_aggregate_objects(
+            source,
+            struct_layouts,
+            union_layouts,
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+    }
+
+    fn new_with_layouts_and_aggregate_objects(
+        source: &str,
+        struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+        union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
+        aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+        aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+    ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
@@ -267,6 +295,9 @@ impl Parser {
             struct_layouts,
             union_layouts,
             current_struct_params: BTreeMap::new(),
+            aggregate_objects_by_function,
+            aggregate_array_objects_by_function,
+            current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
         })
     }
@@ -756,8 +787,29 @@ impl Parser {
         let mut ensures = Vec::new();
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
-        let previous_struct_array_params =
-            std::mem::replace(&mut self.current_struct_array_params, struct_array_params);
+        let aggregate_objects = self
+            .aggregate_objects_by_function
+            .get(signature.name())
+            .cloned()
+            .unwrap_or_default();
+        let previous_aggregate_objects =
+            std::mem::replace(&mut self.current_aggregate_objects, aggregate_objects);
+        let mut visible_struct_array_params = struct_array_params;
+        if let Some(aggregate_array_objects) = self
+            .aggregate_array_objects_by_function
+            .get(signature.name())
+        {
+            visible_struct_array_params.extend(
+                aggregate_array_objects
+                    .iter()
+                    .filter(|name| !parameter_names.contains(*name))
+                    .cloned(),
+            );
+        }
+        let previous_struct_array_params = std::mem::replace(
+            &mut self.current_struct_array_params,
+            visible_struct_array_params,
+        );
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("let") => {
@@ -956,6 +1008,7 @@ impl Parser {
             }
         }
         self.current_struct_params = previous_struct_params;
+        self.current_aggregate_objects = previous_aggregate_objects;
         self.current_struct_array_params = previous_struct_array_params;
 
         let requires: Vec<Requirement> = requires
@@ -2804,9 +2857,11 @@ impl Parser {
             (ContractExpression::CFragment(base.clone()), base)
         };
         let mut struct_name = match &surface_base {
-            ContractExpression::CFragment(CExpression::Variable(name)) => {
-                self.current_struct_params.get(name).cloned()
-            }
+            ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_struct_params
+                .get(name)
+                .or_else(|| self.current_aggregate_objects.get(name))
+                .cloned(),
             _ => None,
         };
         let mut union_name: Option<String> = None;
@@ -2962,23 +3017,27 @@ impl Parser {
                 next_union_name,
                 next_array_element_width,
                 next_array_shape,
+                field_memory_pointer,
             ) = if let Some(base_union_name) = &union_name
                 && self.union_layouts.contains_key(base_union_name)
             {
                 let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
                 let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                let field_memory_pointer = field_has_direct_memory_place(&field);
                 (
                     lowered_field_expression(pointer, &field),
                     field.struct_name,
                     None,
                     None,
                     None,
+                    field_memory_pointer,
                 )
             } else if let Some(base_struct_name) = &struct_name
                 && self.struct_layouts.contains_key(base_struct_name)
             {
                 let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                 let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                let field_memory_pointer = field_has_direct_memory_place(&field);
                 indexed_scalar_field = scalar_array_field_element(&field)
                     .map(|(width, ty)| (field_name.clone(), width, ty));
                 (
@@ -2987,6 +3046,7 @@ impl Parser {
                     field.union_name,
                     field.array_element_width,
                     field.array_shape,
+                    field_memory_pointer,
                 )
             } else {
                 indexed_scalar_field = None;
@@ -2996,14 +3056,26 @@ impl Parser {
                     None,
                     None,
                     None,
+                    false,
                 )
+            };
+            let range_base = if field_memory_pointer
+                && self.peek() == Some(&Token::LBracket)
+                && self.contract_bracket_is_range()
+            {
+                match &lowered {
+                    CExpression::TypedLoad { pointer, .. } => Some((**pointer).clone()),
+                    _ => None,
+                }
+            } else {
+                None
             };
             surface_base = ContractExpression::Field {
                 base: Box::new(surface_base),
                 field: field_name,
                 lowered: lowered.clone(),
             };
-            base = lowered;
+            base = range_base.unwrap_or(lowered);
             struct_name = next_struct_name;
             union_name = next_union_name;
             struct_array_element_width = next_array_element_width;
@@ -3316,7 +3388,10 @@ impl Parser {
         field_name: &str,
     ) -> Result<Option<C0Expression>, ClickError> {
         let struct_name = match &base {
-            C0Expression::Variable(base_name) => self.current_struct_params.get(base_name),
+            C0Expression::Variable(base_name) => self
+                .current_struct_params
+                .get(base_name)
+                .or_else(|| self.current_aggregate_objects.get(base_name)),
             C0Expression::Field {
                 field_struct_name, ..
             } => field_struct_name.as_ref(),
@@ -3374,7 +3449,11 @@ impl Parser {
         let CExpression::Variable(base_name) = base else {
             return Ok(None);
         };
-        let Some(struct_name) = self.current_struct_params.get(base_name) else {
+        let Some(struct_name) = self
+            .current_struct_params
+            .get(base_name)
+            .or_else(|| self.current_aggregate_objects.get(base_name))
+        else {
             return Ok(None);
         };
         if !self.struct_layouts.contains_key(struct_name) {
@@ -3654,9 +3733,11 @@ impl Parser {
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_primary()?;
         let mut struct_name = match &expression {
-            ContractExpression::CFragment(CExpression::Variable(name)) => {
-                self.current_struct_params.get(name).cloned()
-            }
+            ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_struct_params
+                .get(name)
+                .or_else(|| self.current_aggregate_objects.get(name))
+                .cloned(),
             _ => None,
         };
         let mut union_name: Option<String> = None;
@@ -4593,6 +4674,24 @@ fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExp
             value_type: field.c_type.to_kernel_type(),
         }
     }
+}
+
+fn field_has_direct_memory_place(field: &ResolvedField) -> bool {
+    if field.struct_name.is_some() || field.union_name.is_some() {
+        return false;
+    }
+    matches!(
+        field.c_type,
+        C0Type::Int16
+            | C0Type::Int32
+            | C0Type::UInt8
+            | C0Type::UInt16
+            | C0Type::UInt32
+            | C0Type::Int64
+            | C0Type::UInt64
+            | C0Type::Int32Array(_)
+            | C0Type::UInt8Array(_)
+    )
 }
 
 fn scalar_array_field_element(field: &ResolvedField) -> Option<(u32, CType)> {
