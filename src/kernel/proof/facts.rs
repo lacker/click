@@ -909,6 +909,9 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         Bitvector32Term::MemoryLoad(_, pointer) => {
             collect_pointer_offset_bitvector_atoms(&pointer.offset, atoms)
         }
+        Bitvector32Term::PointerAddress(pointer) => {
+            collect_pointer_offset_bitvector_atoms(&pointer.offset, atoms)
+        }
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_)

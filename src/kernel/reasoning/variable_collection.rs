@@ -1021,6 +1021,9 @@ pub(in crate::kernel) fn collect_bitvector_variables(
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_bitvector_variables(pointer, variables);
         }
+        Bitvector32Term::PointerAddress(pointer) => {
+            collect_pointer_bitvector_variables(pointer, variables);
+        }
     }
 }
 

@@ -696,6 +696,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
             // the base expression (for example the owner parameter), not to
             // that index.
             Bitvector32Term::MemoryLoad(_, _) => {}
+            Bitvector32Term::PointerAddress(_) => {}
         }
     }
 
@@ -868,6 +869,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                     pointer.as_ref().clone(),
                 ));
             }
+            Bitvector32Term::PointerAddress(_) => {}
             Bitvector32Term::Variable(variable) => {
                 if let Some((_, pointer)) =
                     crate::kernel::eval::registered_load_for_variable(variable)

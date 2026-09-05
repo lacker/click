@@ -436,6 +436,7 @@ pub(super) fn describe_runtime_error(
             format!("unknown function `{name}`")
         }
         crate::kernel::CRuntimeError::TypeMismatch => "type mismatch".to_string(),
+        crate::kernel::CRuntimeError::PointerConversion(message) => message.clone(),
         crate::kernel::CRuntimeError::IndeterminatePointeeType => {
             "pointer operation has no known pointee type".to_string()
         }
@@ -1444,6 +1445,12 @@ pub(super) fn describe_bitvector_with_context(
         ),
         Bitvector32Term::MemoryLoad(_, pointer) => {
             format!("load({})", describe_pointer(pointer, parameters, arguments))
+        }
+        Bitvector32Term::PointerAddress(pointer) => {
+            format!(
+                "address({})",
+                describe_pointer(pointer, parameters, arguments)
+            )
         }
     }
 }

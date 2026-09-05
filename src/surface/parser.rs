@@ -4066,6 +4066,19 @@ impl Parser {
             return Ok(ContractExpression::CBinding(name));
         }
 
+        if self.peek_ident() == Some("address") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let pointer = self.parse_contract_expression()?;
+            let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
+                return Err(self.error("address expects a current C pointer expression"));
+            };
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(pointer),
+                target_type: CType::UInt64,
+            }));
+        }
+
         if self.peek_ident() == Some("byte_offset") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
             let pointer = self.parse_contract_expression()?;

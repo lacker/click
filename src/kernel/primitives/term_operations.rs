@@ -133,6 +133,7 @@ impl Bitvector32Term {
             Self::Constant(value) => Some(*value),
             Self::Variable(_)
             | Self::MemoryLoad(_, _)
+            | Self::PointerAddress(_)
             | Self::PureFunctionApplication { .. }
             | Self::Int64Constant(_)
             | Self::UInt64Constant(_)
@@ -1711,9 +1712,40 @@ impl ConditionTerm {
         }
     }
 
+    /// Two pointer addresses are equal exactly when their pointers are, and
+    /// an address is zero exactly when its pointer is null. Any other
+    /// address-versus-integer comparison stays undecided: an integer with no
+    /// pointer origin never proves or refutes identity with an allocation.
+    pub(crate) fn address_equality_as_pointer_equality(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<Self> {
+        match (left, right) {
+            (Bitvector32Term::PointerAddress(left), Bitvector32Term::PointerAddress(right)) => {
+                Some(Self::pointer_equal(
+                    left.as_ref().clone(),
+                    right.as_ref().clone(),
+                ))
+            }
+            (Bitvector32Term::PointerAddress(pointer), other)
+            | (other, Bitvector32Term::PointerAddress(pointer))
+                if other.uint64_as_const() == Some(0) =>
+            {
+                Some(Self::pointer_equal(
+                    pointer.as_ref().clone(),
+                    Pointer::null(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn int64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         if left == right {
             return Self::Constant(true);
+        }
+        if let Some(condition) = Self::address_equality_as_pointer_equality(&left, &right) {
+            return condition;
         }
         match (left.int64_as_const(), right.int64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left == right),
@@ -1724,6 +1756,9 @@ impl ConditionTerm {
     pub(crate) fn uint64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         if left == right {
             return Self::Constant(true);
+        }
+        if let Some(condition) = Self::address_equality_as_pointer_equality(&left, &right) {
+            return condition;
         }
         match (left.uint64_as_const(), right.uint64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left == right),

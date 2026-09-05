@@ -310,6 +310,10 @@ id = "c0.expression.cast"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.pointer-integer-cast"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.conditional"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
@@ -428,6 +432,10 @@ path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
 id = "language.word.abstract"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.address"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]

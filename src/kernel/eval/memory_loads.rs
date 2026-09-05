@@ -1250,6 +1250,7 @@ fn substitute_load_variables(
                         }
                         None => term_results.push(term.clone()),
                     },
+                    Bitvector32Term::PointerAddress(_) => term_results.push(term.clone()),
                     Bitvector32Term::Add(left, right) => {
                         visit_binary!(Bitvector32Term::Add, left, right, tasks)
                     }
@@ -1855,6 +1856,11 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_) => false,
         Bitvector32Term::MemoryLoad(_, _) => true,
+        Bitvector32Term::PointerAddress(pointer) => pointer
+            .offset
+            .scaled_values()
+            .into_iter()
+            .any(term_mentions_a_memory_load),
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)

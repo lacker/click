@@ -1802,6 +1802,7 @@ fn c0_syntax_accepts_scalar_casts_and_conditional_expressions() {
                 syntax::C0Expression::Cast {
                     c_type: syntax::C0Type::Int32,
                     expression,
+                    ..
                 } if matches!(expression.as_ref(), syntax::C0Expression::Variable(name) if name == "left")
             )
             && matches!(
@@ -1817,16 +1818,56 @@ fn c0_syntax_accepts_scalar_casts_and_conditional_expressions() {
 fn c0_syntax_rejects_non_scalar_casts() {
     let error = syntax::parse_function(
         r#"
-        int32 bad(int32* value) {
-            return (int32*) value;
+        struct node {
+            int32 value;
+        };
+
+        int32 bad(struct node* node) {
+            return (struct node) node;
         }
         "#,
     )
-    .expect_err("pointer casts are outside the scalar cast subset");
+    .expect_err("aggregate casts are outside the cast subset");
     assert!(
         error
             .message()
-            .contains("scalar integer or floating-point values")
+            .contains("scalar integer or floating-point values, or object pointer types")
+    );
+}
+
+#[test]
+fn c0_syntax_parses_object_pointer_casts_with_struct_tags() {
+    let function = syntax::parse_function(
+        r#"
+        struct node {
+            int32 value;
+            unsigned long word;
+        };
+
+        int32 through_word(struct node* node) {
+            node->word = (unsigned long) node;
+            return ((struct node*) node->word)->value;
+        }
+        "#,
+    )
+    .expect("pointer casts to and from `unsigned long` should parse");
+    let syntax::C0Statement::Seq(store, _) = function.body() else {
+        panic!("expected a store followed by a return");
+    };
+    assert!(
+        matches!(
+            store.as_ref(),
+            syntax::C0Statement::Store { value, .. }
+                if matches!(
+                    value,
+                    syntax::C0Expression::Cast {
+                        c_type: syntax::C0Type::UInt64,
+                        struct_name: None,
+                        ..
+                    }
+                )
+        ),
+        "store value should be a cast to uint64: {store:?}"
     );
 }
 

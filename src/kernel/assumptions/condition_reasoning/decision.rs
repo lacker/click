@@ -1007,6 +1007,9 @@ impl PureFactContext {
             Bitvector32Term::MemoryLoad(memory, pointer) => {
                 Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
             }
+            Bitvector32Term::PointerAddress(pointer) => {
+                Bitvector32Term::PointerAddress(pointer.clone())
+            }
         }
     }
 

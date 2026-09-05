@@ -520,6 +520,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 Bitvector32Term::MemoryLoad(memory, pointer) => {
                     Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewrite_pointer(pointer)))
                 }
+                Bitvector32Term::PointerAddress(pointer) => {
+                    Bitvector32Term::PointerAddress(Box::new(rewrite_pointer(pointer)))
+                }
                 Bitvector32Term::Variable(_) => {
                     rewrite_through_load_variable(term, &rewrite_pointer)
                         .unwrap_or_else(|| term.clone())
@@ -1037,6 +1040,12 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     offset: rewrite_offset(&pointer.offset, from, to),
                 }),
             ),
+            Bitvector32Term::PointerAddress(pointer) => {
+                Bitvector32Term::PointerAddress(Box::new(Pointer {
+                    block: pointer.block.clone(),
+                    offset: rewrite_offset(&pointer.offset, from, to),
+                }))
+            }
             Bitvector32Term::Variable(_) => {
                 rewrite_through_load_variable(term, &|pointer| Pointer {
                     block: pointer.block.clone(),
@@ -1877,6 +1886,7 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
         | Bitvector32Term::Float64Binary { .. }
         | Bitvector32Term::RangeFold { .. }
         | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::MemoryLoad(_, _) => None,
         Bitvector32Term::Add(left, right) => {
             Some(simp_bitvector_const(left)?.wrapping_add(simp_bitvector_const(right)?))
@@ -2161,6 +2171,9 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
+        }
+        Bitvector32Term::PointerAddress(pointer) => {
+            Bitvector32Term::PointerAddress(pointer.clone())
         }
     }
 }

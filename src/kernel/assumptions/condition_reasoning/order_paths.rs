@@ -41,6 +41,10 @@ impl PureFactContext {
                     left.blocks_proven_distinct(right).then_some(false)
                 }
             }
+            ConditionTerm::Bitvector64Equal(left, right) => {
+                ConditionTerm::address_equality_as_pointer_equality(left, right)
+                    .and_then(|condition| self.decide(&condition))
+            }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {

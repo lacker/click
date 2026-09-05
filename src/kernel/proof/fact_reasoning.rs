@@ -54,6 +54,7 @@ fn signed_term_interval(
         }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::PureFunctionApplication { .. }
         | Bitvector32Term::Float32Negate(_)
         | Bitvector32Term::Float32Binary { .. }
@@ -309,6 +310,7 @@ fn collect_signed_affine_terms(
         }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::PureFunctionApplication { .. } => {
             let atom = crate::kernel::eval::canonical_term(term);
             let updated = terms
@@ -497,6 +499,7 @@ fn signed_affine_term_is_defined(
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::PureFunctionApplication { .. } => true,
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)

@@ -85,6 +85,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.null-pointer",
     "expression.address-of",
     "expression.cast",
+    "expression.pointer-integer-cast",
     "expression.conditional",
     "expression.sizeof-struct",
     "expression.sizeof-type",
@@ -1461,6 +1462,9 @@ pub enum C0Expression {
     Cast {
         expression: Box<C0Expression>,
         c_type: C0Type,
+        /// The struct tag of a pointer cast target, so field access through
+        /// the cast result resolves the same layout as a declared pointer.
+        struct_name: Option<String>,
     },
     Conditional {
         condition: Box<C0Expression>,
@@ -2257,9 +2261,9 @@ impl C0Expression {
                 unreachable!("call expressions must be lowered before kernel conversion")
             }
             Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
-            Self::Cast { expression, c_type } => {
-                crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type())
-            }
+            Self::Cast {
+                expression, c_type, ..
+            } => crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type()),
             Self::Conditional {
                 condition,
                 then_branch,
@@ -9044,13 +9048,18 @@ impl Parser {
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
-            C0Expression::Cast { expression, c_type } => {
+            C0Expression::Cast {
+                expression,
+                c_type,
+                struct_name,
+            } => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((
                     prefix,
                     C0Expression::Cast {
                         expression: Box::new(expression),
                         c_type,
+                        struct_name,
                     },
                 ))
             }
@@ -9563,6 +9572,7 @@ impl Parser {
         let byte_pointer = C0Expression::Cast {
             expression: Box::new(pointer),
             c_type: C0Type::UInt8Pointer,
+            struct_name: None,
         };
         let byte_offset = C0Expression::Multiply(
             Box::new(offset),
@@ -9595,7 +9605,7 @@ impl Parser {
             self.position += 1;
             let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
-            let c_type = match (
+            let (c_type, struct_name) = match (
                 parsed_type.c_type,
                 parsed_type.struct_name,
                 parsed_type.union_name,
@@ -9610,17 +9620,25 @@ impl Parser {
                     | C0Type::UInt64,
                     None,
                     None,
-                ) => parsed_type.c_type,
-                (C0Type::Float32 | C0Type::Float64, None, None) => parsed_type.c_type,
+                ) => (parsed_type.c_type, None),
+                (C0Type::Float32 | C0Type::Float64, None, None) => (parsed_type.c_type, None),
+                // An object pointer target: the kernel accepts only a 64-bit
+                // integer whose value carries pointer provenance, or zero.
+                (c_type, struct_name, None)
+                    if c_type.is_pointer() && !matches!(c_type, C0Type::FunctionPointer(_)) =>
+                {
+                    (c_type, struct_name)
+                }
                 _ => {
                     return Err(self.error_at_previous(
-                        "casts support only modeled scalar integer or floating-point values",
+                        "casts support only modeled scalar integer or floating-point values, or object pointer types",
                     ));
                 }
             };
             return Ok(C0Expression::Cast {
                 expression: Box::new(self.parse_unary()?),
                 c_type,
+                struct_name,
             });
         }
 
@@ -9857,6 +9875,7 @@ impl Parser {
                             let byte_pointer = C0Expression::Cast {
                                 expression: Box::new(expression),
                                 c_type: C0Type::UInt8Pointer,
+                                struct_name: None,
                             };
                             let offset = C0Expression::Multiply(
                                 Box::new(first_index),
@@ -10079,6 +10098,10 @@ impl Parser {
                 C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
                 _ => None,
             },
+            C0Expression::Cast {
+                struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
             C0Expression::Cast { expression, .. } => self.struct_pointer_name(expression),
             C0Expression::Add(left, _) | C0Expression::Subtract(left, _) => {
                 self.struct_pointer_name(left)
@@ -10275,6 +10298,10 @@ impl Parser {
             C0Expression::Load(_) => (self.struct_pointer_name(base), None),
             C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name.clone()), None),
             C0Expression::UnionAddress { union_name, .. } => (None, Some(union_name)),
+            C0Expression::Cast {
+                struct_name: Some(struct_name),
+                ..
+            } => (Some(struct_name.clone()), None),
             _ => (None, None),
         };
         if let Some(struct_name) = struct_name {
@@ -10336,9 +10363,10 @@ impl Parser {
                     {
                         self.variable_structs.get(name).cloned()
                     }
-                    C0Expression::Cast { expression, c_type }
-                        if *c_type == C0Type::UInt8Pointer
-                            && self.struct_pointer_name(expression).is_some() =>
+                    C0Expression::Cast {
+                        expression, c_type, ..
+                    } if *c_type == C0Type::UInt8Pointer
+                        && self.struct_pointer_name(expression).is_some() =>
                     {
                         self.struct_pointer_name(expression)
                     }

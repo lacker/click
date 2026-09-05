@@ -222,6 +222,13 @@ fn bitvector_term_exceeds_depth_limit(root: &Bitvector32Term) -> bool {
                     pending.push((value, depth + 1));
                 }
             }
+            Bitvector32Term::PointerAddress(pointer) => {
+                if let PointerOffsetTerm::Int32Scaled { value, .. }
+                | PointerOffsetTerm::Int64Scaled { value, .. } = &pointer.offset
+                {
+                    pending.push((value, depth + 1));
+                }
+            }
             Bitvector32Term::Constant(_)
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_)
@@ -1086,6 +1093,14 @@ fn synthesize_surface_bitvector(
         | Bitvector32Term::Float32Binary { .. }
         | Bitvector32Term::Float64Negate(_)
         | Bitvector32Term::Float64Binary { .. } => None,
+        Bitvector32Term::PointerAddress(pointer) => {
+            let pointer =
+                synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)?;
+            Some(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(pointer),
+                target_type: CType::UInt64,
+            }))
+        }
         Bitvector32Term::MemoryLoad(_, kernel_pointer) => {
             if let PointerBlock::Concrete(block) = &kernel_pointer.block
                 && let Some(name) = block.strip_prefix("local:")
@@ -1450,6 +1465,9 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
         }
         match term {
             Bitvector32Term::MemoryLoad(_, _) => return false,
+            Bitvector32Term::PointerAddress(pointer) => {
+                pending.extend(pointer.offset.scaled_values());
+            }
             Bitvector32Term::Constant(_)
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_)

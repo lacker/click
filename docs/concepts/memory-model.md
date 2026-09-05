@@ -21,6 +21,18 @@ pointer-valued return, initialization, assignment, argument, and comparison
 contexts. This narrow conversion does not identify pointers with integers:
 nonzero integers still cannot be used as pointers.
 
+Under the LP64 profile a pointer also has an integer representation. Casting an
+object pointer to `unsigned long` (or another 64-bit integer type) yields its
+address, a kernel term that records the exact source pointer rather than an
+arbitrary number; `address(p)` is the spec spelling. Only such an address, or
+zero, converts back through an explicit pointer cast, and it restores the
+original block, offset, and provenance. Two addresses are equal exactly when
+their pointers are equal, an address is zero exactly when its pointer is null,
+and an address compared with an integer that has no pointer origin is not
+decided either way. Integer coincidence therefore never manufactures an
+allocation identity. Null converts to the integer zero. Tag arithmetic on an
+address is not yet modeled.
+
 For `int32**` and `uint8**`, pointer arithmetic advances by the eight-byte
 ABI width of each pointer-valued cell.
 

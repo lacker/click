@@ -178,6 +178,13 @@ either way, and a cast to an integer type narrower than the pointer.
 
 Each slice should land green on its own.
 
+Status: slice 1 landed on 2026-09-05 (the `PointerAddress` term, both cast
+directions, the equality rule, `address(p)`, and the
+`mdtests/pointer_address_*.md` regressions). Cast-back is currently
+syntactic: the 64-bit value must be exactly an address term or zero. Slice 3
+extends it to values proven equal to an address under the alignment and tag
+obligations. The resource-body pointer witness has not yet been exercised.
+
 1. The provenance-carrying integer term, the pointer-to-`unsigned long`
    cast, cast-back when the term is syntactically an untagged address, and
    the equality rule. Covers `rb_link_node` and `RB_EMPTY_NODE`.

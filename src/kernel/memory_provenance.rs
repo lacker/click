@@ -2708,6 +2708,9 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                 Bitvector32Term::MemoryLoad(_, pointer) => {
                     pending.push(Node::Offset(&pointer.offset, depth + 1));
                 }
+                Bitvector32Term::PointerAddress(pointer) => {
+                    pending.push(Node::Offset(&pointer.offset, depth + 1));
+                }
                 Bitvector32Term::Add(left, right)
                 | Bitvector32Term::Subtract(left, right)
                 | Bitvector32Term::Multiply(left, right)
@@ -2942,6 +2945,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                     | Bitvector32Term::Variable(_)
                     | Bitvector32Term::Int64Constant(_)
                     | Bitvector32Term::UInt64Constant(_) => results.push(term.clone()),
+                    Bitvector32Term::PointerAddress(_) => results.push(term.clone()),
                     Bitvector32Term::MemoryLoad(memory, pointer) => {
                         let canonical_pointer = canonicalize_pointer_loads(pointer);
                         let resolved = match memory.load(&canonical_pointer) {
@@ -3790,6 +3794,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
     fn bitvector_has_memory(term: &Bitvector32Term) -> bool {
         match term {
             Bitvector32Term::MemoryLoad(_, _) => true,
+            Bitvector32Term::PointerAddress(pointer) => offset_has_memory(&pointer.offset),
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
@@ -3989,6 +3994,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_)
         | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::PointerAddress(_) => {}
         Bitvector32Term::MemoryLoad(memory, _) => {
             if !memories.contains(memory) {
                 memories.push(memory.clone());
@@ -4262,6 +4268,7 @@ fn transport_framed_atomic_bitvector(
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_) => term.clone(),
+        Bitvector32Term::PointerAddress(_) => term.clone(),
         Bitvector32Term::Variable(variable) => {
             // A load variable transports as the load it represents:
             // when frame evidence rewrites that load to the post-effect
@@ -5040,6 +5047,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                             tasks.push(ExactLoadNormalizationTask::Visit(argument));
                         }
                     }
+                    Bitvector32Term::PointerAddress(_) => results.push(term),
                     load @ Bitvector32Term::MemoryLoad(_, _) => {
                         if !active_loads.insert(load.clone()) {
                             results.push(load);
@@ -5355,6 +5363,7 @@ fn normalize_exact_memory_loads_in_bitvector_recursive(
                     .collect(),
             }
         }
+        Bitvector32Term::PointerAddress(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             if let Some(CValue::Int32(value)) = memory.known_value(pointer)
                 && &value != term

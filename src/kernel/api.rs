@@ -4516,6 +4516,7 @@ fn rewrite_int32_term_by_exact_equality(
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_)
         | Bitvector32Term::Int64From32(_)
@@ -5265,6 +5266,9 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             Bitvector32Term::MemoryLoad(memory, pointer) => {
                 memory_depth_exceeds(memory, remaining - 1)
                     || pointer_depth_exceeds(pointer, remaining - 1)
+            }
+            Bitvector32Term::PointerAddress(pointer) => {
+                pointer_depth_exceeds(pointer, remaining - 1)
             }
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)

@@ -418,6 +418,11 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         tasks.push(HavocIdentityTask::Text(")"));
                         tasks.push(HavocIdentityTask::Pointer(*pointer));
                     }
+                    Bitvector32Term::PointerAddress(pointer) => {
+                        identity.push_str("address(");
+                        tasks.push(HavocIdentityTask::Text(")"));
+                        tasks.push(HavocIdentityTask::Pointer(*pointer));
+                    }
                 }
             }
             HavocIdentityTask::FloatCondition {

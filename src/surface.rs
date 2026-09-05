@@ -117,6 +117,7 @@ pub const FULL_DIAGNOSTICS_ENV: &str = "CLICK_FULL_DIAGNOSTICS";
 /// coverage compares this registry bidirectionally with its public inventory.
 pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "abstract",
+    "address",
     "all",
     "and",
     "any",

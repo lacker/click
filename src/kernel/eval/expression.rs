@@ -842,13 +842,68 @@ fn cast_c_value_to_type(
     target_type: CType,
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
-) -> Option<CValue> {
+) -> Result<CValue, CRuntimeError> {
     if target_type.is_pointer() {
-        if let CValue::Pointer(pointer) = value {
-            return Some(CValue::typed_pointer(pointer.into_pointer(), target_type));
+        match value {
+            CValue::Pointer(pointer) => {
+                return Ok(CValue::typed_pointer(pointer.into_pointer(), target_type));
+            }
+            // Integer-to-pointer conversion is accepted only for a 64-bit
+            // value that is exactly the recorded address of an object
+            // pointer, or the constant zero. Provenance comes from the term,
+            // never from integer coincidence.
+            CValue::UInt64(term) | CValue::Int64(term)
+                if !matches!(target_type, CType::FunctionPointer(_)) =>
+            {
+                return match term {
+                    Bitvector32Term::PointerAddress(pointer) => {
+                        Ok(CValue::typed_pointer(*pointer, target_type))
+                    }
+                    term if term.uint64_as_const() == Some(0) => {
+                        Ok(CValue::typed_pointer(Pointer::null(), target_type))
+                    }
+                    _ => Err(CRuntimeError::PointerConversion(
+                        "integer-to-pointer cast requires a value that is a recorded pointer \
+                         address or zero; an integer without pointer origin cannot become a \
+                         pointer"
+                            .to_string(),
+                    )),
+                };
+            }
+            value => {
+                return coerce_c_value_to_type(value, target_type, obligations, assumptions)
+                    .ok_or(CRuntimeError::TypeMismatch);
+            }
         }
     }
+    if let CValue::Pointer(pointer) = &value {
+        // Pointer-to-integer conversion under LP64: the integer is the
+        // pointer's address term, which keeps the exact source pointer. Null
+        // is the integer zero; function addresses are not modeled.
+        if !matches!(target_type, CType::UInt64 | CType::Int64) {
+            return Err(CRuntimeError::PointerConversion(
+                "pointer-to-integer cast requires a 64-bit integer type under the LP64 \
+                 profile; a narrower integer cannot hold a pointer"
+                    .to_string(),
+            ));
+        }
+        if pointer.block.is_function() || matches!(pointer.c_type(), CType::FunctionPointer(_)) {
+            return Err(CRuntimeError::PointerConversion(
+                "function addresses do not convert to integers".to_string(),
+            ));
+        }
+        let address = if pointer.is_null() {
+            Bitvector32Term::UInt64Constant(0)
+        } else {
+            Bitvector32Term::PointerAddress(Box::new(pointer.pointer().clone()))
+        };
+        return Ok(match target_type {
+            CType::UInt64 => CValue::UInt64(address),
+            _ => CValue::Int64(address),
+        });
+    }
     coerce_c_value_to_type(value, target_type, obligations, assumptions)
+        .ok_or(CRuntimeError::TypeMismatch)
 }
 
 pub(in crate::kernel) fn coerce_c_null_pointer_constant(
@@ -1219,6 +1274,7 @@ fn evaluate_c_cast_paths(
                         value @ (CValue::Int16(_) | CValue::UInt8(_) | CValue::UInt16(_)) => {
                             promote_c_int32_path_value(value, &mut facts, &effective_assumptions)
                                 .map(CValue::Int32)
+                                .ok_or(CRuntimeError::TypeMismatch)
                         }
                         value => cast_c_value_to_type(
                             value,
@@ -1236,8 +1292,8 @@ fn evaluate_c_cast_paths(
                     )
                 };
                 match coerced {
-                    Some(value) => CExpressionOutcome::Value(value),
-                    None => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    Ok(value) => CExpressionOutcome::Value(value),
+                    Err(error) => CExpressionOutcome::RuntimeError(error),
                 }
             }
             CExpressionOutcome::UndefinedBehavior(error) => {

@@ -126,6 +126,13 @@ pub enum Bitvector32Term {
         arguments: Vec<Bitvector32Term>,
     },
     MemoryLoad(SharedCMemory, Box<Pointer>),
+    /// The 64-bit integer representation of a non-null object pointer under
+    /// the LP64 profile.  The term keeps the exact source pointer, so the
+    /// integer carries provenance: a cast back recovers that pointer, and two
+    /// addresses compare as their pointers do.  No arithmetic on the term
+    /// is interpreted as address arithmetic; tag bits are handled by checked
+    /// rewrites on top of this term.
+    PointerAddress(Box<Pointer>),
     Int64From32(Box<Bitvector32Term>),
     UInt64From32(Box<Bitvector32Term>),
     Int64FromUInt32(Box<Bitvector32Term>),
@@ -185,6 +192,28 @@ pub enum PointerOffsetTerm {
         byte_width: i64,
         unsigned: bool,
     },
+}
+
+impl PointerOffsetTerm {
+    /// Every bitvector term nested in this offset, for traversals that must
+    /// look through a pointer embedded in a term.
+    pub(crate) fn scaled_values(&self) -> Vec<&Bitvector32Term> {
+        let mut values = Vec::new();
+        let mut pending = vec![self];
+        while let Some(offset) = pending.pop() {
+            match offset {
+                Self::Constant(_) | Self::Variable(_) => {}
+                Self::Add(left, right) => {
+                    pending.push(left);
+                    pending.push(right);
+                }
+                Self::Int32Scaled { value, .. } | Self::Int64Scaled { value, .. } => {
+                    values.push(value.as_ref());
+                }
+            }
+        }
+        values
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1424,6 +1453,9 @@ pub enum CRuntimeError {
     UnboundVariable(String),
     UnknownFunction(String),
     TypeMismatch,
+    /// A pointer/integer cast outside the modeled LP64 conversions: the
+    /// message names the rejected direction and what evidence it needed.
+    PointerConversion(String),
     IndeterminatePointeeType,
     WrongArity {
         expected: usize,

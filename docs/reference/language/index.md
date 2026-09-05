@@ -1042,7 +1042,16 @@ not have a recoverable C source place:
 - `load_int32_pointer(pointer)` and `load_uint8_pointer(pointer)`
 - `byte_offset(pointer, bytes)`
 
-These are Surface Click escape hatches, not Kernel Click syntax. The canonical
+`address(pointer)` is the `uint64` integer representation of an object pointer
+under the LP64 profile. It is the spec spelling of the C cast
+`(unsigned long) pointer` and denotes the same kernel term: the address keeps
+the exact source pointer, so `address(p) == address(q)` is decided exactly as
+`p == q`, `address(p) == 0` as `p == 0`, and a comparison with an integer that
+has no pointer origin stays undecided. Contracts use it to describe words that
+hold a pointer in integer form, such as `ensures node->word == address(next)`.
+
+The low-level reads and `byte_offset` are Surface Click escape hatches, not
+Kernel Click syntax. The canonical
 renderer prefers `owner->field` whenever imported layout provenance identifies
 the address. Expansion may emit a low-level read only when no source field
 place is available.

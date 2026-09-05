@@ -1025,6 +1025,10 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
         Bitvector32Term::UInt64Constant(value) => std::hash::Hash::hash(value, hasher),
         Bitvector32Term::Variable(variable) => std::hash::Hash::hash(variable, hasher),
         Bitvector32Term::MemoryLoad(_, pointer) => hash_memory_blind_pointer(pointer, hasher),
+        Bitvector32Term::PointerAddress(pointer) => {
+            std::hash::Hash::hash("address", hasher);
+            hash_memory_blind_pointer(pointer, hasher)
+        }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)
@@ -1194,6 +1198,9 @@ fn collect_bitvector_memory_load_keys(
                 pointer.block.clone(),
                 memory_blind_pointer_fingerprint(pointer),
             ));
+            collect_pointer_offset_memory_load_keys(&pointer.offset, keys);
+        }
+        Bitvector32Term::PointerAddress(pointer) => {
             collect_pointer_offset_memory_load_keys(&pointer.offset, keys);
         }
         Bitvector32Term::Add(left, right)
@@ -3292,6 +3299,11 @@ impl SymbolicCConditionEvaluationPath {
 fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
     match term {
         Bitvector32Term::MemoryLoad(_, _) => true,
+        Bitvector32Term::PointerAddress(pointer) => pointer
+            .offset
+            .scaled_values()
+            .into_iter()
+            .any(bitvector_term_contains_load),
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::Int64Constant(_)
