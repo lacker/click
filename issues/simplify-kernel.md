@@ -62,6 +62,12 @@ depth of two (`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`) remains separately measured
 and designed in `issues/load-equality-prover-in-kernel.md` because it caps a
 fact-branching search rather than a structural walk.
 
+The 2026-09-05 deciding-route census refined that older depth-hit count. After
+all cheaper load-equality rules had failed, the global fallback proved only 31
+of 1,628 example queries and 27 of 1,347 mdtest queries. Those 58 decisions are
+now classified by fixture, consumer, load, and required replacement evidence
+in the dedicated issue; 23 were merely positive-memo reuses.
+
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
 distinctness fallback has been deleted. Click has no compatibility commitment
@@ -153,7 +159,9 @@ change an answer.
    which violates relevant-input scaling.
 2. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
    framed-load fallback from `memory_loads_proven_equal`. It hit 345,653 /
-   315,061 times in its census. This is owned by
+   315,061 times in the original depth census. The later deciding-route census
+   found that the fallback itself answered only 31 / 1,628 example calls and
+   27 / 1,347 mdtest calls. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover every
    kernel and surface consumer, not only fact matching: planning selects an
    effect/DAG route, and a typed certificate records the route and per-edge
