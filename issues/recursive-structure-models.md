@@ -9,6 +9,12 @@ the exact node sequence is unchanged. Linux rbtree does not store keys itself,
 so its generic correctness property is preservation of node identity and
 in-order order while links and colors change.
 
+The logical sequence algebra itself is tracked independently in
+[sequence-type.md](sequence-type.md). This issue begins once those immutable
+values can be used as resource arguments; its remaining problem is deriving a
+parent model from existential child models across recursive ownership and
+mutation.
+
 The fixed synthetic C scaffold for this work lives in
 [`examples/modeled-binary-tree`](../examples/modeled-binary-tree/README.md).
 Its sidecar currently imports the unchanged implementation without claiming
@@ -37,11 +43,10 @@ folded as some binary tree.
 
 ## Acceptance criteria
 
-- The specification language has a finite abstract collection or algebraic
-  model suitable for sequences of pointer identities, with explicit empty,
-  singleton, concatenation, equality, and membership reasoning.
-- A guarded recursive composite can expose a model determined compositionally
-  from its node and direct children.
+- Sequence values from [sequence-type.md](sequence-type.md) can index a
+  composite resource.
+- A guarded recursive composite can bind child-model witnesses and expose a
+  parent model determined compositionally from its node and direct children.
 - Models retain pointer identity without turning pointers into arithmetic
   integers or granting pointee ownership.
 - Function contracts can relate entry and exit models across a changed root.
@@ -50,5 +55,6 @@ folded as some binary tree.
 - The rotation regressions, an insert/erase model-preservation regression, and
   `scripts/check.sh` pass.
 
-Related: [mathematical-integers-in-specs.md](mathematical-integers-in-specs.md)
-and [resource-algebra-extensions.md](resource-algebra-extensions.md).
+Related: [sequence-type.md](sequence-type.md),
+[mathematical-integers-in-specs.md](mathematical-integers-in-specs.md), and
+[resource-algebra-extensions.md](resource-algebra-extensions.md).

@@ -64,6 +64,7 @@ C import and execution:
 Specification and proof:
 
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
+- [Add a specification sequence type](sequence-type.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
@@ -80,7 +81,7 @@ normal tooling-first policy and should then be added to this list.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 25
+## Functionality gaps: 26
 
 C language coverage:
 
@@ -107,6 +108,7 @@ Semantics and reasoning:
 
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
+- [Add a specification sequence type](sequence-type.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)

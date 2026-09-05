@@ -34,6 +34,9 @@ records the current C0 boundary.
 
 Current projects:
 
+- `sequence-transform/` fixes small array copy, concatenation, reversal, and
+  membership operations for the specification sequence type; its sidecar
+  currently imports the C without claiming the missing sequence contracts.
 - `modeled-binary-tree/` fixes a plain binary-tree implementation for the
   heap-derived in-order sequence model, membership, rotation-preservation, and
   structural-termination work required by MVR; its sidecar currently imports
