@@ -68,6 +68,67 @@ proven equal nor proven unequal.
   alignment; an unprovable obligation is a prompt proof failure, not a
   silently truncated address.
 
+## Language additions
+
+Two Click spec additions are required; a third may already exist.
+
+- `address(p)`: a spec term of type `uint64`, the integer representation of a
+  pointer. It is the only way a contract or resource can describe a tagged
+  word. Existing spec add, bitwise and, or, and not express tags on it, so
+  `list_next` can state `ensures address(result) == node->word & ~1` and the
+  kernel decides `result == next` from the equality rule.
+- `aligned(p, n)`: a proposition stating that `address(p)` is a multiple of
+  `n`. It may appear in `requires` clauses and as a fact inside a resource.
+- A bound witness inside a resource body. A resource whose tail is recovered
+  from a tagged word must name the pointer the word was built from, using the
+  existing `let name: type where proposition` binder with a pointer type. The
+  documentation describes that binder for proposition clauses only; if
+  resource bodies reject it, extending them is part of slice 1. Do not add a
+  spec-side inverse such as `origin(w)`; the existential is the honest
+  statement and avoids a partial spec function.
+
+C0 acceptance changes are separate from the spec language: casting an object
+pointer to `unsigned long`, and casting `unsigned long` back to a struct
+pointer. The parser currently rejects struct-pointer cast targets outright.
+The provenance-carrying term, the tag algebra, the cast-back obligation, and
+the equality rule are kernel work with no contract-visible syntax.
+
+## Example: marked linked list
+
+Before rbtree, land an `examples/` project that is real code on its own: a
+singly linked list whose `next` word carries a low-bit mark for logically
+deleted nodes, the sequential half of the Harris list and the same shape as
+allocator and collector mark bits. It builds on `allocated-linked-list`,
+reusing its recursive ownership shape.
+
+```click
+resource marked_list(node: struct node*) {
+    if node != 0 {
+        contains allocation(node, sizeof(struct node));
+        owns object(node);
+        fact aligned(node, 8);
+        let next: struct node* where node->word == address(next) + (node->word & 1);
+        contains marked_list(next);
+    }
+}
+```
+
+Functions, each verified against unchanged C:
+
+- `list_mark(node)` sets the low bit of the stored word;
+- `list_is_marked(node)` reads it with a mask;
+- `list_next(node)` clears the mask and casts back, ensuring
+  `address(result) == node->word & ~1`;
+- `list_count_live(head)` traverses through recovered pointers, skipping
+  marked nodes, with a loop invariant over the remaining suffix;
+- `list_prepend` and `list_destroy` establish and consume the resource, so
+  alignment of fresh nodes comes from the allocation.
+
+This exercises cast out, tag set and read, tag clear, cast back, dereference
+through the recovered pointer, the tagged word living in a struct field, and
+the null end of the list flowing through the integer zero. Only the unmasked
+cast-back under a color precondition is left to the focused regression.
+
 ## Intended regression
 
 Use an unchanged C fixture shaped like `rb_node`: cast an aligned `struct
@@ -105,6 +166,10 @@ either way, and a cast to an integer type narrower than the pointer.
   without pointer origin is not decided.
 - Other integer-to-pointer casts remain rejected, and arithmetic overflow or
   unsupported representation behavior cannot produce a proof.
+- `address(p)` and `aligned(p, n)` are documented in the language reference
+  with their kernel meaning, and a resource body can bind a pointer witness.
+- The marked linked list example verifies with a README, and its C sources
+  are ordinary list code with no proof-only shape.
 - `rb_parent`, `rb_set_parent`, `rb_set_parent_color`, `rb_red_parent`,
   `RB_EMPTY_NODE`, and the focused positive and negative regressions verify;
   `scripts/check.sh` passes.
@@ -122,7 +187,7 @@ Each slice should land green on its own.
    obligation, plus cast-back under a tag-is-zero obligation. Covers
    `rb_parent`, `rb_set_parent`, `rb_set_parent_color`, `rb_color`, and
    `rb_red_parent`.
-4. The remaining negative regressions.
+4. The marked linked list example and the remaining negative regressions.
 
 Related: [gnu-c-extensions.md](gnu-c-extensions.md) for the `aligned`
 attribute that fixes `rb_node` alignment, [struct-model.md](struct-model.md)
