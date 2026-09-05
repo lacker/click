@@ -5263,11 +5263,6 @@ impl Parser {
                 object_constant = true;
             }
             saw_pointer = true;
-            if parsed.struct_name.is_some() && c_type != C0Type::Int32Pointer {
-                return Err(
-                    self.error_at_previous("pointer depth beyond `struct S*` is not supported")
-                );
-            }
             if parsed.union_name.is_some() {
                 return Err(
                     self.error_at_previous("pointers to union values are not supported yet")
