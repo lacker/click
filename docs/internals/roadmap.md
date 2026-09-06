@@ -97,7 +97,9 @@ Likely additions:
   or translation-unit-private storage with literal/zero element
   initialization. Fixed-size one-dimensional arrays of supported scalar-field
   aggregates now use the same stable linkage and ABI-sized element storage;
-  non-literal designators, incomplete, multidimensional, and dynamically
+  const-qualified static-storage aggregates now use read-only backing and
+  compatible cross-file qualifiers are checked; non-literal designators,
+  incomplete, multidimensional, and dynamically
   initialized aggregate tables remain open.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract

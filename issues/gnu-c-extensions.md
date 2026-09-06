@@ -9,7 +9,10 @@ declaration-only attributes and metadata.
 
 Click now accepts `__attribute__((always_inline))` and
 `__attribute__((__always_inline__))` as declaration-only metadata on supported
-static inline helpers. Alignment and other semantic attributes remain open.
+static inline helpers. It also models the exact trailing struct declaration
+form `__attribute__((aligned(sizeof(long))))` (and its `__aligned__` spelling)
+as an LP64 eight-byte alignment requirement; other alignment forms and
+semantic attributes remain open.
 
 This issue is not permission to accept arbitrary GNU C by erasing unfamiliar
 syntax. Each supported form needs an explicit C0 meaning or a checked
@@ -35,7 +38,9 @@ Use unchanged focused C fixtures for:
    than discarded.
 
 The header inline regression also rejects an unsupported function attribute,
-such as `aligned`, rather than treating it as harmless metadata.
+such as `aligned`, rather than treating it as harmless metadata. The aligned
+struct regression checks nested offsets and tail padding, while a negative
+fixture rejects an unknown struct attribute.
 
 The pinned rbtree translation unit must then parse with original source
 locations and the modeled LP64 layout.
@@ -48,8 +53,9 @@ locations and the modeled LP64 layout.
   identity and qualifiers.
 - Statement expressions preserve source-order evaluation, side effects, and
   the final value; they are not lowered by an unverified text rewrite.
-- Supported alignment attributes affect the imported layout and allocation
-  alignment used by proofs.
+- The supported aligned-struct form affects imported LP64 layout, nested field
+  offsets, and tail padding; broader allocation-alignment evidence remains a
+  follow-up when pointer-tagging proofs need it.
 - Branch-expectation builtins preserve the operand's C value and effects.
 - Ignorable attributes are restricted to an explicit declaration-only
   allowlist; the two supported always-inline spellings are accepted only on

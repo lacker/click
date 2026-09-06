@@ -2298,12 +2298,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         slot: slot.clone(),
                         constant: *constant,
                     },
-                    CLocalBinding::AggregateObject { layout, slot } => {
-                        CLocalBinding::AggregateObject {
-                            layout: layout.clone(),
-                            slot: slot.clone(),
-                        }
-                    }
+                    CLocalBinding::AggregateObject {
+                        layout,
+                        slot,
+                        constant,
+                    } => CLocalBinding::AggregateObject {
+                        layout: layout.clone(),
+                        slot: slot.clone(),
+                        constant: *constant,
+                    },
                 };
                 (name.clone(), binding)
             })
@@ -4175,12 +4178,15 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
                         constant: *constant,
                     },
-                    CLocalBinding::AggregateObject { layout, slot } => {
-                        CLocalBinding::AggregateObject {
-                            layout: layout.clone(),
-                            slot: substitute_pointer_variable_in_pointer(slot, from, to),
-                        }
-                    }
+                    CLocalBinding::AggregateObject {
+                        layout,
+                        slot,
+                        constant,
+                    } => CLocalBinding::AggregateObject {
+                        layout: layout.clone(),
+                        slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                        constant: *constant,
+                    },
                 };
                 (name.clone(), binding)
             })

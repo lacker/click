@@ -1084,6 +1084,7 @@ pub struct CGlobalAggregate {
     pub(super) kernel_name: String,
     pub(super) layout: CAggregateLayout,
     pub(super) initializers: Vec<CAggregateInitializer>,
+    pub(super) constant: bool,
 }
 
 /// A linked file-scope array of supported struct aggregates. Initializer
@@ -1096,6 +1097,7 @@ pub struct CGlobalAggregateArray {
     pub(super) layout: CAggregateLayout,
     pub(super) length: u32,
     pub(super) initializers: Vec<CAggregateInitializer>,
+    pub(super) constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1125,6 +1127,7 @@ pub struct CStaticAggregate {
     pub(super) kernel_name: String,
     pub(super) layout: CAggregateLayout,
     pub(super) initializers: Vec<CAggregateInitializer>,
+    pub(super) constant: bool,
 }
 
 /// A function-local static array of supported struct aggregates.
@@ -1135,6 +1138,7 @@ pub struct CStaticAggregateArray {
     pub(super) layout: CAggregateLayout,
     pub(super) length: u32,
     pub(super) initializers: Vec<CAggregateInitializer>,
+    pub(super) constant: bool,
 }
 
 /// Static-storage metadata shared by all copies of a function descriptor.
@@ -1216,16 +1220,26 @@ impl CAggregateInitializer {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateLayout {
     pub(super) size_bytes: u32,
+    pub(super) alignment_bytes: u32,
     pub(super) fields: Vec<CAggregateField>,
 }
 
 impl CAggregateLayout {
-    pub fn new(size_bytes: u32, fields: Vec<CAggregateField>) -> Self {
-        Self { size_bytes, fields }
+    pub fn new(size_bytes: u32, alignment_bytes: u32, fields: Vec<CAggregateField>) -> Self {
+        assert!(alignment_bytes.is_power_of_two());
+        Self {
+            size_bytes,
+            alignment_bytes,
+            fields,
+        }
     }
 
     pub fn size_bytes(&self) -> u32 {
         self.size_bytes
+    }
+
+    pub fn alignment_bytes(&self) -> u32 {
+        self.alignment_bytes
     }
 
     pub fn fields(&self) -> &[CAggregateField] {
@@ -1664,6 +1678,7 @@ pub(super) enum CLocalBinding {
     AggregateObject {
         layout: CAggregateLayout,
         slot: Pointer,
+        constant: bool,
     },
 }
 

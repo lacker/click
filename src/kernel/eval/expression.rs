@@ -968,9 +968,14 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 .slot(name)
                 .expect("array binding must carry a stack slot")
                 .clone();
+            let pointee_constant = match state.locals.binding(name) {
+                Some(CLocalBinding::ArrayObject { constant, .. })
+                | Some(CLocalBinding::AggregateObject { constant, .. }) => *constant,
+                _ => false,
+            };
             vec![CExpressionPath {
                 outcome: if state.memory.has_block(&pointer.block) {
-                    CExpressionOutcome::Value(CValue::typed_pointer(
+                    CExpressionOutcome::Value(CValue::typed_pointer_with_pointee_constant(
                         pointer,
                         if state.locals.is_aggregate_object(name) {
                             CType::UInt8Pointer
@@ -981,6 +986,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                                 .and_then(CType::pointer_to)
                                 .unwrap_or(CType::Int32Pointer)
                         },
+                        pointee_constant,
                     ))
                 } else {
                     CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))

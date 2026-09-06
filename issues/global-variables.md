@@ -20,6 +20,10 @@ compile-time scalar and null-pointer initializers now populate those same
 objects, with omitted leaves retaining zero initialization. Designated
 Const-qualified scalar globals and scalar tables now use read-only backing
 blocks and preserve pointer-to-const views across translation units.
+Const-qualified aggregate globals and function-local aggregate statics now use
+read-only backing blocks, preserve their field access across translation units,
+and reject field writes. Compatible `extern const` aggregate declarations are
+checked against their linked definitions.
 Designated initializers, multidimensional or incomplete arrays, initialization ordering,
 and wider string-literal forms remain unsupported; dynamic or non-literal
 initialization remains unsupported as well. Fixed-size one-dimensional arrays
@@ -59,7 +63,10 @@ and `mdtests/aggregate_array_static_effect.md` for rejecting an unauthorized
 indexed aggregate-array write, and
 `mdtests/designated_aggregate_static_objects.md` for designated field and
 array-element initialization across external, file-scope-static, and
-function-local-static storage. The three
+function-local-static storage, `mdtests/const_aggregate_objects.md` for
+const-qualified aggregate arrays across translation units and function-local
+static storage, and `mdtests/const_aggregate_write_rejected.md` for rejecting
+const aggregate field writes. The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
@@ -83,7 +90,9 @@ propagation, and indirect-write rejection.
   struct globals and function-local struct statics whose layouts contain
   supported scalar leaf fields, links compatible external declarations to one
   definition, and zero-fills omitted leaves. Designated fields use literal
-  scalar values and may appear in any order.
+  scalar values and may appear in any order. Const-qualified globals and
+  function-local statics are read-only, and `extern` declarations must match
+  the definition's const qualifier.
 - The kernel materializes each supported aggregate as one stable typed-field
   block, using global linkage or function-qualified static storage, applies
   explicit initializer cells once after zero-filling, and keeps that state
@@ -117,8 +126,8 @@ propagation, and indirect-write rejection.
   global write not named in `mutable` is rejected. Aggregate-array indexed
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
-  non-literal designators, const-qualified aggregate objects and automatic
-  locals, multidimensional/incomplete arrays, dynamic or
+  non-literal designators, const-qualified automatic aggregate locals,
+  multidimensional/incomplete arrays, dynamic or
   non-literal initialization, initialization ordering, and wider literal forms
   remain open.
 - `scripts/check.sh` passes.

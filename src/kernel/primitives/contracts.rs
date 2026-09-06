@@ -247,6 +247,7 @@ impl CGlobalAggregate {
             kernel_name: kernel_name.into(),
             layout,
             initializers,
+            constant: false,
         }
     }
 
@@ -264,6 +265,15 @@ impl CGlobalAggregate {
 
     pub fn initializers(&self) -> &[CAggregateInitializer] {
         &self.initializers
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 
@@ -293,6 +303,7 @@ impl CGlobalAggregateArray {
             layout,
             length,
             initializers,
+            constant: false,
         }
     }
 
@@ -314,6 +325,15 @@ impl CGlobalAggregateArray {
 
     pub fn initializers(&self) -> &[CAggregateInitializer] {
         &self.initializers
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 
@@ -477,6 +497,7 @@ impl CStaticAggregate {
             kernel_name: kernel_name.into(),
             layout,
             initializers,
+            constant: false,
         }
     }
 
@@ -494,6 +515,15 @@ impl CStaticAggregate {
 
     pub fn initializers(&self) -> &[CAggregateInitializer] {
         &self.initializers
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 
@@ -523,6 +553,7 @@ impl CStaticAggregateArray {
             layout,
             length,
             initializers,
+            constant: false,
         }
     }
 
@@ -544,6 +575,15 @@ impl CStaticAggregateArray {
 
     pub fn initializers(&self) -> &[CAggregateInitializer] {
         &self.initializers
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    pub fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
     }
 }
 

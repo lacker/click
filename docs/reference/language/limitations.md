@@ -120,7 +120,11 @@ their calls execute the checked body directly; they do not yet receive
 sidecar contracts. The declaration-only GNU spellings
 `__attribute__((always_inline))` and `__attribute__((__always_inline__))` are
 accepted on those helpers; other attributes and function definitions in headers
-remain unsupported.
+remain unsupported. The exact trailing struct spelling
+`__attribute__((aligned(sizeof(long))))` (and `__aligned__`) is supported as an
+LP64 eight-byte alignment requirement; other alignment forms remain
+unsupported. Const-qualified static-storage aggregates are read-only, while
+automatic/local const aggregates remain unsupported.
 System header includes other than the modeled no-op `<stdint.h>`, function-like macros
 with more than three parameters, empty arguments, stringification, token pasting,
 or multi-token object-like macros, macro redefinitions without an intervening `#undef`,

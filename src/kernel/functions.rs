@@ -2279,9 +2279,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     for global_aggregate in function.global_aggregates() {
         let slot = CMemory::global_pointer(global_aggregate.kernel_name());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
-                .memory
-                .with_block(slot.block.clone(), global_aggregate.layout().size_bytes());
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                global_aggregate.layout().size_bytes(),
+                global_aggregate.is_constant(),
+            );
             state.memory =
                 zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
             state.memory = initialize_aggregate_fields(
@@ -2290,18 +2292,20 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 global_aggregate.initializers(),
             );
         }
-        state.locals.set_aggregate_object_at(
+        state.locals.set_aggregate_object_at_with_constant(
             global_aggregate.kernel_name().to_string(),
             global_aggregate.layout().clone(),
             slot.clone(),
+            global_aggregate.is_constant(),
         );
         if global_aggregate.kernel_name() != global_aggregate.source_name()
             && !state.locals.contains_name(global_aggregate.source_name())
         {
-            state.locals.set_aggregate_object_at(
+            state.locals.set_aggregate_object_at_with_constant(
                 global_aggregate.source_name().to_string(),
                 global_aggregate.layout().clone(),
                 slot,
+                global_aggregate.is_constant(),
             );
         }
     }
@@ -2312,7 +2316,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             .checked_mul(global_aggregate_array.layout().size_bytes())
             .expect("validated C global aggregate array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                bytes,
+                global_aggregate_array.is_constant(),
+            );
             state.memory = zero_aggregate_array_fields(
                 state.memory.clone(),
                 &slot,
@@ -2325,22 +2333,24 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 global_aggregate_array.initializers(),
             );
         }
-        state.locals.set_array_object_at(
+        state.locals.set_array_object_at_with_constant(
             global_aggregate_array.kernel_name().to_string(),
             CType::UInt8,
             bytes,
             slot.clone(),
+            global_aggregate_array.is_constant(),
         );
         if global_aggregate_array.kernel_name() != global_aggregate_array.source_name()
             && !state
                 .locals
                 .contains_name(global_aggregate_array.source_name())
         {
-            state.locals.set_array_object_at(
+            state.locals.set_array_object_at_with_constant(
                 global_aggregate_array.source_name().to_string(),
                 CType::UInt8,
                 bytes,
                 slot,
+                global_aggregate_array.is_constant(),
             );
         }
     }
@@ -2424,10 +2434,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     for static_aggregate in function.static_aggregates() {
         let slot = CMemory::static_pointer(function.name(), static_aggregate.kernel_name());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
-                .memory
-                .clone()
-                .with_block(slot.block.clone(), static_aggregate.layout().size_bytes());
+            state.memory = state.memory.clone().with_block_or_read_only(
+                slot.block.clone(),
+                static_aggregate.layout().size_bytes(),
+                static_aggregate.is_constant(),
+            );
             state.memory =
                 zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
             state.memory = initialize_aggregate_fields(
@@ -2436,18 +2447,20 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 static_aggregate.initializers(),
             );
         }
-        state.locals.set_aggregate_object_at(
+        state.locals.set_aggregate_object_at_with_constant(
             static_aggregate.kernel_name().to_string(),
             static_aggregate.layout().clone(),
             slot.clone(),
+            static_aggregate.is_constant(),
         );
         if static_aggregate.kernel_name() != static_aggregate.source_name()
             && !state.locals.contains_name(static_aggregate.source_name())
         {
-            state.locals.set_aggregate_object_at(
+            state.locals.set_aggregate_object_at_with_constant(
                 static_aggregate.source_name().to_string(),
                 static_aggregate.layout().clone(),
                 slot,
+                static_aggregate.is_constant(),
             );
         }
     }
@@ -2458,7 +2471,11 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             .checked_mul(static_aggregate_array.layout().size_bytes())
             .expect("validated C static aggregate array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block(slot.block.clone(), bytes);
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                bytes,
+                static_aggregate_array.is_constant(),
+            );
             state.memory = zero_aggregate_array_fields(
                 state.memory.clone(),
                 &slot,
@@ -2471,22 +2488,24 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 static_aggregate_array.initializers(),
             );
         }
-        state.locals.set_array_object_at(
+        state.locals.set_array_object_at_with_constant(
             static_aggregate_array.kernel_name().to_string(),
             CType::UInt8,
             bytes,
             slot.clone(),
+            static_aggregate_array.is_constant(),
         );
         if static_aggregate_array.kernel_name() != static_aggregate_array.source_name()
             && !state
                 .locals
                 .contains_name(static_aggregate_array.source_name())
         {
-            state.locals.set_array_object_at(
+            state.locals.set_array_object_at_with_constant(
                 static_aggregate_array.source_name().to_string(),
                 CType::UInt8,
                 bytes,
                 slot,
+                static_aggregate_array.is_constant(),
             );
         }
     }

@@ -1105,7 +1105,24 @@ impl CLocalEnvironment {
         layout: CAggregateLayout,
         slot: Pointer,
     ) {
-        self.insert_binding(name.into(), CLocalBinding::AggregateObject { layout, slot });
+        self.set_aggregate_object_at_with_constant(name, layout, slot, false);
+    }
+
+    pub(in crate::kernel) fn set_aggregate_object_at_with_constant(
+        &mut self,
+        name: impl Into<String>,
+        layout: CAggregateLayout,
+        slot: Pointer,
+        constant: bool,
+    ) {
+        self.insert_binding(
+            name.into(),
+            CLocalBinding::AggregateObject {
+                layout,
+                slot,
+                constant,
+            },
+        );
     }
 
     pub fn get(&self, name: &str) -> Option<&CValue> {
@@ -1144,7 +1161,7 @@ impl CLocalEnvironment {
         self.bindings
             .iter()
             .filter_map(|(name, binding)| match binding {
-                CLocalBinding::AggregateObject { layout, slot } => {
+                CLocalBinding::AggregateObject { layout, slot, .. } => {
                     Some((name.as_str(), layout, slot))
                 }
                 CLocalBinding::Object { .. }

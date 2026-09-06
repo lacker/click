@@ -2293,6 +2293,11 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for aggregate global `{name}`"
                     )));
                 }
+                Some(previous) if previous.is_constant() != aggregate.is_constant() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting const qualifiers for aggregate global `{name}`"
+                    )));
+                }
                 Some(previous) if previous.is_file_static() != aggregate.is_file_static() => {
                     return Err(ClickError::new(format!(
                         "conflicting linkage declarations for aggregate global `{name}`"
@@ -2335,6 +2340,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for aggregate global `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_constant() != aggregate.is_constant() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting const qualifiers for aggregate global `{name}`"
                     )));
                 }
                 Some(previous) if previous.is_defined() && aggregate.is_defined() => {
@@ -2393,6 +2403,11 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for aggregate global array `{name}`"
                     )));
                 }
+                Some(previous) if previous.is_constant() != aggregate.is_constant() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting const qualifiers for aggregate global array `{name}`"
+                    )));
+                }
                 Some(previous) if previous.is_file_static() != aggregate.is_file_static() => {
                     return Err(ClickError::new(format!(
                         "conflicting linkage declarations for aggregate global array `{name}`"
@@ -2439,6 +2454,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for aggregate global array `{name}`"
+                    )));
+                }
+                Some(previous) if previous.is_constant() != aggregate.is_constant() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting const qualifiers for aggregate global array `{name}`"
                     )));
                 }
                 Some(previous) if previous.is_defined() && aggregate.is_defined() => {

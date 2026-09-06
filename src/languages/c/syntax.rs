@@ -433,6 +433,7 @@ pub struct C0GlobalAggregate {
     initializer: Option<Vec<C0AggregateInitializer>>,
     defined: bool,
     file_static: bool,
+    constant: bool,
 }
 
 /// A fixed-size one-dimensional file-scope array of supported struct
@@ -448,6 +449,7 @@ pub struct C0GlobalAggregateArray {
     length: u32,
     initializer: Option<Vec<C0AggregateInitializer>>,
     file_static: bool,
+    constant: bool,
 }
 
 impl C0GlobalAggregateArray {
@@ -467,6 +469,7 @@ impl C0GlobalAggregateArray {
             length,
             initializer: None,
             file_static,
+            constant: false,
         }
     }
 
@@ -487,6 +490,7 @@ impl C0GlobalAggregateArray {
             length,
             initializer: Some(initializer),
             file_static,
+            constant: false,
         }
     }
 
@@ -526,6 +530,15 @@ impl C0GlobalAggregateArray {
         self.file_static
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub fn initializer(&self) -> Option<&[C0AggregateInitializer]> {
         self.initializer.as_deref()
     }
@@ -538,13 +551,16 @@ impl C0GlobalAggregateArray {
             .iter()
             .map(C0AggregateInitializer::to_kernel)
             .collect::<Option<Vec<_>>>()?;
-        Some(crate::kernel::CGlobalAggregateArray::new(
-            self.name.clone(),
-            self.kernel_name.clone(),
-            self.layout.to_kernel_aggregate_layout(),
-            self.length,
-            initializers,
-        ))
+        Some(
+            crate::kernel::CGlobalAggregateArray::new(
+                self.name.clone(),
+                self.kernel_name.clone(),
+                self.layout.to_kernel_aggregate_layout(),
+                self.length,
+                initializers,
+            )
+            .with_constant(self.is_constant()),
+        )
     }
 }
 
@@ -564,6 +580,7 @@ impl C0GlobalAggregate {
             initializer: None,
             defined: false,
             file_static,
+            constant: false,
         }
     }
 
@@ -583,6 +600,7 @@ impl C0GlobalAggregate {
             initializer: Some(initializer),
             defined: true,
             file_static,
+            constant: false,
         }
     }
 
@@ -610,6 +628,15 @@ impl C0GlobalAggregate {
         self.file_static
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub fn initializer(&self) -> Option<&[C0AggregateInitializer]> {
         self.initializer.as_deref()
     }
@@ -627,6 +654,7 @@ impl C0GlobalAggregate {
                 self.layout.to_kernel_aggregate_layout(),
                 initializers,
             )
+            .with_constant(self.is_constant())
         })
     }
 }
@@ -969,6 +997,7 @@ pub struct C0StaticAggregate {
     struct_name: String,
     layout: C0StructLayout,
     initializer: Vec<C0AggregateInitializer>,
+    constant: bool,
 }
 
 /// A fixed-size one-dimensional function-local static array of supported
@@ -982,6 +1011,7 @@ pub struct C0StaticAggregateArray {
     layout: C0StructLayout,
     length: u32,
     initializer: Vec<C0AggregateInitializer>,
+    constant: bool,
 }
 
 impl C0StaticAggregateArray {
@@ -1000,6 +1030,7 @@ impl C0StaticAggregateArray {
             layout,
             length,
             initializer,
+            constant: false,
         }
     }
 
@@ -1035,6 +1066,15 @@ impl C0StaticAggregateArray {
         &self.initializer
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub(crate) fn to_kernel_static_aggregate_array(&self) -> crate::kernel::CStaticAggregateArray {
         crate::kernel::CStaticAggregateArray::new(
             self.source_name.clone(),
@@ -1047,6 +1087,7 @@ impl C0StaticAggregateArray {
                 .collect::<Option<Vec<_>>>()
                 .expect("validated static aggregate array initializer"),
         )
+        .with_constant(self.is_constant())
     }
 }
 
@@ -1064,6 +1105,7 @@ impl C0StaticAggregate {
             struct_name,
             layout,
             initializer,
+            constant: false,
         }
     }
 
@@ -1087,6 +1129,15 @@ impl C0StaticAggregate {
         &self.initializer
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.constant
+    }
+
+    fn with_constant(mut self, constant: bool) -> Self {
+        self.constant = constant;
+        self
+    }
+
     pub(crate) fn to_kernel_static_aggregate(&self) -> crate::kernel::CStaticAggregate {
         crate::kernel::CStaticAggregate::new(
             self.source_name.clone(),
@@ -1098,6 +1149,7 @@ impl C0StaticAggregate {
                 .collect::<Option<Vec<_>>>()
                 .expect("validated static aggregate initializer"),
         )
+        .with_constant(self.is_constant())
     }
 }
 
@@ -1891,6 +1943,7 @@ impl C0StructLayout {
     pub(crate) fn to_kernel_aggregate_layout(&self) -> crate::kernel::CAggregateLayout {
         crate::kernel::CAggregateLayout::new(
             self.size_bytes,
+            self.alignment_bytes,
             self.aggregate_fields
                 .iter()
                 .map(|field| {
@@ -3462,6 +3515,14 @@ impl Parser {
                 .global_arrays
                 .get(name)
                 .is_some_and(C0GlobalArray::is_constant)
+            || self
+                .global_aggregates
+                .get(name)
+                .is_some_and(C0GlobalAggregate::is_constant)
+            || self
+                .global_aggregate_arrays
+                .get(name)
+                .is_some_and(C0GlobalAggregateArray::is_constant)
     }
 
     fn variable_pointee_is_constant(&self, name: &str) -> bool {
@@ -4093,6 +4154,34 @@ impl Parser {
         Ok(true)
     }
 
+    /// Consume the one layout-affecting GNU attribute needed by the imported
+    /// rbtree headers. This deliberately accepts only the exact constant
+    /// spelling used by those headers; silently dropping another attribute
+    /// would make the imported ABI unsound.
+    fn consume_struct_alignment_attribute(&mut self) -> Result<Option<u32>, C0SyntaxError> {
+        if self.peek_ident() != Some("__attribute__") {
+            return Ok(None);
+        }
+        self.position += 1;
+        self.expect(Token::LParen)?;
+        self.expect(Token::LParen)?;
+        let attribute = self.expect_ident("GNU struct attribute")?;
+        if attribute != "aligned" && attribute != "__aligned__" {
+            return Err(self.error_at_previous(format!(
+                "unsupported GNU struct attribute `{attribute}`; only `aligned` is supported in this slice"
+            )));
+        }
+        self.expect(Token::LParen)?;
+        self.expect_ident_spelling("sizeof")?;
+        self.expect(Token::LParen)?;
+        self.expect_ident_spelling("long")?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        Ok(Some(8))
+    }
+
     fn register_function_declaration(
         &mut self,
         header: &C0FunctionHeader,
@@ -4204,11 +4293,6 @@ impl Parser {
             return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
         }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
-            if parsed_type.is_constant {
-                return Err(self.error_here(
-                    "const-qualified aggregate globals are not supported in this slice; use a scalar or scalar array table",
-                ));
-            }
             if parsed_type.is_volatile {
                 return Err(self.error_here(
                     "the small volatile model does not support volatile aggregate globals",
@@ -4299,7 +4383,8 @@ impl Parser {
                                 length,
                                 is_file_static,
                             )
-                        });
+                        })
+                        .with_constant(parsed_type.is_constant);
                     self.register_global_aggregate_array_declaration(name.clone(), declaration)?;
                     let bytes = length
                         .checked_mul(layout.size_bytes())
@@ -4310,6 +4395,9 @@ impl Parser {
                         .insert(kernel_name.clone(), vec![length]);
                     self.variable_structs
                         .insert(kernel_name.clone(), struct_name.clone());
+                    if parsed_type.is_constant {
+                        self.variable_constants.insert(kernel_name.clone());
+                    }
                     if self.peek() == Some(&Token::Comma) {
                         self.position += 1;
                         continue;
@@ -4346,12 +4434,16 @@ impl Parser {
                         layout.clone(),
                         is_file_static,
                     )
-                };
+                }
+                .with_constant(parsed_type.is_constant);
                 self.register_global_aggregate_declaration(name.clone(), declaration)?;
                 self.variable_types
                     .insert(name.clone(), struct_value_type(layout));
                 self.variable_structs
                     .insert(name.clone(), struct_name.clone());
+                if parsed_type.is_constant {
+                    self.variable_constants.insert(name.clone());
+                }
                 if kernel_name != name {
                     self.variable_types
                         .insert(kernel_name.clone(), struct_value_type(layout));
@@ -4698,6 +4790,11 @@ impl Parser {
                     "conflicting declarations for aggregate global `{name}`"
                 )));
             }
+            if previous.is_constant() != declaration.is_constant() {
+                return Err(self.error_here(format!(
+                    "conflicting const qualifiers for aggregate global `{name}`"
+                )));
+            }
             if previous.is_file_static() != declaration.is_file_static() {
                 return Err(self.error_here(format!(
                     "conflicting linkage declarations for aggregate global `{name}`"
@@ -4739,6 +4836,11 @@ impl Parser {
             {
                 return Err(self.error_here(format!(
                     "conflicting declarations for aggregate global array `{name}`"
+                )));
+            }
+            if previous.is_constant() != declaration.is_constant() {
+                return Err(self.error_here(format!(
+                    "conflicting const qualifiers for aggregate global array `{name}`"
                 )));
             }
             if previous.is_file_static() != declaration.is_file_static() {
@@ -5074,6 +5176,9 @@ impl Parser {
         }
 
         self.expect(Token::RBrace)?;
+        if let Some(attribute_alignment) = self.consume_struct_alignment_attribute()? {
+            struct_alignment = struct_alignment.max(attribute_alignment);
+        }
         self.expect(Token::Semicolon)?;
 
         if fields.is_empty() {
@@ -7790,11 +7895,6 @@ impl Parser {
             ));
         }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
-            if parsed_type.is_constant {
-                return Err(self.error_here(
-                    "const-qualified aggregate statics are not supported in this slice; use a scalar or scalar array table",
-                ));
-            }
             if parsed_type.is_volatile {
                 return Err(self.error_here(
                     "the small volatile model does not support volatile aggregate statics",
@@ -7854,6 +7954,9 @@ impl Parser {
                         .insert(kernel_name.clone(), vec![length]);
                     self.variable_structs
                         .insert(kernel_name.clone(), struct_name.clone());
+                    if parsed_type.is_constant {
+                        self.variable_constants.insert(kernel_name.clone());
+                    }
                     self.static_aggregate_arrays.insert(
                         kernel_name.clone(),
                         C0StaticAggregateArray::new(
@@ -7863,7 +7966,8 @@ impl Parser {
                             layout.clone(),
                             length,
                             initializer,
-                        ),
+                        )
+                        .with_constant(parsed_type.is_constant),
                     );
                     if self.peek() != Some(&Token::Comma) {
                         break;
@@ -7881,6 +7985,9 @@ impl Parser {
                     .insert(kernel_name.clone(), struct_value_type(layout));
                 self.variable_structs
                     .insert(kernel_name.clone(), struct_name.clone());
+                if parsed_type.is_constant {
+                    self.variable_constants.insert(kernel_name.clone());
+                }
                 self.static_aggregates.insert(
                     kernel_name.clone(),
                     C0StaticAggregate::new(
@@ -7889,7 +7996,8 @@ impl Parser {
                         struct_name.clone(),
                         layout.clone(),
                         initializer,
-                    ),
+                    )
+                    .with_constant(parsed_type.is_constant),
                 );
                 if self.peek() != Some(&Token::Comma) {
                     break;

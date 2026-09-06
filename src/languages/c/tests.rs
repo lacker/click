@@ -352,6 +352,90 @@ fn c0_rejects_const_global_and_pointer_view_writes() {
 }
 
 #[test]
+fn c0_preserves_const_aggregate_global_and_static_objects() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        const struct state shared = {7, 1};
+
+        int32 read() {
+            static const struct state local = {3};
+            return shared.value + shared.ready + local.value + local.ready;
+        }
+        "#,
+    )
+    .expect("const aggregate objects should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("aggregate reader function");
+    assert!(function.global_aggregates()["shared"].is_constant());
+    assert!(
+        function
+            .static_aggregates()
+            .values()
+            .next()
+            .unwrap()
+            .is_constant()
+    );
+
+    let kernel_function = function.to_kernel_function();
+    assert!(kernel_function.global_aggregates()[0].is_constant());
+    assert!(kernel_function.static_aggregates()[0].is_constant());
+
+    let error = syntax::parse_functions(
+        "struct state { int32 value; }; const struct state shared = {1}; int32 bad() { shared.value = 2; return 0; }",
+    )
+    .expect_err("writes through const aggregate globals must be rejected");
+    assert!(
+        error.message().contains("const-qualified"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn c0_const_aggregate_extern_declarations_must_match_definitions() {
+    let error = crate::surface::verify_c0_sources(
+        r#"
+        verifying "state.c";
+        verifying "reader.c";
+        int32 state_value() {
+            ensures result == 7 by auto;
+        }
+        int32 read() {
+            ensures result == 7 by auto;
+        }
+        "#,
+        &[
+            (
+                "state.h",
+                "struct state { int32 value; }; extern struct state shared;",
+            ),
+            (
+                "state.c",
+                "struct state { int32 value; }; const struct state shared = {7}; int32 state_value() { return shared.value; }",
+            ),
+            (
+                "reader.c",
+                "#include \"state.h\"\nint32 read() { return shared.value; }",
+            ),
+        ],
+    )
+    .expect_err("extern and definition const qualifiers must agree");
+    assert!(
+        error.message().contains("conflicting const qualifiers"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_collects_file_scope_struct_aggregates() {
     let functions = syntax::parse_functions(
         r#"
@@ -4856,6 +4940,58 @@ fn c0_struct_layout_uses_lp64_alignment_and_tail_padding() {
     assert_eq!(layout.field("length").unwrap().offset_bytes(), 16);
     assert_eq!(layout.alignment_bytes(), 8);
     assert_eq!(layout.size_bytes(), 24);
+}
+
+#[test]
+fn c0_struct_alignment_attribute_extends_layout() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct aligned_node {
+            int32 value;
+        } __attribute__((aligned(sizeof(long))));
+
+        struct container {
+            uint8 tag;
+            struct aligned_node node;
+        };
+
+        int32 sizes() {
+            return sizeof(struct aligned_node) + sizeof(struct container);
+        }
+        "#,
+    )
+    .expect("the imported aligned struct spelling should parse");
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "sizes")
+        .expect("size function");
+    let aligned_node = function
+        .structs()
+        .get("aligned_node")
+        .expect("aligned node layout");
+    assert_eq!(aligned_node.alignment_bytes(), 8);
+    assert_eq!(aligned_node.size_bytes(), 8);
+    let container = function
+        .structs()
+        .get("container")
+        .expect("container layout");
+    assert_eq!(container.field("node").unwrap().offset_bytes(), 8);
+    assert_eq!(container.size_bytes(), 16);
+}
+
+#[test]
+fn c0_rejects_unsupported_struct_alignment_attributes() {
+    let error = syntax::parse_functions(
+        "struct packed_node { int32 value; } __attribute__((packed)); int32 read() { return 0; }",
+    )
+    .expect_err("unsupported layout attributes must not be silently ignored");
+    assert!(
+        error
+            .message()
+            .contains("unsupported GNU struct attribute `packed`"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]
