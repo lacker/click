@@ -238,6 +238,13 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
         }
         Term::CValue(value) => collect_c_value_bitvector_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bitvector_variables(sequence, variables),
+        Term::Algebraic(term) => {
+            if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
+                for field in fields {
+                    collect_c_value_bitvector_variables(field, variables);
+                }
+            }
+        }
         Term::CExpressionOutcome(outcome) => {
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
@@ -442,9 +449,7 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
     match expression {
         SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
         SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            for field in &scrutinee.fields {
-                collect_spec_expression_bitvector_variables(field, variables);
-            }
+            collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
             for arm in arms {
                 collect_spec_expression_bitvector_variables(&arm.body, variables);
             }
@@ -536,9 +541,8 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
 ) {
     match proposition {
         SpecProposition::AlgebraicComparison { left, right, .. } => {
-            for field in left.fields.iter().chain(&right.fields) {
-                collect_spec_expression_bitvector_variables(field, variables);
-            }
+            collect_spec_algebraic_expression_bitvector_variables(left, variables);
+            collect_spec_algebraic_expression_bitvector_variables(right, variables);
         }
         SpecProposition::SequenceMembership { element, sequence } => {
             collect_spec_expression_bitvector_variables(element, variables);
@@ -605,6 +609,26 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
         }
         SpecProposition::Defined(expression) => {
             collect_spec_expression_bitvector_variables(expression, variables);
+        }
+    }
+}
+
+fn collect_spec_algebraic_expression_bitvector_variables(
+    expression: &SpecAlgebraicExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_) => {}
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
+            for field in fields {
+                collect_spec_expression_bitvector_variables(field, variables);
+            }
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
+            for arm in arms {
+                collect_spec_algebraic_expression_bitvector_variables(&arm.body, variables);
+            }
         }
     }
 }

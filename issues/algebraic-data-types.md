@@ -55,7 +55,11 @@ unchanged.
   as pure-function result types; and
 - arbitrary symbolic nonrecursive algebraic values, structural reflexivity,
   exhaustive elimination, and pure positive/negative mdtests that require no
-  C translation unit.
+  C translation unit; and
+- typed kernel algebraic terms with one variable node per arbitrary value,
+  constructor nodes with checked instantiated schemas, retained match nodes,
+  and shared datatype definitions. The earlier eager encoding as an integer
+  tag plus fields for every possible variant has been removed.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -69,6 +73,9 @@ recursive fields, structural decreases and induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
 Opaque and recursive algebraic-valued pure function calls also wait on that
 recursive representation; nonrecursive calls are elaborated compositionally.
+General constructor reasoning beyond direct structural simplification—most
+notably explicit cases, injectivity used from hypotheses, and generated
+induction principles—also remains to be added as checked datatype rules.
 
 ## Violated invariant
 

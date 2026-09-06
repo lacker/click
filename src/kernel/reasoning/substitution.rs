@@ -678,6 +678,13 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
         Term::CValue(value) => collect_c_value_bound_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bound_variables(sequence, variables),
+        Term::Algebraic(term) => {
+            if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
+                for field in fields {
+                    collect_c_value_bound_variables(field, variables);
+                }
+            }
+        }
         Term::CExpressionOutcome(outcome) => {
             collect_expression_outcome_bound_variables(outcome, variables)
         }
@@ -1244,6 +1251,21 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::Sequence(sequence) => Term::Sequence(substitute_bitvector_variable_in_sequence(
             sequence, from, to,
         )),
+        Term::Algebraic(term) => Term::Algebraic(AlgebraicTerm {
+            algebraic_type: term.algebraic_type.clone(),
+            node: match &term.node {
+                AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
+                AlgebraicTermNode::Constructor { variant, fields } => {
+                    AlgebraicTermNode::Constructor {
+                        variant: variant.clone(),
+                        fields: fields
+                            .iter()
+                            .map(|field| substitute_bitvector_variable_in_c_value(field, from, to))
+                            .collect(),
+                    }
+                }
+            },
+        }),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
         ),
@@ -1715,6 +1737,49 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_memory(
     }
 }
 
+fn substitute_bitvector_variable_in_spec_algebraic_expression(
+    expression: &SpecAlgebraicExpression,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecAlgebraicExpression {
+    let node = match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(variable) => {
+            SpecAlgebraicExpressionNode::Variable(*variable)
+        }
+        SpecAlgebraicExpressionNode::Constructor { variant, fields } => {
+            SpecAlgebraicExpressionNode::Constructor {
+                variant: variant.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
+                    .collect(),
+            }
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            SpecAlgebraicExpressionNode::Match {
+                scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
+                    scrutinee, from, to,
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| SpecAlgebraicResultMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        body: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
+                            &arm.body, from, to,
+                        )),
+                    })
+                    .collect(),
+            }
+        }
+    };
+    SpecAlgebraicExpression {
+        algebraic_type: expression.algebraic_type.clone(),
+        node,
+    }
+}
+
 pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
     expression: &SpecExpression,
     from: Variable,
@@ -1725,40 +1790,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
             SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
         SpecExpression::AlgebraicMatch { scrutinee, arms } => SpecExpression::AlgebraicMatch {
-            scrutinee: Box::new(SpecAlgebraicExpression {
-                type_name: scrutinee.type_name.clone(),
-                type_arguments: scrutinee.type_arguments.clone(),
-                variant: scrutinee.variant.clone(),
-                fields: scrutinee
-                    .fields
-                    .iter()
-                    .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
-                    .collect(),
-                symbolic_variants: scrutinee
-                    .symbolic_variants
-                    .iter()
-                    .map(|variant| SpecAlgebraicVariant {
-                        variant: variant.variant.clone(),
-                        guard: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                            &variant.guard,
-                            from,
-                            to,
-                        )),
-                        fields: variant
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                substitute_bitvector_variable_in_spec_expression(field, from, to)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            }),
+            scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
+                scrutinee, from, to,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| SpecAlgebraicMatchArm {
                     variant: arm.variant.clone(),
                     bindings: arm.bindings.clone(),
+                    binding_types: arm.binding_types.clone(),
                     body: substitute_bitvector_variable_in_spec_expression(&arm.body, from, to),
                 })
                 .collect(),
@@ -1963,39 +2003,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
 ) -> SpecProposition {
     match proposition {
         SpecProposition::AlgebraicComparison { left, equal, right } => {
-            let substitute = |expression: &SpecAlgebraicExpression| SpecAlgebraicExpression {
-                type_name: expression.type_name.clone(),
-                type_arguments: expression.type_arguments.clone(),
-                variant: expression.variant.clone(),
-                fields: expression
-                    .fields
-                    .iter()
-                    .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
-                    .collect(),
-                symbolic_variants: expression
-                    .symbolic_variants
-                    .iter()
-                    .map(|variant| SpecAlgebraicVariant {
-                        variant: variant.variant.clone(),
-                        guard: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                            &variant.guard,
-                            from,
-                            to,
-                        )),
-                        fields: variant
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                substitute_bitvector_variable_in_spec_expression(field, from, to)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            };
             SpecProposition::AlgebraicComparison {
-                left: substitute(left),
+                left: substitute_bitvector_variable_in_spec_algebraic_expression(left, from, to),
                 equal: *equal,
-                right: substitute(right),
+                right: substitute_bitvector_variable_in_spec_algebraic_expression(right, from, to),
             }
         }
         SpecProposition::SequenceComparison { left, equal, right } => {
@@ -3717,6 +3728,21 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::Sequence(sequence) => {
             Term::Sequence(substitute_pointer_variable_in_sequence(sequence, from, to))
         }
+        Term::Algebraic(term) => Term::Algebraic(AlgebraicTerm {
+            algebraic_type: term.algebraic_type.clone(),
+            node: match &term.node {
+                AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
+                AlgebraicTermNode::Constructor { variant, fields } => {
+                    AlgebraicTermNode::Constructor {
+                        variant: variant.clone(),
+                        fields: fields
+                            .iter()
+                            .map(|field| substitute_pointer_variable_in_c_value(field, from, to))
+                            .collect(),
+                    }
+                }
+            },
+        }),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_pointer_variable_in_c_expression_outcome(outcome, from, to),
         ),
@@ -4543,6 +4569,49 @@ fn substitute_pointer_variable_in_spec_memory(
     }
 }
 
+fn substitute_pointer_variable_in_spec_algebraic_expression(
+    expression: &SpecAlgebraicExpression,
+    from: Variable,
+    to: &Pointer,
+) -> SpecAlgebraicExpression {
+    let node = match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(variable) => {
+            SpecAlgebraicExpressionNode::Variable(*variable)
+        }
+        SpecAlgebraicExpressionNode::Constructor { variant, fields } => {
+            SpecAlgebraicExpressionNode::Constructor {
+                variant: variant.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
+                    .collect(),
+            }
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            SpecAlgebraicExpressionNode::Match {
+                scrutinee: Box::new(substitute_pointer_variable_in_spec_algebraic_expression(
+                    scrutinee, from, to,
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| SpecAlgebraicResultMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        body: Box::new(substitute_pointer_variable_in_spec_algebraic_expression(
+                            &arm.body, from, to,
+                        )),
+                    })
+                    .collect(),
+            }
+        }
+    };
+    SpecAlgebraicExpression {
+        algebraic_type: expression.algebraic_type.clone(),
+        node,
+    }
+}
+
 fn substitute_pointer_variable_in_spec_expression(
     expression: &SpecExpression,
     from: Variable,
@@ -4553,40 +4622,15 @@ fn substitute_pointer_variable_in_spec_expression(
             SpecExpression::Value(substitute_pointer_variable_in_c_value(value, from, to))
         }
         SpecExpression::AlgebraicMatch { scrutinee, arms } => SpecExpression::AlgebraicMatch {
-            scrutinee: Box::new(SpecAlgebraicExpression {
-                type_name: scrutinee.type_name.clone(),
-                type_arguments: scrutinee.type_arguments.clone(),
-                variant: scrutinee.variant.clone(),
-                fields: scrutinee
-                    .fields
-                    .iter()
-                    .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
-                    .collect(),
-                symbolic_variants: scrutinee
-                    .symbolic_variants
-                    .iter()
-                    .map(|variant| SpecAlgebraicVariant {
-                        variant: variant.variant.clone(),
-                        guard: Box::new(substitute_pointer_variable_in_spec_proposition(
-                            &variant.guard,
-                            from,
-                            to,
-                        )),
-                        fields: variant
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                substitute_pointer_variable_in_spec_expression(field, from, to)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            }),
+            scrutinee: Box::new(substitute_pointer_variable_in_spec_algebraic_expression(
+                scrutinee, from, to,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| SpecAlgebraicMatchArm {
                     variant: arm.variant.clone(),
                     bindings: arm.bindings.clone(),
+                    binding_types: arm.binding_types.clone(),
                     body: substitute_pointer_variable_in_spec_expression(&arm.body, from, to),
                 })
                 .collect(),
@@ -4741,39 +4785,10 @@ fn substitute_pointer_variable_in_spec_proposition(
 ) -> SpecProposition {
     match proposition {
         SpecProposition::AlgebraicComparison { left, equal, right } => {
-            let substitute = |expression: &SpecAlgebraicExpression| SpecAlgebraicExpression {
-                type_name: expression.type_name.clone(),
-                type_arguments: expression.type_arguments.clone(),
-                variant: expression.variant.clone(),
-                fields: expression
-                    .fields
-                    .iter()
-                    .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
-                    .collect(),
-                symbolic_variants: expression
-                    .symbolic_variants
-                    .iter()
-                    .map(|variant| SpecAlgebraicVariant {
-                        variant: variant.variant.clone(),
-                        guard: Box::new(substitute_pointer_variable_in_spec_proposition(
-                            &variant.guard,
-                            from,
-                            to,
-                        )),
-                        fields: variant
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                substitute_pointer_variable_in_spec_expression(field, from, to)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            };
             SpecProposition::AlgebraicComparison {
-                left: substitute(left),
+                left: substitute_pointer_variable_in_spec_algebraic_expression(left, from, to),
                 equal: *equal,
-                right: substitute(right),
+                right: substitute_pointer_variable_in_spec_algebraic_expression(right, from, to),
             }
         }
         SpecProposition::SequenceMembership { element, sequence } => {

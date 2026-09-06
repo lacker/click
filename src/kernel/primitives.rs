@@ -76,6 +76,7 @@ pub enum Sort {
     CPointer(CType),
     CValue,
     Sequence(Option<CType>),
+    Algebraic(AlgebraicType),
     CMemory,
     CState,
     CStatementOutcome,
@@ -754,28 +755,72 @@ pub enum SpecExpression {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct SpecAlgebraicExpression {
-    pub type_name: String,
-    pub type_arguments: Vec<CType>,
-    pub variant: String,
-    pub fields: Vec<SpecExpression>,
-    /// Alternative constructor shapes for an arbitrary value. Each guard
-    /// selects one constructor and the guards are generated from one tag.
-    /// Constructed values leave this empty and use `variant`/`fields`.
-    pub symbolic_variants: Vec<SpecAlgebraicVariant>,
+    pub algebraic_type: AlgebraicType,
+    pub node: SpecAlgebraicExpressionNode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct SpecAlgebraicVariant {
-    pub variant: String,
-    pub guard: Box<SpecProposition>,
-    pub fields: Vec<SpecExpression>,
+pub enum SpecAlgebraicExpressionNode {
+    Variable(Variable),
+    Constructor {
+        variant: String,
+        fields: Vec<SpecExpression>,
+    },
+    Match {
+        scrutinee: Box<SpecAlgebraicExpression>,
+        arms: Vec<SpecAlgebraicResultMatchArm>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct SpecAlgebraicMatchArm {
     pub variant: String,
     pub bindings: Vec<String>,
+    pub binding_types: Vec<CType>,
     pub body: SpecExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecAlgebraicResultMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub binding_types: Vec<CType>,
+    pub body: Box<SpecAlgebraicExpression>,
+}
+
+/// A fully resolved application of a Click algebraic datatype. Keeping the
+/// instantiated constructor schema in the kernel term lets the kernel check
+/// constructor formation and exhaustive elimination without trusting names
+/// supplied by surface lowering.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicType {
+    pub name: String,
+    pub arguments: Vec<CType>,
+    pub variants: std::sync::Arc<[AlgebraicVariantType]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicVariantType {
+    pub name: String,
+    pub fields: Vec<CType>,
+}
+
+/// A logical algebraic value. An arbitrary Click binder is one typed
+/// variable; it is not eagerly expanded into a tag and fields for every
+/// possible constructor.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicTerm {
+    pub algebraic_type: AlgebraicType,
+    pub node: AlgebraicTermNode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum AlgebraicTermNode {
+    Variable(Variable),
+    Constructor {
+        variant: String,
+        fields: Vec<CValue>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2630,6 +2675,7 @@ pub enum Term {
     PointerOffset(PointerOffsetTerm),
     CValue(CValue),
     Sequence(SequenceTerm),
+    Algebraic(AlgebraicTerm),
     CExpressionOutcome(CExpressionOutcome),
     CStatementOutcome(CStatementOutcome),
     CFunctionOutcome(CFunctionOutcome),

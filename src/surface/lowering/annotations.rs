@@ -33,7 +33,10 @@ fn contract_expression_is_algebraic(
 use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
 use crate::kernel::SpecSequenceExpression;
-use crate::kernel::{SpecAlgebraicExpression, SpecAlgebraicVariant};
+use crate::kernel::{
+    AlgebraicType, AlgebraicVariantType, SpecAlgebraicExpression, SpecAlgebraicExpressionNode,
+    SpecAlgebraicResultMatchArm,
+};
 
 type FunctionContractSummary = (
     Vec<SpecProposition>,
@@ -78,6 +81,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -135,6 +139,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -250,6 +255,7 @@ pub(in crate::surface) fn annotated_function(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -366,6 +372,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -410,6 +417,7 @@ fn fixed_state_elaboration<'a>(
         parameter_array_element_types: array_element_types,
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -555,6 +563,7 @@ pub(in crate::surface) fn elaborate_pure_function_definitions(
             parameter_array_element_types: array_element_types,
             quantified_values: BTreeMap::new(),
             algebraic_variables: BTreeMap::new(),
+            algebraic_types: BTreeMap::new(),
             active_click_functions: BTreeSet::new(),
             loop_index: 0,
             statement_index: 0,
@@ -613,6 +622,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -660,6 +670,7 @@ pub(in crate::surface) fn function_contract_summary(
             .collect(),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
         active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
@@ -1000,6 +1011,7 @@ struct AnnotationLowerer<'a> {
     parameter_array_element_types: BTreeMap<String, CType>,
     quantified_values: BTreeMap<String, CValue>,
     algebraic_variables: BTreeMap<String, SpecAlgebraicExpression>,
+    algebraic_types: BTreeMap<(String, Vec<CType>), AlgebraicType>,
     active_click_functions: BTreeSet<String>,
     loop_index: usize,
     statement_index: usize,
@@ -1551,51 +1563,47 @@ impl AnnotationLowerer<'_> {
             ),
             ContractExpression::AlgebraicMatch { scrutinee, arms } => {
                 let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
-                let variants = if scrutinee.symbolic_variants.is_empty() {
-                    vec![(scrutinee.variant.clone(), None, scrutinee.fields.clone())]
-                } else {
-                    scrutinee
-                        .symbolic_variants
-                        .iter()
-                        .map(|variant| {
-                            (
-                                variant.variant.clone(),
-                                Some(variant.guard.as_ref().clone()),
-                                variant.fields.clone(),
-                            )
-                        })
-                        .collect()
-                };
-                let mut lowered = Vec::new();
-                for (variant, guard, fields) in variants {
+                if let SpecAlgebraicExpressionNode::Constructor { variant, fields } =
+                    &scrutinee.node
+                {
                     let arm = arms
                         .iter()
-                        .find(|arm| arm.variant == variant)
+                        .find(|arm| arm.variant == *variant)
                         .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
                     let mut body_environment = environment.clone();
-                    for (binding, field) in arm.bindings.iter().zip(fields) {
-                        body_environment.values.insert(binding.clone(), field);
+                    for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
+                        body_environment
+                            .values
+                            .insert(binding.clone(), field.clone());
                     }
-                    lowered.push((
-                        guard,
-                        self.lower_contract_expression_to_spec(&arm.body, &body_environment)?,
-                    ));
+                    return self.lower_contract_expression_to_spec(&arm.body, &body_environment);
                 }
-                let Some((_, mut result)) = lowered.pop() else {
-                    return Err("an algebraic match must have an arm".to_string());
-                };
-                while let Some((guard, body)) = lowered.pop() {
-                    let Some(guard) = guard else {
-                        result = body;
-                        continue;
-                    };
-                    result = SpecExpression::If {
-                        condition: Box::new(guard),
-                        then_branch: Box::new(body),
-                        else_branch: Box::new(result),
-                    };
-                }
-                Ok(result)
+                let lowered_arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let variant = scrutinee
+                            .algebraic_type
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == arm.variant)
+                            .ok_or_else(|| format!("unknown match variant `{}`", arm.variant))?;
+                        let mut body_environment = environment.clone();
+                        for binding in &arm.bindings {
+                            body_environment.values.remove(binding);
+                        }
+                        Ok(crate::kernel::SpecAlgebraicMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            binding_types: variant.fields.clone(),
+                            body: self
+                                .lower_contract_expression_to_spec(&arm.body, &body_environment)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(SpecExpression::AlgebraicMatch {
+                    scrutinee: Box::new(scrutinee),
+                    arms: lowered_arms,
+                })
             }
             ContractExpression::CFragment(expression)
             | ContractExpression::Field {
@@ -1861,82 +1869,64 @@ impl AnnotationLowerer<'_> {
                 variant,
                 arguments,
             } => Ok(SpecAlgebraicExpression {
-                type_name: algebraic_type.name.clone(),
-                type_arguments: algebraic_type
-                    .arguments
-                    .iter()
-                    .map(|click_type| match click_type {
-                        ClickType::C(c_type) => Ok(c_type.to_kernel_type()),
-                        ClickType::Algebraic(_) => {
-                            Err("nested algebraic datatype arguments are not supported yet"
-                                .to_string())
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                variant: variant.clone(),
-                fields: arguments
-                    .iter()
-                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
-                    .collect::<Result<Vec<_>, _>>()?,
-                symbolic_variants: Vec::new(),
+                algebraic_type: self.cached_algebraic_kernel_type(algebraic_type)?,
+                node: SpecAlgebraicExpressionNode::Constructor {
+                    variant: variant.clone(),
+                    fields: arguments
+                        .iter()
+                        .map(|argument| {
+                            self.lower_contract_expression_to_spec(argument, environment)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                },
             }),
             ContractExpression::AlgebraicMatch { scrutinee, arms } => {
                 let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
-                if scrutinee.symbolic_variants.is_empty() {
+                if let SpecAlgebraicExpressionNode::Constructor { variant, fields } =
+                    &scrutinee.node
+                {
                     let arm = arms
                         .iter()
-                        .find(|arm| arm.variant == scrutinee.variant)
-                        .ok_or_else(|| format!("missing match arm for `{}`", scrutinee.variant))?;
+                        .find(|arm| arm.variant == *variant)
+                        .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
                     let mut body_environment = environment.clone();
-                    for (binding, field) in arm.bindings.iter().zip(scrutinee.fields) {
-                        body_environment.values.insert(binding.clone(), field);
-                    }
-                    return self.lower_contract_algebraic_to_spec(&arm.body, &body_environment);
-                }
-                let mut result_type_name = None;
-                let mut result_type_arguments = None;
-                let mut result_variants = Vec::new();
-                for input in &scrutinee.symbolic_variants {
-                    let arm = arms
-                        .iter()
-                        .find(|arm| arm.variant == input.variant)
-                        .ok_or_else(|| format!("missing match arm for `{}`", input.variant))?;
-                    let mut body_environment = environment.clone();
-                    for (binding, field) in arm.bindings.iter().zip(&input.fields) {
+                    for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
                         body_environment
                             .values
                             .insert(binding.clone(), field.clone());
                     }
-                    let output =
-                        self.lower_contract_algebraic_to_spec(&arm.body, &body_environment)?;
-                    result_type_name.get_or_insert_with(|| output.type_name.clone());
-                    result_type_arguments.get_or_insert_with(|| output.type_arguments.clone());
-                    if output.symbolic_variants.is_empty() {
-                        result_variants.push(SpecAlgebraicVariant {
-                            variant: output.variant,
-                            guard: input.guard.clone(),
-                            fields: output.fields,
-                        });
-                    } else {
-                        for variant in output.symbolic_variants {
-                            result_variants.push(SpecAlgebraicVariant {
-                                variant: variant.variant,
-                                guard: Box::new(SpecProposition::And(
-                                    input.guard.clone(),
-                                    variant.guard,
-                                )),
-                                fields: variant.fields,
-                            });
-                        }
+                    return self.lower_contract_algebraic_to_spec(&arm.body, &body_environment);
+                }
+                let mut lowered_arms = Vec::new();
+                let mut result_type = None;
+                for arm in arms {
+                    let variant = scrutinee
+                        .algebraic_type
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == arm.variant)
+                        .ok_or_else(|| format!("unknown match variant `{}`", arm.variant))?;
+                    let mut body_environment = environment.clone();
+                    for binding in &arm.bindings {
+                        body_environment.values.remove(binding);
                     }
+                    let body =
+                        self.lower_contract_algebraic_to_spec(&arm.body, &body_environment)?;
+                    result_type.get_or_insert_with(|| body.algebraic_type.clone());
+                    lowered_arms.push(SpecAlgebraicResultMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: variant.fields.clone(),
+                        body: Box::new(body),
+                    });
                 }
                 Ok(SpecAlgebraicExpression {
-                    type_name: result_type_name
+                    algebraic_type: result_type
                         .ok_or_else(|| "an algebraic match must have an arm".to_string())?,
-                    type_arguments: result_type_arguments.unwrap_or_default(),
-                    variant: String::new(),
-                    fields: Vec::new(),
-                    symbolic_variants: result_variants,
+                    node: SpecAlgebraicExpressionNode::Match {
+                        scrutinee: Box::new(scrutinee),
+                        arms: lowered_arms,
+                    },
                 })
             }
             ContractExpression::Old(inner) => {
@@ -1970,72 +1960,32 @@ impl AnnotationLowerer<'_> {
         if let Some(value) = self.algebraic_variables.get(name) {
             return Ok(value.clone());
         }
-        let definition = self
-            .click_function_environment
-            .algebraic_type_definitions
-            .get(&algebraic_type.name)
-            .ok_or_else(|| format!("unknown algebraic datatype `{}`", algebraic_type.name))?;
-        let type_arguments = algebraic_kernel_type_arguments(algebraic_type)?;
         const ALGEBRAIC_VARIABLE_BASE: u64 = 4_000_000;
         const ALGEBRAIC_BINDER_STRIDE: u64 = 65_536;
         let binder_base = ALGEBRAIC_VARIABLE_BASE
             .checked_add((binder_index as u64).saturating_mul(ALGEBRAIC_BINDER_STRIDE))
             .ok_or_else(|| "too many algebraic binders".to_string())?;
-        let tag = binder_base;
-        let mut field_index = 1u64;
-        let mut symbolic_variants = Vec::new();
-        for (index, variant) in definition.variants().iter().enumerate() {
-            let mut fields = Vec::new();
-            for field in variant.fields() {
-                let c_type = instantiate_algebraic_c_field_type(definition, algebraic_type, field)?;
-                if field_index >= ALGEBRAIC_BINDER_STRIDE {
-                    return Err("an algebraic binder has too many constructor fields".to_string());
-                }
-                let variable = Variable(binder_base + field_index);
-                field_index += 1;
-                fields.push(SpecExpression::Value(crate::kernel::symbolic_call_result(
-                    c_type.to_kernel_type(),
-                    variable,
-                )));
-            }
-            let exact_guard = |variant_index: usize| SpecProposition::Comparison {
-                left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(
-                    tag,
-                )))),
-                operator: CComparisonOperator::Equal,
-                right: SpecExpression::Value(int32(variant_index as u32)),
-            };
-            let guard = if definition.variants().len() == 1 {
-                SpecProposition::Comparison {
-                    left: SpecExpression::Value(int32(0)),
-                    operator: CComparisonOperator::Equal,
-                    right: SpecExpression::Value(int32(0)),
-                }
-            } else if index + 1 == definition.variants().len() {
-                let earlier = (0..index)
-                    .map(exact_guard)
-                    .reduce(|left, right| SpecProposition::Or(Box::new(left), Box::new(right)))
-                    .expect("the last of multiple variants has an earlier guard");
-                SpecProposition::Not(Box::new(earlier))
-            } else {
-                exact_guard(index)
-            };
-            symbolic_variants.push(SpecAlgebraicVariant {
-                variant: variant.name().to_string(),
-                guard: Box::new(guard),
-                fields,
-            });
-        }
         let value = SpecAlgebraicExpression {
-            type_name: algebraic_type.name.clone(),
-            type_arguments,
-            variant: String::new(),
-            fields: Vec::new(),
-            symbolic_variants,
+            algebraic_type: self.cached_algebraic_kernel_type(algebraic_type)?,
+            node: SpecAlgebraicExpressionNode::Variable(Variable(binder_base)),
         };
         self.algebraic_variables
             .insert(name.to_string(), value.clone());
         Ok(value)
+    }
+
+    fn cached_algebraic_kernel_type(
+        &mut self,
+        application: &AlgebraicTypeApplication,
+    ) -> Result<AlgebraicType, String> {
+        let arguments = algebraic_kernel_type_arguments(application)?;
+        let key = (application.name.clone(), arguments);
+        if let Some(algebraic_type) = self.algebraic_types.get(&key) {
+            return Ok(algebraic_type.clone());
+        }
+        let algebraic_type = algebraic_kernel_type(self.click_function_environment, application)?;
+        self.algebraic_types.insert(key, algebraic_type.clone());
+        Ok(algebraic_type)
     }
 
     fn lower_click_function_call_to_algebraic_spec(
@@ -3104,6 +3054,38 @@ fn algebraic_kernel_type_arguments(
             }
         })
         .collect()
+}
+
+fn algebraic_kernel_type(
+    environment: &ClickFunctionEnvironment,
+    application: &AlgebraicTypeApplication,
+) -> Result<AlgebraicType, String> {
+    let definition = environment
+        .algebraic_type_definitions
+        .get(&application.name)
+        .ok_or_else(|| format!("unknown algebraic datatype `{}`", application.name))?;
+    Ok(AlgebraicType {
+        name: application.name.clone(),
+        arguments: algebraic_kernel_type_arguments(application)?,
+        variants: definition
+            .variants()
+            .iter()
+            .map(|variant| {
+                Ok(AlgebraicVariantType {
+                    name: variant.name().to_string(),
+                    fields: variant
+                        .fields()
+                        .iter()
+                        .map(|field| {
+                            instantiate_algebraic_c_field_type(definition, application, field)
+                                .map(C0Type::to_kernel_type)
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .into(),
+    })
 }
 
 fn instantiate_algebraic_c_field_type(

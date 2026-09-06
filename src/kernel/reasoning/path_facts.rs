@@ -127,6 +127,9 @@ pub(in crate::kernel) fn memory_effect_execution_facts(
 
 pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     match proposition {
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
+            algebraic_terms_equal(left, right)
+        }
         Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
             sequence_terms_equal_by_elements(left, right)
         }
@@ -176,11 +179,60 @@ fn disprove_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
             c_values_definitely_distinct(left, right)
         }
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
+            algebraic_terms_definitely_distinct(left, right)
+        }
         Proposition::And(left, right) => {
             disprove_builtin_prop(left) || disprove_builtin_prop(right)
         }
         Proposition::Or(left, right) => disprove_builtin_prop(left) && disprove_builtin_prop(right),
         Proposition::Not(body) => solve_builtin_prop(body),
+        _ => false,
+    }
+}
+
+fn algebraic_terms_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
+    if left.algebraic_type != right.algebraic_type {
+        return false;
+    }
+    match (&left.node, &right.node) {
+        (AlgebraicTermNode::Variable(left), AlgebraicTermNode::Variable(right)) => left == right,
+        (
+            AlgebraicTermNode::Constructor {
+                variant: left_variant,
+                fields: left_fields,
+            },
+            AlgebraicTermNode::Constructor {
+                variant: right_variant,
+                fields: right_fields,
+            },
+        ) => left_variant == right_variant && left_fields == right_fields,
+        _ => false,
+    }
+}
+
+fn algebraic_terms_definitely_distinct(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
+    if left.algebraic_type != right.algebraic_type {
+        return true;
+    }
+    match (&left.node, &right.node) {
+        (
+            AlgebraicTermNode::Constructor {
+                variant: left_variant,
+                fields: left_fields,
+            },
+            AlgebraicTermNode::Constructor {
+                variant: right_variant,
+                fields: right_fields,
+            },
+        ) => {
+            left_variant != right_variant
+                || left_fields.len() != right_fields.len()
+                || left_fields
+                    .iter()
+                    .zip(right_fields)
+                    .any(|(left, right)| c_values_definitely_distinct(left, right))
+        }
         _ => false,
     }
 }
