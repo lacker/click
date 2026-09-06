@@ -232,7 +232,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
     let theorem = theorem_environment
         .get(&application.name)
         .ok_or_else(|| format!("unknown theorem `{}`", application.name))?;
-    let (values, array_refs) = theorem_application_bindings(
+    let (values, array_refs, algebraic_values) = theorem_application_bindings(
         theorem,
         application,
         context,
@@ -259,11 +259,12 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                     theorem.name()
                 )
             })?;
-            let lowered = lower_fixed_state_proposition_through_kernel(
+            let lowered = lower_fixed_state_proposition_through_kernel_with_algebraic_values(
                 requirement,
                 assumptions,
                 &values,
                 &array_refs,
+                &algebraic_values,
                 &pre_state,
                 &post_state,
                 None,

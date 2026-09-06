@@ -165,7 +165,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         ));
     }
 
-    let (values, array_refs) = theorem_application_bindings(
+    let (values, array_refs, algebraic_values) = theorem_application_bindings(
         theorem,
         application,
         context,
@@ -187,11 +187,12 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     let pre_state = bind(context.pre_state);
     let post_state = bind(context.post_state);
     let lower = |proposition: &ClickProposition| {
-        lower_fixed_state_proposition_through_kernel(
+        lower_fixed_state_proposition_through_kernel_with_algebraic_values(
             proposition,
             lowering_assumptions,
             &values,
             &array_refs,
+            &algebraic_values,
             &pre_state,
             &post_state,
             None,
@@ -290,17 +291,55 @@ pub(super) fn theorem_application_bindings(
     assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<(BTreeMap<String, CValue>, ClickArrayRefs), String> {
+) -> Result<
+    (
+        BTreeMap<String, CValue>,
+        ClickArrayRefs,
+        BTreeMap<String, SpecAlgebraicExpression>,
+    ),
+    String,
+> {
     let mut active_functions = BTreeSet::new();
     let mut values = BTreeMap::new();
     let mut array_refs = BTreeMap::new();
+    let mut algebraic_values = BTreeMap::new();
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
         let Some(parameter_type) = parameter.click_type().c_type() else {
-            return Err(format!(
-                "applying theorem `{}` with algebraic parameter `{}` is not supported yet",
-                theorem.name(),
-                parameter.name()
-            ));
+            let ClickType::Algebraic(expected_type) = parameter.click_type() else {
+                unreachable!("Click theorem parameters are C or algebraic values")
+            };
+            let value = capture_fixed_state_algebraic_expression(
+                argument,
+                assumptions,
+                context.values,
+                context.array_refs,
+                context.pre_state,
+                context.post_state,
+                context.result,
+                context.recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            let type_matches = value.algebraic_type.name == expected_type.name
+                && value.algebraic_type.arguments.len() == expected_type.arguments.len()
+                && expected_type
+                    .arguments
+                    .iter()
+                    .zip(&value.algebraic_type.arguments)
+                    .all(|(expected, actual)| {
+                        matches!(expected, ClickType::C(expected) if expected.to_kernel_type() == *actual)
+                    });
+            if !type_matches {
+                return Err(format!(
+                    "theorem `{}` parameter `{}` expects algebraic type `{}`, got `{}`",
+                    theorem.name(),
+                    parameter.name(),
+                    expected_type.name,
+                    value.algebraic_type.name
+                ));
+            }
+            algebraic_values.insert(parameter.name().to_string(), value);
+            continue;
         };
         if parameter_is_click_array_ref(parameter) {
             let array_ref = evaluate_fixed_state_array_ref_through_kernel(
@@ -365,7 +404,7 @@ pub(super) fn theorem_application_bindings(
             values.insert(parameter.name().to_string(), value);
         }
     }
-    Ok((values, array_refs))
+    Ok((values, array_refs, algebraic_values))
 }
 
 fn theorem_application_error(

@@ -108,11 +108,41 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+    lower_fixed_state_proposition_through_kernel_with_algebraic_values(
         proposition,
         assumptions,
         values,
         array_refs,
+        &BTreeMap::new(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_algebraic_values(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        algebraic_values,
         pre_state,
         state,
         result,
@@ -121,6 +151,54 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel(
         click_function_environment,
         &std::collections::BTreeSet::new(),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<Proposition, String> {
+    let mut click_function_calls = BTreeSet::new();
+    crate::surface::validation::collect_click_function_calls_in_proposition(
+        proposition,
+        &mut click_function_calls,
+    );
+    let symbolic_load_assumptions =
+        (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
+    let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
+    let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_values(
+        proposition,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        algebraic_values.clone(),
+        result,
+        recorded_snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions.clone(),
+    )?;
+    let (lowered, _, obligations) = crate::kernel::c_lower_spec_proposition_at_state(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )?;
+    refuse_impossible_loads(&obligations)?;
+    Ok(lowered)
 }
 
 /// The kernel lowering of a proof-side proposition whose calls named in
@@ -139,36 +217,20 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<Proposition, String> {
-    let mut click_function_calls = BTreeSet::new();
-    crate::surface::validation::collect_click_function_calls_in_proposition(
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
         proposition,
-        &mut click_function_calls,
-    );
-    let symbolic_load_assumptions =
-        (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
-    let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
-    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
-    let spec = crate::surface::lowering::elaborate_fixed_state_proposition(
-        proposition,
-        states.element_types,
-        &states.entry_state,
-        states.entry_values,
-        states.current_values,
+        assumptions,
+        values,
+        array_refs,
+        &BTreeMap::new(),
+        pre_state,
+        state,
         result,
         recorded_snapshots,
-        assumptions,
         predicate_environment,
         click_function_environment,
-        opaque_click_functions.clone(),
-    )?;
-    let (lowered, _, obligations) = crate::kernel::c_lower_spec_proposition_at_state(
-        &states.lowering_state,
-        &spec,
-        Some(&states.entry_state),
-        assumptions,
-    )?;
-    refuse_impossible_loads(&obligations)?;
-    Ok(lowered)
+        opaque_click_functions,
+    )
 }
 
 /// The one evaluation of a proof-side expression: elaborated into the
@@ -216,6 +278,38 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
     )?;
     refuse_impossible_loads(&obligations)?;
     Ok(value)
+}
+
+/// Captures an algebraic expression as the symbolic spec term it denotes at
+/// this proof state. The kernel will evaluate the captured term together with
+/// the theorem clause that consumes it.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<SpecAlgebraicExpression, String> {
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
+    crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
+        expression,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        result,
+        recorded_snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        BTreeSet::new(),
+    )
 }
 
 /// The one evaluation of a C fragment stated outside a proof: a resource

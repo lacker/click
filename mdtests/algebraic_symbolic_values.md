@@ -80,6 +80,24 @@ theorem algebraic_identity_is_stable(left: Maybe<int32>, right: Maybe<int32>) {
     }
 }
 
+theorem apply_algebraic_identity(m: Maybe<int32>) {
+    ensures m == m by {
+        apply(maybe_reflexive(m));
+    }
+}
+
+theorem apply_algebraic_constructor(value: int32) {
+    ensures Maybe<int32>::Some(value) == Maybe<int32>::Some(value) by {
+        apply(maybe_reflexive(Maybe<int32>::Some(value)));
+    }
+}
+
+theorem apply_algebraic_function_result(value: int32) {
+    ensures wrap(value) == wrap(value) by {
+        apply(maybe_reflexive(wrap(value)));
+    }
+}
+
 theorem maybe_constructor_congruence(left: int32, right: int32) {
     requires left == right;
     ensures Maybe<int32>::Some(left) == Maybe<int32>::Some(right) by simp;

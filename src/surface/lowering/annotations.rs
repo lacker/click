@@ -434,16 +434,18 @@ fn fixed_state_elaboration<'a>(
     (lowerer, context)
 }
 
-/// Elaborates a proposition stated in a fixed-state proof into the kernel's
-/// spec form, exactly as a contract clause is elaborated; the kernel then
-/// lowers the result at the proof's state.
+/// Elaborates a fixed-state proposition with already-elaborated symbolic
+/// algebraic bindings. The bindings are logical values captured at the
+/// application site, so entering `old(...)` or another snapshot keeps the
+/// same value instead of re-evaluating its source expression there.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn elaborate_fixed_state_proposition(
+pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_values(
     proposition: &ClickProposition,
     array_element_types: BTreeMap<String, CType>,
     entry_state: &CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     result: Option<&CValue>,
     snapshots: &RecordedSnapshots,
     assumptions: &PureFactContext,
@@ -463,7 +465,41 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition(
         click_function_environment,
         opaque_click_functions,
     );
+    let mut context = context;
+    context.algebraic_values = algebraic_values;
     lowerer.click_proposition_to_spec_proposition(proposition, &context)
+}
+
+/// Elaborates an algebraic expression at a fixed proof state without
+/// evaluating or expanding it. This is the symbolic value captured for an
+/// algebraic theorem argument.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
+    expression: &ContractExpression,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> Result<SpecAlgebraicExpression, String> {
+    let (mut lowerer, context) = fixed_state_elaboration(
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    );
+    lowerer.lower_contract_algebraic_to_spec(expression, &context)
 }
 
 /// Elaborates an expression stated in a fixed-state proof into the kernel's

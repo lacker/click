@@ -62,7 +62,9 @@ unchanged.
   The earlier eager encoding as an integer tag plus fields for every possible
   variant has been removed; and
 - checked constructor formation, disjointness, congruence, and injectivity,
-  with explicit surface certificates and indexed exact-hypothesis lookup.
+  with explicit surface certificates and indexed exact-hypothesis lookup; and
+- theorem application with symbolic algebraic variables, constructors, and
+  pure-function results as checked, type-preserving arguments.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -71,8 +73,8 @@ must remain supported while their public semantics migrate to `List<T>`:
 not remain a second, privileged logical collection universe.
 
 Still open are algebraic `let` bindings and quantifiers, resource arguments,
-theorem application with algebraic arguments, nested and strictly positive
-recursive fields, structural decreases and induction, the library-defined
+nested and strictly positive recursive fields, structural decreases and
+induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
 Recursive algebraic-valued pure functions also wait on that recursive
 representation. All pure calls remain logical applications during lowering;
