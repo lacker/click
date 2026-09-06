@@ -1613,11 +1613,14 @@ pub(in crate::surface::proof) fn prove_pure_proposition_case_in_state(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` could not lower proposition: {message}"
                     ))
                 })?;
+                let extraction_assumptions = assumptions_from_propositions(&available);
                 if !exact_proper_conjunct_is_available(&proposition, &available)
                     && !discharged_implication_consequent_is_available(&proposition, &available)
+                    && !extraction_assumptions
+                        .contains_algebraic_constructor_field_equality(&proposition)
                 {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",
                         describe_pure_fact(&proposition, parameters, arguments)
                     )));
                 }

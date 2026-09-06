@@ -1,5 +1,151 @@
 use super::*;
 
+fn maybe_int32_type() -> AlgebraicType {
+    AlgebraicType {
+        name: "Maybe".to_string(),
+        arguments: vec![CType::Int32],
+        variants: vec![
+            AlgebraicVariantType {
+                name: "None".to_string(),
+                fields: vec![],
+            },
+            AlgebraicVariantType {
+                name: "Some".to_string(),
+                fields: vec![CType::Int32],
+            },
+        ]
+        .into(),
+    }
+}
+
+fn maybe_constructor(
+    algebraic_type: &AlgebraicType,
+    variant: &str,
+    fields: Vec<CValue>,
+) -> AlgebraicTerm {
+    AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: variant.to_string(),
+            fields,
+        },
+    }
+}
+
+#[test]
+fn checked_algebraic_constructor_rules_are_sound() {
+    let algebraic_type = maybe_int32_type();
+    let left = Bitvector32Term::Variable(Variable(89_000));
+    let right = Bitvector32Term::Variable(Variable(89_001));
+    let field_equality =
+        Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true);
+    let constructor_equality = Proposition::Equal(
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::Int32(left.clone())],
+        )),
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::Int32(right.clone())],
+        )),
+    );
+
+    let injectivity_context =
+        PureFactContext::new().assume_proposition(constructor_equality.clone());
+    let injectivity = injectivity_context
+        .derive_simp_proposition(&field_equality)
+        .expect("a checked same-constructor equality entails its field equality");
+    assert_eq!(
+        injectivity.algebraic_constructor_injectivity_source(),
+        Some((&constructor_equality, 0))
+    );
+    assert!(injectivity.check(&injectivity_context));
+
+    let congruence_context = PureFactContext::new().assume_proposition(field_equality);
+    let congruence = congruence_context
+        .derive_simp_proposition(&constructor_equality)
+        .expect("checked field equalities entail equality of their constructors");
+    assert!(congruence.check(&congruence_context));
+
+    let malformed = Proposition::Equal(
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::UInt32(left)],
+        )),
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::UInt32(right)],
+        )),
+    );
+    assert!(
+        PureFactContext::new()
+            .derive_simp_proposition(&malformed)
+            .is_none(),
+        "constructor rules must reject terms that do not match the retained schema"
+    );
+}
+
+#[test]
+fn distinct_algebraic_constructors_make_the_context_inconsistent() {
+    let algebraic_type = maybe_int32_type();
+    let conflict = Proposition::Equal(
+        Term::Algebraic(maybe_constructor(&algebraic_type, "None", vec![])),
+        Term::Algebraic(maybe_constructor(&algebraic_type, "Some", vec![int32(7)])),
+    );
+    assert!(
+        PureFactContext::new()
+            .assume_proposition(conflict)
+            .is_inconsistent()
+    );
+}
+
+#[test]
+fn algebraic_constructor_injectivity_ignores_unrelated_facts() {
+    let algebraic_type = maybe_int32_type();
+    let left = Bitvector32Term::Variable(Variable(89_100));
+    let right = Bitvector32Term::Variable(Variable(89_101));
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true);
+    let source = Proposition::Equal(
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::Int32(left)],
+        )),
+        Term::Algebraic(maybe_constructor(
+            &algebraic_type,
+            "Some",
+            vec![CValue::Int32(right)],
+        )),
+    );
+    let samples = [16, 64, 256]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = PureFactContext::new().assume_proposition(source.clone());
+            for index in 0..size {
+                assumptions = assumptions.assume_proposition(Proposition::Predicate {
+                    name: format!("unrelated_{index}"),
+                    arguments: vec![],
+                });
+            }
+            let (derivation, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.derive_simp_proposition(&goal)
+            });
+            assert!(derivation.is_some());
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8),
+            "constructor injectivity lookup scaled with unrelated facts: {samples:?}"
+        );
+    }
+}
+
 #[test]
 fn function_contract_lookup_ignores_unrelated_pointer_facts() {
     fn contract_fact(name: &str, pointer: Pointer) -> Proposition {

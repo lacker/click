@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface) enum SimpProposition {
@@ -279,6 +280,51 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     .get_or_init(|| assumptions_from_propositions(available)),
             )
     };
+
+    fn rewrite_c_value(
+        value: &CValue,
+        rewrite_term: &impl Fn(&Bitvector32Term) -> Bitvector32Term,
+        rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
+    ) -> CValue {
+        match value {
+            CValue::Void => CValue::Void,
+            CValue::Int16(term) => CValue::Int16(rewrite_term(term)),
+            CValue::Int32(term) => CValue::Int32(rewrite_term(term)),
+            CValue::UInt8(term) => CValue::UInt8(rewrite_term(term)),
+            CValue::UInt16(term) => CValue::UInt16(rewrite_term(term)),
+            CValue::UInt32(term) => CValue::UInt32(rewrite_term(term)),
+            CValue::Int64(term) => CValue::Int64(rewrite_term(term)),
+            CValue::UInt64(term) => CValue::UInt64(rewrite_term(term)),
+            CValue::Float32(term) => CValue::Float32(rewrite_term(term)),
+            CValue::Float64(term) => CValue::Float64(rewrite_term(term)),
+            CValue::Pointer(pointer) => {
+                let mut rewritten = pointer.clone();
+                rewritten.replace_pointer(rewrite_pointer(pointer.pointer()));
+                CValue::Pointer(rewritten)
+            }
+        }
+    }
+
+    fn rewrite_algebraic(
+        term: &AlgebraicTerm,
+        rewrite_term: &impl Fn(&Bitvector32Term) -> Bitvector32Term,
+        rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
+    ) -> AlgebraicTerm {
+        let node = match &term.node {
+            AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
+            AlgebraicTermNode::Constructor { variant, fields } => AlgebraicTermNode::Constructor {
+                variant: variant.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| rewrite_c_value(field, rewrite_term, rewrite_pointer))
+                    .collect(),
+            },
+        };
+        AlgebraicTerm {
+            algebraic_type: term.algebraic_type.clone(),
+            node,
+        }
+    }
 
     if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality
     {
@@ -631,6 +677,25 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 parent: rewrite_resource_offset(parent, left, right),
                 child: rewrite_resource_offset(child, left, right),
             },
+            Proposition::Equal(Term::Algebraic(goal_left), Term::Algebraic(goal_right)) => {
+                let rewrite_term = |term: &Bitvector32Term| rewrite_term_offset(term, left, right);
+                let rewrite_pointer = |pointer: &Pointer| Pointer {
+                    block: pointer.block.clone(),
+                    offset: rewrite_offset(&pointer.offset, left, right),
+                };
+                Proposition::Equal(
+                    Term::Algebraic(rewrite_algebraic(
+                        goal_left,
+                        &rewrite_term,
+                        &rewrite_pointer,
+                    )),
+                    Term::Algebraic(rewrite_algebraic(
+                        goal_right,
+                        &rewrite_term,
+                        &rewrite_pointer,
+                    )),
+                )
+            }
             _ => {
                 return Err(
                     "`rewrite` pointer-offset equality does not occur in this goal".to_string(),
@@ -758,6 +823,22 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     }
                 };
                 Proposition::ConditionIs(rewritten, *expected)
+            }
+            Proposition::Equal(Term::Algebraic(goal_left), Term::Algebraic(goal_right)) => {
+                let rewrite_term =
+                    |term: &Bitvector32Term| rewrite_load_pointers(term, &rewrite_pointer);
+                Proposition::Equal(
+                    Term::Algebraic(rewrite_algebraic(
+                        goal_left,
+                        &rewrite_term,
+                        &rewrite_pointer,
+                    )),
+                    Term::Algebraic(rewrite_algebraic(
+                        goal_right,
+                        &rewrite_term,
+                        &rewrite_pointer,
+                    )),
+                )
             }
             _ => {
                 return Err("`rewrite` pointer equality expects a condition goal".to_string());
@@ -1179,6 +1260,25 @@ fn rewrite_atomic_proposition_by_exact_equality(
             },
             bytes: rewrite_term(bytes, left, right),
         },
+        Proposition::Equal(Term::Algebraic(goal_left), Term::Algebraic(goal_right)) => {
+            let rewrite_term = |term: &Bitvector32Term| rewrite_term(term, left, right);
+            let rewrite_pointer = |pointer: &Pointer| Pointer {
+                block: pointer.block.clone(),
+                offset: rewrite_offset_term(&pointer.offset, left, right),
+            };
+            Proposition::Equal(
+                Term::Algebraic(rewrite_algebraic(
+                    goal_left,
+                    &rewrite_term,
+                    &rewrite_pointer,
+                )),
+                Term::Algebraic(rewrite_algebraic(
+                    goal_right,
+                    &rewrite_term,
+                    &rewrite_pointer,
+                )),
+            )
+        }
         _ => return Err("`rewrite` int32 equality does not occur in this goal".to_string()),
     };
     if &rewritten == goal {

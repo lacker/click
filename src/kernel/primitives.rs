@@ -826,6 +826,34 @@ pub enum AlgebraicTermNode {
     },
 }
 
+impl AlgebraicTerm {
+    /// Returns a constructor's fields only when the constructor is formed
+    /// against this term's resolved datatype schema. Logical variables are
+    /// well formed but have no constructor fields.
+    pub(in crate::kernel) fn checked_constructor_fields(&self) -> Option<&[CValue]> {
+        let AlgebraicTermNode::Constructor { variant, fields } = &self.node else {
+            return None;
+        };
+        let schema = self
+            .algebraic_type
+            .variants
+            .iter()
+            .find(|schema| schema.name == *variant)?;
+        (schema.fields.len() == fields.len()
+            && schema
+                .fields
+                .iter()
+                .zip(fields)
+                .all(|(expected, field)| *expected == field.c_type()))
+        .then_some(fields)
+    }
+
+    pub(in crate::kernel) fn is_well_formed(&self) -> bool {
+        matches!(&self.node, AlgebraicTermNode::Variable(_))
+            || self.checked_constructor_fields().is_some()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecSequenceExpression {
     Literal(Vec<SpecExpression>),
@@ -2946,6 +2974,17 @@ pub(super) enum PropositionDerivationRule {
         left: Box<PropositionDerivation>,
         right: Box<PropositionDerivation>,
     },
+    /// Constructor congruence: equal corresponding fields make two
+    /// applications of the same constructor equal.
+    AlgebraicConstructorCongruence {
+        fields: Vec<PropositionDerivation>,
+    },
+    /// Constructor injectivity: an exact equality between two applications
+    /// of one constructor entails equality of the selected fields.
+    AlgebraicConstructorInjectivity {
+        source: Proposition,
+        field_index: usize,
+    },
     OrLeft(Box<PropositionDerivation>),
     OrRight(Box<PropositionDerivation>),
     DoubleNegation(Box<PropositionDerivation>),
@@ -3130,6 +3169,17 @@ pub struct PureFactContext {
     /// known for that pointer, never to project-wide declarations.
     pub(super) function_contract_facts:
         std::sync::Arc<BTreeMap<Pointer, BTreeMap<String, Proposition>>>,
+    /// Exact equalities between two applications of one algebraic
+    /// constructor, indexed by each field equality they entail. Both levels
+    /// are persistent so adding one proof fact changes logarithmically many
+    /// nodes instead of cloning an ambient fact table.
+    pub(super) algebraic_constructor_field_equalities: crate::persistent::PersistentMap<
+        Proposition,
+        crate::persistent::PersistentMap<(Proposition, usize), ()>,
+    >,
+    /// Exact equalities between distinct checked constructors. Any such fact
+    /// makes the context inconsistent by constructor disjointness.
+    pub(super) algebraic_constructor_conflicts: crate::persistent::PersistentMap<Proposition, ()>,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every
     /// unrelated proposition in the context.

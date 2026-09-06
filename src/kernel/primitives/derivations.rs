@@ -552,6 +552,19 @@ impl PropositionDerivation {
         premises.into_iter().collect()
     }
 
+    /// The exact constructor equality cited by a checked injectivity step.
+    /// Certificate lowering uses this only to select the existing `extract`
+    /// syntax; proof checking recomputes the field equality independently.
+    pub(crate) fn algebraic_constructor_injectivity_source(&self) -> Option<(&Proposition, usize)> {
+        match &self.rule {
+            PropositionDerivationRule::AlgebraicConstructorInjectivity {
+                source,
+                field_index,
+            } => Some((source, *field_index)),
+            _ => None,
+        }
+    }
+
     fn collect_context_premises(&self, premises: &mut BTreeSet<Proposition>) {
         fn collect_local_assumptions(
             proposition: &Proposition,
@@ -576,6 +589,14 @@ impl PropositionDerivation {
             PropositionDerivationRule::And { left, right } => {
                 left.collect_context_premises(premises);
                 right.collect_context_premises(premises);
+            }
+            PropositionDerivationRule::AlgebraicConstructorCongruence { fields } => {
+                for field in fields {
+                    field.collect_context_premises(premises);
+                }
+            }
+            PropositionDerivationRule::AlgebraicConstructorInjectivity { source, .. } => {
+                premises.insert(source.clone());
             }
             PropositionDerivationRule::OrLeft(proof)
             | PropositionDerivationRule::OrRight(proof)

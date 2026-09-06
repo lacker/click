@@ -1318,6 +1318,63 @@ impl Proposition {
     }
 }
 
+/// Recompute the field equalities justified by one exact equality between
+/// applications of the same checked algebraic constructor. This single
+/// definition is shared by evidence production, index maintenance, and proof
+/// checking so none of those layers can disagree about the rule.
+fn algebraic_constructor_field_equalities(proposition: &Proposition) -> Option<Vec<Proposition>> {
+    let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition else {
+        return None;
+    };
+    if left.algebraic_type != right.algebraic_type {
+        return None;
+    }
+    let (
+        AlgebraicTermNode::Constructor {
+            variant: left_variant,
+            ..
+        },
+        AlgebraicTermNode::Constructor {
+            variant: right_variant,
+            ..
+        },
+    ) = (&left.node, &right.node)
+    else {
+        return None;
+    };
+    if left_variant != right_variant {
+        return None;
+    }
+    let left_fields = left.checked_constructor_fields()?;
+    let right_fields = right.checked_constructor_fields()?;
+    left_fields
+        .iter()
+        .zip(right_fields)
+        .map(|(left, right)| {
+            c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
+        })
+        .collect()
+}
+
+fn is_algebraic_constructor_conflict(proposition: &Proposition) -> bool {
+    let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition else {
+        return false;
+    };
+    if left.algebraic_type != right.algebraic_type
+        || left.checked_constructor_fields().is_none()
+        || right.checked_constructor_fields().is_none()
+    {
+        return false;
+    }
+    matches!(
+        (&left.node, &right.node),
+        (
+            AlgebraicTermNode::Constructor { variant: left, .. },
+            AlgebraicTermNode::Constructor { variant: right, .. }
+        ) if left != right
+    )
+}
+
 impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_bitvector_equality_index_fact_visits() {
@@ -1623,6 +1680,8 @@ impl PureFactContext {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
+        self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
+        self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1641,6 +1700,7 @@ impl PureFactContext {
                 .cloned()
                 .collect(),
         );
+        self.rebuild_algebraic_constructor_field_equalities();
         self.rebuild_memory_loadable_facts();
         self.rebuild_memory_separation_facts();
         self.rebuild_function_contract_facts();
@@ -1756,6 +1816,82 @@ impl PureFactContext {
         for proposition in facts {
             self.adjust_memory_loadable_fact(&proposition, true);
         }
+    }
+
+    fn adjust_algebraic_constructor_field_equalities(
+        &mut self,
+        proposition: &Proposition,
+        insert: bool,
+    ) {
+        let Some(fields) = algebraic_constructor_field_equalities(proposition) else {
+            return;
+        };
+        for (field_index, field) in fields.into_iter().enumerate() {
+            let source = (proposition.clone(), field_index);
+            let mut sources = self
+                .algebraic_constructor_field_equalities
+                .get(&field)
+                .cloned()
+                .unwrap_or_default();
+            if insert {
+                sources = sources.with_inserted(source, ());
+            } else {
+                sources = sources.without_key(&source);
+            }
+            self.algebraic_constructor_field_equalities = if sources.is_empty() {
+                self.algebraic_constructor_field_equalities
+                    .without_key(&field)
+            } else {
+                self.algebraic_constructor_field_equalities
+                    .with_inserted(field, sources)
+            };
+        }
+    }
+
+    fn adjust_algebraic_constructor_conflict(&mut self, proposition: &Proposition, insert: bool) {
+        if !is_algebraic_constructor_conflict(proposition) {
+            return;
+        }
+        self.algebraic_constructor_conflicts = if insert {
+            self.algebraic_constructor_conflicts
+                .with_inserted(proposition.clone(), ())
+        } else {
+            self.algebraic_constructor_conflicts
+                .without_key(proposition)
+        };
+    }
+
+    fn rebuild_algebraic_constructor_field_equalities(&mut self) {
+        self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
+        self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
+        let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
+        for proposition in facts {
+            self.adjust_algebraic_constructor_field_equalities(&proposition, true);
+            self.adjust_algebraic_constructor_conflict(&proposition, true);
+        }
+    }
+
+    fn algebraic_constructor_field_sources(
+        &self,
+        field: &Proposition,
+    ) -> impl Iterator<Item = &(Proposition, usize)> {
+        self.algebraic_constructor_field_equalities
+            .get(field)
+            .into_iter()
+            .flat_map(|sources| sources.iter().map(|(source, ())| source))
+    }
+
+    /// Whether an exact same-constructor equality in this context entails
+    /// `field`. This is the checked no-confusion rule used by explicit
+    /// `extract`; the persistent index keeps the query independent of the
+    /// number of unrelated facts in the proof state.
+    pub(crate) fn contains_algebraic_constructor_field_equality(
+        &self,
+        field: &Proposition,
+    ) -> bool {
+        self.algebraic_constructor_field_sources(field)
+            .next()
+            .is_some()
     }
 
     #[cfg(test)]
@@ -1937,6 +2073,8 @@ impl PureFactContext {
             if matches!(proposition, Proposition::Or(_, _)) {
                 std::sync::Arc::make_mut(&mut self.disjunction_facts).insert(proposition.clone());
             }
+            self.adjust_algebraic_constructor_field_equalities(&proposition, true);
+            self.adjust_algebraic_constructor_conflict(&proposition, true);
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
@@ -1950,6 +2088,8 @@ impl PureFactContext {
             if matches!(proposition, Proposition::Or(_, _)) {
                 std::sync::Arc::make_mut(&mut self.disjunction_facts).remove(proposition);
             }
+            self.adjust_algebraic_constructor_field_equalities(proposition, false);
+            self.adjust_algebraic_constructor_conflict(proposition, false);
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.adjust_nonmemory_separation_fact(proposition, false);
@@ -2021,6 +2161,12 @@ impl PureFactContext {
                 &self.function_contract_facts,
                 &other.function_contract_facts,
             )
+            && self
+                .algebraic_constructor_field_equalities
+                .shares_root_with(&other.algebraic_constructor_field_equalities)
+            && self
+                .algebraic_constructor_conflicts
+                .shares_root_with(&other.algebraic_constructor_conflicts)
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(
@@ -2357,6 +2503,26 @@ impl PropositionDerivation {
                     && right.conclusion == **expected_right
                     && left.check(available)
                     && right.check(available)
+            }
+            PropositionDerivationRule::AlgebraicConstructorCongruence { fields } => {
+                let Some(expected) = algebraic_constructor_field_equalities(&self.conclusion)
+                else {
+                    return false;
+                };
+                !expected.is_empty()
+                    && derivations_match_propositions(fields, &expected)
+                    && fields.iter().all(|proof| proof.check(available))
+            }
+            PropositionDerivationRule::AlgebraicConstructorInjectivity {
+                source,
+                field_index,
+            } => {
+                let Some(expected) = algebraic_constructor_field_equalities(source)
+                    .and_then(|fields| fields.get(*field_index).cloned())
+                else {
+                    return false;
+                };
+                expected == self.conclusion && available.prop_facts.contains(source)
             }
             PropositionDerivationRule::OrLeft(proof) => {
                 let Proposition::Or(expected, _) = &self.conclusion else {

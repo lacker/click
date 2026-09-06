@@ -36,6 +36,18 @@ pub(super) fn lower_surface_atomic_derivation(
     if let Some(selector) = anchor {
         conclusion = surface_at_snapshot(&conclusion, selector)?;
     }
+    if derivation
+        .algebraic_constructor_injectivity_source()
+        .is_some()
+    {
+        let tactics = vec![ProofTactic::Extract(conclusion.clone())];
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "algebraic constructor injectivity produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
     if let (
         Some((left_derivation, right_derivation)),
         ClickProposition::And(surface_left, surface_right),
@@ -205,6 +217,18 @@ pub(super) fn lower_surface_atomic_derivation(
             }
             Err(error) => unexpressed_premises.push((premise, error)),
         }
+    }
+    if let Some((_, surface)) = premise_pairs
+        .iter()
+        .find(|(kernel, _)| normalizes_context_free(&Proposition::Not(Box::new(kernel.clone()))))
+    {
+        let tactics = vec![ProofTactic::Contradiction(surface.clone())];
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "context-free contradiction produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     drop(premise_synthesis_span);
     let conclusion_lowering_span = crate::instrumentation::OperationTiming::new(

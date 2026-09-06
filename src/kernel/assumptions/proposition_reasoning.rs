@@ -200,6 +200,14 @@ impl PureFactContext {
             return true;
         }
 
+        if let Some(rule) = self.derive_by_algebraic_constructor_rules(proposition, false) {
+            let proof = proposition_derivation(proposition, rule);
+            if proof.check(self) {
+                record_implicit_reasoning_provenance(self, proposition);
+                return true;
+            }
+        }
+
         let direct = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
@@ -606,6 +614,9 @@ impl PureFactContext {
                 PropositionDerivationRule::ContextFree,
             ));
         }
+        if let Some(rule) = self.derive_by_algebraic_constructor_rules(proposition, for_simp) {
+            return Some(proposition_derivation(proposition, rule));
+        }
         let direct = match proposition {
             Proposition::And(left, right) => self
                 .derive_proposition_using(left, for_simp)
@@ -714,6 +725,30 @@ impl PureFactContext {
         }
         self.derive_by_disjunction_cases(proposition, for_simp)
             .map(|rule| proposition_derivation(proposition, rule))
+    }
+
+    fn derive_by_algebraic_constructor_rules(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        if let Some(fields) = algebraic_constructor_field_equalities(proposition)
+            && !fields.is_empty()
+        {
+            let fields = fields
+                .iter()
+                .map(|field| self.derive_proposition_using(field, for_simp))
+                .collect::<Option<Vec<_>>>()?;
+            return Some(PropositionDerivationRule::AlgebraicConstructorCongruence { fields });
+        }
+        self.algebraic_constructor_field_sources(proposition)
+            .next()
+            .map(|(source, field_index)| {
+                PropositionDerivationRule::AlgebraicConstructorInjectivity {
+                    source: source.clone(),
+                    field_index: *field_index,
+                }
+            })
     }
 
     fn proves_atomic_without_search(&self, proposition: &Proposition) -> bool {
@@ -3971,6 +4006,9 @@ impl PureFactContext {
     fn is_inconsistent_unmemoized(&self) -> bool {
         #[cfg(test)]
         CONTEXT_INCONSISTENCY_FULL_SCANS.with(|scans| scans.set(scans.get() + 1));
+        if !self.algebraic_constructor_conflicts.is_empty() {
+            return true;
+        }
         let fact_scan_timing = crate::instrumentation::OperationTiming::new(
             "kernel",
             "context inconsistency",

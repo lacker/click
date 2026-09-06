@@ -192,7 +192,10 @@ fn disprove_builtin_prop(proposition: &Proposition) -> bool {
 }
 
 fn algebraic_terms_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
-    if left.algebraic_type != right.algebraic_type {
+    if !left.is_well_formed()
+        || !right.is_well_formed()
+        || left.algebraic_type != right.algebraic_type
+    {
         return false;
     }
     match (&left.node, &right.node) {
@@ -212,6 +215,9 @@ fn algebraic_terms_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
 }
 
 fn algebraic_terms_definitely_distinct(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
+    if !left.is_well_formed() || !right.is_well_formed() {
+        return false;
+    }
     if left.algebraic_type != right.algebraic_type {
         return true;
     }

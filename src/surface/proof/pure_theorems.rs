@@ -499,12 +499,21 @@ fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
     context: &PureTheoremContext,
     goal: &Proposition,
+    surface_goal: &ClickProposition,
     certificate: &SimpEvidence,
 ) -> Option<Vec<ProofTactic>> {
     let tactic = match certificate {
         SimpEvidence::Assumption => ProofTactic::Assumption,
         SimpEvidence::Normalize => ProofTactic::Normalize,
         SimpEvidence::Derivation(derivation) => {
+            if derivation
+                .algebraic_constructor_injectivity_source()
+                .is_some()
+            {
+                let tactic = ProofTactic::Extract(surface_goal.clone());
+                ProofCertificate::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
+                return Some(vec![tactic]);
+            }
             let premise_pairs = derivation
                 .context_premises()
                 .iter()
@@ -519,6 +528,13 @@ fn lower_pure_simp_certificate(
                         .map(|surface| (premise.clone(), surface))
                 })
                 .collect::<Option<Vec<_>>>()?;
+            if let Some((_, surface)) = premise_pairs.iter().find(|(kernel, _)| {
+                normalizes_context_free(&Proposition::Not(Box::new(kernel.clone())))
+            }) {
+                let tactic = ProofTactic::Contradiction(surface.clone());
+                ProofCertificate::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
+                return Some(vec![tactic]);
+            }
             if premise_pairs.is_empty() {
                 ProofTactic::Normalize
             } else if let Some(ordered) = recorded_signed_order_pairs(derivation, &premise_pairs)
@@ -745,6 +761,7 @@ fn verify_theorem_ensure(
                         claim_label,
                         context,
                         &goal,
+                        surface_goal,
                         source_tactics.as_deref(),
                         predicate_environment,
                         click_function_environment,
@@ -1179,6 +1196,7 @@ fn pure_theorem_surface_certificate(
     claim_label: &str,
     context: &PureTheoremContext,
     goal: &Proposition,
+    surface_goal: &ClickProposition,
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -1343,7 +1361,8 @@ fn pure_theorem_surface_certificate(
     }
     let assumptions = assumptions_from_propositions(&context.requires);
     if let Some(plan) = plan_simp_certificate(goal, &assumptions)
-        && let Some(tactics) = lower_pure_simp_certificate(theorem, context, goal, &plan)
+        && let Some(tactics) =
+            lower_pure_simp_certificate(theorem, context, goal, surface_goal, &plan)
     {
         return ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -3525,11 +3544,14 @@ fn prove_pure_theorem_tactics(
                 .map_err(|message| {
                     ClickError::new(format!("`extract` failed for `{claim_label}`: {message}"))
                 })?;
+                let extraction_assumptions = assumptions_from_propositions(&available);
                 if !exact_proper_conjunct_is_available(&proposition, &available)
                     && !discharged_implication_consequent_is_available(&proposition, &available)
+                    && !extraction_assumptions
+                        .contains_algebraic_constructor_field_equality(&proposition)
                 {
                     return Err(ClickError::new(format!(
-                        "`extract` failed for `{claim_label}`: proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
+                        "`extract` failed for `{claim_label}`: proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",
                         describe_pure_fact(&proposition, &[], &[])
                     )));
                 }

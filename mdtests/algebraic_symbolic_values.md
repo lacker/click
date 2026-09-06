@@ -73,6 +73,31 @@ theorem algebraic_identity_is_stable(left: Maybe<int32>, right: Maybe<int32>) {
         assumption();
     }
 }
+
+theorem maybe_constructor_congruence(left: int32, right: int32) {
+    requires left == right;
+    ensures Maybe<int32>::Some(left) == Maybe<int32>::Some(right) by simp;
+}
+
+theorem maybe_constructor_injectivity(left: int32, right: int32) {
+    requires Maybe<int32>::Some(left) == Maybe<int32>::Some(right);
+    ensures left == right by simp;
+}
+
+theorem maybe_pointer_constructor_rules(left: int32*, right: int32*) {
+    requires left == right;
+    ensures Maybe<int32*>::Some(left) == Maybe<int32*>::Some(right) by simp;
+}
+
+theorem maybe_pointer_constructor_injectivity(left: int32*, right: int32*) {
+    requires Maybe<int32*>::Some(left) == Maybe<int32*>::Some(right);
+    ensures left == right by simp;
+}
+
+theorem maybe_constructor_disjointness_is_checked(value: int32) {
+    requires Maybe<int32>::None == Maybe<int32>::Some(value);
+    ensures 0 == 1 by simp;
+}
 ```
 
 ```expect

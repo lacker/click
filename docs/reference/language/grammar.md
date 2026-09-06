@@ -153,12 +153,18 @@ ensures match Maybe<int32>::Some(value) {
 } == value;
 ```
 
-Constructor equality is structural: different variants are unequal, while
-equal variants compare corresponding fields. Pattern arms must name every
-variant exactly once, use the declared field arity, and keep field bindings
-local to the arm. Generic arguments and fields currently use modeled C scalar
-and data-pointer types. See the pure, C-free first-class regression in
-`mdtests/algebraic_symbolic_values.md`.
+Constructor equality is structural and checked against the resolved datatype
+schema. Different variants are disjoint; an assumed equality between them is
+a contradiction. Equality of every corresponding field proves equality of
+two applications of one constructor (congruence), and an exact equality of
+such applications exposes equality only at the same field position
+(injectivity). `simp` can select these rules, expanding congruence to explicit
+`rewrite` steps and injectivity to checked `extract` steps.
+
+Pattern arms must name every variant exactly once, use the declared field
+arity, and keep field bindings local to the arm. Generic arguments and fields
+currently use modeled C scalar and data-pointer types. See the pure, C-free
+first-class regression in `mdtests/algebraic_symbolic_values.md`.
 
 An algebraic parameter is one typed logical variable. Click does not encode an
 unknown value by allocating a runtime-like tag or by eagerly constructing one
@@ -169,7 +175,9 @@ of a logical value.
 
 Algebraic `let` bindings and quantifiers, resource arguments, theorem
 application with algebraic arguments, nested/recursive fields, and structural
-recursion/induction remain tracked in the algebraic data types issue.
+recursion/induction remain tracked in the algebraic data types issue. Reusing
+one constructor refinement across repeated matches is tracked separately in
+the algebraic match path-correlation issue.
 
 ## Specification sequences
 

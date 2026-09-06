@@ -59,7 +59,9 @@ unchanged.
 - typed kernel algebraic terms with one variable node per arbitrary value,
   constructor nodes with checked instantiated schemas, retained match nodes,
   and shared datatype definitions. The earlier eager encoding as an integer
-  tag plus fields for every possible variant has been removed.
+  tag plus fields for every possible variant has been removed; and
+- checked constructor formation, disjointness, congruence, and injectivity,
+  with explicit surface certificates and indexed exact-hypothesis lookup.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -73,9 +75,9 @@ recursive fields, structural decreases and induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
 Opaque and recursive algebraic-valued pure function calls also wait on that
 recursive representation; nonrecursive calls are elaborated compositionally.
-General constructor reasoning beyond direct structural simplification—most
-notably explicit cases, injectivity used from hypotheses, and generated
-induction principles—also remains to be added as checked datatype rules.
+Generated structural induction principles remain to be added as checked
+datatype rules. Correlation between repeated matches of one symbolic value is
+tracked in [algebraic-match-path-correlation.md](algebraic-match-path-correlation.md).
 
 ## Violated invariant
 

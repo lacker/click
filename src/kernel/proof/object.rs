@@ -801,6 +801,11 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 .state
                 .facts
                 .contains_discharged_implication_consequent(&proposition)
+            && !branch
+                .state
+                .facts
+                .assumptions()
+                .contains_algebraic_constructor_field_equality(&proposition)
         {
             return Err(PropositionCloseError::ExtractUnavailable(proposition));
         }

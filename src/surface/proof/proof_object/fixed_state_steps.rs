@@ -691,7 +691,7 @@ impl<'a> Proof<'a> {
         let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
         self.state.apply_extract(proposition).map_err(|error| match error {
             PropositionCloseError::ExtractUnavailable(proposition) => self.step_error(format!(
-                "`extract` proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
+                "`extract` proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",
                 describe_pure_fact(&proposition, &[], &[])
             )),
             PropositionCloseError::Unavailable => {
