@@ -832,6 +832,8 @@ pub(super) enum MemoryDagHopJustification {
         left: CMemoryRange,
         right: CMemoryRange,
         orientation: StoreSeparatedRangeOrientation,
+        write_membership: PointerInRangeEvidence,
+        load_membership: PointerInRangeEvidence,
     },
     IntrinsicNoWrite,
     AllocationOfOtherBlock,
@@ -874,6 +876,35 @@ pub(super) enum StoreSeparatedRangesAuthority {
 pub(super) enum StoreSeparatedRangeOrientation {
     WriteLeftLoadRight,
     WriteRightLoadLeft,
+}
+
+/// Either an assumption-free structural membership or a pointer's exact
+/// element index with the two retained signed bounds that place it inside one
+/// range. Symbolic construction may search indexed order facts, but checking
+/// touches only this index and the named bound premises.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PointerInRangeEvidence {
+    /// Existing structural constant/affine membership. Retaining this cheap
+    /// form keeps ordinary store edges out of the symbolic bound producer.
+    Shallow,
+    Indexed {
+        index: Bitvector32Term,
+        lower: RangeBoundEvidence,
+        upper: RangeBoundEvidence,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RangeBoundEvidence {
+    Intrinsic,
+    SignedOrderPath(Vec<SignedOrderDerivationStep>),
+    /// `left < base + 1` and `base < right` imply `left < right` over
+    /// signed int32. The second strict bound also proves that `base + 1`
+    /// does not wrap.
+    StrictUpperViaSuccessor {
+        to_successor: SignedOrderDerivationStep,
+        successor_base_to_upper: Vec<SignedOrderDerivationStep>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -961,6 +992,8 @@ impl MemoryDagHopJustification {
                 left,
                 right,
                 orientation,
+                write_membership,
+                load_membership,
             } => {
                 let CMemoryDerivation::Store { pointer: write, .. } = derivation else {
                     return false;
@@ -984,16 +1017,12 @@ impl MemoryDagHopJustification {
                 authority_checks
                     && match orientation {
                         StoreSeparatedRangeOrientation::WriteLeftLoadRight => {
-                            super::assumptions::pointer_in_memory_range_shallow(write, left)
-                                && super::assumptions::pointer_in_memory_range_shallow(
-                                    pointer, right,
-                                )
+                            write_membership.checks(write, left, assumptions)
+                                && load_membership.checks(pointer, right, assumptions)
                         }
                         StoreSeparatedRangeOrientation::WriteRightLoadLeft => {
-                            super::assumptions::pointer_in_memory_range_shallow(write, right)
-                                && super::assumptions::pointer_in_memory_range_shallow(
-                                    pointer, left,
-                                )
+                            write_membership.checks(write, right, assumptions)
+                                && load_membership.checks(pointer, left, assumptions)
                         }
                     }
             }
@@ -1845,6 +1874,138 @@ fn typed_range_disjoint_from_pointer_evidence(
     Some(RangeDisjointFromPointerEvidence::ForwardOffset { offset, positive })
 }
 
+impl RangeBoundEvidence {
+    fn for_true_condition(
+        condition: &ConditionTerm,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        if condition == &ConditionTerm::Constant(true) {
+            return Some(Self::Intrinsic);
+        }
+        let (left, right, strict) = condition_as_order_fact(condition, true)?;
+        if let Some(step) = assumptions.exact_direct_order_step(&left, &right, strict) {
+            return Some(Self::SignedOrderPath(vec![step]));
+        }
+        if strict {
+            let successor = assumptions.signed_order_bound_entries(&left).find_map(
+                |(fact_endpoint, successor, strict, forward)| {
+                    if !strict || !forward || fact_endpoint != left {
+                        return None;
+                    }
+                    let successor_base = successor.add_const_base(1)?;
+                    let to_successor =
+                        assumptions.exact_direct_order_step(&fact_endpoint, &successor, true)?;
+                    let successor_base_to_upper = assumptions
+                        .exact_direct_order_step(&successor_base, &right, true)
+                        .map(|step| vec![step])
+                        .or_else(|| {
+                            assumptions.exact_signed_order_path_evidence(
+                                &successor_base,
+                                &right,
+                                true,
+                            )
+                        })?;
+                    Some(Self::StrictUpperViaSuccessor {
+                        to_successor,
+                        successor_base_to_upper,
+                    })
+                },
+            );
+            if successor.is_some() {
+                return successor;
+            }
+        }
+        assumptions
+            .exact_signed_order_path_evidence(&left, &right, strict)
+            .map(Self::SignedOrderPath)
+    }
+
+    fn checks(&self, condition: &ConditionTerm, assumptions: &PureFactContext) -> bool {
+        match self {
+            Self::Intrinsic => condition == &ConditionTerm::Constant(true),
+            Self::SignedOrderPath(path) => {
+                condition_as_order_fact(condition, true).is_some_and(|(left, right, strict)| {
+                    assumptions.checks_exact_signed_order_path(path, &left, &right, strict)
+                })
+            }
+            Self::StrictUpperViaSuccessor {
+                to_successor,
+                successor_base_to_upper,
+            } => {
+                let ConditionTerm::Bitvector32SignedLessThan(left, right) = condition else {
+                    return false;
+                };
+                if to_successor.lower != **left || !to_successor.strict {
+                    return false;
+                }
+                let Some(successor_base) = to_successor.upper.add_const_base(1) else {
+                    return false;
+                };
+                assumptions.checks_exact_order_step(to_successor)
+                    && assumptions.checks_exact_signed_order_path(
+                        successor_base_to_upper,
+                        &successor_base,
+                        right,
+                        true,
+                    )
+            }
+        }
+    }
+}
+
+impl PointerInRangeEvidence {
+    fn for_pointer(
+        pointer: &Pointer,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        if super::assumptions::pointer_in_memory_range_shallow(pointer, range) {
+            return Some(Self::Shallow);
+        }
+        let index =
+            pointer.element_index_from_base_with_width(range.base(), range.element_width())?;
+        let lower_condition =
+            ConditionTerm::signed_less_equal(range.start().clone(), index.clone());
+        let upper_condition = ConditionTerm::signed_less_than(index.clone(), range.end().clone());
+        Some(Self::Indexed {
+            index,
+            lower: RangeBoundEvidence::for_true_condition(&lower_condition, assumptions)?,
+            upper: RangeBoundEvidence::for_true_condition(&upper_condition, assumptions)?,
+        })
+    }
+
+    fn checks(
+        &self,
+        pointer: &Pointer,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let Self::Indexed {
+            index: retained_index,
+            lower,
+            upper,
+        } = self
+        else {
+            return super::assumptions::pointer_in_memory_range_shallow(pointer, range);
+        };
+        let Some(index) =
+            pointer.element_index_from_base_with_width(range.base(), range.element_width())
+        else {
+            return false;
+        };
+        if index != *retained_index {
+            return false;
+        }
+        lower.checks(
+            &ConditionTerm::signed_less_equal(range.start().clone(), index.clone()),
+            assumptions,
+        ) && upper.checks(
+            &ConditionTerm::signed_less_than(index, range.end().clone()),
+            assumptions,
+        )
+    }
+}
+
 fn typed_store_separated_ranges_evidence(
     write: &Pointer,
     pointer: &Pointer,
@@ -1862,17 +2023,28 @@ fn typed_store_separated_ranges_evidence(
             ) {
                 return None;
             }
-            let orientation = if super::assumptions::pointer_in_memory_range_shallow(write, left)
-                && super::assumptions::pointer_in_memory_range_shallow(pointer, right)
-            {
-                StoreSeparatedRangeOrientation::WriteLeftLoadRight
-            } else if super::assumptions::pointer_in_memory_range_shallow(write, right)
-                && super::assumptions::pointer_in_memory_range_shallow(pointer, left)
-            {
-                StoreSeparatedRangeOrientation::WriteRightLoadLeft
-            } else {
-                return None;
-            };
+            let (orientation, write_membership, load_membership) =
+                if let (Some(write_membership), Some(load_membership)) = (
+                    PointerInRangeEvidence::for_pointer(write, left, assumptions),
+                    PointerInRangeEvidence::for_pointer(pointer, right, assumptions),
+                ) {
+                    (
+                        StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+                        write_membership,
+                        load_membership,
+                    )
+                } else if let (Some(write_membership), Some(load_membership)) = (
+                    PointerInRangeEvidence::for_pointer(write, right, assumptions),
+                    PointerInRangeEvidence::for_pointer(pointer, left, assumptions),
+                ) {
+                    (
+                        StoreSeparatedRangeOrientation::WriteRightLoadLeft,
+                        write_membership,
+                        load_membership,
+                    )
+                } else {
+                    return None;
+                };
             let authority = composition.map_or_else(
                 || StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
                 |resources| StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
@@ -1882,6 +2054,8 @@ fn typed_store_separated_ranges_evidence(
                 left: left.clone(),
                 right: right.clone(),
                 orientation,
+                write_membership,
+                load_membership,
             })
         })
 }

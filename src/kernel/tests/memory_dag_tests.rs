@@ -439,24 +439,47 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
             .clone()
     };
 
+    let direct = retained_hop(&direct_assumptions);
+    let MemoryDagHopJustification::StoreSeparatedRanges {
+        authority,
+        left,
+        right,
+        orientation,
+        ..
+    } = &direct
+    else {
+        panic!("expected retained separated-range evidence, got {direct:?}");
+    };
     assert_eq!(
-        retained_hop(&direct_assumptions),
-        MemoryDagHopJustification::StoreSeparatedRanges {
-            authority: StoreSeparatedRangesAuthority::ExactProposition(separation),
-            left: write_range.clone(),
-            right: load_range.clone(),
-            orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
-        }
+        authority,
+        &StoreSeparatedRangesAuthority::ExactProposition(separation)
+    );
+    assert_eq!(left, &write_range);
+    assert_eq!(right, &load_range);
+    assert_eq!(
+        orientation,
+        &StoreSeparatedRangeOrientation::WriteLeftLoadRight
     );
     let composed = retained_hop(&composed_assumptions);
+    let MemoryDagHopJustification::StoreSeparatedRanges {
+        authority,
+        left,
+        right,
+        orientation,
+        ..
+    } = &composed
+    else {
+        panic!("expected retained separated-range evidence, got {composed:?}");
+    };
     assert_eq!(
-        composed,
-        MemoryDagHopJustification::StoreSeparatedRanges {
-            authority: StoreSeparatedRangesAuthority::ResourceComposition(resources),
-            left: write_range,
-            right: load_range,
-            orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
-        }
+        authority,
+        &StoreSeparatedRangesAuthority::ResourceComposition(resources)
+    );
+    assert_eq!(left, &write_range);
+    assert_eq!(right, &load_range);
+    assert_eq!(
+        orientation,
+        &StoreSeparatedRangeOrientation::WriteLeftLoadRight
     );
     let derivation = crate::kernel::intern_c_memory_ref(&after)
         .derivation()
@@ -464,6 +487,97 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
     assert!(
         !composed.checks(derivation.as_ref(), &load, &PureFactContext::new(),),
         "the retained composition must still be present during checking"
+    );
+}
+
+#[test]
+fn separated_range_store_hop_retains_symbolic_membership_bounds() {
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let range_base = |variable| Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let write_base = range_base(120);
+    let load_base = range_base(121);
+    let write_range = memory_range(write_base.clone(), 0, 3);
+    let load_range = memory_range(load_base.clone(), 0, 3);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(write_range),
+        right: CResource::Memory(load_range),
+    };
+    let write_index = Bitvector32Term::Variable(Variable(122));
+    let load_index = Bitvector32Term::Variable(Variable(123));
+    let zero_le_write =
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), write_index.clone());
+    let write_lt_three =
+        ConditionTerm::signed_less_than(write_index.clone(), Bitvector32Term::Constant(3));
+    let zero_le_load =
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), load_index.clone());
+    let load_lt_write_successor = ConditionTerm::signed_less_than(
+        load_index.clone(),
+        Bitvector32Term::add(write_index.clone(), Bitvector32Term::Constant(1)),
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(separation.clone())
+        .assume_condition(zero_le_write.clone(), true)
+        .assume_condition(write_lt_three.clone(), true)
+        .assume_condition(zero_le_load.clone(), true)
+        .assume_condition(load_lt_write_successor.clone(), true);
+    let write = write_base.offset_by_int32_elements(write_index);
+    let load = load_base.offset_by_int32_elements(load_index.clone());
+    let after = base
+        .clone()
+        .store(write, CValue::Int32(Bitvector32Term::Constant(7)));
+    let left = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after),
+        Box::new(load.clone()),
+    );
+    let right = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&base),
+        Box::new(load.clone()),
+    );
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_atomic_load_equality(&left, &right, &assumptions));
+    let equalities = capture.finish();
+    let [equality] = equalities.as_slice() else {
+        panic!("expected one retained load equality, got {equalities:?}");
+    };
+    let Some(AtomicMemoryLoadEqualityEvidence::SameCell(evidence)) =
+        equality.memory_dag_evidence_for_test()
+    else {
+        panic!("expected typed same-cell evidence, got {equality:?}");
+    };
+    let hop = &retained_memory_dag_path(&evidence.left)[0];
+    assert!(matches!(
+        hop.justification,
+        MemoryDagHopJustification::StoreSeparatedRanges { .. }
+    ));
+    assert!(
+        hop.justification
+            .checks(hop.derivation.as_ref(), &load, &assumptions)
+    );
+
+    let missing_successor = PureFactContext::new()
+        .assume_proposition(separation)
+        .assume_condition(zero_le_write, true)
+        .assume_condition(write_lt_three, true)
+        .assume_condition(zero_le_load, true);
+    assert!(
+        !hop.justification
+            .checks(hop.derivation.as_ref(), &load, &missing_successor),
+        "the retained successor bound must still be present"
+    );
+    let retargeted = load_base.offset_by_int32_elements(Bitvector32Term::add(
+        load_index,
+        Bitvector32Term::Constant(1),
+    ));
+    assert!(
+        !hop.justification
+            .checks(hop.derivation.as_ref(), &retargeted, &assumptions),
+        "the membership evidence must remain tied to its exact index"
     );
 }
 

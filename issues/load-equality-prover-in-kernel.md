@@ -293,8 +293,8 @@ ambient order search. Framed atomic transport asks for this checked evidence
 first and retains it on the enclosing checked event, while temporarily
 falling back to the legacy prover for the residual cases below.
 
-A fresh complete run of the example and mdtest fixture harnesses reduced the
-nine dynamic legacy-only checks to three:
+A fresh complete run of the example and mdtest fixture harnesses initially
+reduced the nine dynamic legacy-only checks to three:
 
 | fixture | dynamic residual checks | exact missing evidence |
 |---|---:|---|
@@ -302,17 +302,26 @@ nine dynamic legacy-only checks to three:
 | `copy3_array_demo` | 2 | one store hop whose pointer separation uses general range-membership reasoning |
 
 The six canonical-projection/indexed-store checks are therefore migrated.
-For the remaining `copy3` shape, the right walk crosses the local-index store
-and stops at the next store; the next node is exactly the left endpoint. The
-ambient context proves the write and load pointers belong to separated
-ranges, but only through `pointer_in_range_with_width`, whose successful arms
-include pointer equality transport, address congruence, canonical-atom order
-matching, derived order facts, and recursive condition decisions. Neither the
-structural nor exact-fact membership witness currently suffices. The next
-design decision is whether to introduce a reusable typed pointer-in-range
-derivation (and which of those arms it admits), or to have the surface proof
-establish the two exact membership facts before transport. Do not expose the
-general boolean membership prover as a typed store-hop justification.
+
+The two `copy3` checks are now migrated as well. `StoreSeparatedRanges`
+retains a `PointerInRangeEvidence` for both the written and loaded pointer.
+The object keeps the old assumption-free structural membership as its cheap
+form. When membership is symbolic, it instead names the exact element index
+plus independently checked lower and upper bounds. Bounds may be intrinsic
+constants or a named signed-order path (including a one-premise path). The one
+additional discrete-int32 rule needed by `copy3` retains `k < i + 1` and
+`i < 3`; its checker derives `k < 3` directly, using the second strict bound
+both for transitivity and to rule out overflow of `i + 1`. Construction first
+tries the cheap structural form, then uses the signed-order index; checking is
+linear in only the retained path. It never calls
+`pointer_in_range_with_width` or the general condition prover.
+
+The symbolic membership form also re-derives the pointer's structural element
+index, so changing the pointer, range, element width, or either named order
+premise invalidates it. A complete mdtest census now has no legacy framed-load
+successes. The complete example census has exactly the existing one in
+`bounded-pool`, leaving call-event authority as the only observed endpoint
+fallback.
 
 The call-havoc case also reaches a real authority boundary. A call result
 retains its `CallHavoc` derivation, fresh variable, write-set identity, and
@@ -384,10 +393,10 @@ comparisons do not invoke a framed-load planner.
   framed-transport census originally found six dynamic checks needing retained
   canonical load-projection evidence plus common-base store evidence, one
   matching call-havoc sibling case, and two repeated checks of a separate
-  incomplete typed DAG edge. The first six are now migrated; the residual
-  complete census is one call-havoc check and two `copy3` range-membership
-  checks. A general arbitrary snapshot-delta object is not required by the
-  observed fixtures.
+  incomplete typed DAG edge. The canonical projection, common-base store, and
+  `copy3` pointer-membership cases are now migrated; the residual complete
+  census is one call-havoc check. A general arbitrary snapshot-delta object is
+  not required by the observed fixtures.
 - A surface tactic (transport, frame, or a completion of the call step)
   advances the proof object with the snapshot-equality fact and its checked
   evidence. When the tactic is smart, expansion serializes corresponding
