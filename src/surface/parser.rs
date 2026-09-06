@@ -163,6 +163,7 @@ struct Parser {
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
+    current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,16 +183,21 @@ fn is_c_type_keyword(name: &str) -> bool {
             | "int32"
             | "int"
             | "int32_t"
+            | "int16"
+            | "int64"
             | "uint8"
             | "uint8_t"
             | "uint32"
             | "uint32_t"
+            | "uint16"
+            | "uint64"
             | "unsigned"
             | "signed"
             | "char"
             | "short"
             | "long"
             | "size_t"
+            | "ssize_t"
             | "int16_t"
             | "int64_t"
             | "uint16_t"
@@ -203,7 +209,7 @@ fn is_c_type_keyword(name: &str) -> bool {
     )
 }
 
-fn algebraic_field_c_type_supported(c_type: C0Type) -> bool {
+pub(in crate::surface) fn algebraic_field_c_type_supported(c_type: C0Type) -> bool {
     !matches!(
         c_type,
         C0Type::Void
@@ -242,6 +248,21 @@ struct ParsedFunctionSignature {
     struct_params: BTreeMap<String, String>,
     struct_array_params: BTreeSet<String>,
     return_struct_name: Option<String>,
+}
+
+fn algebraic_parameter_types(
+    parameters: &[FunctionParameter],
+) -> BTreeMap<String, (AlgebraicTypeApplication, usize)> {
+    parameters
+        .iter()
+        .enumerate()
+        .filter_map(|(index, parameter)| match parameter.click_type() {
+            ClickType::Algebraic(application) => {
+                Some((parameter.name().to_string(), (application.clone(), index)))
+            }
+            ClickType::C(_) => None,
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -326,6 +347,7 @@ impl Parser {
             aggregate_array_objects_by_function,
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
+            current_algebraic_params: BTreeMap::new(),
         })
     }
 
@@ -492,9 +514,14 @@ impl Parser {
             &mut self.current_struct_array_params,
             parsed_parameters.struct_array_params,
         );
+        let previous_algebraic_params = std::mem::replace(
+            &mut self.current_algebraic_params,
+            algebraic_parameter_types(&parsed_parameters.parameters),
+        );
         let body = self.parse_proposition()?;
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_algebraic_params = previous_algebraic_params;
         self.expect(Token::RBrace)?;
         Ok(PredicateDefinition {
             name,
@@ -510,13 +537,14 @@ impl Parser {
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
-        let parsed_return_type = self.parse_type()?;
-        if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
-            return Err(self.error("only pointer-to-struct types are supported"));
-        }
-        let return_type = parsed_return_type.c_type;
-        if return_type == C0Type::Void {
-            return Err(self.error("pure Click functions must return a value"));
+        let (return_type, parsed_c_return_type) = self.parse_click_type()?;
+        if let Some(parsed_return_type) = parsed_c_return_type {
+            if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
+            if parsed_return_type.c_type == C0Type::Void {
+                return Err(self.error("pure Click functions must return a value"));
+            }
         }
         let decreases = if self.peek_ident() == Some("decreases") {
             self.position += 1;
@@ -533,9 +561,14 @@ impl Parser {
             &mut self.current_struct_array_params,
             parsed_parameters.struct_array_params,
         );
+        let previous_algebraic_params = std::mem::replace(
+            &mut self.current_algebraic_params,
+            algebraic_parameter_types(&parsed_parameters.parameters),
+        );
         let body = self.parse_contract_expression()?;
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_algebraic_params = previous_algebraic_params;
         self.expect(Token::RBrace)?;
         Ok(ClickFunctionDefinition {
             name,
@@ -566,6 +599,10 @@ impl Parser {
             &mut self.current_struct_array_params,
             parsed_parameters.struct_array_params,
         );
+        let previous_algebraic_params = std::mem::replace(
+            &mut self.current_algebraic_params,
+            algebraic_parameter_types(&parsed_parameters.parameters),
+        );
         let composite_body = match self.peek() {
             Some(Token::Semicolon) if is_abstract => {
                 self.position += 1;
@@ -588,6 +625,7 @@ impl Parser {
         };
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_algebraic_params = previous_algebraic_params;
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
@@ -709,8 +747,24 @@ impl Parser {
                 );
             }
             self.expect(Token::Colon)?;
-            let parsed_type = self.parse_type()?;
-            let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
+            let (click_type, parsed_c_type) = self.parse_click_type()?;
+            let parsed_parameter = if let Some(parsed_type) = parsed_c_type {
+                self.parse_parameter_array_suffix(name, parsed_type)?
+            } else {
+                ParsedParameter {
+                    parameter: FunctionParameter {
+                        click_type,
+                        name,
+                        struct_name: None,
+                        function_pointer_signature: None,
+                        constant: false,
+                        pointee_constant: false,
+                    },
+                    struct_name: None,
+                    declared_bytes: None,
+                    struct_array: false,
+                }
+            };
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
             }
@@ -762,6 +816,10 @@ impl Parser {
         let previous_struct_array_params = std::mem::replace(
             &mut self.current_struct_array_params,
             parsed_parameters.struct_array_params,
+        );
+        let previous_algebraic_params = std::mem::replace(
+            &mut self.current_algebraic_params,
+            algebraic_parameter_types(&parsed_parameters.parameters),
         );
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
@@ -887,6 +945,7 @@ impl Parser {
         self.expect(Token::RBrace)?;
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_algebraic_params = previous_algebraic_params;
 
         let requires: Vec<Requirement> = requires
             .into_iter()
@@ -1279,7 +1338,7 @@ impl Parser {
                     self.parse_function_pointer_declarator(parsed_type.clone())?;
                 ParsedParameter {
                     parameter: FunctionParameter {
-                        c_type,
+                        click_type: ClickType::C(c_type),
                         name,
                         struct_name: None,
                         function_pointer_signature: Some(function_pointer_signature),
@@ -1476,6 +1535,18 @@ impl Parser {
         })
     }
 
+    fn parse_click_type(&mut self) -> Result<(ClickType, Option<ParsedType>), ClickError> {
+        let Some(name) = self.peek_ident() else {
+            return Err(self.error("expected Click type"));
+        };
+        if is_c_type_keyword(name) {
+            let parsed = self.parse_type()?;
+            return Ok((ClickType::C(parsed.c_type), Some(parsed)));
+        }
+        let application = self.parse_algebraic_type_application()?;
+        Ok((ClickType::Algebraic(application), None))
+    }
+
     fn scalar_struct_value_type(&self, struct_name: &str) -> Result<C0Type, ClickError> {
         let layout = self
             .struct_layouts
@@ -1632,7 +1703,7 @@ impl Parser {
             };
             return Ok(ParsedParameter {
                 parameter: FunctionParameter {
-                    c_type,
+                    click_type: ClickType::C(c_type),
                     name,
                     struct_name: struct_name.clone(),
                     function_pointer_signature: None,
@@ -1656,7 +1727,7 @@ impl Parser {
             self.expect(Token::RBracket)?;
             return Ok(ParsedParameter {
                 parameter: FunctionParameter {
-                    c_type: C0Type::Int32Pointer,
+                    click_type: ClickType::C(C0Type::Int32Pointer),
                     name,
                     struct_name: struct_name.clone(),
                     function_pointer_signature: None,
@@ -1695,7 +1766,7 @@ impl Parser {
         self.expect(Token::RBracket)?;
         Ok(ParsedParameter {
             parameter: FunctionParameter {
-                c_type: pointer_type,
+                click_type: ClickType::C(pointer_type),
                 name,
                 struct_name: None,
                 function_pointer_signature: None,
@@ -4457,9 +4528,14 @@ impl Parser {
             Some(Token::Ident(name)) if name == "by" => {
                 Err(self.error("expected contract expression, got `by`"))
             }
-            Some(Token::Ident(name)) => {
-                Ok(ContractExpression::CFragment(CExpression::Variable(name)))
-            }
+            Some(Token::Ident(name)) => match self.current_algebraic_params.get(&name) {
+                Some((algebraic_type, binder_index)) => Ok(ContractExpression::AlgebraicVariable {
+                    name,
+                    algebraic_type: algebraic_type.clone(),
+                    binder_index: *binder_index,
+                }),
+                None => Ok(ContractExpression::CFragment(CExpression::Variable(name))),
+            },
             Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
                 CValue::Int32(Bitvector32Term::Constant(value)),
             ))),
@@ -4528,13 +4604,16 @@ impl Parser {
         if self.peek() == Some(&Token::LessThan) {
             self.position += 1;
             loop {
-                let parsed = self.parse_type()?;
+                let (argument, parsed_c_type) = self.parse_click_type()?;
+                let Some(parsed) = parsed_c_type else {
+                    return Err(
+                        self.error("nested algebraic datatype arguments are not supported yet")
+                    );
+                };
                 if !algebraic_field_c_type_supported(parsed.c_type) {
-                    return Err(self.error(
-                        "algebraic datatype arguments must be C scalar or data-pointer types in this slice",
-                    ));
+                    return Err(self.error("algebraic datatype arguments must be value types"));
                 }
-                arguments.push(parsed.c_type);
+                arguments.push(argument);
                 match self.peek() {
                     Some(Token::Comma) => self.position += 1,
                     Some(Token::GreaterThan) => {

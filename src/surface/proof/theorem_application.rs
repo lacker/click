@@ -295,6 +295,13 @@ pub(super) fn theorem_application_bindings(
     let mut values = BTreeMap::new();
     let mut array_refs = BTreeMap::new();
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
+        let Some(parameter_type) = parameter.click_type().c_type() else {
+            return Err(format!(
+                "applying theorem `{}` with algebraic parameter `{}` is not supported yet",
+                theorem.name(),
+                parameter.name()
+            ));
+        };
         if parameter_is_click_array_ref(parameter) {
             let array_ref = evaluate_fixed_state_array_ref_through_kernel(
                 argument,
@@ -309,7 +316,7 @@ pub(super) fn theorem_application_bindings(
                 click_function_environment,
             )?;
             let expected_element_type =
-                click_array_element_type(parameter.c_type()).ok_or_else(|| {
+                click_array_element_type(parameter_type).ok_or_else(|| {
                     format!(
                         "theorem `{}` parameter `{}` is not an array-ref parameter",
                         theorem.name(),
@@ -347,12 +354,12 @@ pub(super) fn theorem_application_bindings(
                 context.recorded_snapshots,
                 &mut active_functions,
             )?;
-            if !c_value_matches_click_type(&value, parameter.c_type()) {
+            if !c_value_matches_click_type(&value, parameter_type) {
                 return Err(format!(
                     "theorem `{}` parameter `{}` expects {}, got {value:?}",
                     theorem.name(),
                     parameter.name(),
-                    describe_c0_type(parameter.c_type())
+                    describe_c0_type(parameter_type)
                 ));
             }
             values.insert(parameter.name().to_string(), value);

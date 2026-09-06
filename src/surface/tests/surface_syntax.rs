@@ -28,7 +28,7 @@ fn parser_accepts_standard_c_type_spellings_in_sidecars() {
             .signature()
             .parameters()
             .iter()
-            .map(|parameter| parameter.c_type)
+            .map(FunctionParameter::c_type)
             .collect::<Vec<_>>(),
         vec![
             C0Type::Int32Pointer,
@@ -149,7 +149,7 @@ fn parses_checked_signature_and_contract_clauses() {
     assert_eq!(
         function.signature().parameters(),
         &[FunctionParameter {
-            c_type: C0Type::Int32Pointer,
+            click_type: ClickType::C(C0Type::Int32Pointer),
             name: "p".to_string(),
             struct_name: None,
             function_pointer_signature: None,
@@ -251,7 +251,7 @@ fn parses_pure_theorem_definition() {
     assert_eq!(
         theorem.parameters(),
         &[FunctionParameter {
-            c_type: C0Type::Int32,
+            click_type: ClickType::C(C0Type::Int32),
             name: "x".to_string(),
             struct_name: None,
             function_pointer_signature: None,
@@ -1564,7 +1564,7 @@ fn parses_array_parameter_signature_as_pointer() {
     assert_eq!(
         function.signature().parameters(),
         &[FunctionParameter {
-            c_type: C0Type::Int32Pointer,
+            click_type: ClickType::C(C0Type::Int32Pointer),
             name: "p".to_string(),
             struct_name: None,
             function_pointer_signature: None,
@@ -1592,7 +1592,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
     assert_eq!(
         function.signature().parameters(),
         &[FunctionParameter {
-            c_type: C0Type::Int32Pointer,
+            click_type: ClickType::C(C0Type::Int32Pointer),
             name: "obj".to_string(),
             struct_name: Some("json_object".to_string()),
             function_pointer_signature: None,

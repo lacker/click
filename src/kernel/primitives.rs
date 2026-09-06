@@ -758,6 +758,17 @@ pub struct SpecAlgebraicExpression {
     pub type_arguments: Vec<CType>,
     pub variant: String,
     pub fields: Vec<SpecExpression>,
+    /// Alternative constructor shapes for an arbitrary value. Each guard
+    /// selects one constructor and the guards are generated from one tag.
+    /// Constructed values leave this empty and use `variant`/`fields`.
+    pub symbolic_variants: Vec<SpecAlgebraicVariant>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecAlgebraicVariant {
+    pub variant: String,
+    pub guard: Box<SpecProposition>,
+    pub fields: Vec<SpecExpression>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

@@ -42,7 +42,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             definition.name().to_string(),
             ClickFunctionType {
                 parameters: definition.parameters().to_vec(),
-                return_type: definition.return_type(),
+                return_type: definition.return_type().clone(),
             },
         );
     }
@@ -131,7 +131,10 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
-    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
+    let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+        &click_function_definitions,
+        file.algebraic_type_definitions(),
+    );
 
     for definition in &resource_definitions {
         validate_resource_definition(
@@ -1141,6 +1144,7 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::AlgebraicVariable { .. } => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_resource_fact_reads_from_contract_expression(

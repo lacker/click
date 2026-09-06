@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::parser::algebraic_field_c_type_supported;
 
 pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(), ClickError> {
     let mut names = BTreeSet::new();
@@ -72,17 +73,76 @@ pub(super) fn validate_algebraic_type_uses(
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
+    let predicate_types = file
+        .predicate_definitions()
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
+
+    for (kind, name, parameters) in file
+        .predicate_definitions()
+        .iter()
+        .map(|definition| ("predicate", definition.name(), definition.parameters()))
+        .chain(
+            file.click_function_definitions()
+                .iter()
+                .map(|definition| ("function", definition.name(), definition.parameters())),
+        )
+        .chain(
+            file.theorem_definitions()
+                .iter()
+                .map(|definition| ("theorem", definition.name(), definition.parameters())),
+        )
+    {
+        for parameter in parameters {
+            if let ClickType::Algebraic(application) = parameter.click_type() {
+                validate_type_application(
+                    application,
+                    &definitions,
+                    &format!("{kind} `{name}` parameter `{}`", parameter.name()),
+                )?;
+            }
+        }
+    }
+    for definition in file.click_function_definitions() {
+        if let ClickType::Algebraic(application) = definition.return_type() {
+            validate_type_application(
+                application,
+                &definitions,
+                &format!("function `{}` result", definition.name()),
+            )?;
+        }
+    }
+    for definition in file.resource_definitions() {
+        if let Some(parameter) = definition
+            .parameters()
+            .iter()
+            .find(|parameter| matches!(parameter.click_type(), ClickType::Algebraic(_)))
+        {
+            return Err(ClickError::new(format!(
+                "resource `{}` parameter `{}` uses an algebraic type; algebraic resource arguments are not supported yet",
+                definition.name(),
+                parameter.name()
+            )));
+        }
+    }
 
     for definition in file.predicate_definitions() {
         let variables = definition
             .parameters()
             .iter()
-            .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+            .filter_map(|parameter| {
+                parameter
+                    .click_type()
+                    .c_type()
+                    .map(|c_type| (parameter.name().to_string(), c_type))
+            })
             .collect();
         validate_algebraic_proposition(
             definition.body(),
             &variables,
             click_functions,
+            &predicate_types,
             &definitions,
             &format!("predicate `{}`", definition.name()),
         )?;
@@ -91,15 +151,47 @@ pub(super) fn validate_algebraic_type_uses(
         let variables = definition
             .parameters()
             .iter()
-            .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+            .filter_map(|parameter| {
+                parameter
+                    .click_type()
+                    .c_type()
+                    .map(|c_type| (parameter.name().to_string(), c_type))
+            })
             .collect();
-        validate_algebraic_expression(
+        let body_type = validate_algebraic_expression(
             definition.body(),
             &variables,
             click_functions,
+            &predicate_types,
             &definitions,
             &format!("function `{}`", definition.name()),
         )?;
+        match (definition.return_type(), body_type) {
+            (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
+            (ClickType::Algebraic(expected), Some(actual)) => {
+                return Err(ClickError::new(format!(
+                    "function `{}` returns {}, but its body has type {}",
+                    definition.name(),
+                    describe_click_type(&ClickType::Algebraic(expected.clone())),
+                    describe_click_type(&ClickType::Algebraic(actual))
+                )));
+            }
+            (ClickType::Algebraic(expected), None) => {
+                return Err(ClickError::new(format!(
+                    "function `{}` returns {}, but its body is not algebraic",
+                    definition.name(),
+                    describe_click_type(&ClickType::Algebraic(expected.clone()))
+                )));
+            }
+            (ClickType::C(_), Some(actual)) => {
+                return Err(ClickError::new(format!(
+                    "function `{}` returns a C value, but its body has algebraic type {}",
+                    definition.name(),
+                    describe_click_type(&ClickType::Algebraic(actual))
+                )));
+            }
+            (ClickType::C(_), None) => {}
+        }
     }
     for theorem in file.theorem_definitions() {
         let variables = theorem_type_environment(theorem);
@@ -112,6 +204,7 @@ pub(super) fn validate_algebraic_type_uses(
                 requirement,
                 &variables,
                 click_functions,
+                &predicate_types,
                 &definitions,
                 &format!("theorem `{}` requirement", theorem.name()),
             )?;
@@ -122,6 +215,7 @@ pub(super) fn validate_algebraic_type_uses(
                     proposition,
                     &variables,
                     click_functions,
+                    &predicate_types,
                     &definitions,
                     &format!("theorem `{}` ensure", theorem.name()),
                 )?;
@@ -135,13 +229,19 @@ pub(super) fn validate_algebraic_type_uses(
         let variables = definition
             .parameters()
             .iter()
-            .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+            .filter_map(|parameter| {
+                parameter
+                    .click_type()
+                    .c_type()
+                    .map(|c_type| (parameter.name().to_string(), c_type))
+            })
             .collect();
         if let Some(condition) = body.condition() {
             validate_algebraic_proposition(
                 condition,
                 &variables,
                 click_functions,
+                &predicate_types,
                 &definitions,
                 &format!("resource `{}` condition", definition.name()),
             )?;
@@ -151,6 +251,7 @@ pub(super) fn validate_algebraic_type_uses(
                 fact,
                 &variables,
                 click_functions,
+                &predicate_types,
                 &definitions,
                 &format!("resource `{}` fact", definition.name()),
             )?;
@@ -168,6 +269,7 @@ pub(super) fn validate_algebraic_type_uses(
                 requirement,
                 &requires_variables,
                 click_functions,
+                &predicate_types,
                 &definitions,
                 &format!("requires clause in `{}`", function.signature().name()),
             )?;
@@ -179,6 +281,7 @@ pub(super) fn validate_algebraic_type_uses(
                         proposition,
                         &requires_variables,
                         click_functions,
+                        &predicate_types,
                         &definitions,
                         &format!("structural clause in `{}`", function.signature().name()),
                     )?;
@@ -191,6 +294,7 @@ pub(super) fn validate_algebraic_type_uses(
                     proposition,
                     &ensures_variables,
                     click_functions,
+                    &predicate_types,
                     &definitions,
                     &format!("ensures clause in `{}`", function.signature().name()),
                 )?;
@@ -204,20 +308,36 @@ fn validate_algebraic_proposition(
     proposition: &ClickProposition,
     variables: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
     definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
     context: &str,
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
-            validate_algebraic_expression(left, variables, click_functions, definitions, context)?;
-            validate_algebraic_expression(right, variables, click_functions, definitions, context)
-                .map(|_| ())
+            validate_algebraic_expression(
+                left,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_algebraic_expression(
+                right,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
+            .map(|_| ())
         }
         ClickProposition::FloatClassification { expression, .. }
         | ClickProposition::Defined { expression } => validate_algebraic_expression(
             expression,
             variables,
             click_functions,
+            predicates,
             definitions,
             context,
         )
@@ -225,18 +345,46 @@ fn validate_algebraic_proposition(
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            validate_algebraic_proposition(left, variables, click_functions, definitions, context)?;
-            validate_algebraic_proposition(right, variables, click_functions, definitions, context)
+            validate_algebraic_proposition(
+                left,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_algebraic_proposition(
+                right,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
         }
         ClickProposition::Not(body)
         | ClickProposition::At {
             proposition: body, ..
-        } => validate_algebraic_proposition(body, variables, click_functions, definitions, context),
+        } => validate_algebraic_proposition(
+            body,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
         ClickProposition::ForAll { c_type, name, body }
         | ClickProposition::Exists { c_type, name, body } => {
             let mut variables = variables.clone();
             variables.insert(name.clone(), *c_type);
-            validate_algebraic_proposition(body, &variables, click_functions, definitions, context)
+            validate_algebraic_proposition(
+                body,
+                &variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
         }
         ClickProposition::RangeAll {
             start,
@@ -250,21 +398,73 @@ fn validate_algebraic_proposition(
             item,
             body,
         } => {
-            validate_algebraic_expression(start, variables, click_functions, definitions, context)?;
-            validate_algebraic_expression(end, variables, click_functions, definitions, context)?;
+            validate_algebraic_expression(
+                start,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_algebraic_expression(
+                end,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
             let mut variables = variables.clone();
             variables.insert(item.clone(), C0Type::Int32);
-            validate_algebraic_proposition(body, &variables, click_functions, definitions, context)
+            validate_algebraic_proposition(
+                body,
+                &variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
         }
-        ClickProposition::PredicateCall { arguments, .. } => {
-            for argument in arguments {
-                validate_algebraic_expression(
+        ClickProposition::PredicateCall { name, arguments } => {
+            let definition = predicates.get(name.as_str());
+            for (index, argument) in arguments.iter().enumerate() {
+                let actual = validate_algebraic_expression(
                     argument,
                     variables,
                     click_functions,
+                    predicates,
                     definitions,
                     context,
                 )?;
+                let Some(expected) =
+                    definition.and_then(|definition| definition.parameters().get(index))
+                else {
+                    continue;
+                };
+                match (expected.click_type(), actual) {
+                    (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
+                    (ClickType::Algebraic(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "predicate `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_click_type(&ClickType::Algebraic(expected.clone())),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::Algebraic(expected), None) => {
+                        return Err(ClickError::new(format!(
+                            "predicate `{name}` argument {index} expects {}, got a C value in {context}",
+                            describe_click_type(&ClickType::Algebraic(expected.clone()))
+                        )));
+                    }
+                    (ClickType::C(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "predicate `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(*expected),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::C(_), None) => {}
+                }
             }
             Ok(())
         }
@@ -278,10 +478,15 @@ fn validate_algebraic_expression(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
     definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
     context: &str,
 ) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
     match expression {
+        ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
+            validate_type_application(algebraic_type, definitions, context)?;
+            Ok(Some(algebraic_type.clone()))
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -330,6 +535,7 @@ fn validate_algebraic_expression(
                     argument,
                     variables,
                     click_functions,
+                    predicates,
                     definitions,
                     context,
                 )?
@@ -360,6 +566,7 @@ fn validate_algebraic_expression(
                 scrutinee,
                 variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?
@@ -370,7 +577,7 @@ fn validate_algebraic_expression(
             };
             let definition = definitions[algebraic_type.name.as_str()];
             let mut seen = BTreeSet::new();
-            let mut result_type = None;
+            let mut result_type: Option<ClickType> = None;
             for arm in arms {
                 if arm.type_name != definition.name() {
                     return Err(ClickError::new(format!(
@@ -421,36 +628,43 @@ fn validate_algebraic_expression(
                         instantiate_field_type(definition, &algebraic_type, field)?,
                     );
                 }
-                if validate_algebraic_expression(
+                let algebraic_arm_type = validate_algebraic_expression(
                     &arm.body,
                     &arm_variables,
                     click_functions,
+                    predicates,
                     definitions,
                     context,
-                )?
-                .is_some()
-                {
-                    return Err(ClickError::new(
-                        "algebraic-valued match arms are not supported in this slice",
-                    ));
-                }
-                let arm_type = infer_contract_expression_type(
-                    &arm.body,
-                    &arm_variables,
-                    click_functions,
-                    context,
                 )?;
-                if let (Some(expected), Some(actual)) = (result_type, arm_type)
-                    && !click_types_compatible(actual, expected)
-                {
-                    return Err(ClickError::new(format!(
-                        "match for `{}` has incompatible arm result types {} and {} in {context}",
-                        definition.name(),
-                        describe_c0_type(expected),
-                        describe_c0_type(actual)
-                    )));
+                let arm_type = match algebraic_arm_type {
+                    Some(application) => Some(ClickType::Algebraic(application)),
+                    None => infer_contract_expression_type(
+                        &arm.body,
+                        &arm_variables,
+                        click_functions,
+                        context,
+                    )?
+                    .map(ClickType::C),
+                };
+                if let (Some(expected), Some(actual)) = (&result_type, &arm_type) {
+                    let compatible = match (expected, actual) {
+                        (ClickType::C(expected), ClickType::C(actual)) => {
+                            click_types_compatible(*actual, *expected)
+                        }
+                        _ => expected == actual,
+                    };
+                    if !compatible {
+                        return Err(ClickError::new(format!(
+                            "match for `{}` has incompatible arm result types {} and {} in {context}",
+                            definition.name(),
+                            describe_click_type(expected),
+                            describe_click_type(actual)
+                        )));
+                    }
                 }
-                result_type = result_type.or(arm_type);
+                if result_type.is_none() {
+                    result_type = arm_type;
+                }
             }
             let missing = definition
                 .variants()
@@ -465,7 +679,10 @@ fn validate_algebraic_expression(
                     missing.join(", ")
                 )));
             }
-            Ok(None)
+            Ok(match result_type {
+                Some(ClickType::Algebraic(application)) => Some(application),
+                _ => None,
+            })
         }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
@@ -473,6 +690,7 @@ fn validate_algebraic_expression(
                     element,
                     variables,
                     click_functions,
+                    predicates,
                     definitions,
                     context,
                 )?;
@@ -491,8 +709,22 @@ fn validate_algebraic_expression(
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right)
         | ContractExpression::Index(left, right) => {
-            validate_algebraic_expression(left, variables, click_functions, definitions, context)?;
-            validate_algebraic_expression(right, variables, click_functions, definitions, context)?;
+            validate_algebraic_expression(
+                left,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_algebraic_expression(
+                right,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
             Ok(None)
         }
         ContractExpression::BitwiseNot(inner)
@@ -500,7 +732,14 @@ fn validate_algebraic_expression(
         | ContractExpression::At {
             expression: inner, ..
         } => {
-            validate_algebraic_expression(inner, variables, click_functions, definitions, context)?;
+            validate_algebraic_expression(
+                inner,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
             Ok(None)
         }
         ContractExpression::If {
@@ -512,6 +751,7 @@ fn validate_algebraic_expression(
                 condition,
                 variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
@@ -519,6 +759,7 @@ fn validate_algebraic_expression(
                 then_branch,
                 variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
@@ -526,6 +767,7 @@ fn validate_algebraic_expression(
                 else_branch,
                 variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
@@ -539,12 +781,27 @@ fn validate_algebraic_expression(
             item,
             body,
         } => {
-            validate_algebraic_expression(start, variables, click_functions, definitions, context)?;
-            validate_algebraic_expression(end, variables, click_functions, definitions, context)?;
+            validate_algebraic_expression(
+                start,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_algebraic_expression(
+                end,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
             validate_algebraic_expression(
                 initial,
                 variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
@@ -555,6 +812,7 @@ fn validate_algebraic_expression(
                 body,
                 &body_variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
@@ -566,7 +824,14 @@ fn validate_algebraic_expression(
             value,
             body,
         } => {
-            validate_algebraic_expression(value, variables, click_functions, definitions, context)?;
+            validate_algebraic_expression(
+                value,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
             let mut body_variables = variables.clone();
             if let Some(c_type) = c_type {
                 body_variables.insert(name.clone(), *c_type);
@@ -575,22 +840,58 @@ fn validate_algebraic_expression(
                 body,
                 &body_variables,
                 click_functions,
+                predicates,
                 definitions,
                 context,
             )?;
             Ok(None)
         }
-        ContractExpression::Call { arguments, .. } => {
-            for argument in arguments {
-                validate_algebraic_expression(
+        ContractExpression::Call { name, arguments } => {
+            let function = click_functions.get(name);
+            for (index, argument) in arguments.iter().enumerate() {
+                let actual_algebraic = validate_algebraic_expression(
                     argument,
                     variables,
                     click_functions,
+                    predicates,
                     definitions,
                     context,
                 )?;
+                let Some(expected) = function.and_then(|function| function.parameters.get(index))
+                else {
+                    continue;
+                };
+                match (expected.click_type(), actual_algebraic) {
+                    (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
+                    (ClickType::Algebraic(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_click_type(&ClickType::Algebraic(expected.clone())),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::Algebraic(expected), None) => {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects {}, got a C value in {context}",
+                            describe_click_type(&ClickType::Algebraic(expected.clone()))
+                        )));
+                    }
+                    (ClickType::C(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(*expected),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::C(_), None) => {}
+                }
             }
-            Ok(None)
+            Ok(click_functions
+                .get(name)
+                .and_then(|definition| match &definition.return_type {
+                    ClickType::Algebraic(application) => Some(application.clone()),
+                    ClickType::C(_) => None,
+                }))
         }
         ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
@@ -611,8 +912,45 @@ fn instantiate_field_type(
             .type_parameters()
             .iter()
             .position(|parameter| parameter == name)
-            .and_then(|index| application.arguments.get(index).copied())
+            .and_then(|index| application.arguments.get(index))
+            .and_then(ClickType::c_type)
             .ok_or_else(|| ClickError::new(format!("unresolved type parameter `{name}`"))),
         AlgebraicFieldType::Algebraic(_) => unreachable!("nested fields rejected before uses"),
     }
+}
+
+fn validate_type_application(
+    application: &AlgebraicTypeApplication,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let definition = definitions.get(application.name.as_str()).ok_or_else(|| {
+        ClickError::new(format!(
+            "unknown algebraic datatype `{}` in {context}",
+            application.name
+        ))
+    })?;
+    if application.arguments.len() != definition.type_parameters().len() {
+        return Err(ClickError::new(format!(
+            "algebraic datatype `{}` expects {} type argument(s), got {} in {context}",
+            definition.name(),
+            definition.type_parameters().len(),
+            application.arguments.len()
+        )));
+    }
+    for argument in &application.arguments {
+        match argument {
+            ClickType::C(c_type) if algebraic_field_c_type_supported(*c_type) => {}
+            ClickType::C(c_type) => {
+                return Err(ClickError::new(format!(
+                    "{} is not a valid algebraic datatype argument in {context}",
+                    describe_c0_type(*c_type)
+                )));
+            }
+            ClickType::Algebraic(nested) => {
+                validate_type_application(nested, definitions, context)?;
+            }
+        }
+    }
+    Ok(())
 }

@@ -131,10 +131,12 @@ Comparisons form propositions rather than contract expressions. See
 
 ## Algebraic datatypes
 
-The initial algebraic-datatype slice supports generic, specification-only,
-nonrecursive sum-of-products declarations. A constructor is fully type-applied
-at its use site, and an exhaustive `match` returns an ordinary C scalar or
-data-pointer value:
+The algebraic-datatype slice supports generic, specification-only,
+nonrecursive sum-of-products declarations as first-class Click types. A
+constructor is fully type-applied at its use site. Pure functions, predicates,
+and theorems may receive arbitrary algebraic values, pure functions may return
+them, and an exhaustive `match` may inspect an unknown variant and return a
+common C or algebraic type:
 
 <!-- verified-example: mdtests/algebraic_maybe.md -->
 ```click
@@ -153,12 +155,12 @@ Constructor equality is structural: different variants are unequal, while
 equal variants compare corresponding fields. Pattern arms must name every
 variant exactly once, use the declared field arity, and keep field bindings
 local to the arm. Generic arguments and fields currently use modeled C scalar
-and data-pointer types.
+and data-pointer types. See the pure, C-free first-class regression in
+`mdtests/algebraic_symbolic_values.md`.
 
-This slice intentionally has no algebraic-typed parameters, quantifiers,
-function results, or nested/recursive fields. Those require a representation
-for arbitrary symbolic algebraic values and are tracked in the algebraic data
-types issue.
+Algebraic `let` bindings and quantifiers, resource arguments, theorem
+application with algebraic arguments, nested/recursive fields, and structural
+recursion/induction remain tracked in the algebraic data types issue.
 
 ## Specification sequences
 

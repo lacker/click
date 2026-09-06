@@ -285,8 +285,9 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
     parameters
         .iter()
         .enumerate()
-        .map(|(index, parameter)| {
-            let value = match parameter.c_type() {
+        .filter_map(|(index, parameter)| {
+            let c_type = parameter.click_type().c_type()?;
+            let value = match c_type {
                 C0Type::Void => unreachable!("pure theorem parameters cannot be void"),
                 C0Type::VoidPointer => CValue::typed_pointer(
                     Pointer {
@@ -430,8 +431,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 | C0Type::UInt64PointerPointer
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer => {
-                    let element_width = parameter
-                        .c_type()
+                    let element_width = c_type
                         .pointee_type()
                         .expect("pointer-to-pointer parameter has a pointee")
                         .to_kernel_type()
@@ -446,15 +446,15 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                                 i64::from(element_width),
                             ),
                         },
-                        parameter.c_type().to_kernel_type(),
+                        c_type.to_kernel_type(),
                     )
                 }
                 C0Type::FunctionPointer(_) => CValue::typed_pointer(
                     Pointer::symbolic_function(Variable(index as u64)),
-                    parameter.c_type().to_kernel_type(),
+                    c_type.to_kernel_type(),
                 ),
             };
-            (parameter.name().to_string(), value)
+            Some((parameter.name().to_string(), value))
         })
         .collect()
 }
@@ -467,7 +467,8 @@ pub(in crate::surface) fn pure_theorem_array_refs(
     parameters
         .iter()
         .filter_map(|parameter| {
-            let element_type = click_array_element_type(parameter.c_type())?;
+            let c_type = parameter.click_type().c_type()?;
+            let element_type = click_array_element_type(c_type)?;
             let Some(CValue::Pointer(pointer)) = values.get(parameter.name()) else {
                 return None;
             };
@@ -1996,6 +1997,7 @@ fn click_function_applications(
         applications: &mut Vec<ClickFunctionApplication>,
     ) {
         match term {
+            ContractExpression::AlgebraicVariable { .. } => {}
             ContractExpression::AlgebraicConstructor { arguments, .. } => {
                 for argument in arguments {
                     expression(argument, known_facts, applications);
@@ -3136,7 +3138,7 @@ fn prove_pure_theorem_tactics(
                             application.name
                         ))
                     })?;
-                if definition.return_type() != C0Type::Int32 {
+                if definition.return_type() != &ClickType::C(C0Type::Int32) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: pure function `unfold` currently requires an int32 result"
                     )));

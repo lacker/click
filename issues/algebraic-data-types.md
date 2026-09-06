@@ -49,7 +49,13 @@ unchanged.
   `match` expressions over constructed values whose fields may be symbolic C
   values; and
 - checked rejection of wrong constructor field types, nonexhaustive matches,
-  and recursive fields in this initial datatype slice.
+  and recursive fields in this initial datatype slice;
+- a first-class `ClickType` family distinct from C's `C0Type`, with algebraic
+  types accepted as pure-function, predicate, and theorem parameter types and
+  as pure-function result types; and
+- arbitrary symbolic nonrecursive algebraic values, structural reflexivity,
+  exhaustive elimination, and pure positive/negative mdtests that require no
+  C translation unit.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -57,10 +63,12 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are arbitrary algebraic-typed variables and boundaries, nested and
-strictly positive recursive fields, matching an unknown symbolic variant,
-structural decreases and induction, the library-defined `List<T>`,
-recursive-resource use, and symbolic typed-memory-range projection.
+Still open are algebraic `let` bindings and quantifiers, resource arguments,
+theorem application with algebraic arguments, nested and strictly positive
+recursive fields, structural decreases and induction, the library-defined
+`List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
+Opaque and recursive algebraic-valued pure function calls also wait on that
+recursive representation; nonrecursive calls are elaborated compositionally.
 
 ## Violated invariant
 

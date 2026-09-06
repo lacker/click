@@ -149,7 +149,10 @@ pub(in crate::surface) fn verify_click_file_theorems(
     let (theorem_definitions, stdlib_theorem_ensure_count) =
         combined_theorem_definitions_with_stdlib_ensure_count(file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
-    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
+    let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+        &click_function_definitions,
+        file.algebraic_type_definitions(),
+    );
     let verified = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
@@ -656,7 +659,10 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             verification_target.as_ref(),
         );
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
-        let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
+        let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+            &click_function_definitions,
+            file.algebraic_type_definitions(),
+        );
         let resource_environment = ResourceEnvironment::new(&resource_definitions);
         // Frame evidence may look through composite definitions to decide
         // that a call's mutable ranges or a store's written cell cannot
@@ -714,7 +720,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     .theorem_definition
                     .parameters()
                     .iter()
-                    .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
+                    .all(|parameter| parameter.click_type() == &ClickType::C(C0Type::Int32))
         }) {
             let implication = theorem.requires.iter().rev().fold(
                 theorem.conclusion.clone(),

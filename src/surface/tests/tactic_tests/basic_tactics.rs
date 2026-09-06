@@ -282,7 +282,7 @@ fn parses_composite_resource_definition() {
     assert_eq!(
         resource.parameters(),
         &[FunctionParameter {
-            c_type: C0Type::Int32Pointer,
+            click_type: ClickType::C(C0Type::Int32Pointer),
             name: "flag".to_string(),
             struct_name: None,
             function_pointer_signature: None,

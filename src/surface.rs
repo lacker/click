@@ -20,8 +20,8 @@ use crate::kernel::{
     CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
     ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition,
     PropositionDerivation, PureFactContext, ResourceContext, ResourceContextValidityError, Sort,
-    SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
-    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
+    SpecAlgebraicExpression, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition,
+    SpecResource, SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
     c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
     c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
     c_function_contract_entry_state, c_function_entry_state,
@@ -385,10 +385,37 @@ pub enum AlgebraicFieldType {
     Algebraic(String),
 }
 
+/// A value type in the Click specification language. C types are one family
+/// of Click types; specification-only algebraic datatypes are another.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClickType {
+    C(C0Type),
+    Algebraic(AlgebraicTypeApplication),
+}
+
+impl ClickType {
+    pub fn c_type(&self) -> Option<C0Type> {
+        match self {
+            Self::C(c_type) => Some(*c_type),
+            Self::Algebraic(_) => None,
+        }
+    }
+}
+
+impl AlgebraicTypeApplication {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn arguments(&self) -> &[ClickType] {
+        &self.arguments
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlgebraicTypeApplication {
     name: String,
-    arguments: Vec<C0Type>,
+    arguments: Vec<ClickType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -410,7 +437,7 @@ pub struct PredicateDefinition {
 pub struct ClickFunctionDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
-    return_type: C0Type,
+    return_type: ClickType,
     decreases: Option<ContractExpression>,
     body: ContractExpression,
 }
@@ -461,7 +488,7 @@ pub struct TheoremDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClickFunctionType {
     parameters: Vec<FunctionParameter>,
-    return_type: C0Type,
+    return_type: ClickType,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -498,7 +525,7 @@ pub struct FunctionSignature {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionParameter {
-    c_type: C0Type,
+    click_type: ClickType,
     name: String,
     struct_name: Option<String>,
     function_pointer_signature: Option<syntax::C0FunctionPointerSignature>,
@@ -873,6 +900,9 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::AlgebraicVariable { name, .. } => {
+            names.insert(name.clone());
+        }
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_current_contract_expression_variables(argument, names);
@@ -1326,9 +1356,14 @@ pub enum ContractExpression {
         variant: String,
         arguments: Vec<ContractExpression>,
     },
-    /// Exhaustive elimination of a constructed algebraic value into an
-    /// ordinary scalar expression. Arbitrary algebraic binders are a later
-    /// slice; retaining the match here keeps that extension source-compatible.
+    /// A Click-native binder whose value is not a C object or scalar.
+    AlgebraicVariable {
+        name: String,
+        algebraic_type: AlgebraicTypeApplication,
+        binder_index: usize,
+    },
+    /// Exhaustive elimination of an algebraic value. Its arms may produce a
+    /// common C or algebraic result type.
     AlgebraicMatch {
         scrutinee: Box<ContractExpression>,
         arms: Vec<AlgebraicMatchArm>,
@@ -1800,6 +1835,7 @@ struct SpecArrayRef {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecElaborationContext {
     values: BTreeMap<String, SpecExpression>,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     array_refs: BTreeMap<String, SpecArrayRef>,
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
@@ -1817,6 +1853,7 @@ impl Default for SpecElaborationContext {
     fn default() -> Self {
         Self {
             values: BTreeMap::new(),
+            algebraic_values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Current,
             current_loop_entry: None,
@@ -1857,6 +1894,7 @@ impl SpecElaborationContext {
         if self.function_contract {
             return Ok(Self {
                 values: self.values.clone(),
+                algebraic_values: self.algebraic_values.clone(),
                 array_refs: BTreeMap::new(),
                 current_memory: SpecMemory::FunctionEntry,
                 current_loop_entry: None,
@@ -1878,6 +1916,7 @@ impl SpecElaborationContext {
 
         Ok(Self {
             values,
+            algebraic_values: self.algebraic_values.clone(),
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
             current_loop_entry: None,
@@ -3216,6 +3255,7 @@ impl PredicateEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClickFunctionEnvironment {
     definitions: BTreeMap<String, ClickFunctionDefinition>,
+    algebraic_type_definitions: BTreeMap<String, AlgebraicTypeDefinition>,
     /// The definitions in spec form, for the kernel to evaluate constant
     /// applications by; elaborated once with the environment.
     spec_definitions: std::sync::Arc<crate::kernel::SpecPureFunctionDefinitions>,
@@ -3223,8 +3263,19 @@ struct ClickFunctionEnvironment {
 
 impl ClickFunctionEnvironment {
     fn new(definitions: &[ClickFunctionDefinition]) -> Self {
+        Self::with_algebraic_types(definitions, &[])
+    }
+
+    fn with_algebraic_types(
+        definitions: &[ClickFunctionDefinition],
+        algebraic_type_definitions: &[AlgebraicTypeDefinition],
+    ) -> Self {
         let mut environment = Self {
             definitions: definitions
+                .iter()
+                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .collect(),
+            algebraic_type_definitions: algebraic_type_definitions
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
@@ -3462,8 +3513,8 @@ impl ClickFunctionDefinition {
         &self.parameters
     }
 
-    pub fn return_type(&self) -> C0Type {
-        self.return_type
+    pub fn return_type(&self) -> &ClickType {
+        &self.return_type
     }
 
     pub fn decreases(&self) -> Option<&ContractExpression> {
@@ -3601,7 +3652,16 @@ impl FunctionSignature {
 
 impl FunctionParameter {
     pub fn c_type(&self) -> C0Type {
-        self.c_type
+        match &self.click_type {
+            ClickType::C(c_type) => *c_type,
+            ClickType::Algebraic(_) => {
+                panic!("an algebraic Click parameter has no C type")
+            }
+        }
+    }
+
+    pub fn click_type(&self) -> &ClickType {
+        &self.click_type
     }
 
     pub fn name(&self) -> &str {
@@ -3653,7 +3713,10 @@ fn requirement_contains_resource(requirement: &Requirement) -> bool {
 }
 
 fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
-    parameter.c_type().is_pointer()
+    parameter
+        .click_type()
+        .c_type()
+        .is_some_and(C0Type::is_pointer)
 }
 
 fn click_array_element_type(c_type: C0Type) -> Option<CType> {

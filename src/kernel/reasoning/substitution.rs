@@ -1721,6 +1721,25 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
                     .iter()
                     .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
                     .collect(),
+                symbolic_variants: scrutinee
+                    .symbolic_variants
+                    .iter()
+                    .map(|variant| SpecAlgebraicVariant {
+                        variant: variant.variant.clone(),
+                        guard: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                            &variant.guard,
+                            from,
+                            to,
+                        )),
+                        fields: variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                substitute_bitvector_variable_in_spec_expression(field, from, to)
+                            })
+                            .collect(),
+                    })
+                    .collect(),
             }),
             arms: arms
                 .iter()
@@ -1939,6 +1958,25 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
                     .fields
                     .iter()
                     .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
+                    .collect(),
+                symbolic_variants: expression
+                    .symbolic_variants
+                    .iter()
+                    .map(|variant| SpecAlgebraicVariant {
+                        variant: variant.variant.clone(),
+                        guard: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                            &variant.guard,
+                            from,
+                            to,
+                        )),
+                        fields: variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                substitute_bitvector_variable_in_spec_expression(field, from, to)
+                            })
+                            .collect(),
+                    })
                     .collect(),
             };
             SpecProposition::AlgebraicComparison {
@@ -4472,6 +4510,25 @@ fn substitute_pointer_variable_in_spec_expression(
                     .iter()
                     .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
                     .collect(),
+                symbolic_variants: scrutinee
+                    .symbolic_variants
+                    .iter()
+                    .map(|variant| SpecAlgebraicVariant {
+                        variant: variant.variant.clone(),
+                        guard: Box::new(substitute_pointer_variable_in_spec_proposition(
+                            &variant.guard,
+                            from,
+                            to,
+                        )),
+                        fields: variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                substitute_pointer_variable_in_spec_expression(field, from, to)
+                            })
+                            .collect(),
+                    })
+                    .collect(),
             }),
             arms: arms
                 .iter()
@@ -4640,6 +4697,25 @@ fn substitute_pointer_variable_in_spec_proposition(
                     .fields
                     .iter()
                     .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
+                    .collect(),
+                symbolic_variants: expression
+                    .symbolic_variants
+                    .iter()
+                    .map(|variant| SpecAlgebraicVariant {
+                        variant: variant.variant.clone(),
+                        guard: Box::new(substitute_pointer_variable_in_spec_proposition(
+                            &variant.guard,
+                            from,
+                            to,
+                        )),
+                        fields: variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                substitute_pointer_variable_in_spec_expression(field, from, to)
+                            })
+                            .collect(),
+                    })
                     .collect(),
             };
             SpecProposition::AlgebraicComparison {

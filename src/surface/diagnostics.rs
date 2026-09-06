@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition};
+use crate::surface::validation::describe_click_type;
 use std::fmt::Write;
 
 const MAX_DIAGNOSTIC_ITEMS: usize = 12;
@@ -1037,7 +1038,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                     algebraic_type
                         .arguments
                         .iter()
-                        .map(|c_type| describe_c0_type(*c_type))
+                        .map(describe_click_type)
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -1052,6 +1053,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                     .join(", ")
             )
         }
+        ContractExpression::AlgebraicVariable { name, .. } => name.clone(),
         ContractExpression::AlgebraicMatch { scrutinee, arms } => format!(
             "match {} {{ {} }}",
             describe_contract_expression(scrutinee),

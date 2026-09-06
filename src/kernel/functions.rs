@@ -1788,7 +1788,7 @@ fn coerce_function_return_value(
     coerce_c_value_to_type(value, function.return_type(), obligations, assumptions)
 }
 
-pub(super) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
+pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
         CType::VoidPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),

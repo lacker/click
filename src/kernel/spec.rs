@@ -484,6 +484,21 @@ fn lower_spec_algebraic_comparison_at_state(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    if !left.symbolic_variants.is_empty() || !right.symbolic_variants.is_empty() {
+        let equality = symbolic_algebraic_equality(left, right);
+        let proposition = if equal {
+            equality
+        } else {
+            SpecProposition::Not(Box::new(equality))
+        };
+        return lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            &proposition,
+            loop_entry_state,
+            assumptions,
+            budget,
+        );
+    }
     let mut paths = Vec::new();
     for left_path in
         evaluate_spec_algebraic_at_state(state, left, loop_entry_state, assumptions, budget)?
@@ -543,6 +558,94 @@ fn lower_spec_algebraic_comparison_at_state(
     Ok(paths)
 }
 
+fn symbolic_algebraic_equality(
+    left: &SpecAlgebraicExpression,
+    right: &SpecAlgebraicExpression,
+) -> SpecProposition {
+    if left == right {
+        return spec_true();
+    }
+    if left.type_name != right.type_name || left.type_arguments != right.type_arguments {
+        return spec_false();
+    }
+    let left_variants = algebraic_variant_specs(left);
+    let right_variants = algebraic_variant_specs(right);
+    let alternatives = left_variants
+        .iter()
+        .flat_map(|left| {
+            right_variants
+                .iter()
+                .filter(move |right| left.0 == right.0 && left.2.len() == right.2.len())
+                .map(move |right| {
+                    let mut conjuncts = vec![left.1.clone(), right.1.clone()];
+                    conjuncts.extend(left.2.iter().zip(right.2).map(|(left, right)| {
+                        SpecProposition::Comparison {
+                            left: left.clone(),
+                            operator: CComparisonOperator::Equal,
+                            right: right.clone(),
+                        }
+                    }));
+                    spec_and_all(conjuncts)
+                })
+        })
+        .collect::<Vec<_>>();
+    spec_or_all(alternatives)
+}
+
+fn algebraic_variant_specs(
+    expression: &SpecAlgebraicExpression,
+) -> Vec<(&str, SpecProposition, &[SpecExpression])> {
+    if expression.symbolic_variants.is_empty() {
+        vec![(
+            expression.variant.as_str(),
+            spec_true(),
+            expression.fields.as_slice(),
+        )]
+    } else {
+        expression
+            .symbolic_variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.variant.as_str(),
+                    variant.guard.as_ref().clone(),
+                    variant.fields.as_slice(),
+                )
+            })
+            .collect()
+    }
+}
+
+fn spec_true() -> SpecProposition {
+    SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(0)),
+    }
+}
+
+fn spec_false() -> SpecProposition {
+    SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(1)),
+    }
+}
+
+fn spec_and_all(mut propositions: Vec<SpecProposition>) -> SpecProposition {
+    propositions
+        .drain(..)
+        .reduce(|left, right| SpecProposition::And(Box::new(left), Box::new(right)))
+        .unwrap_or_else(spec_true)
+}
+
+fn spec_or_all(mut propositions: Vec<SpecProposition>) -> SpecProposition {
+    propositions
+        .drain(..)
+        .reduce(|left, right| SpecProposition::Or(Box::new(left), Box::new(right)))
+        .unwrap_or_else(spec_false)
+}
+
 fn evaluate_spec_algebraic_at_state(
     state: &CState,
     expression: &SpecAlgebraicExpression,
@@ -551,6 +654,37 @@ fn evaluate_spec_algebraic_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecAlgebraicPath>> {
     budget.consume_expression_step()?;
+    if !expression.symbolic_variants.is_empty() {
+        let mut result = Vec::new();
+        for variant in &expression.symbolic_variants {
+            let mut concrete = expression.clone();
+            concrete.variant = variant.variant.clone();
+            concrete.fields = variant.fields.clone();
+            concrete.symbolic_variants.clear();
+            for mut path in evaluate_spec_algebraic_at_state(
+                state,
+                &concrete,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
+                let guard_paths = lower_spec_proposition_at_state_with_loop_entry(
+                    state,
+                    &variant.guard,
+                    loop_entry_state,
+                    assumptions,
+                    budget,
+                )?;
+                for guard_path in guard_paths {
+                    path.facts
+                        .push(ExecutionPureFact::new(guard_path.proposition));
+                    result.push(path.clone());
+                }
+            }
+        }
+        budget.check_path_width(result.len())?;
+        return Ok(result);
+    }
     let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
     for field in &expression.fields {
         let mut next = Vec::new();

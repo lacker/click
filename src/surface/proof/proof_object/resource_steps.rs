@@ -1,6 +1,7 @@
 //! Predicate and resource unfold/fold/observation steps.
 
 use super::*;
+use crate::surface::validation::describe_click_type;
 
 impl<'a> Proof<'a> {
     pub(super) fn apply_function_unfold(
@@ -112,11 +113,11 @@ impl<'a> Proof<'a> {
                     application.name
                 ))
             })?;
-        if definition.return_type() != C0Type::Int32 {
+        if definition.return_type() != &ClickType::C(C0Type::Int32) {
             return Err(self.step_error(format!(
                 "pure function `unfold` currently requires an int32 result; `{}` returns {}",
                 definition.name(),
-                describe_c0_type(definition.return_type())
+                describe_click_type(definition.return_type())
             )));
         }
         if application.arguments.len() != definition.parameters().len() {

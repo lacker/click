@@ -19,7 +19,12 @@ pub(super) fn theorem_type_environment(theorem: &TheoremDefinition) -> BTreeMap<
     theorem
         .parameters()
         .iter()
-        .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+        .filter_map(|parameter| {
+            parameter
+                .click_type()
+                .c_type()
+                .map(|c_type| (parameter.name().to_string(), c_type))
+        })
         .collect()
 }
 
@@ -112,8 +117,7 @@ pub(super) fn validate_proposition_expression_types(
         }
         ClickProposition::PredicateCall { arguments, .. } => {
             for argument in arguments {
-                let _ =
-                    infer_contract_expression_type(argument, variables, click_functions, context)?;
+                let _ = infer_spec_value_type(argument, variables, click_functions, context)?;
             }
             Ok(())
         }
@@ -214,12 +218,26 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
+            Ok(SpecValueType::Algebraic(algebraic_type.clone()))
+        }
         ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
             Ok(SpecValueType::Algebraic(algebraic_type.clone()))
         }
-        ContractExpression::AlgebraicMatch { .. } => Ok(SpecValueType::Scalar(
-            infer_contract_expression_type(expression, variables, click_functions, context)?,
-        )),
+        ContractExpression::AlgebraicMatch { arms, .. } => {
+            if let Some(first) = arms.first()
+                && let SpecValueType::Algebraic(application) =
+                    infer_spec_value_type(&first.body, variables, click_functions, context)?
+            {
+                return Ok(SpecValueType::Algebraic(application));
+            }
+            Ok(SpecValueType::Scalar(infer_contract_expression_type(
+                expression,
+                variables,
+                click_functions,
+                context,
+            )?))
+        }
         ContractExpression::SequenceLiteral(elements) => {
             let mut element_type = None;
             for element in elements {
@@ -276,6 +294,19 @@ fn infer_spec_value_type(
         | ContractExpression::At {
             expression: inner, ..
         } => infer_spec_value_type(inner, variables, click_functions, context),
+        ContractExpression::Call { name, .. }
+            if matches!(
+                click_functions
+                    .get(name)
+                    .map(|function| &function.return_type),
+                Some(ClickType::Algebraic(_))
+            ) =>
+        {
+            let ClickType::Algebraic(application) = &click_functions[name].return_type else {
+                unreachable!()
+            };
+            Ok(SpecValueType::Algebraic(application.clone()))
+        }
         _ => Ok(SpecValueType::Scalar(infer_contract_expression_type(
             expression,
             variables,
@@ -568,6 +599,28 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
     }
 }
 
+pub(in crate::surface) fn describe_click_type(click_type: &ClickType) -> String {
+    match click_type {
+        ClickType::C(c_type) => describe_c0_type(*c_type),
+        ClickType::Algebraic(application) => {
+            if application.arguments.is_empty() {
+                application.name.clone()
+            } else {
+                format!(
+                    "{}<{}>",
+                    application.name,
+                    application
+                        .arguments
+                        .iter()
+                        .map(describe_click_type)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
 pub(super) fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
     match (actual, expected) {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
@@ -647,7 +700,8 @@ pub(super) fn infer_contract_expression_type(
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
     match expression {
-        ContractExpression::AlgebraicConstructor { .. } => Err(ClickError::new(format!(
+        ContractExpression::AlgebraicConstructor { .. }
+        | ContractExpression::AlgebraicVariable { .. } => Err(ClickError::new(format!(
             "algebraic values are only valid in algebraic equality or as a `match` scrutinee in {context}"
         ))),
         ContractExpression::AlgebraicMatch { scrutinee, arms } => {
@@ -809,10 +863,12 @@ pub(super) fn infer_contract_expression_type(
             for (index, (parameter, argument)) in
                 function.parameters.iter().zip(arguments).enumerate()
             {
+                let Some(expected) = parameter.click_type().c_type() else {
+                    continue;
+                };
                 if let Some(actual) =
                     infer_contract_expression_type(argument, variables, click_functions, context)?
                 {
-                    let expected = parameter.c_type();
                     if !click_types_compatible(actual, expected) {
                         return Err(ClickError::new(format!(
                             "function `{name}` argument {index} expects {}, got {} in {context}",
@@ -822,7 +878,7 @@ pub(super) fn infer_contract_expression_type(
                     }
                 }
             }
-            Ok(Some(function.return_type))
+            Ok(function.return_type.c_type())
         }
     }
 }
@@ -1421,6 +1477,7 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::AlgebraicVariable { .. } => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 validate_contract_expression_calls(argument, click_functions, context)?;
