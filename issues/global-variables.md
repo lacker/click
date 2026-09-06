@@ -21,7 +21,9 @@ objects, with omitted leaves retaining zero initialization. Designated
 Const-qualified scalar globals and scalar tables now use read-only backing
 blocks and preserve pointer-to-const views across translation units.
 Static-storage pointers can now use address constants for declared scalar
-objects, including cross-translation-unit globals and function-local statics.
+objects, array elements, and scalar struct fields, including
+cross-translation-unit globals and function-local statics. Subobject addresses
+are represented as the containing stable block plus their ABI byte offset.
 Const-qualified aggregate globals and function-local aggregate statics now use
 read-only backing blocks, preserve their field access across translation units,
 and reject field writes. Compatible `extern const` aggregate declarations are
@@ -68,16 +70,17 @@ array-element initialization across external, file-scope-static, and
 function-local-static storage, `mdtests/const_aggregate_objects.md` for
 const-qualified aggregate arrays across translation units and function-local
 static storage, and `mdtests/const_aggregate_write_rejected.md` for rejecting
-const aggregate field writes. `mdtests/static_pointer_initializers_cross_file.md`
-and `mdtests/static_pointer_initializer_const_discard.md` cover stable address
-constants and pointee-const rejection. The three
+`mdtests/static_pointer_initializers_cross_file.md`,
+`mdtests/static_subobject_pointer_initializers_cross_file.md`, and
+`mdtests/static_pointer_initializer_const_discard.md` cover stable address
+constants for objects and scalar subobjects plus pointee-const rejection. The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
 ## Acceptance criteria
 
 - The parser accepts supported scalar file-scope declarations with optional
-  literal, null-pointer, or declared-object-address initializers, `extern`
+  literal, null-pointer, or stable object/subobject-address initializers, `extern`
   declarations, and internal-linkage `static`
   definitions, including const-qualified scalar objects and scalar arrays, and
   rejects duplicate or missing external definitions across the source bundle.

@@ -117,6 +117,12 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "operator.bitwise-not",
 ];
 
+#[derive(Clone, Debug)]
+struct StaticAddress {
+    pointer: crate::kernel::Pointer,
+    c_type: C0Type,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     return_type: C0Type,
@@ -1900,28 +1906,164 @@ impl C0Function {
         self.body.to_kernel_statement()
     }
 
-    fn static_object_address(&self, name: &str) -> Option<(crate::kernel::Pointer, C0Type, bool)> {
+    fn static_object_address(&self, name: &str) -> Option<StaticAddress> {
         if let Some(global) = self
             .globals
             .values()
             .find(|global| global.name() == name || global.kernel_name() == name)
         {
-            return Some((
-                crate::kernel::CMemory::global_pointer(global.kernel_name()),
-                global.c_type(),
-                global.is_constant(),
-            ));
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::global_pointer(global.kernel_name()),
+                c_type: global.c_type(),
+            });
         }
-        self.static_locals
+        if let Some(global_array) = self
+            .global_arrays
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::global_pointer(global_array.kernel_name()),
+                c_type: global_array.c_type(),
+            });
+        }
+        if let Some(global_aggregate) = self
+            .global_aggregates
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::global_pointer(global_aggregate.kernel_name()),
+                c_type: struct_value_type(global_aggregate.layout()),
+            });
+        }
+        if let Some(global_aggregate_array) = self
+            .global_aggregate_arrays
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::global_pointer(
+                    global_aggregate_array.kernel_name(),
+                ),
+                c_type: global_aggregate_array.c_type(),
+            });
+        }
+        if let Some(static_local) = self
+            .static_locals
             .values()
             .find(|static_local| static_local.name() == name || static_local.kernel_name() == name)
-            .map(|static_local| {
-                (
-                    crate::kernel::CMemory::static_pointer(&self.name, static_local.kernel_name()),
-                    static_local.c_type(),
-                    static_local.is_constant(),
-                )
+        {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::static_pointer(
+                    &self.name,
+                    static_local.kernel_name(),
+                ),
+                c_type: static_local.c_type(),
+            });
+        }
+        if let Some(static_array) = self
+            .static_arrays
+            .values()
+            .find(|static_array| static_array.name() == name || static_array.kernel_name() == name)
+        {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::static_pointer(
+                    &self.name,
+                    static_array.kernel_name(),
+                ),
+                c_type: static_array.c_type(),
+            });
+        }
+        if let Some(static_aggregate) = self.static_aggregates.values().find(|static_aggregate| {
+            static_aggregate.name() == name || static_aggregate.kernel_name() == name
+        }) {
+            return Some(StaticAddress {
+                pointer: crate::kernel::CMemory::static_pointer(
+                    &self.name,
+                    static_aggregate.kernel_name(),
+                ),
+                c_type: struct_value_type(static_aggregate.layout()),
+            });
+        }
+        self.static_aggregate_arrays
+            .values()
+            .find(|static_aggregate_array| {
+                static_aggregate_array.name() == name
+                    || static_aggregate_array.kernel_name() == name
             })
+            .map(|static_aggregate_array| StaticAddress {
+                pointer: crate::kernel::CMemory::static_pointer(
+                    &self.name,
+                    static_aggregate_array.kernel_name(),
+                ),
+                c_type: static_aggregate_array.c_type(),
+            })
+    }
+
+    fn static_address_expression(&self, expression: &C0Expression) -> Option<StaticAddress> {
+        match expression {
+            C0Expression::Variable(name) => self.static_object_address(name),
+            C0Expression::Field {
+                pointer,
+                field_type,
+                ..
+            }
+            | C0Expression::UnionField {
+                pointer,
+                field_type,
+                ..
+            } => {
+                let mut address = self.static_address_expression(pointer)?;
+                address.c_type = *field_type;
+                Some(address)
+            }
+            C0Expression::Index(base, index) => {
+                let mut address = self.static_address_expression(base)?;
+                let element_type = address.c_type.pointee_type()?;
+                let index = static_integer_value(index)?;
+                let bytes = index.checked_mul(element_type.abi_size_bytes())?;
+                address.pointer = address.pointer.offset_by_bytes(bytes);
+                address.c_type = element_type;
+                Some(address)
+            }
+            C0Expression::PointerOffsetBytes { pointer, bytes } => {
+                let mut address = self.static_address_expression(pointer)?;
+                address.pointer = address.pointer.offset_by_bytes(*bytes);
+                Some(address)
+            }
+            C0Expression::Add(pointer, offset) => {
+                let mut address = self.static_address_expression(pointer)?;
+                address.pointer = address
+                    .pointer
+                    .offset_by_bytes(static_integer_value(offset)?);
+                Some(address)
+            }
+            C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } => {
+                let mut address = self.static_address_expression(pointer)?;
+                address.c_type = struct_value_type(self.structs.get(struct_name)?);
+                Some(address)
+            }
+            C0Expression::UnionAddress {
+                pointer,
+                union_name,
+            } => {
+                let mut address = self.static_address_expression(pointer)?;
+                address.c_type = C0Type::UInt8Array(self.unions.get(union_name)?.size_bytes);
+                Some(address)
+            }
+            C0Expression::Cast {
+                expression, c_type, ..
+            } => {
+                let mut address = self.static_address_expression(expression)?;
+                address.c_type = *c_type;
+                Some(address)
+            }
+            _ => None,
+        }
     }
 
     fn static_address_initializer_value(
@@ -1933,15 +2075,12 @@ impl C0Function {
         let C0Expression::AddressOf(target) = initializer else {
             return None;
         };
-        let C0Expression::Variable(name) = target.as_ref() else {
-            return None;
-        };
-        let (pointer, target_type, _) = self.static_object_address(name)?;
-        if target_type.pointer_type()? != declared_type {
+        let address = self.static_address_expression(target)?;
+        if address.c_type.pointer_type()? != declared_type {
             return None;
         }
         Some(crate::kernel::CValue::typed_pointer_with_pointee_constant(
-            pointer,
+            address.pointer,
             declared_type.to_kernel_type(),
             declared_pointee_constant,
         ))
@@ -3931,20 +4070,137 @@ impl Parser {
         Ok(())
     }
 
+    fn static_object_type(&self, name: &str) -> Option<(C0Type, bool)> {
+        if let Some(global) = self
+            .globals
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some((global.c_type(), global.is_constant()));
+        }
+        if let Some(global_array) = self
+            .global_arrays
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some((global_array.c_type(), global_array.is_constant()));
+        }
+        if let Some(global_aggregate) = self
+            .global_aggregates
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some((
+                struct_value_type(global_aggregate.layout()),
+                global_aggregate.is_constant(),
+            ));
+        }
+        if let Some(global_aggregate_array) = self
+            .global_aggregate_arrays
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some((
+                global_aggregate_array.c_type(),
+                global_aggregate_array.is_constant(),
+            ));
+        }
+        if let Some(static_local) = self
+            .static_locals
+            .values()
+            .find(|static_local| static_local.name() == name || static_local.kernel_name() == name)
+        {
+            return Some((static_local.c_type(), static_local.is_constant()));
+        }
+        if let Some(static_array) = self
+            .static_arrays
+            .values()
+            .find(|static_array| static_array.name() == name || static_array.kernel_name() == name)
+        {
+            return Some((static_array.c_type(), static_array.is_constant()));
+        }
+        if let Some(static_aggregate) = self.static_aggregates.values().find(|static_aggregate| {
+            static_aggregate.name() == name || static_aggregate.kernel_name() == name
+        }) {
+            return Some((
+                struct_value_type(static_aggregate.layout()),
+                static_aggregate.is_constant(),
+            ));
+        }
+        self.static_aggregate_arrays
+            .values()
+            .find(|static_aggregate_array| {
+                static_aggregate_array.name() == name
+                    || static_aggregate_array.kernel_name() == name
+            })
+            .map(|static_aggregate_array| {
+                (
+                    static_aggregate_array.c_type(),
+                    static_aggregate_array.is_constant(),
+                )
+            })
+    }
+
+    fn static_address_expression(&self, expression: &C0Expression) -> Option<(C0Type, bool)> {
+        match expression {
+            C0Expression::Variable(name) => self.static_object_type(name),
+            C0Expression::Field {
+                pointer,
+                field_type,
+                ..
+            }
+            | C0Expression::UnionField {
+                pointer,
+                field_type,
+                ..
+            } => {
+                let (_, constant) = self.static_address_expression(pointer)?;
+                Some((*field_type, constant))
+            }
+            C0Expression::Index(base, index) => {
+                let (base_type, constant) = self.static_address_expression(base)?;
+                static_integer_value(index)?;
+                Some((base_type.pointee_type()?, constant))
+            }
+            C0Expression::PointerOffsetBytes { pointer, .. } => {
+                self.static_address_expression(pointer)
+            }
+            C0Expression::Add(pointer, offset) => {
+                static_integer_value(offset)?;
+                self.static_address_expression(pointer)
+            }
+            C0Expression::AggregateAddress {
+                pointer,
+                struct_name,
+            } => {
+                let (_, constant) = self.static_address_expression(pointer)?;
+                Some((struct_value_type(self.structs.get(struct_name)?), constant))
+            }
+            C0Expression::UnionAddress {
+                pointer,
+                union_name,
+            } => {
+                let (_, constant) = self.static_address_expression(pointer)?;
+                Some((
+                    C0Type::UInt8Array(self.unions.get(union_name)?.size_bytes),
+                    constant,
+                ))
+            }
+            C0Expression::Cast {
+                expression, c_type, ..
+            } => {
+                let (_, constant) = self.static_address_expression(expression)?;
+                Some((*c_type, constant))
+            }
+            _ => None,
+        }
+    }
+
     fn static_address_target(&self, expression: &C0Expression) -> Option<(C0Type, bool)> {
         let C0Expression::AddressOf(target) = expression else {
             return None;
         };
-        let C0Expression::Variable(name) = target.as_ref() else {
-            return None;
-        };
-        let resolved_name = self.resolve_name(name);
-        let c_type = self
-            .variable_types
-            .get(&resolved_name)
-            .copied()
-            .or_else(|| self.variable_types.get(name).copied())?;
-        Some((c_type, self.expression_is_constant_lvalue(target)))
+        self.static_address_expression(target)
     }
 
     fn validate_static_pointer_initializer(
@@ -3959,12 +4215,12 @@ impl Parser {
         let Some((target_type, target_is_constant)) = self.static_address_target(initializer)
         else {
             return Err(self.error_here(
-                "static pointer initializers currently support only null or the address of a declared scalar object",
+                "static pointer initializers currently support only null or the address of a declared object or subobject",
             ));
         };
         let Some(expected_type) = target_type.pointer_type() else {
             return Err(self.error_here(
-                "static pointer initializers currently support only addresses of scalar objects",
+                "static pointer initializers currently support only addresses of scalar objects or scalar subobjects",
             ));
         };
         if expected_type != declared_type {
@@ -11845,6 +12101,24 @@ impl Parser {
             self.position += 1;
         }
         token
+    }
+}
+
+fn static_integer_value(expression: &C0Expression) -> Option<u32> {
+    match expression {
+        C0Expression::Int32Literal(value) => Some(*value),
+        C0Expression::UInt8Literal(value) => Some(u32::from(*value)),
+        C0Expression::UInt32Literal(value) => Some(*value),
+        C0Expression::Add(left, right) => {
+            static_integer_value(left)?.checked_add(static_integer_value(right)?)
+        }
+        C0Expression::Subtract(left, right) => {
+            static_integer_value(left)?.checked_sub(static_integer_value(right)?)
+        }
+        C0Expression::Multiply(left, right) => {
+            static_integer_value(left)?.checked_mul(static_integer_value(right)?)
+        }
+        _ => None,
     }
 }
 

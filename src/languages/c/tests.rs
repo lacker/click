@@ -297,6 +297,124 @@ fn c0_rejects_static_address_initializers_that_discard_const() {
 }
 
 #[test]
+fn c0_lowers_static_subobject_address_initializers_with_byte_offsets() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct state {
+            int32 value;
+            uint8 bytes[4];
+        };
+        int32 table[3] = {1, 2, 3};
+        struct state shared;
+        int32 *table_middle = &table[1];
+        int32 *shared_value = &shared.value;
+        uint8 *shared_byte = &shared.bytes[2];
+
+        int32 read() {
+            static int32 *local_value = &shared.value;
+            return *table_middle + *shared_value + *shared_byte + *local_value;
+        }
+        "#,
+        "static-subobjects.c",
+    )
+    .expect("static subobject address initializers should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("static subobject reader function");
+    let kernel = function.to_kernel_function();
+
+    let table_middle = kernel
+        .global_variables()
+        .iter()
+        .find(|global| global.name() == "table_middle")
+        .expect("array-element address initializer");
+    let crate::kernel::CValue::Pointer(table_middle_pointer) = table_middle.initial_value() else {
+        panic!("array-element address initializer should lower to a pointer value");
+    };
+    assert_eq!(
+        table_middle_pointer.pointer(),
+        &crate::kernel::CMemory::global_pointer("table").offset_by_bytes(4)
+    );
+
+    let shared_layout = function.structs()["state"].clone();
+    let value_offset = shared_layout
+        .field("value")
+        .expect("state.value")
+        .offset_bytes();
+    let bytes_offset = shared_layout
+        .field("bytes")
+        .expect("state.bytes")
+        .offset_bytes();
+    for (name, offset) in [
+        ("shared_value", value_offset),
+        ("shared_byte", bytes_offset + 2),
+    ] {
+        let global = kernel
+            .global_variables()
+            .iter()
+            .find(|global| global.name() == name)
+            .expect("struct-field address initializer");
+        let crate::kernel::CValue::Pointer(pointer) = global.initial_value() else {
+            panic!("struct-field address initializer should lower to a pointer value");
+        };
+        assert_eq!(
+            pointer.pointer(),
+            &crate::kernel::CMemory::global_pointer("shared").offset_by_bytes(offset)
+        );
+    }
+
+    let local_value = kernel
+        .static_variables()
+        .iter()
+        .find(|static_local| static_local.source_name() == "local_value")
+        .expect("static struct-field address initializer");
+    let crate::kernel::CValue::Pointer(pointer) = local_value.initial_value() else {
+        panic!("static struct-field address initializer should lower to a pointer value");
+    };
+    assert_eq!(
+        pointer.pointer(),
+        &crate::kernel::CMemory::global_pointer("shared").offset_by_bytes(value_offset)
+    );
+}
+
+#[test]
+fn c0_rejects_static_subobject_address_initializers_that_discard_const() {
+    let error = syntax::parse_functions(
+        r#"
+        const int32 table[2] = {1, 2};
+        int32 *alias = &table[1];
+        int32 read() { return *alias; }
+        "#,
+    )
+    .expect_err("static subobject pointer initializers must preserve pointee constness");
+    assert!(
+        error
+            .message()
+            .contains("cannot discard const qualification")
+    );
+}
+
+#[test]
+fn c0_rejects_dynamic_static_subobject_address_initializers() {
+    let error = syntax::parse_functions(
+        r#"
+        int32 table[2] = {1, 2};
+        int32 index = 0;
+        int32 *alias = &table[index];
+        int32 read() { return *alias; }
+        "#,
+    )
+    .expect_err("static subobject pointer initializers require constant offsets");
+    assert!(
+        error
+            .message()
+            .contains("address of a declared object or subobject")
+    );
+}
+
+#[test]
 fn c0_collects_file_scope_scalar_arrays() {
     let functions = syntax::parse_functions(
         r#"
