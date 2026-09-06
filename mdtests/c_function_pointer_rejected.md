@@ -1,4 +1,10 @@
-# C0 function pointers dispatch compatible callbacks
+# Abstract function-pointer calls require callback contracts
+
+The C signature of `callback` does not specify its behavior. Even though this
+project contains one compatible concrete function, verifying `apply`
+independently must not infer a callback contract by enumerating the project.
+Checked higher-order callback contracts are tracked in
+`issues/higher-order-callback-contracts.md`.
 
 ```c filename=compare.c
 int32 compare(int32 left, int32 right) {
@@ -47,5 +53,5 @@ int32 caller() {
 ```
 
 ```expect
-pass
+fail: cannot verify call through function pointer `callback`: its behavior has no declared callback contract
 ```

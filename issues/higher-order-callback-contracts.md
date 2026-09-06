@@ -1,12 +1,21 @@
 # Give function-pointer parameters checked callback contracts
 
 Found by the 2026-09-04 MVR audit. Click can dispatch a function-pointer call
-among compatible concrete functions known to the verified project. Linux's
-augmented rbtree core is genuinely generic: exported functions receive an
-`augment_rotate` callback, and erase helpers invoke `propagate`, `copy`, and
-`rotate` through a caller-supplied `struct rb_augment_callbacks`. Enumerating
-all kernel clients is neither modular nor a contract for an arbitrary valid
-callback.
+when its exact concrete target is known. Calls through abstract callback
+parameters are rejected until they carry a checked contract; the earlier
+whole-project fallback that enumerated every signature-compatible function was
+removed because it was non-modular and scaled with unrelated project state.
+Linux's augmented rbtree core is genuinely generic: exported functions
+receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
+`copy`, and `rotate` through a caller-supplied
+`struct rb_augment_callbacks`.
+
+## Implemented precursor
+
+- Exact concrete function-pointer targets continue to dispatch normally.
+- An abstract function-pointer call without a behavioral contract fails
+  promptly with a source-level diagnostic. It does not scan or branch over
+  same-signature functions in the verified project.
 
 ## Violated invariant
 

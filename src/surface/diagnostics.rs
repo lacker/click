@@ -454,6 +454,9 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::UnsupportedOpaqueFunctionContract(name) => format!(
             "cannot execute call to `{name}` opaquely: its contract refers to an internal program point that is unavailable at the call site"
         ),
+        crate::kernel::CRuntimeError::AbstractFunctionPointerCall(name) => format!(
+            "cannot verify call through function pointer `{name}`: its behavior has no declared callback contract"
+        ),
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")
         }

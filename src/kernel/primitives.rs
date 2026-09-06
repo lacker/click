@@ -1504,6 +1504,7 @@ pub enum CRuntimeError {
     },
     MissingVerifiedFunctionRule(String),
     UnsupportedOpaqueFunctionContract(String),
+    AbstractFunctionPointerCall(String),
     FunctionContract(String),
     InvalidFree(CInvalidFree),
     UnresolvedAllocationOutcome,

@@ -133,10 +133,10 @@ int32 caller(int32 x) {
 }
 
 #[test]
-fn location_verification_checks_function_pointer_targets() {
+fn location_verification_rejects_abstract_function_pointer_without_contract() {
     let compare_c = r#"
 int32 compare(int32 left, int32 right) {
-    return left - right;
+    return left;
 }
 "#;
     let apply_c = r#"
@@ -159,18 +159,15 @@ verifying "apply.c";
 verifying "caller.c";
 
 int32 compare(int32 left, int32 right) {
-    ensures result == left - right + 1;
-} by {
-    execute();
-    simp();
-}
+    ensures result == left;
+} by auto;
 
 int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
-    ensures result == left - right;
+    ensures result == left;
 } by auto;
 
 int32 caller() {
-    ensures result == 38;
+    ensures result == 40;
 } by auto;
 "#;
     let sources = [
@@ -178,12 +175,18 @@ int32 caller() {
         ("apply.c", apply_c),
         ("caller.c", caller_c),
     ];
-    let caller_proof = click_source.rfind("ensures result == 38;").unwrap();
+    let caller_proof = click_source.rfind("ensures result == 40;").unwrap();
     let position = expansion::position_at_offset(click_source, caller_proof);
 
     let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
-        .expect_err("targeted callback verification must check its concrete target");
-    assert!(error.message().contains("compare"), "{}", error.message());
+        .expect_err("an abstract callback call must require a declared contract");
+    assert!(
+        error.message().contains(
+            "cannot verify call through function pointer `callback`: its behavior has no declared callback contract"
+        ),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

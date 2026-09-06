@@ -293,11 +293,18 @@ fn execute_c_indirect_call_paths(
                     PointerBlock::Function(name) => {
                         vec![Ok(name.clone())]
                     }
-                    PointerBlock::FunctionSymbolic(_) => environment
-                        .function_names_with_pointer_type(function_type)
-                        .into_iter()
-                        .map(Ok)
-                        .collect(),
+                    PointerBlock::FunctionSymbolic(_) => {
+                        paths.push(CFunctionPath {
+                            outcome: CFunctionOutcome::RuntimeError(
+                                CRuntimeError::AbstractFunctionPointerCall(
+                                    function_name.to_string(),
+                                ),
+                            ),
+                            facts,
+                            obligations,
+                        });
+                        continue;
+                    }
                     _ => vec![Err(CRuntimeError::TypeMismatch)],
                 }
             }
@@ -320,16 +327,6 @@ fn execute_c_indirect_call_paths(
             }
         };
 
-        if target_names.is_empty() {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "no compatible target for function pointer `{function_name}`"
-                ))),
-                facts,
-                obligations,
-            });
-            continue;
-        }
         for target_name in target_names {
             let Ok(target_name) = target_name else {
                 paths.push(CFunctionPath {

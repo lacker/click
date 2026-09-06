@@ -1204,14 +1204,6 @@ impl CExecutionEnvironment {
         self.external_function_rules.get(name)
     }
 
-    pub(crate) fn function_names_with_pointer_type(&self, c_type: CType) -> Vec<String> {
-        self.functions
-            .values()
-            .filter(|function| function.function_pointer_type() == c_type)
-            .map(|function| function.name().to_string())
-            .collect()
-    }
-
     pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {
         std::sync::Arc::make_mut(&mut self.verified_function_rules)
             .insert(rule.function.name().to_string(), rule);
