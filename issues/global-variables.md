@@ -17,8 +17,8 @@ Zero-initialized struct globals and function-local struct statics with
 supported scalar leaf fields now use stable typed aggregate storage, including
 cross-file `extern` sharing and field-level contract effects. Positional
 compile-time scalar and null-pointer initializers now populate those same
-objects, with omitted leaves retaining zero initialization. Designated
-Const-qualified scalar globals and scalar tables now use read-only backing
+objects, with omitted leaves retaining zero initialization. Designated and
+const-qualified scalar globals and scalar tables now use read-only backing
 blocks and preserve pointer-to-const views across translation units.
 Static-storage pointers can now use address constants for declared scalar
 objects, array elements, and scalar struct fields, including
@@ -28,9 +28,11 @@ Const-qualified aggregate globals and function-local aggregate statics now use
 read-only backing blocks, preserve their field access across translation units,
 and reject field writes. Compatible `extern const` aggregate declarations are
 checked against their linked definitions.
-Scalar-array designators, multidimensional or incomplete arrays, initialization ordering,
-and wider string-literal forms remain unsupported; dynamic or non-literal
-initialization remains unsupported as well. Fixed-size one-dimensional arrays
+Scalar-array designators, multidimensional or incomplete arrays, and wider
+string-literal forms remain unsupported; dynamic or non-literal initialization
+remains unsupported as well. Static address initializer chains are resolved
+after the complete source bundle is linked, so declaration and translation-unit
+definition order does not affect stable relocations. Fixed-size one-dimensional arrays
 of those aggregates now use one stable ABI-sized block, support nested
 positional element initializers, cross-file `extern` sharing, file-scope
 `static`, function-local `static`, indexed field access, and field-level
@@ -73,7 +75,10 @@ static storage, and `mdtests/const_aggregate_write_rejected.md` for rejecting
 `mdtests/static_pointer_initializers_cross_file.md`,
 `mdtests/static_subobject_pointer_initializers_cross_file.md`, and
 `mdtests/static_pointer_initializer_const_discard.md` cover stable address
-constants for objects and scalar subobjects plus pointee-const rejection. The three
+constants for objects and scalar subobjects plus pointee-const rejection, while
+`mdtests/static_initializer_dependency_chain_cross_file.md` covers linked
+initializer chains whose definitions follow their use and cross translation units.
+The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
 
@@ -138,8 +143,10 @@ propagation, and indirect-write rejection.
   scalar-array designators, non-literal designators, const-qualified automatic
   aggregate locals,
   multidimensional/incomplete arrays, dynamic or
-  non-literal initialization, initialization ordering, and wider literal forms
-  remain open.
+  non-literal initialization, and wider literal forms remain open. Static
+  address initializers are revalidated after external globals are linked,
+  including chains such as `alias = &target; alias_ref = &alias`, with
+  deterministic unresolved-target, type-mismatch, and const-discard diagnostics.
 - `scripts/check.sh` passes.
 
 Related: [multi-function-files-and-headers.md](multi-function-files-and-headers.md).

@@ -121,6 +121,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
 struct StaticAddress {
     pointer: crate::kernel::Pointer,
     c_type: C0Type,
+    constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1915,6 +1916,7 @@ impl C0Function {
             return Some(StaticAddress {
                 pointer: crate::kernel::CMemory::global_pointer(global.kernel_name()),
                 c_type: global.c_type(),
+                constant: global.is_constant(),
             });
         }
         if let Some(global_array) = self
@@ -1925,6 +1927,7 @@ impl C0Function {
             return Some(StaticAddress {
                 pointer: crate::kernel::CMemory::global_pointer(global_array.kernel_name()),
                 c_type: global_array.c_type(),
+                constant: global_array.is_constant(),
             });
         }
         if let Some(global_aggregate) = self
@@ -1935,6 +1938,7 @@ impl C0Function {
             return Some(StaticAddress {
                 pointer: crate::kernel::CMemory::global_pointer(global_aggregate.kernel_name()),
                 c_type: struct_value_type(global_aggregate.layout()),
+                constant: global_aggregate.is_constant(),
             });
         }
         if let Some(global_aggregate_array) = self
@@ -1947,6 +1951,7 @@ impl C0Function {
                     global_aggregate_array.kernel_name(),
                 ),
                 c_type: global_aggregate_array.c_type(),
+                constant: global_aggregate_array.is_constant(),
             });
         }
         if let Some(static_local) = self
@@ -1960,6 +1965,7 @@ impl C0Function {
                     static_local.kernel_name(),
                 ),
                 c_type: static_local.c_type(),
+                constant: static_local.is_constant(),
             });
         }
         if let Some(static_array) = self
@@ -1973,6 +1979,7 @@ impl C0Function {
                     static_array.kernel_name(),
                 ),
                 c_type: static_array.c_type(),
+                constant: static_array.is_constant(),
             });
         }
         if let Some(static_aggregate) = self.static_aggregates.values().find(|static_aggregate| {
@@ -1984,6 +1991,7 @@ impl C0Function {
                     static_aggregate.kernel_name(),
                 ),
                 c_type: struct_value_type(static_aggregate.layout()),
+                constant: static_aggregate.is_constant(),
             });
         }
         self.static_aggregate_arrays
@@ -1998,6 +2006,7 @@ impl C0Function {
                     static_aggregate_array.kernel_name(),
                 ),
                 c_type: static_aggregate_array.c_type(),
+                constant: static_aggregate_array.is_constant(),
             })
     }
 
@@ -2084,6 +2093,71 @@ impl C0Function {
             declared_type.to_kernel_type(),
             declared_pointee_constant,
         ))
+    }
+
+    fn validate_static_pointer_initializer(
+        &self,
+        declared_type: C0Type,
+        declared_pointee_constant: bool,
+        initializer: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if matches!(initializer, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        let C0Expression::AddressOf(target) = initializer else {
+            return Err(C0SyntaxError::new(
+                "static pointer initializers currently support only null or the address of a declared object or subobject",
+            ));
+        };
+        let Some(address) = self.static_address_expression(target) else {
+            return Err(C0SyntaxError::new(
+                "static pointer initializers currently support only null or the address of a declared object or subobject",
+            ));
+        };
+        let Some(expected_type) = address.c_type.pointer_type() else {
+            return Err(C0SyntaxError::new(
+                "static pointer initializers currently support only addresses of scalar objects or scalar subobjects",
+            ));
+        };
+        if expected_type != declared_type {
+            return Err(C0SyntaxError::new(format!(
+                "address initializer has type `{expected_type:?}`, but `{declared_type:?}` is required"
+            )));
+        }
+        if address.constant && !declared_pointee_constant {
+            return Err(C0SyntaxError::new(
+                "cannot discard const qualification from a pointer initializer",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Revalidates address-valued static initializers after global linkage has
+    /// replaced translation-unit declarations with their selected
+    /// definitions. Parsing checks the declarations visible at each use;
+    /// this final pass checks the linked object graph that lowering will use.
+    pub(crate) fn validate_static_initializers(&self) -> Result<(), C0SyntaxError> {
+        for global in self.globals.values() {
+            if global.c_type().is_pointer()
+                && let Some(initializer) = global.initializer()
+            {
+                self.validate_static_pointer_initializer(
+                    global.c_type(),
+                    global.pointee_is_constant(),
+                    initializer,
+                )?;
+            }
+        }
+        for static_local in self.static_locals.values() {
+            if static_local.c_type().is_pointer() {
+                self.validate_static_pointer_initializer(
+                    static_local.c_type(),
+                    static_local.pointee_is_constant(),
+                    static_local.initializer(),
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn to_kernel_global(&self, global: &C0Global) -> Option<crate::kernel::CGlobal> {
@@ -4466,12 +4540,25 @@ impl Parser {
         }
     }
 
+    fn link_function_global_objects(
+        &self,
+        function: C0Function,
+    ) -> Result<C0Function, C0SyntaxError> {
+        let function = function
+            .with_globals(self.globals.clone())
+            .with_global_arrays(self.global_arrays.clone())
+            .with_global_aggregates(self.global_aggregates.clone())
+            .with_global_aggregate_arrays(self.global_aggregate_arrays.clone());
+        function.validate_static_initializers()?;
+        Ok(function)
+    }
+
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_declarations()?;
         let function = self.parse_function_definition(false)?;
         self.parse_declarations()?;
         self.expect_end(function.name())?;
-        Ok(function)
+        self.link_function_global_objects(function)
     }
 
     fn parse_functions(mut self) -> Result<Vec<C0Function>, C0SyntaxError> {
@@ -4553,7 +4640,10 @@ impl Parser {
                 "C source must define at least one function",
             ));
         }
-        Ok(functions)
+        functions
+            .into_iter()
+            .map(|function| self.link_function_global_objects(function))
+            .collect()
     }
 
     fn parse_header(mut self) -> Result<(), C0SyntaxError> {

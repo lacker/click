@@ -284,6 +284,68 @@ fn c0_lowers_static_address_initializers_with_pointer_provenance() {
 }
 
 #[test]
+fn c0_links_static_address_dependencies_after_later_definitions() {
+    let functions = syntax::parse_functions(
+        r#"
+        extern int32 target;
+        extern int32 *alias;
+        extern int32 **alias_ref;
+
+        int32 read() {
+            return **alias_ref;
+        }
+
+        int32 **alias_ref = &alias;
+        int32 *alias = &target;
+        int32 target = 7;
+        "#,
+    )
+    .expect("static initializer dependencies should resolve after parsing the file");
+
+    let kernel = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("reader function")
+        .to_kernel_function();
+    assert_eq!(kernel.global_variables().len(), 3);
+
+    let alias = kernel
+        .global_variables()
+        .iter()
+        .find(|global| global.name() == "alias")
+        .expect("linked alias definition");
+    let crate::kernel::CValue::Pointer(alias_pointer) = alias.initial_value() else {
+        panic!("alias should have an address initializer");
+    };
+    assert_eq!(
+        alias_pointer.pointer(),
+        &crate::kernel::CMemory::global_pointer("target")
+    );
+
+    let alias_ref = kernel
+        .global_variables()
+        .iter()
+        .find(|global| global.name() == "alias_ref")
+        .expect("linked alias_ref definition");
+    let crate::kernel::CValue::Pointer(alias_ref_pointer) = alias_ref.initial_value() else {
+        panic!("alias_ref should have an address initializer");
+    };
+    assert_eq!(
+        alias_ref_pointer.pointer(),
+        &crate::kernel::CMemory::global_pointer("alias")
+    );
+    assert_eq!(
+        kernel
+            .global_variables()
+            .iter()
+            .find(|global| global.name() == "target")
+            .expect("linked target definition")
+            .initial_value(),
+        &crate::kernel::int32(7)
+    );
+}
+
+#[test]
 fn c0_rejects_static_address_initializers_that_discard_const() {
     let error = syntax::parse_functions(
         "const int32 target = 3; int32 *alias = &target; int32 read() { return *alias; }",

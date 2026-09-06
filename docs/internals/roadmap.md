@@ -86,8 +86,8 @@ Likely additions:
 - Basic ASCII string literal support now lowers to null-terminated, read-only
   function-owned byte arrays; remaining work includes `char`, wider literal
   forms, and byte/string predicates in the standard library.
-- Remaining static-storage work: other linkage forms and initialization
-  ordering. Immutable scalar globals and scalar tables now use stable
+- Remaining static-storage work: other linkage forms and dynamic or
+  non-literal initialization. Immutable scalar globals and scalar tables now use stable
   read-only storage, and pointer-to-const views preserve their write
   restriction across translation units. Static scalar-field aggregates now accept
   out-of-order `.field = literal` designators, and their fixed-size
@@ -104,7 +104,9 @@ Likely additions:
   Static-storage pointers now also accept address constants for declared scalar
   objects, array elements, and scalar struct fields, preserving stable global or
   function-qualified static provenance and pointee-`const` views across
-  translation units.
+  translation units. Address-initializer chains are resolved after whole-bundle
+  linking, so declaration and translation-unit definition order does not change
+  their stable block identities.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use

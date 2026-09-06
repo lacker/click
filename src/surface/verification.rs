@@ -2568,6 +2568,14 @@ pub(in crate::surface) fn parse_verified_sources(
         })
         .collect();
 
+    for (source_path, function) in parsed.values() {
+        function.validate_static_initializers().map_err(|error| {
+            ClickError::new(format!(
+                "failed to resolve static initializer in `{source_path}`: {error}"
+            ))
+        })?;
+    }
+
     for function in file
         .function_blocks()
         .iter()
