@@ -3214,6 +3214,438 @@ fn validate_global_initializer(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticIntegerValue {
+    Signed { value: i128, bits: u32 },
+    Unsigned { value: u128, bits: u32 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticIntegerEvaluationError {
+    NotConstant,
+    Overflow,
+    DivisionByZero,
+    InvalidShift,
+    OutOfRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticIntegerKind {
+    Signed,
+    Unsigned,
+}
+
+fn is_static_integer_type(c_type: C0Type) -> bool {
+    matches!(
+        c_type,
+        C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+    )
+}
+
+fn static_integer_value_kind(value: StaticIntegerValue) -> StaticIntegerKind {
+    match value {
+        StaticIntegerValue::Signed { .. } => StaticIntegerKind::Signed,
+        StaticIntegerValue::Unsigned { .. } => StaticIntegerKind::Unsigned,
+    }
+}
+
+fn static_integer_value_bits(value: StaticIntegerValue) -> u32 {
+    match value {
+        StaticIntegerValue::Signed { bits, .. } | StaticIntegerValue::Unsigned { bits, .. } => bits,
+    }
+}
+
+fn signed_bounds(bits: u32) -> Option<(i128, i128)> {
+    if bits == 0 || bits >= 128 {
+        return None;
+    }
+    let upper = (1i128 << (bits - 1)) - 1;
+    Some((-1i128 - upper, upper))
+}
+
+fn unsigned_max(bits: u32) -> Option<u128> {
+    if bits == 0 || bits >= 128 {
+        return None;
+    }
+    Some((1u128 << bits) - 1)
+}
+
+fn checked_static_signed(
+    value: i128,
+    bits: u32,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    let (_, maximum) = signed_bounds(bits).ok_or(StaticIntegerEvaluationError::Overflow)?;
+    let minimum = -1i128 - maximum;
+    if (minimum..=maximum).contains(&value) {
+        Ok(StaticIntegerValue::Signed { value, bits })
+    } else {
+        Err(StaticIntegerEvaluationError::Overflow)
+    }
+}
+
+fn checked_static_unsigned(
+    value: u128,
+    bits: u32,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    let maximum = unsigned_max(bits).ok_or(StaticIntegerEvaluationError::Overflow)?;
+    if value <= maximum {
+        Ok(StaticIntegerValue::Unsigned { value, bits })
+    } else {
+        Err(StaticIntegerEvaluationError::Overflow)
+    }
+}
+
+fn static_integer_common_kind(
+    left: StaticIntegerValue,
+    right: StaticIntegerValue,
+) -> (StaticIntegerKind, u32) {
+    let left_bits = static_integer_value_bits(left);
+    let right_bits = static_integer_value_bits(right);
+    match (
+        static_integer_value_kind(left),
+        static_integer_value_kind(right),
+    ) {
+        (StaticIntegerKind::Signed, StaticIntegerKind::Signed) => {
+            (StaticIntegerKind::Signed, left_bits.max(right_bits))
+        }
+        (StaticIntegerKind::Unsigned, StaticIntegerKind::Unsigned) => {
+            (StaticIntegerKind::Unsigned, left_bits.max(right_bits))
+        }
+        (StaticIntegerKind::Signed, StaticIntegerKind::Unsigned) => {
+            if right_bits >= left_bits {
+                (StaticIntegerKind::Unsigned, right_bits)
+            } else {
+                (StaticIntegerKind::Signed, left_bits)
+            }
+        }
+        (StaticIntegerKind::Unsigned, StaticIntegerKind::Signed) => {
+            if left_bits >= right_bits {
+                (StaticIntegerKind::Unsigned, left_bits)
+            } else {
+                (StaticIntegerKind::Signed, right_bits)
+            }
+        }
+    }
+}
+
+fn convert_static_integer(
+    value: StaticIntegerValue,
+    kind: StaticIntegerKind,
+    bits: u32,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    match (kind, value) {
+        (StaticIntegerKind::Signed, StaticIntegerValue::Signed { value, .. }) => {
+            checked_static_signed(value, bits)
+        }
+        (StaticIntegerKind::Signed, StaticIntegerValue::Unsigned { value, .. }) => {
+            let value =
+                i128::try_from(value).map_err(|_| StaticIntegerEvaluationError::Overflow)?;
+            checked_static_signed(value, bits)
+        }
+        (StaticIntegerKind::Unsigned, StaticIntegerValue::Unsigned { value, .. }) => {
+            checked_static_unsigned(value, bits)
+        }
+        (StaticIntegerKind::Unsigned, StaticIntegerValue::Signed { value, .. }) => {
+            let value =
+                u128::try_from(value).map_err(|_| StaticIntegerEvaluationError::Overflow)?;
+            checked_static_unsigned(value, bits)
+        }
+    }
+}
+
+fn evaluate_static_integer_binary(
+    left: StaticIntegerValue,
+    right: StaticIntegerValue,
+    operation: fn(i128, i128) -> Option<i128>,
+    unsigned_operation: fn(u128, u128) -> Option<u128>,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    let (kind, bits) = static_integer_common_kind(left, right);
+    let left = convert_static_integer(left, kind, bits)?;
+    let right = convert_static_integer(right, kind, bits)?;
+    match (kind, left, right) {
+        (
+            StaticIntegerKind::Signed,
+            StaticIntegerValue::Signed { value: left, .. },
+            StaticIntegerValue::Signed { value: right, .. },
+        ) => checked_static_signed(
+            operation(left, right).ok_or(StaticIntegerEvaluationError::Overflow)?,
+            bits,
+        ),
+        (
+            StaticIntegerKind::Unsigned,
+            StaticIntegerValue::Unsigned { value: left, .. },
+            StaticIntegerValue::Unsigned { value: right, .. },
+        ) => checked_static_unsigned(
+            unsigned_operation(left, right).ok_or(StaticIntegerEvaluationError::Overflow)?,
+            bits,
+        ),
+        _ => unreachable!("static integer conversion preserves the common kind"),
+    }
+}
+
+fn evaluate_static_integer_expression(
+    expression: &C0Expression,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    match expression {
+        C0Expression::Int32Literal(value) => {
+            checked_static_signed(i128::from(i32::from_ne_bytes(value.to_ne_bytes())), 32)
+        }
+        C0Expression::UInt8Literal(value) => checked_static_signed(i128::from(*value), 32),
+        C0Expression::UInt32Literal(value) => checked_static_unsigned(u128::from(*value), 32),
+        C0Expression::Int64Literal(value) => checked_static_signed(i128::from(*value), 64),
+        C0Expression::UInt64Literal(value) => checked_static_unsigned(u128::from(*value), 64),
+        C0Expression::SizeOfStruct { bytes, .. }
+        | C0Expression::SizeOfUnion { bytes, .. }
+        | C0Expression::SizeOfType { bytes, .. } => checked_static_signed(i128::from(*bytes), 32),
+        C0Expression::Not(expression) => {
+            let value = evaluate_static_integer_expression(expression)?;
+            let is_zero = match value {
+                StaticIntegerValue::Signed { value, .. } => value == 0,
+                StaticIntegerValue::Unsigned { value, .. } => value == 0,
+            };
+            checked_static_signed(i128::from(is_zero as u8), 32)
+        }
+        C0Expression::BitwiseNot(expression) => {
+            let value = evaluate_static_integer_expression(expression)?;
+            match value {
+                StaticIntegerValue::Signed { value, bits } => checked_static_signed(!value, bits),
+                StaticIntegerValue::Unsigned { value, bits } => {
+                    checked_static_unsigned(!value & unsigned_max(bits).unwrap(), bits)
+                }
+            }
+        }
+        C0Expression::Add(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            i128::checked_add,
+            u128::checked_add,
+        ),
+        C0Expression::Subtract(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            i128::checked_sub,
+            u128::checked_sub,
+        ),
+        C0Expression::Multiply(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            i128::checked_mul,
+            u128::checked_mul,
+        ),
+        C0Expression::Divide(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            let right = evaluate_static_integer_expression(right)?;
+            if matches!(right, StaticIntegerValue::Signed { value: 0, .. })
+                || matches!(right, StaticIntegerValue::Unsigned { value: 0, .. })
+            {
+                return Err(StaticIntegerEvaluationError::DivisionByZero);
+            }
+            evaluate_static_integer_binary(left, right, i128::checked_div, u128::checked_div)
+        }
+        C0Expression::Remainder(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            let right = evaluate_static_integer_expression(right)?;
+            if matches!(right, StaticIntegerValue::Signed { value: 0, .. })
+                || matches!(right, StaticIntegerValue::Unsigned { value: 0, .. })
+            {
+                return Err(StaticIntegerEvaluationError::DivisionByZero);
+            }
+            evaluate_static_integer_binary(left, right, i128::checked_rem, u128::checked_rem)
+        }
+        C0Expression::ShiftLeft(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            let right = evaluate_static_integer_expression(right)?;
+            let shift =
+                match right {
+                    StaticIntegerValue::Signed { value, .. } => u32::try_from(value)
+                        .map_err(|_| StaticIntegerEvaluationError::InvalidShift)?,
+                    StaticIntegerValue::Unsigned { value, .. } => u32::try_from(value)
+                        .map_err(|_| StaticIntegerEvaluationError::InvalidShift)?,
+                };
+            let bits = static_integer_value_bits(left);
+            if shift >= bits {
+                return Err(StaticIntegerEvaluationError::InvalidShift);
+            }
+            match left {
+                StaticIntegerValue::Signed { value, .. } => {
+                    if value < 0 {
+                        return Err(StaticIntegerEvaluationError::InvalidShift);
+                    }
+                    checked_static_signed(
+                        value
+                            .checked_shl(shift)
+                            .ok_or(StaticIntegerEvaluationError::Overflow)?,
+                        bits,
+                    )
+                }
+                StaticIntegerValue::Unsigned { value, .. } => checked_static_unsigned(
+                    value
+                        .checked_shl(shift)
+                        .ok_or(StaticIntegerEvaluationError::Overflow)?,
+                    bits,
+                ),
+            }
+        }
+        C0Expression::ShiftRight(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            let right = evaluate_static_integer_expression(right)?;
+            let shift =
+                match right {
+                    StaticIntegerValue::Signed { value, .. } => u32::try_from(value)
+                        .map_err(|_| StaticIntegerEvaluationError::InvalidShift)?,
+                    StaticIntegerValue::Unsigned { value, .. } => u32::try_from(value)
+                        .map_err(|_| StaticIntegerEvaluationError::InvalidShift)?,
+                };
+            let bits = static_integer_value_bits(left);
+            if shift >= bits {
+                return Err(StaticIntegerEvaluationError::InvalidShift);
+            }
+            match left {
+                StaticIntegerValue::Signed { value, .. } => {
+                    checked_static_signed(value >> shift, bits)
+                }
+                StaticIntegerValue::Unsigned { value, .. } => {
+                    checked_static_unsigned(value >> shift, bits)
+                }
+            }
+        }
+        C0Expression::BitwiseAnd(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| Some(left & right),
+            |left, right| Some(left & right),
+        ),
+        C0Expression::BitwiseOr(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| Some(left | right),
+            |left, right| Some(left | right),
+        ),
+        C0Expression::BitwiseXor(left, right) => evaluate_static_integer_binary(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| Some(left ^ right),
+            |left, right| Some(left ^ right),
+        ),
+        C0Expression::LessThan(left, right)
+        | C0Expression::LessEqual(left, right)
+        | C0Expression::GreaterThan(left, right)
+        | C0Expression::GreaterEqual(left, right)
+        | C0Expression::Equal(left, right)
+        | C0Expression::NotEqual(left, right)
+        | C0Expression::And(left, right)
+        | C0Expression::Or(left, right)
+        | C0Expression::Conditional {
+            condition: left,
+            then_branch: right,
+            else_branch: _,
+        } => {
+            let _ = (left, right);
+            Err(StaticIntegerEvaluationError::NotConstant)
+        }
+        C0Expression::Cast { .. }
+        | C0Expression::Void
+        | C0Expression::Variable(_)
+        | C0Expression::Call { .. }
+        | C0Expression::IndirectCall { .. }
+        | C0Expression::FunctionAddress(_)
+        | C0Expression::FloatNegate(_)
+        | C0Expression::FloatClassification { .. }
+        | C0Expression::AddressOf(_)
+        | C0Expression::PointerOffsetBytes { .. }
+        | C0Expression::Float32Literal(_)
+        | C0Expression::Float64Literal(_)
+        | C0Expression::Load(_)
+        | C0Expression::AggregateAddress { .. }
+        | C0Expression::Field { .. }
+        | C0Expression::UnionAddress { .. }
+        | C0Expression::UnionField { .. }
+        | C0Expression::Index(_, _) => Err(StaticIntegerEvaluationError::NotConstant),
+    }
+}
+
+fn static_integer_literal_for_type(
+    c_type: C0Type,
+    value: StaticIntegerValue,
+) -> Result<C0Expression, StaticIntegerEvaluationError> {
+    let (minimum, maximum) = match c_type {
+        C0Type::Int16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
+        C0Type::Int32 => (i128::from(i32::MIN), i128::from(i32::MAX)),
+        C0Type::UInt8 => (0, i128::from(u8::MAX)),
+        C0Type::UInt16 => (0, i128::from(u16::MAX)),
+        C0Type::UInt32 => (0, i128::from(u32::MAX)),
+        _ => return Err(StaticIntegerEvaluationError::NotConstant),
+    };
+    let value = match value {
+        StaticIntegerValue::Signed { value, .. } => value,
+        StaticIntegerValue::Unsigned { value, .. } => {
+            i128::try_from(value).map_err(|_| StaticIntegerEvaluationError::OutOfRange)?
+        }
+    };
+    if value < minimum || value > maximum {
+        if matches!(c_type, C0Type::UInt32)
+            && (i128::from(i32::MIN)..=i128::from(i32::MAX)).contains(&value)
+        {
+            return Ok(C0Expression::UInt32Literal((value as i32) as u32));
+        }
+        return Err(StaticIntegerEvaluationError::OutOfRange);
+    }
+    if matches!(c_type, C0Type::Int16 | C0Type::Int32) {
+        Ok(C0Expression::Int32Literal((value as i32) as u32))
+    } else {
+        Ok(C0Expression::UInt32Literal(value as u32))
+    }
+}
+
+fn normalize_static_initializer(
+    parser: &Parser,
+    c_type: C0Type,
+    pointee_constant: bool,
+    initializer: &C0Expression,
+    storage: &str,
+    static_local: bool,
+) -> Result<C0Expression, C0SyntaxError> {
+    if !is_static_integer_type(c_type) {
+        if static_local {
+            validate_static_initializer(parser, c_type, pointee_constant, initializer)?;
+        } else {
+            validate_global_initializer(parser, c_type, pointee_constant, initializer)?;
+        }
+        return Ok(initializer.clone());
+    }
+    let value = evaluate_static_integer_expression(initializer).map_err(|error| {
+        let message = match error {
+            StaticIntegerEvaluationError::NotConstant => {
+                format!(
+                    "{storage} initializers currently support only integer constant expressions"
+                )
+            }
+            StaticIntegerEvaluationError::Overflow => {
+                format!("integer constant expression overflows in {storage} initializer")
+            }
+            StaticIntegerEvaluationError::DivisionByZero => {
+                format!("integer constant expression divides by zero in {storage} initializer")
+            }
+            StaticIntegerEvaluationError::InvalidShift => {
+                format!("integer constant expression has an invalid shift in {storage} initializer")
+            }
+            StaticIntegerEvaluationError::OutOfRange => {
+                format!("integer constant expression is out of range for {storage} type {c_type:?}")
+            }
+        };
+        parser.error_here(message)
+    })?;
+    static_integer_literal_for_type(c_type, value).map_err(|error| {
+        let message = match error {
+            StaticIntegerEvaluationError::OutOfRange => {
+                format!("integer constant expression is out of range for {storage} type {c_type:?}")
+            }
+            _ => format!("{storage} initializer is not a supported integer constant expression"),
+        };
+        parser.error_here(message)
+    })
+}
+
 fn validate_static_initializer(
     parser: &Parser,
     c_type: C0Type,
@@ -5243,11 +5675,13 @@ impl Parser {
                     }
                     self.position += 1;
                     let initializer = self.parse_expression()?;
-                    validate_global_initializer(
+                    let initializer = normalize_static_initializer(
                         self,
                         parsed_type.c_type,
                         parsed_type.pointee_constant,
                         &initializer,
+                        "global",
+                        false,
                     )?;
                     Some(initializer)
                 } else if is_extern {
@@ -5410,11 +5844,25 @@ impl Parser {
                     )));
                 }
                 let value = self.parse_expression()?;
-                if static_local {
-                    validate_static_initializer(self, element_type, false, &value)?;
+                let value = if static_local {
+                    normalize_static_initializer(
+                        self,
+                        element_type,
+                        false,
+                        &value,
+                        "static local",
+                        true,
+                    )?
                 } else {
-                    validate_global_initializer(self, element_type, false, &value)?;
-                }
+                    normalize_static_initializer(
+                        self,
+                        element_type,
+                        false,
+                        &value,
+                        "global",
+                        false,
+                    )?
+                };
                 values[element_index as usize] = value;
                 match self.peek() {
                     Some(Token::Comma) => {
@@ -8868,13 +9316,14 @@ impl Parser {
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
                     let initializer = self.parse_expression()?;
-                    validate_static_initializer(
+                    normalize_static_initializer(
                         self,
                         parsed_type.c_type,
                         parsed_type.pointee_constant,
                         &initializer,
-                    )?;
-                    initializer
+                        "static local",
+                        true,
+                    )?
                 } else {
                     zero_initializer(parsed_type.c_type)
                 };

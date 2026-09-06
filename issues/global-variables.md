@@ -6,7 +6,9 @@ The scalar file-scope slice is now implemented for both externally linked and
 internal-linkage objects: supported integer globals, compatible `extern`
 declarations, exactly one linked external definition, per-translation-unit
 file-scope `static` storage, literal or zero initialization, shared storage
-across calls, `old(global)`, and one-cell contract footprints. Fixed-size
+across calls, `old(global)`, and one-cell contract footprints. Bounded integer
+constant expressions in those initializers are folded before storage lowering;
+runtime loads and calls remain rejected. Fixed-size
 one-dimensional scalar arrays now use the same stable linkage and
 element-initialization model. Function-local scalar `static` objects and
 fixed-size one-dimensional scalar `static` arrays are also initialized once
@@ -31,8 +33,9 @@ checked against their linked definitions.
 Static scalar arrays now accept literal index designators with zero-filled
 omitted elements across external, file-scope `static`, and function-local
 `static` storage. Multidimensional or incomplete arrays, and wider
-string-literal forms remain unsupported; dynamic or non-literal initialization
-remains unsupported as well. Static address initializer chains are resolved
+string-literal forms remain unsupported; dynamic initialization remains
+unsupported, while bounded integer constant expressions are folded for scalar
+objects and arrays. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
 definition order does not affect stable relocations. Fixed-size one-dimensional arrays
 of those aggregates now use one stable ABI-sized block, support nested
@@ -83,7 +86,11 @@ initializer chains whose definitions follow their use and cross translation unit
 `mdtests/designated_scalar_static_arrays.md` covers sparse literal-index
 initializers across external, file-scope-static, and function-local-static
 arrays, while `mdtests/designated_scalar_static_arrays_rejected.md` covers
-duplicate designators.
+duplicate designators. `mdtests/static_integer_constant_initializers.md`
+covers bounded arithmetic, bitwise, and shift expressions in scalar static
+initializers and arrays, while
+`mdtests/static_integer_constant_initializers_rejected.md` covers the
+runtime-load boundary.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -91,17 +98,19 @@ propagation, and indirect-write rejection.
 ## Acceptance criteria
 
 - The parser accepts supported scalar file-scope declarations with optional
-  literal, null-pointer, or stable object/subobject-address initializers, literal
-  scalar-array index designators, `extern` declarations, and internal-linkage
+  bounded integer constant-expression, literal, null-pointer, or stable
+  object/subobject-address initializers, literal scalar-array index designators,
+  `extern` declarations, and internal-linkage
   `static` definitions, including const-qualified scalar objects and scalar arrays, and
   rejects duplicate or missing external definitions across the source bundle.
 - The kernel models each externally linked scalar as one stable global block
   and each file-scope `static` scalar as one stable translation-unit-qualified
-  block, materialized at entry with its literal, null, or stable address
+  block, materialized at entry with its folded integer literal, null, or stable address
   initial value (or zero) and
   shared across that object's function frames.
 - The kernel models each fixed-size one-dimensional scalar global as one stable
-  array block, initialized element-by-element with omitted values set to zero;
+  array block, initialized element-by-element with bounded integer constant
+  expressions folded to literals and omitted values set to zero;
   literal index designators select sparse elements without changing the block
   identity or linkage;
   external definitions are shared across translation units and file-scope

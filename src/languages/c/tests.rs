@@ -1228,6 +1228,98 @@ fn c0_collects_static_scalar_arrays_with_stable_kernel_names() {
 }
 
 #[test]
+fn c0_folds_integer_constant_static_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 global = 1 + 2 * 3;
+        uint32 flags = (1u << 4) | 3u;
+        static uint16 private = (20 & 7) + 1;
+
+        int32 read() {
+            static int32 local = (8 >> 1) ^ 3;
+            static int32 values[3] = {1 + 1, 1 << 2, 7 & 3};
+            return global + flags + private + local
+                + values[0] + values[1] + values[2];
+        }
+        "#,
+    )
+    .expect("integer constant static initializers should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("reader function");
+    assert_eq!(
+        function.globals()["global"].initializer(),
+        Some(&syntax::C0Expression::Int32Literal(7))
+    );
+    assert_eq!(
+        function.globals()["flags"].initializer(),
+        Some(&syntax::C0Expression::UInt32Literal(19))
+    );
+    assert_eq!(
+        function.globals()["private"].initializer(),
+        Some(&syntax::C0Expression::UInt32Literal(5))
+    );
+    assert_eq!(
+        function
+            .static_locals()
+            .values()
+            .find(|local| local.name() == "local")
+            .expect("folded static local")
+            .initializer(),
+        &syntax::C0Expression::Int32Literal(7)
+    );
+    assert_eq!(
+        function
+            .static_arrays()
+            .values()
+            .find(|array| array.name() == "values")
+            .expect("folded static array")
+            .initializer(),
+        &[
+            syntax::C0Expression::Int32Literal(2),
+            syntax::C0Expression::Int32Literal(4),
+            syntax::C0Expression::Int32Literal(3),
+        ]
+    );
+}
+
+#[test]
+fn c0_rejects_invalid_static_integer_constant_initializers() {
+    for (source, expected) in [
+        (
+            "int32 seed = 1; int32 value = seed + 1; int32 read() { return value; }",
+            "integer constant expressions",
+        ),
+        (
+            "int32 value = 1 / 0; int32 read() { return value; }",
+            "divides by zero",
+        ),
+        (
+            "int32 value = 1 << 32; int32 read() { return value; }",
+            "invalid shift",
+        ),
+        (
+            "int32 value = ~0 << 1; int32 read() { return value; }",
+            "invalid shift",
+        ),
+        (
+            "int32 value = 2147483647 + 1; int32 read() { return value; }",
+            "overflows",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("invalid static integer initializers must be rejected");
+        assert!(
+            error.message().contains(expected),
+            "expected `{expected}` in `{}`",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_collects_designated_static_scalar_array_initializers() {
     let functions = syntax::parse_functions(
         r#"
