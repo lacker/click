@@ -47,6 +47,8 @@ parameters and locals now retain nominal struct-pointer tags in callback
 metadata, check known callback targets and indirect arguments before lowering,
 and keep the kernel's generic pointer representation. Contract effects for
 abstract callbacks remain tracked separately in
-`issues/higher-order-callback-contracts.md`.
+`issues/higher-order-callback-contracts.md`. Click contract signatures spell
+the type as `struct S** name` (2026-09-05, `mdtests/rb_parent_family.md`
+passes a link slot to `rb_link_node`).
 
 Related: [struct-model.md](struct-model.md).

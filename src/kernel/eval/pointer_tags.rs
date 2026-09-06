@@ -240,9 +240,25 @@ fn form_of(
             } else {
                 CBitwiseOperation::Or
             };
-            let (inner, constant) = match (left.uint64_as_const(), right.uint64_as_const()) {
-                (None, Some(constant)) => (left, constant),
-                (Some(constant), None) => (right, constant),
+            // The tag side is a constant, or for `|` a masked term `x & m`
+            // (rbtree's `rb_color(rb) | (unsigned long)p`), whose bound the
+            // mask constant gives.
+            let masked_bound = |term: &Bitvector32Term| match term {
+                Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+                    left.uint64_as_const().or_else(|| right.uint64_as_const())
+                }
+                _ => None,
+            };
+            let (inner, tag, constant) = match (left.uint64_as_const(), right.uint64_as_const()) {
+                (None, Some(constant)) => (left, None, constant),
+                (Some(constant), None) => (right, None, constant),
+                (None, None) if matches!(operation, CBitwiseOperation::Or) => {
+                    match (masked_bound(left), masked_bound(right)) {
+                        (None, Some(bound)) => (left, Some(right.as_ref().clone()), bound),
+                        (Some(bound), None) => (right, Some(left.as_ref().clone()), bound),
+                        _ => return Ok(None),
+                    }
+                }
                 _ => return Ok(None),
             };
             let Some(form) = form_of(inner, assumptions, undecided, used, through_facts)? else {
@@ -294,7 +310,7 @@ fn form_of(
                         pointer: form.pointer,
                         tag: Bitvector32Term::uint64_bitwise_or(
                             form.tag,
-                            Bitvector32Term::UInt64Constant(constant),
+                            tag.unwrap_or(Bitvector32Term::UInt64Constant(constant)),
                         ),
                     })
                 }
@@ -330,6 +346,24 @@ pub(in crate::kernel) fn tagged_address_form(
 
 /// `term & mask` with a tag-reading mask, as the masked tag alone, using
 /// only decided conditions.
+/// An upper bound on a tag term: a constant is its own bound, `x & m` is
+/// bounded by `m`, and `a | b` by the all-ones value covering both bounds.
+pub(in crate::kernel) fn tag_bound(term: &Bitvector32Term) -> Option<u64> {
+    if let Some(constant) = term.uint64_as_const() {
+        return Some(constant);
+    }
+    match term {
+        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+            left.uint64_as_const().or_else(|| right.uint64_as_const())
+        }
+        Bitvector32Term::UInt64BitwiseOr(left, right) => {
+            let bound = tag_bound(left)?.max(tag_bound(right)?);
+            Some(bound.checked_add(1)?.checked_next_power_of_two()? - 1)
+        }
+        _ => None,
+    }
+}
+
 pub(in crate::kernel) fn masked_tag_value(
     term: &Bitvector32Term,
     assumptions: &PureFactContext,

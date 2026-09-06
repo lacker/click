@@ -644,6 +644,46 @@ pub(super) fn execute_c_function_call_paths(
             &arguments_path.facts,
             &argument_obligations,
         );
+        if function.has_inline_body() {
+            // An inline body is call-site code: it runs on the caller's own
+            // resources and leaves the caller whatever it did not consume.
+            // There is no contract boundary to transfer across.
+            let callee_state = callee_state.with_resource_context(caller_state.resources().clone());
+            for body_path in execute_c_statement_paths(
+                &callee_state,
+                function.body(),
+                &body_assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )? {
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &arguments_path.facts,
+                    &argument_obligations,
+                    &body_path.facts,
+                    &body_path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                let return_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                let (outcome, obligations) = function_outcome_from_body(
+                    caller_state,
+                    function,
+                    complete_void_fallthrough(function, body_path.outcome),
+                    obligations,
+                    &return_assumptions,
+                    None,
+                );
+                paths.push(CFunctionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                });
+            }
+            continue;
+        }
         let resource_transfer = match prepare_function_resource_transfer(
             caller_state,
             &callee_state,
@@ -6219,6 +6259,7 @@ pub(super) fn function_outcome_from_body(
             caller_state.memory = state.memory;
             caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
             caller_state.counted_populations = state.counted_populations;
+            caller_state.next_local_frame = state.next_local_frame;
             (
                 CFunctionOutcome::Return {
                     value,

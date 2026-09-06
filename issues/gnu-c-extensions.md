@@ -65,5 +65,5 @@ locations and the modeled LP64 layout.
   `scripts/check.sh` pass.
 
 Related: [kernel-scale-preprocessing.md](kernel-scale-preprocessing.md),
-[pointer-integer-casts-and-tagging.md](pointer-integer-casts-and-tagging.md),
+the tagged pointer word rules in `docs/reference/language/index.md` (landed 2026-09-05),
 and [multiple-compilers.md](multiple-compilers.md).

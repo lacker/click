@@ -53,7 +53,6 @@ C import and execution:
 - [Model C `_Bool` and `bool`](c-bool.md)
 - [Preserve `const` qualification in C types](const-qualified-types.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
-- [Verify provenance-preserving pointer/integer tagging](pointer-integer-casts-and-tagging.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)
@@ -80,7 +79,7 @@ normal tooling-first policy and should then be added to this list.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 25
+## Functionality gaps: 24
 
 C language coverage:
 
@@ -99,7 +98,6 @@ C language coverage:
 - [Preserve `const` qualification in C types](const-qualified-types.md)
 - [Model C `_Bool` and `bool`](c-bool.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
-- [Verify provenance-preserving pointer/integer tagging](pointer-integer-casts-and-tagging.md)
 
 Semantics and reasoning:
 

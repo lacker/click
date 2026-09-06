@@ -2748,10 +2748,31 @@ pub(in crate::surface) fn composite_resource_definitions(
         let Some(body) = definition.composite_body() else {
             continue;
         };
+        // The body's memory clauses take their element widths from the
+        // definition's own parameters and field types, as contract clauses
+        // do, so a `uint64` field is one 8-byte element on both sides of
+        // an unfold.
+        let definition_parameters = definition
+            .parameters()
+            .iter()
+            .map(|parameter| {
+                syntax::C0Parameter::new(
+                    parameter.c_type(),
+                    parameter.name().to_string(),
+                    parameter.struct_name().map(str::to_string),
+                )
+            })
+            .collect::<Vec<_>>();
         let contains = body
             .contains()
             .iter()
-            .map(resource_clause_to_resource_spec)
+            .map(|resource| {
+                resource_clause_to_resource_spec_with_parameters(
+                    resource,
+                    &definition_parameters,
+                    None,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let recursive = body.contains().iter().any(|resource| {
             matches!(

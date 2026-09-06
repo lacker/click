@@ -35,4 +35,4 @@ an indirect write through the const-qualified pointer and is rejected.
 - The rbtree const signatures, focused regressions, and `scripts/check.sh`
   pass.
 
-Related: [pointer-integer-casts-and-tagging.md](pointer-integer-casts-and-tagging.md).
+Related: the tagged pointer word rules in `docs/reference/language/index.md` (landed 2026-09-05).

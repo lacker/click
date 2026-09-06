@@ -3320,9 +3320,17 @@ fn materialize_composite_resource_cells(
             crate::kernel::intern_c_memory(base_memory.clone()),
             pointer.clone(),
         );
-        let value = match element_width {
-            1 => CValue::UInt8(load),
-            _ => CValue::Int32(load),
+        // A scalar field cell takes the field's own type, so a `uint64` word
+        // reads back as itself; pointer fields and plain ranges keep the
+        // int32 words this projection uses everywhere.
+        let value = match segment.field_element_type() {
+            Some(element_type) if !element_type.is_pointer() => {
+                crate::surface::lowering::symbolic_value_from_load(&pointer, element_type, load)
+            }
+            _ => match element_width {
+                1 => CValue::UInt8(load),
+                _ => CValue::Int32(load),
+            },
         };
         memory = memory.store(pointer, value);
     }

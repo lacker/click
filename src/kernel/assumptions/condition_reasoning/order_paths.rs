@@ -1058,7 +1058,7 @@ impl PureFactContext {
         right: &Bitvector32Term,
         used: &mut crate::kernel::eval::pointer_tags::UsedFacts,
     ) -> Option<bool> {
-        use crate::kernel::eval::pointer_tags::{masked_tag_value, tagged_address_form};
+        use crate::kernel::eval::pointer_tags::{masked_tag_value, tag_bound, tagged_address_form};
         let left_form = tagged_address_form(left, self, used);
         let right_form = tagged_address_form(right, self, used);
         match (left_form, right_form) {
@@ -1074,7 +1074,7 @@ impl PureFactContext {
                         .decide_citing(&ConditionTerm::uint64_equal(left.tag, right.tag), used);
                 }
                 let (Some(left_tag), Some(right_tag)) =
-                    (left.tag.uint64_as_const(), right.tag.uint64_as_const())
+                    (tag_bound(&left.tag), tag_bound(&right.tag))
                 else {
                     return None;
                 };
@@ -1105,7 +1105,7 @@ impl PureFactContext {
                 if other.uint64_as_const() != Some(0) {
                     return None;
                 }
-                let tag = form.tag.uint64_as_const()?;
+                let tag = tag_bound(&form.tag)?;
                 let alignment = tag.checked_add(1)?.checked_next_power_of_two()?;
                 let nonnull = self.decide_citing(
                     &ConditionTerm::pointer_equal(form.pointer.clone(), Pointer::null()),

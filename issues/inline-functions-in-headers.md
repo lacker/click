@@ -11,6 +11,11 @@ including `rb_set_parent_color`, `__rb_change_child`, and
 `__rb_erase_augmented`; treating them as unverified declarations would move
 the core algorithm outside the proof. GNU alignment attributes, richer inline
 signatures, and sidecar contracts for header helpers remain follow-up work.
+Since 2026-09-05 an inline body executes on the caller's own memory and
+resources with no contract boundary, so helpers that read and write fields
+(`rb_set_parent`, `rb_link_node`) verify at their call sites, and a helper
+returning `struct S *` keeps the struct identity at the call
+(`mdtests/rb_parent_family.md`).
 
 ## Violated invariant
 

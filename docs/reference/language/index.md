@@ -1085,7 +1085,10 @@ hold a pointer in integer form, such as `ensures node->word == address(next)`
 or, for a tagged word, `requires node->word == address(next) + 1`. Tag
 operations on such words (`+`, `|`, `& ~m`, `& m`) and the cast back to a
 pointer are checked rewrites whose obligations come from `aligned`; the
-memory model describes the rules.
+memory model describes the rules. The tag set with `|` may be a constant or
+a masked read `x & m`, as in rbtree's `rb_color(rb) | (unsigned long)p`,
+whose bound is the mask; two words whose tags are so bounded compare unequal
+when their pointers are distinct and both aligned past the bound.
 
 The low-level reads and `byte_offset` are Surface Click escape hatches, not
 Kernel Click syntax. The canonical

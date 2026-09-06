@@ -3994,6 +3994,17 @@ impl Parser {
         )
     }
 
+    /// The declaration behind a call target. Calls carry the kernel name,
+    /// which for a `static inline` header function is the mangled
+    /// internal-linkage name rather than the declaration's source name.
+    fn function_declaration_for_call(&self, function_name: &str) -> Option<&C0FunctionHeader> {
+        self.function_declarations.get(function_name).or_else(|| {
+            self.function_declarations
+                .values()
+                .find(|function| function.name == function_name)
+        })
+    }
+
     fn resolve_function_name(&self, source_name: &str) -> String {
         self.function_declarations
             .get(source_name)
@@ -11296,8 +11307,7 @@ impl Parser {
                 self.variable_structs.get(name).cloned()
             }
             C0Expression::Call { function_name, .. } => self
-                .function_declarations
-                .get(function_name)
+                .function_declaration_for_call(function_name)
                 .map(|function| function.return_pointer_struct_name.clone())
                 .or_else(|| {
                     self.variable_function_pointers
@@ -11356,8 +11366,7 @@ impl Parser {
                 self.variable_structs.get(name).cloned()
             }
             C0Expression::Call { function_name, .. } => self
-                .function_declarations
-                .get(function_name)
+                .function_declaration_for_call(function_name)
                 .map(|function| function.return_pointer_struct_name.clone())
                 .or_else(|| {
                     self.variable_function_pointers

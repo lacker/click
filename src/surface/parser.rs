@@ -1401,8 +1401,19 @@ impl Parser {
             }
             if self.peek() == Some(&Token::Star) {
                 self.position += 1;
+                // `struct name**`: a pointer to a struct pointer, as for a
+                // link slot passed to `rb_link_node`.
+                let c_type = if self.peek() == Some(&Token::Star) {
+                    self.position += 1;
+                    if self.peek() == Some(&Token::Star) {
+                        return Err(self.error("pointer depth beyond `**` is not supported"));
+                    }
+                    C0Type::Int32PointerPointer
+                } else {
+                    C0Type::Int32Pointer
+                };
                 return Ok(ParsedType {
-                    c_type: C0Type::Int32Pointer,
+                    c_type,
                     struct_name: Some(struct_name),
                     struct_pointer: true,
                     constant: false,
