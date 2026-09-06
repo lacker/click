@@ -1315,6 +1315,38 @@ impl CFunctionContract {
                 == function.composite_resource_definitions
             && self.function.predicate_unfoldings == function.predicate_unfoldings
     }
+
+    /// Checks the portion of a callback interface that the first behavioral
+    /// refinement rule does not yet vary. Parameter names are binders, but
+    /// their types, layouts, and qualifiers remain part of the signature.
+    /// Resources and effects deliberately remain exact until their own
+    /// variance rules are defined.
+    pub(crate) fn has_compatible_signature_and_contract_vocabulary(
+        &self,
+        function: &CFunction,
+    ) -> bool {
+        self.function.return_type == function.return_type
+            && self.function.return_aggregate_layout == function.return_aggregate_layout
+            && self.function.parameters.len() == function.parameters.len()
+            && self
+                .function
+                .parameters
+                .iter()
+                .zip(&function.parameters)
+                .all(|(contract, implementation)| {
+                    contract.c_type == implementation.c_type
+                        && contract.aggregate_layout == implementation.aggregate_layout
+                        && contract.volatile == implementation.volatile
+                        && contract.pointee_volatile == implementation.pointee_volatile
+                        && contract.constant == implementation.constant
+                        && contract.pointee_constant == implementation.pointee_constant
+                })
+            && self.function.contract_effect_claim_required
+                == function.contract_effect_claim_required
+            && self.function.composite_resource_definitions
+                == function.composite_resource_definitions
+            && self.function.predicate_unfoldings == function.predicate_unfoldings
+    }
 }
 
 impl CExecutionEnvironment {

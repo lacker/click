@@ -1,4 +1,4 @@
-# Concrete callbacks must match the named contract
+# Concrete callbacks must satisfy the named contract
 
 A compatible C signature is insufficient. The concrete callback below has a
 different verified postcondition, so its address cannot satisfy `Difference`.

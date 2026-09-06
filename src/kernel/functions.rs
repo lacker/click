@@ -920,12 +920,14 @@ fn execute_verified_function_rule(
                     }
                     established_requirements.push(guarded);
                 }
+                let contract_requirement_is_proven = function_contract_requirement_is_proven(
+                    &requirement_path.proposition,
+                    environment,
+                    budget,
+                )?;
                 let requirement_is_proven =
                     super::assumptions::capture_implicit_reasoning_provenance(|| {
-                        if function_contract_requirement_is_proven(
-                            &requirement_path.proposition,
-                            environment,
-                        ) {
+                        if contract_requirement_is_proven {
                             return true;
                         }
                         match &requirement_path.proposition {
@@ -1278,41 +1280,440 @@ pub(super) fn execute_c_function_contract_paths(
 fn function_contract_requirement_is_proven(
     proposition: &Proposition,
     environment: &CExecutionEnvironment,
-) -> bool {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
     match proposition {
         Proposition::And(left, right) => {
-            function_contract_requirement_is_proven(left, environment)
-                && function_contract_requirement_is_proven(right, environment)
+            Ok(
+                function_contract_requirement_is_proven(left, environment, budget)?
+                    && function_contract_requirement_is_proven(right, environment, budget)?,
+            )
         }
         Proposition::Predicate { name, arguments } => {
             let Some(contract_name) = CFunctionContract::surface_name_from_predicate(name) else {
-                return false;
+                return Ok(false);
             };
             let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice()
             else {
-                return false;
+                return Ok(false);
             };
             let Pointer {
                 block: PointerBlock::Function(target),
                 offset: PointerOffsetTerm::Constant(0),
             } = pointer.pointer()
             else {
-                return false;
+                return Ok(false);
             };
             let Some(contract) = environment.get_function_contract(contract_name) else {
-                return false;
+                return Ok(false);
             };
             if pointer.c_type() != contract.function_pointer_type() {
-                return false;
+                return Ok(false);
             }
             if let Some(rule) = environment.get_verified_function_rule(target) {
-                return contract.exactly_matches(&rule.function);
+                return function_refines_named_contract(contract, &rule.function, budget);
             }
-            environment
-                .get_external_function_rule(target)
-                .is_some_and(|rule| contract.exactly_matches(&rule.function))
+            let Some(rule) = environment.get_external_function_rule(target) else {
+                return Ok(false);
+            };
+            function_refines_named_contract(contract, &rule.function, budget)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Proves the state-independent pure portion of behavioral callback
+/// refinement. Exact matching remains the fast path and continues to cover
+/// every existing resource- and memory-bearing contract. The semantic path
+/// keeps resources and effects exact, instantiates both interfaces with the
+/// same symbolic arguments, then checks preconditions contravariantly and
+/// postconditions covariantly. This is local to one named contract and one
+/// concrete target; it never enumerates signature-compatible functions.
+fn function_refines_named_contract(
+    contract: &CFunctionContract,
+    function: &CFunction,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if contract.exactly_matches(function) {
+        return Ok(true);
+    }
+    if !contract.has_compatible_signature_and_contract_vocabulary(function)
+        || !contract
+            .template()
+            .contract_requires()
+            .iter()
+            .chain(contract.template().contract_ensures())
+            .chain(function.contract_requires())
+            .chain(function.contract_ensures())
+            .all(spec_proposition_is_state_independent)
+    {
+        return Ok(false);
+    }
+
+    let mut argument_values = Vec::with_capacity(function.parameters().len());
+    for parameter in function.parameters() {
+        let variable = Variable(budget.next_kernel_variable);
+        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        argument_values.push(symbolic_call_result(parameter.c_type(), variable));
+    }
+    let result_variable = Variable(budget.next_kernel_variable);
+    budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+
+    let contract_entry =
+        with_contract_argument_views(&CState::new(), contract.template(), &argument_values);
+    let function_entry = with_contract_argument_views(&CState::new(), function, &argument_values);
+    let mut preconditions = PureFactContext::new();
+    if !assume_contract_propositions(
+        &contract_entry,
+        &contract_entry,
+        contract.template().contract_requires(),
+        &mut preconditions,
+        budget,
+    )? || !prove_contract_propositions(
+        &function_entry,
+        &function_entry,
+        function.contract_requires(),
+        &mut preconditions,
+        budget,
+    )? {
+        return Ok(false);
+    }
+
+    let result = symbolic_call_result(function.return_type(), result_variable);
+    let mut contract_post = contract_entry.clone();
+    let mut function_post = function_entry.clone();
+    if function.return_type() != CType::Void {
+        set_function_result(&mut contract_post, contract.template(), result.clone());
+        set_function_result(&mut function_post, function, result);
+    }
+    if !exact_resource_effect_interfaces_match(
+        contract.template(),
+        function,
+        &contract_entry,
+        &function_entry,
+        &contract_post,
+        &function_post,
+        &preconditions,
+        budget,
+    )? {
+        return Ok(false);
+    }
+    let mut postconditions = preconditions;
+    if !assume_contract_propositions(
+        &function_post,
+        &function_entry,
+        function.contract_ensures(),
+        &mut postconditions,
+        budget,
+    )? {
+        return Ok(false);
+    }
+    prove_contract_propositions(
+        &contract_post,
+        &contract_entry,
+        contract.template().contract_ensures(),
+        &mut postconditions,
+        budget,
+    )
+}
+
+fn exact_resource_effect_interfaces_match(
+    contract: &CFunction,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    contract_post: &CState,
+    function_post: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if contract.resource_requires().len() != function.resource_requires().len()
+        || contract.resource_ensures().len() != function.resource_ensures().len()
+        || contract.contract_mutable().len() != function.contract_mutable().len()
+    {
+        return Ok(false);
+    }
+    for (contract_resource, function_resource) in contract
+        .resource_requires()
+        .iter()
+        .zip(function.resource_requires())
+    {
+        let contract_resource = match evaluate_function_resource_spec(
+            contract_entry,
+            contract_resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(_) => return Ok(false),
+        };
+        let function_resource = match evaluate_function_resource_spec(
+            function_entry,
+            function_resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(_) => return Ok(false),
+        };
+        if contract_resource != function_resource {
+            return Ok(false);
+        }
+    }
+    for (contract_resource, function_resource) in contract
+        .resource_ensures()
+        .iter()
+        .zip(function.resource_ensures())
+    {
+        let contract_resource = match evaluate_function_resource_spec(
+            contract_post,
+            contract_resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(_) => return Ok(false),
+        };
+        let function_resource = match evaluate_function_resource_spec(
+            function_post,
+            function_resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(_) => return Ok(false),
+        };
+        if contract_resource != function_resource {
+            return Ok(false);
+        }
+    }
+    for (contract_segment, function_segment) in contract
+        .contract_mutable()
+        .iter()
+        .zip(function.contract_mutable())
+    {
+        if contract_segment.guard() != function_segment.guard() {
+            return Ok(false);
+        }
+        let contract_segment = match evaluate_loop_effect_segment_with_facts(
+            contract_entry,
+            contract_segment,
+            assumptions,
+            budget,
+        )? {
+            Ok((segment, _)) => segment,
+            Err(_) => return Ok(false),
+        };
+        let function_segment = match evaluate_loop_effect_segment_with_facts(
+            function_entry,
+            function_segment,
+            assumptions,
+            budget,
+        )? {
+            Ok((segment, _)) => segment,
+            Err(_) => return Ok(false),
+        };
+        if contract_segment != function_segment {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn assume_contract_propositions(
+    state: &CState,
+    entry_state: &CState,
+    propositions: &[SpecProposition],
+    assumptions: &mut PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    for proposition in propositions {
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            proposition,
+            Some(entry_state),
+            assumptions,
+            budget,
+        )?;
+        let [path] = paths.as_slice() else {
+            return Ok(false);
+        };
+        for fact in &path.facts {
+            *assumptions = assumptions
+                .clone()
+                .assume_proposition(fact.proposition().clone());
+        }
+        for obligation in &path.obligations {
+            *assumptions = assumptions
+                .clone()
+                .assume_proposition(obligation.proposition().clone());
+        }
+        *assumptions = assumptions
+            .clone()
+            .assume_proposition(path.proposition.clone());
+    }
+    Ok(true)
+}
+
+fn prove_contract_propositions(
+    state: &CState,
+    entry_state: &CState,
+    propositions: &[SpecProposition],
+    assumptions: &mut PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    for proposition in propositions {
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            proposition,
+            Some(entry_state),
+            assumptions,
+            budget,
+        )?;
+        let [path] = paths.as_slice() else {
+            return Ok(false);
+        };
+        for fact in &path.facts {
+            *assumptions = assumptions
+                .clone()
+                .assume_proposition(fact.proposition().clone());
+        }
+        if path
+            .obligations
+            .iter()
+            .any(|obligation| !assumptions.proves(obligation.proposition()))
+            || !assumptions.proves(&path.proposition)
+        {
+            return Ok(false);
+        }
+        for obligation in &path.obligations {
+            *assumptions = assumptions
+                .clone()
+                .assume_proposition(obligation.proposition().clone());
+        }
+        *assumptions = assumptions
+            .clone()
+            .assume_proposition(path.proposition.clone());
+    }
+    Ok(true)
+}
+
+fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {
+    match proposition {
+        SpecProposition::Comparison { left, right, .. } => {
+            spec_expression_is_state_independent(left)
+                && spec_expression_is_state_independent(right)
+        }
+        SpecProposition::FloatClassification { expression, .. }
+        | SpecProposition::Defined(expression) => spec_expression_is_state_independent(expression),
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            spec_proposition_is_state_independent(left)
+                && spec_proposition_is_state_independent(right)
+        }
+        SpecProposition::Not(body)
+        | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllPointer { body, .. }
+        | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsPointer { body, .. } => {
+            spec_proposition_is_state_independent(body)
         }
         _ => false,
+    }
+}
+
+fn spec_expression_is_state_independent(expression: &SpecExpression) -> bool {
+    match expression {
+        SpecExpression::Value(_) => true,
+        SpecExpression::CExpression(expression) => c_expression_is_state_independent(expression),
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
+            spec_expression_is_state_independent(left)
+                && spec_expression_is_state_independent(right)
+        }
+        SpecExpression::BitwiseNot(body) | SpecExpression::LoopEntrySnapshot(body) => {
+            spec_expression_is_state_independent(body)
+        }
+        SpecExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            spec_proposition_is_state_independent(condition)
+                && spec_expression_is_state_independent(then_branch)
+                && spec_expression_is_state_independent(else_branch)
+        }
+        SpecExpression::Let { value, body, .. } => {
+            spec_expression_is_state_independent(value)
+                && spec_expression_is_state_independent(body)
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(spec_expression_is_state_independent)
+        }
+        SpecExpression::PointerOffset {
+            pointer, elements, ..
+        } => {
+            spec_expression_is_state_independent(pointer)
+                && spec_expression_is_state_independent(elements)
+        }
+        _ => false,
+    }
+}
+
+fn c_expression_is_state_independent(expression: &CExpression) -> bool {
+    match expression {
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::BitwiseNot(expression) => c_expression_is_state_independent(expression),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_is_state_independent(condition)
+                && c_expression_is_state_independent(then_branch)
+                && c_expression_is_state_independent(else_branch)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right) => {
+            c_expression_is_state_independent(left) && c_expression_is_state_independent(right)
+        }
+        CExpression::AddressOf(_)
+        | CExpression::Load(_)
+        | CExpression::TypedLoad { .. }
+        | CExpression::Index(_, _) => false,
     }
 }
 

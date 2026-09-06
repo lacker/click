@@ -22,17 +22,20 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   authorize abstract calls through parameters and pointer-backed struct
   fields without enumerating project functions.
 - A verified or explicitly external concrete function forms a named contract
-  fact when its normalized contract matches exactly. Signature and behavioral
-  mismatches are rejected.
+  fact when its exact interface matches or its state-independent pure contract
+  behavior refines the named contract. Parameter names are treated as binders;
+  named preconditions imply implementation preconditions, and implementation
+  postconditions imply named postconditions. Reversed variance is rejected.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is behavioral refinement at concrete-pointer
-formation. Exact matching is sound but unnecessarily restrictive: a concrete
-function should eventually be allowed to require no more, guarantee no less,
-and stay within the named effect/resource interface. The Linux augmented
-rbtree regressions below also remain to be added on top of that rule.
+The remaining semantic step is refinement for resources, effects, and
+state-dependent propositions at concrete-pointer formation. Those interface
+parts still match exactly; a concrete function should eventually be allowed to
+consume no more, return no less, and stay within the named mutable footprint.
+The Linux augmented rbtree regressions below also remain to be added on top of
+that rule.
 
 ## Violated invariant
 
