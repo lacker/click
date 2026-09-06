@@ -198,6 +198,19 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
             }];
         }
+    } else if let Some(value) = memory.known_union_value(&pointer, value_type) {
+        if value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
     } else if let Some(value) = memory.cells.iter().find_map(|(stored_pointer, value)| {
         let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
         // A bounded equality query can retain an alias guard before its

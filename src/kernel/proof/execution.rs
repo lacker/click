@@ -1261,7 +1261,7 @@ fn memory_diff_is_covered_by_pointers(
         .into_iter()
         .filter(|pointer| !pointer.block.starts_with("local:"))
         .all(|diff_pointer| {
-            if !after.cells.contains_key(&diff_pointer) {
+            if !after.has_known_cell_at(&diff_pointer) {
                 return false;
             }
             changed.iter().any(|changed_pointer| {
@@ -1290,7 +1290,7 @@ fn memory_diff_is_covered_by_ranges(
         .into_iter()
         .filter(|pointer| !pointer.block.starts_with("local:"))
         .all(|diff_pointer| {
-            if !after.cells.contains_key(&diff_pointer) {
+            if !after.has_known_cell_at(&diff_pointer) {
                 return false;
             }
             mutable_ranges.iter().any(|range| {

@@ -2193,6 +2193,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::AggregateCopy { .. }
             | syntax::C0Statement::Update { .. } => false,
         }
     }
@@ -2623,7 +2624,7 @@ fn c0_tagged_union_member_writes_are_rejected() {
 }
 
 #[test]
-fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
+fn c0_tagged_union_values_remain_rejected_but_containers_are_copyable() {
     let value_error = syntax::parse_function(
         r#"
         union payload { int32 number; int32* pointer; };
@@ -2637,7 +2638,7 @@ fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
     .expect_err("whole tagged union values should not become scalar loads");
     assert!(value_error.message().contains("tagged union values"));
 
-    let copy_error = syntax::parse_function(
+    syntax::parse_function(
         r#"
         union payload { int32 number; int32* pointer; };
         struct packet { int32 tag; union payload payload; };
@@ -2647,12 +2648,7 @@ fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
         }
         "#,
     )
-    .expect_err("structs containing unions are not by-value aggregates yet");
-    assert!(
-        copy_error
-            .message()
-            .contains("contains a function pointer, an unsupported field shape, or a union field")
-    );
+    .expect("structs containing supported unions should be by-value aggregates");
 }
 
 #[test]
@@ -5735,8 +5731,8 @@ fn c0_struct_value_pointer_parameter_and_return_copy_pointee_identity() {
 }
 
 #[test]
-fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
-    let error = syntax::parse_function(
+fn c0_accepts_union_struct_values_with_overlapping_metadata() {
+    syntax::parse_function(
         r#"
         union payload {
             int32 number;
@@ -5744,6 +5740,7 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
         };
 
         struct packet {
+            int32 tag;
             union payload payload;
         };
 
@@ -5752,16 +5749,7 @@ fn c0_rejects_union_struct_values_with_a_shape_diagnostic() {
         }
         "#,
     )
-    .expect_err("union-bearing struct values should remain outside this slice");
-
-    assert!(error.message().contains(
-        "int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields"
-    ));
-    assert!(
-        error
-            .message()
-            .contains("contains a function pointer, an unsupported field shape, or a union field")
-    );
+    .expect("union-bearing struct values should retain their overlapping layout");
 }
 
 #[test]
@@ -7404,6 +7392,78 @@ fn c0_syntax_rejects_multiple_unsequenced_expression_calls() {
         "{}",
         error.message()
     );
+}
+
+#[test]
+fn c0_struct_union_fields_are_copyable_by_value_without_flattening_overlap() {
+    let parsed = syntax::parse_functions(
+        r#"
+        union payload {
+            int32 number;
+            int32* pointer;
+        };
+
+        struct packet {
+            int32 tag;
+            union payload payload;
+        };
+
+        int32 inspect(struct packet value) {
+            struct packet copy;
+            copy = value;
+            if (copy.tag != 1) {
+                return 0;
+            }
+            return copy.payload.number;
+        }
+        "#,
+    )
+    .expect("structs containing supported unions should be accepted by value");
+    let inspect = parsed
+        .iter()
+        .find(|function| function.name() == "inspect")
+        .expect("the by-value union function should be present");
+    let layout = inspect
+        .parameters()
+        .first()
+        .and_then(|parameter| parameter.struct_layout())
+        .expect("the union-containing by-value parameter should retain aggregate metadata");
+    let kernel_layout = layout.to_kernel_aggregate_layout();
+    assert_eq!(kernel_layout.unions().len(), 1);
+    assert_eq!(kernel_layout.unions()[0].offset_bytes(), 8);
+    assert_eq!(kernel_layout.unions()[0].size_bytes(), 8);
+    assert_eq!(kernel_layout.unions()[0].fields().len(), 2);
+    let function = parsed
+        .into_iter()
+        .find(|function| function.name() == "inspect")
+        .expect("the by-value union function should be present")
+        .to_kernel_function();
+
+    let source = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("packet", 16)
+            .store(source.clone(), crate::kernel::int32(1))
+            .store(source.offset_by_bytes(8), crate::kernel::int32(42)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state,
+        function,
+        vec![crate::kernel::c_pointer_value(source)],
+        Default::default(),
+    )
+    .expect("union-containing aggregate copy should preserve the active member view");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected union aggregate copy to return, got {theorem:?}");
+    };
+    assert_eq!(value, &crate::kernel::int32(42));
 }
 
 #[test]

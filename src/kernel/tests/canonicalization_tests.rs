@@ -1020,6 +1020,7 @@ fn symbolic_memory_block_sizes_are_free_and_substitutable() {
             CBlock::with_symbolic_size(Bitvector32Term::Variable(size_variable)),
         )])),
         cells: std::sync::Arc::new(BTreeMap::new()),
+        union_cells: std::sync::Arc::new(BTreeMap::new()),
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
 

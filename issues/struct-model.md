@@ -50,9 +50,10 @@ zero-filled.
 Fixed-dimensional embedded-struct arrays in by-value
 containers are flattened row-major to typed leaf fields with each element's
 complete ABI stride. Union
-members use overlapping layout and read-only typed loads; union writes,
-whole-union values, and by-value containers with function pointers or unions
-remain rejected. Data-pointer fields in by-value containers are
+members use overlapping layout and read-only typed loads; union writes and
+whole-union values remain rejected. Union-containing by-value containers retain
+typed overlapping member views during parameter, local, and return copies.
+Data-pointer fields in by-value containers are
 shallow-copied: the pointer cell is copied, while the pointee remains shared.
 Broader struct-value shapes remain. Compiler- or ABI-dependent layout rules
 are tracked in [multiple-compilers.md](multiple-compilers.md).
@@ -204,6 +205,12 @@ Staged mdtests, each with an unchanged C file:
     `mdtests/struct_union_member_address.md` and the C0 typed-lvalue and
     pointer-result regressions. Direct union-member writes remain outside the
     read-only slice.
+24. ~~A copyable struct containing a supported named union preserves the
+    union's overlapping scalar and pointer member views across parameter,
+    local, and return copies without flattening members into disjoint cells.~~
+    Covered by the C0/kernel union-overlay regression in
+    `src/languages/c/tests.rs`. Whole-union values and member writes remain
+    separate follow-up slices.
 
 ## Acceptance criteria
 
@@ -221,13 +228,14 @@ Staged mdtests, each with an unchanged C file:
   nominal signature metadata, and LP64 slot; compatible concrete function
   addresses can be stored, loaded, and called directly for known-target
   dispatch, while incompatible known targets and by-value callback fields
-  remain rejected.
+  remain rejected. Abstract callback contracts remain a separate slice.
 - Address-taking of modeled scalar leaf fields preserves the original
   allocation block, adds every ABI field offset in the chain, and returns the
   correct modeled pointer type; unsupported pointer forms are rejected rather
   than approximated.
 - Union member reads and address-taking use explicit overlapping layout rules,
   preserve scalar and pointer member types, and retain allocation provenance;
+  union-containing by-value struct copies preserve each typed member view;
   direct member writes and whole-union values remain rejected. Other
   compiler-dependent layout constructs are owned by `multiple-compilers.md`.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.

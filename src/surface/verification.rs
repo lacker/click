@@ -1559,6 +1559,7 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::AggregateCopy { .. }
             | syntax::C0Statement::Update { .. } => {}
         }
     }
@@ -1773,6 +1774,12 @@ pub(in crate::surface) fn c0_statement_calls(
                 let mut dependencies = BTreeSet::new();
                 collect_function_addresses(pointer, &mut dependencies);
                 collect_function_addresses(value, &mut dependencies);
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::AggregateCopy { target, source, .. } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(target, &mut dependencies);
+                collect_function_addresses(source, &mut dependencies);
                 calls.push(dependencies);
             }
             syntax::C0Statement::Update {

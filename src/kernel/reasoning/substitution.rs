@@ -813,6 +813,10 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
             collect_c_expression_bound_variables(pointer, variables);
             collect_c_expression_bound_variables(value, variables);
         }
+        CStatement::CopyAggregate { target, source, .. } => {
+            collect_c_expression_bound_variables(target, variables);
+            collect_c_expression_bound_variables(source, variables);
+        }
         CStatement::Update {
             target, operand, ..
         } => {
@@ -1607,6 +1611,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
             value_type: *value_type,
+        },
+        CStatement::CopyAggregate {
+            target,
+            source,
+            layout,
+        } => CStatement::CopyAggregate {
+            target: substitute_bitvector_variable_in_c_expression(target, from, to),
+            source: substitute_bitvector_variable_in_c_expression(source, from, to),
+            layout: layout.clone(),
         },
         CStatement::Update {
             target,
@@ -3229,6 +3242,21 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                 .collect(),
         ),
         cells,
+        union_cells: std::sync::Arc::new(
+            memory
+                .union_cells
+                .iter()
+                .map(|((pointer, c_type), value)| {
+                    (
+                        (
+                            substitute_bitvector_variable_in_pointer(pointer, from, to),
+                            *c_type,
+                        ),
+                        substitute_bitvector_variable_in_c_value(value, from, to),
+                    )
+                })
+                .collect(),
+        ),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -3987,6 +4015,15 @@ fn substitute_pointer_variable_in_c_statement(
             value: substitute_pointer_variable_in_c_expression(value, from, to),
             value_type: *value_type,
         },
+        CStatement::CopyAggregate {
+            target,
+            source,
+            layout,
+        } => CStatement::CopyAggregate {
+            target: substitute_pointer_variable_in_c_expression(target, from, to),
+            source: substitute_pointer_variable_in_c_expression(source, from, to),
+            layout: layout.clone(),
+        },
         CStatement::Update {
             target,
             operator,
@@ -4360,6 +4397,21 @@ fn substitute_pointer_variable_in_memory(
                 .map(|(pointer, value)| {
                     (
                         substitute_pointer_variable_in_pointer(pointer, from, to),
+                        substitute_pointer_variable_in_c_value(value, from, to),
+                    )
+                })
+                .collect(),
+        ),
+        union_cells: std::sync::Arc::new(
+            memory
+                .union_cells
+                .iter()
+                .map(|((pointer, c_type), value)| {
+                    (
+                        (
+                            substitute_pointer_variable_in_pointer(pointer, from, to),
+                            *c_type,
+                        ),
                         substitute_pointer_variable_in_c_value(value, from, to),
                     )
                 })

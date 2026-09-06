@@ -2606,7 +2606,32 @@ fn zero_aggregate_fields(
             memory = memory.store(base.offset_by_bytes(offset), zero.clone());
         }
     }
+    for union in layout.unions() {
+        let union_base = base.offset_by_bytes(union.offset_bytes());
+        for field in union.fields() {
+            if let Some(value) = zero_union_member_value(field.c_type()) {
+                memory = memory.store_union(
+                    union_base.offset_by_bytes(field.offset_bytes()),
+                    field.c_type(),
+                    value,
+                );
+            }
+        }
+    }
     memory
+}
+
+fn zero_union_member_value(c_type: CType) -> Option<CValue> {
+    Some(match c_type {
+        CType::Int32 => int32(0),
+        CType::UInt8 => uint8(0),
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer
+        | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), c_type),
+        _ => return None,
+    })
 }
 
 fn initialize_aggregate_fields(
@@ -2775,7 +2800,81 @@ pub(super) fn copy_aggregate_fields(
             }
         }
     }
+    for union in layout.unions() {
+        let source_union = source.offset_by_bytes(union.offset_bytes());
+        let destination_union = destination.offset_by_bytes(union.offset_bytes());
+        for field in union.fields() {
+            let source_field = source_union.offset_by_bytes(field.offset_bytes());
+            let Some(value) = copy_aggregate_union_member(&memory, &source_field, field.c_type())
+            else {
+                continue;
+            };
+            memory = memory.store_union(
+                destination_union.offset_by_bytes(field.offset_bytes()),
+                field.c_type(),
+                value,
+            );
+        }
+    }
     memory
+}
+
+fn copy_aggregate_union_member(
+    memory: &CMemory,
+    source_field: &Pointer,
+    element_type: CType,
+) -> Option<CValue> {
+    if let Some(value) = memory.known_union_value(source_field, element_type) {
+        return Some(value);
+    }
+    if let Some(value) = memory.known_value(source_field)
+        && element_type.accepts(&value)
+    {
+        return Some(value);
+    }
+    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+        return zero_union_member_value(element_type);
+    }
+    if memory.has_block(&source_field.block)
+        && !matches!(source_field.block, PointerBlock::Symbolic(_))
+        && memory.access_in_bounds(source_field, element_type.byte_width())
+    {
+        return None;
+    }
+    let load = crate::kernel::canonical_form_of_load(
+        crate::kernel::intern_c_memory(memory.clone()),
+        source_field.clone(),
+    );
+    Some(match element_type {
+        CType::Int32 => CValue::Int32(load),
+        CType::UInt8 => CValue::UInt8(load),
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer
+        | CType::FunctionPointer(_) => {
+            let pointer = if matches!(element_type, CType::FunctionPointer(_)) {
+                match load {
+                    Bitvector32Term::Variable(variable) => Pointer::symbolic_function(variable),
+                    load => Pointer {
+                        block: source_field.block.clone(),
+                        offset: PointerOffsetTerm::scale_int32(load, 1),
+                    },
+                }
+            } else {
+                let pointee_type = element_type.pointee_type()?;
+                Pointer {
+                    block: source_field.block.clone(),
+                    offset: PointerOffsetTerm::scale_int32(
+                        load,
+                        i64::from(pointee_type.byte_width()),
+                    ),
+                }
+            };
+            CValue::typed_pointer(pointer, element_type)
+        }
+        _ => return None,
+    })
 }
 
 fn evaluate_resource_population_body_resources(

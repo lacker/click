@@ -564,6 +564,10 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
             collect_expression_variable_names(pointer, names);
             collect_expression_variable_names(value, names);
         }
+        CStatement::CopyAggregate { target, source, .. } => {
+            collect_expression_variable_names(target, names);
+            collect_expression_variable_names(source, names);
+        }
         CStatement::Update {
             target, operand, ..
         } => {

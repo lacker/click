@@ -505,6 +505,126 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     }
 }
 
+fn execute_c_aggregate_copy_paths(
+    state: &CState,
+    target: &CExpression,
+    source: &CExpression,
+    layout: &CAggregateLayout,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for target_path in evaluate_c_expression_paths(state, target, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: target_outcome,
+            facts: target_facts,
+            obligations: target_obligations,
+        } = target_path;
+        let CExpressionOutcome::Value(CValue::Pointer(target_pointer)) = target_outcome else {
+            continue;
+        };
+        if target_pointer.is_null() {
+            continue;
+        }
+        let value_assumptions =
+            assumptions_with_path_context(assumptions, &target_facts, &target_obligations);
+        for source_path in evaluate_c_expression_paths(state, source, &value_assumptions, budget)? {
+            let CExpressionPath {
+                outcome: source_outcome,
+                facts: source_facts,
+                obligations: source_obligations,
+            } = source_path;
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &target_facts,
+                &target_obligations,
+                &source_facts,
+                &source_obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let CExpressionOutcome::Value(CValue::Pointer(source_pointer)) = source_outcome else {
+                continue;
+            };
+            if source_pointer.is_null() {
+                continue;
+            }
+            if let Some(resource) = missing_aggregate_copy_read_resource(
+                state,
+                source_pointer.pointer(),
+                layout,
+                &assumptions_with_path_context(assumptions, &facts, &obligations),
+            ) {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource,
+                    }),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+            let mut state = state.clone();
+            state.memory = crate::kernel::functions::copy_aggregate_fields(
+                state.memory,
+                source_pointer.pointer(),
+                target_pointer.pointer(),
+                layout,
+            );
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state),
+                facts,
+                obligations,
+            });
+        }
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn missing_aggregate_copy_read_resource(
+    state: &CState,
+    source: &Pointer,
+    layout: &CAggregateLayout,
+    assumptions: &PureFactContext,
+) -> Option<CResourceFact> {
+    if !crate::kernel::eval::is_external_memory_pointer(source)
+        || assumptions.should_allow_symbolic_contract_loads()
+    {
+        return None;
+    }
+    for field in layout.fields() {
+        if !crate::kernel::reasoning::resource_context_has_read(
+            state.resources(),
+            &source.offset_by_bytes(field.offset_bytes()),
+            field.c_type().byte_width(),
+            assumptions,
+        ) {
+            return Some(CResourceFact::view_memory(CMemoryRange::new(
+                source.offset_by_bytes(field.offset_bytes()),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )));
+        }
+    }
+    for union in layout.unions() {
+        let pointer = source.offset_by_bytes(union.offset_bytes());
+        if !crate::kernel::reasoning::resource_context_has_read(
+            state.resources(),
+            &pointer,
+            union.size_bytes(),
+            assumptions,
+        ) {
+            return Some(CResourceFact::view_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )));
+        }
+    }
+    None
+}
+
 pub(super) fn execute_c_heap_allocate_paths(
     state: &CState,
     target: &str,
@@ -1795,6 +1915,11 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 obligations: Vec::new(),
             }]
         }
+        CStatement::CopyAggregate {
+            target,
+            source,
+            layout,
+        } => execute_c_aggregate_copy_paths(state, target, source, layout, assumptions, budget)?,
         CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
             state,
             &c_variable(name.clone()),

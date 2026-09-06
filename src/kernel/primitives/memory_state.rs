@@ -2065,7 +2065,12 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        self.cells.as_ref() == &expected_cells
+        let mut expected_union_cells = before.union_cells.as_ref().clone();
+        expected_union_cells.retain(|(pointer, _), _| {
+            pointer.block.starts_with("local:")
+                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        self.cells.as_ref() == &expected_cells && self.union_cells.as_ref() == &expected_union_cells
     }
 
     pub fn store(self, pointer: Pointer, value: CValue) -> Self {
@@ -2083,6 +2088,8 @@ impl CMemory {
     ) -> Self {
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
+        std::sync::Arc::make_mut(&mut self.union_cells)
+            .retain(|(cell_pointer, _), _| cell_pointer != &pointer);
         record_c_memory_derivation(
             &self,
             CMemoryDerivation::Store {
@@ -2105,9 +2112,23 @@ impl CMemory {
     pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
         let mut pointers = self.cells.keys().cloned().collect::<BTreeSet<_>>();
         pointers.extend(other.cells.keys().cloned());
+        pointers.extend(self.union_cells.keys().map(|(pointer, _)| pointer.clone()));
+        pointers.extend(other.union_cells.keys().map(|(pointer, _)| pointer.clone()));
         pointers
             .into_iter()
-            .filter(|pointer| self.cells.get(pointer) != other.cells.get(pointer))
+            .filter(|pointer| {
+                self.cells.get(pointer) != other.cells.get(pointer)
+                    || self
+                        .union_cells
+                        .iter()
+                        .filter(|((cell_pointer, _), _)| cell_pointer == pointer)
+                        .collect::<BTreeMap<_, _>>()
+                        != other
+                            .union_cells
+                            .iter()
+                            .filter(|((cell_pointer, _), _)| cell_pointer == pointer)
+                            .collect::<BTreeMap<_, _>>()
+            })
             .collect()
     }
 
@@ -2115,9 +2136,40 @@ impl CMemory {
         self.cells.get(pointer).cloned()
     }
 
+    pub(in crate::kernel) fn has_known_cell_at(&self, pointer: &Pointer) -> bool {
+        self.cells.contains_key(pointer)
+            || self
+                .union_cells
+                .keys()
+                .any(|(cell_pointer, _)| cell_pointer == pointer)
+    }
+
+    pub(in crate::kernel) fn known_union_value(
+        &self,
+        pointer: &Pointer,
+        value_type: CType,
+    ) -> Option<CValue> {
+        self.union_cells
+            .get(&(pointer.clone(), value_type))
+            .cloned()
+    }
+
+    pub(in crate::kernel) fn store_union(
+        mut self,
+        pointer: Pointer,
+        value_type: CType,
+        value: CValue,
+    ) -> Self {
+        std::sync::Arc::make_mut(&mut self.cells).remove(&pointer);
+        std::sync::Arc::make_mut(&mut self.union_cells).insert((pointer, value_type), value);
+        self
+    }
+
     pub(in crate::kernel) fn without_cell(&self, pointer: &Pointer) -> Self {
         let mut memory = self.clone();
         std::sync::Arc::make_mut(&mut memory.cells).remove(pointer);
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(cell_pointer, _), _| cell_pointer != pointer);
         memory
     }
 
@@ -2153,10 +2205,27 @@ impl CMemory {
                 || assumptions
                     .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
         });
+        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, _), _| {
+            let normalized_cell_pointer = Pointer {
+                block: cell_pointer.block.clone(),
+                offset: normalize_exact_memory_loads_in_pointer_offset(
+                    &cell_pointer.offset,
+                    assumptions,
+                ),
+            };
+            pointers_proven_distinct_for_memory_resolution(
+                &normalized_cell_pointer,
+                &normalized_pointer,
+                assumptions,
+            ) || assumptions
+                .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
+        });
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged
         // instead of stopping at an edge that records no write.
-        if memory.cells.len() == self.cells.len() {
+        if memory.cells.len() == self.cells.len()
+            && memory.union_cells.len() == self.union_cells.len()
+        {
             return self.clone();
         }
         if let Some(base) = base {
@@ -2387,6 +2456,7 @@ impl CState {
     pub(crate) fn shares_nonlocal_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.memory.blocks, &other.memory.blocks)
             && std::sync::Arc::ptr_eq(&self.memory.cells, &other.memory.cells)
+            && std::sync::Arc::ptr_eq(&self.memory.union_cells, &other.memory.union_cells)
             && std::sync::Arc::ptr_eq(&self.memory.heap, &other.memory.heap)
             && self.resources.shares_storage_with(&other.resources)
             && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)

@@ -513,6 +513,7 @@ fn abstract_c_state_for_join_across_with_policy(
             sibling.locals.bindings.len()
                 + sibling.memory.blocks.len()
                 + sibling.memory.cells.len()
+                + sibling.memory.union_cells.len()
                 + sibling.resources().facts().len()
                 + sibling.counted_populations.len(),
         );
@@ -616,13 +617,15 @@ fn abstract_c_state_for_join_across_with_policy(
 
     let comparable_memory = |state: &CState| {
         crate::instrumentation::record_deterministic_work(
-            state.memory.blocks.len() + state.memory.cells.len(),
+            state.memory.blocks.len() + state.memory.cells.len() + state.memory.union_cells.len(),
         );
         let mut memory = state.memory.clone();
         std::sync::Arc::make_mut(&mut memory.blocks)
             .retain(|block, _| !preserved_blocks.contains(block));
         std::sync::Arc::make_mut(&mut memory.cells)
             .retain(|pointer, _| !preserved_blocks.contains(&pointer.block));
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(pointer, _), _| !preserved_blocks.contains(&pointer.block));
         memory
     };
     let common_memory = preserve_exact_common_memory && {
@@ -974,6 +977,18 @@ pub fn c_declare_with_all_qualifiers(
 pub fn c_declare_aggregate(name: impl Into<String>, layout: CAggregateLayout) -> CStatement {
     CStatement::DeclareAggregate {
         name: name.into(),
+        layout,
+    }
+}
+
+pub fn c_copy_aggregate(
+    target: CExpression,
+    source: CExpression,
+    layout: CAggregateLayout,
+) -> CStatement {
+    CStatement::CopyAggregate {
+        target,
+        source,
         layout,
     }
 }
@@ -5467,6 +5482,21 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             return true;
         }
         memory.cells.iter().any(|(pointer, value)| {
+            pointer_depth_exceeds(pointer, remaining - 1)
+                || match value {
+                    CValue::Void => false,
+                    CValue::Int16(term)
+                    | CValue::Int32(term)
+                    | CValue::UInt8(term)
+                    | CValue::UInt16(term)
+                    | CValue::UInt32(term)
+                    | CValue::Int64(term)
+                    | CValue::UInt64(term)
+                    | CValue::Float32(term)
+                    | CValue::Float64(term) => term_depth_exceeds(term, remaining - 1),
+                    CValue::Pointer(pointer) => pointer_depth_exceeds(pointer, remaining - 1),
+                }
+        }) || memory.union_cells.iter().any(|((pointer, _), value)| {
             pointer_depth_exceeds(pointer, remaining - 1)
                 || match value {
                     CValue::Void => false,

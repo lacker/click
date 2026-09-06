@@ -364,6 +364,7 @@ fn structural_recursion_paths(
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => Ok(paths),
         CStatement::ContinueWithStep { step } => {
             structural_recursion_paths(step, function, measure, paths)
@@ -937,6 +938,7 @@ fn collect_pointer_variables(statement: &CStatement, names: &mut BTreeSet<String
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => {}
     }
 }
@@ -967,6 +969,7 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             escapes(pointer) || escapes(value)
         }
+        CStatement::CopyAggregate { target, source, .. } => escapes(target) || escapes(source),
         CStatement::Update {
             target, operand, ..
         } => escapes(target) || escapes(operand),
@@ -1065,7 +1068,8 @@ fn statement_assigned_variables(statement: &CStatement, names: &mut BTreeSet<Str
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => {}
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. } => {}
     }
 }
 
@@ -1108,6 +1112,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => {}
     }
 }
@@ -1127,7 +1132,8 @@ fn recursion_paths(
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(lower_bounds),
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. } => Ok(lower_bounds),
         CStatement::ContinueWithStep { step } => {
             recursion_paths(step, measure, component, parameter_indices, lower_bounds)
         }
@@ -1303,6 +1309,7 @@ fn loop_paths(
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Call { .. } => Ok(paths),
         CStatement::ContinueWithStep { step } => loop_paths(step, measure_variables, paths),
         CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
@@ -1853,6 +1860,7 @@ fn collect_loop_invariants(
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => {}
     }
 }
@@ -2367,6 +2375,7 @@ fn check_loops(
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => Ok(true),
     }
 }

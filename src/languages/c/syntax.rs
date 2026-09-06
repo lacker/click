@@ -1290,6 +1290,10 @@ pub struct C0StructLayout {
     /// Embedded struct fields are flattened here while preserving their
     /// declared names as qualified paths and their complete ABI offsets.
     aggregate_fields: Vec<C0AggregateField>,
+    /// Address-overlapping union storage retained separately from scalar leaf
+    /// fields. Flattening union members into `aggregate_fields` would make a
+    /// by-value copy overwrite one member with another.
+    aggregate_unions: Vec<C0AggregateUnion>,
     size_bytes: u32,
     alignment_bytes: u32,
 }
@@ -1299,6 +1303,21 @@ struct C0AggregateField {
     name: String,
     offset_bytes: u32,
     c_type: C0Type,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct C0AggregateUnionField {
+    name: String,
+    offset_bytes: u32,
+    c_type: C0Type,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct C0AggregateUnion {
+    name: String,
+    offset_bytes: u32,
+    size_bytes: u32,
+    fields: Vec<C0AggregateUnionField>,
 }
 
 /// One explicitly initialized scalar leaf in a static-storage aggregate.
@@ -1560,6 +1579,15 @@ pub enum C0Statement {
         pointer: C0Expression,
         value: C0Expression,
         value_type: Option<C0Type>,
+    },
+    /// Copy an address-backed aggregate whose layout includes overlapping
+    /// union storage. Ordinary scalar stores cannot represent this copy
+    /// without losing the member views, so the kernel receives the complete
+    /// aggregate metadata.
+    AggregateCopy {
+        target: C0Expression,
+        source: C0Expression,
+        layout: C0StructLayout,
     },
     Update {
         target: C0Expression,
@@ -2052,7 +2080,7 @@ impl C0StructLayout {
     }
 
     pub(crate) fn to_kernel_aggregate_layout(&self) -> crate::kernel::CAggregateLayout {
-        crate::kernel::CAggregateLayout::new(
+        crate::kernel::CAggregateLayout::with_unions(
             self.size_bytes,
             self.alignment_bytes,
             self.aggregate_fields
@@ -2062,6 +2090,27 @@ impl C0StructLayout {
                         &field.name,
                         field.offset_bytes,
                         field.c_type.to_kernel_type(),
+                    )
+                })
+                .collect(),
+            self.aggregate_unions
+                .iter()
+                .map(|union| {
+                    crate::kernel::CAggregateUnion::new(
+                        &union.name,
+                        union.offset_bytes,
+                        union.size_bytes,
+                        union
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                crate::kernel::CAggregateUnionField::new(
+                                    &field.name,
+                                    field.offset_bytes,
+                                    field.c_type.to_kernel_type(),
+                                )
+                            })
+                            .collect(),
                     )
                 })
                 .collect(),
@@ -2544,6 +2593,15 @@ impl C0Statement {
                     value.to_kernel_expression(),
                 ),
             },
+            Self::AggregateCopy {
+                target,
+                source,
+                layout,
+            } => crate::kernel::c_copy_aggregate(
+                target.to_kernel_expression(),
+                source.to_kernel_expression(),
+                layout.to_kernel_aggregate_layout(),
+            ),
             Self::Update {
                 target,
                 operator,
@@ -2890,6 +2948,7 @@ fn validate_function_returns(
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
+        | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. } => Ok(()),
     }
 }
@@ -3118,10 +3177,11 @@ fn zero_initializer_value(c_type: C0Type) -> C0Expression {
     }
 }
 
-fn flatten_aggregate_fields(
+fn flatten_aggregate_layout(
     fields: &BTreeMap<String, C0StructField>,
     structs: &BTreeMap<String, C0StructLayout>,
-) -> Vec<C0AggregateField> {
+    unions: &BTreeMap<String, C0UnionLayout>,
+) -> (Vec<C0AggregateField>, Vec<C0AggregateUnion>) {
     fn row_major_index_path(flat_index: u32, shape: &[u32]) -> String {
         let mut remaining = flat_index;
         let mut indexes = vec![0; shape.len()];
@@ -3152,7 +3212,26 @@ fn flatten_aggregate_fields(
         }
     }
 
+    fn append_nested_unions(
+        aggregate_unions: &mut Vec<C0AggregateUnion>,
+        prefix: &str,
+        base_offset: u32,
+        nested_layout: &C0StructLayout,
+    ) {
+        for nested_union in &nested_layout.aggregate_unions {
+            aggregate_unions.push(C0AggregateUnion {
+                name: format!("{prefix}.{}", nested_union.name),
+                offset_bytes: base_offset
+                    .checked_add(nested_union.offset_bytes)
+                    .expect("validated embedded union offset"),
+                size_bytes: nested_union.size_bytes,
+                fields: nested_union.fields.clone(),
+            });
+        }
+    }
+
     let mut aggregate_fields = Vec::new();
+    let mut aggregate_unions = Vec::new();
     for (field_name, field) in fields {
         if field.c_type == C0Type::Int32
             && field.struct_name.is_some()
@@ -3167,6 +3246,12 @@ fn flatten_aggregate_fields(
                 .expect("embedded struct field has a parsed layout");
             append_nested_fields(
                 &mut aggregate_fields,
+                field_name,
+                field.offset_bytes,
+                nested_layout,
+            );
+            append_nested_unions(
+                &mut aggregate_unions,
                 field_name,
                 field.offset_bytes,
                 nested_layout,
@@ -3199,7 +3284,31 @@ fn flatten_aggregate_fields(
                     element_offset,
                     nested_layout,
                 );
+                append_nested_unions(
+                    &mut aggregate_unions,
+                    &format!("{field_name}{index_path}"),
+                    element_offset,
+                    nested_layout,
+                );
             }
+        } else if let Some(union_name) = &field.union_name {
+            let union_layout = unions
+                .get(union_name)
+                .expect("embedded union field has a parsed layout");
+            aggregate_unions.push(C0AggregateUnion {
+                name: field_name.clone(),
+                offset_bytes: field.offset_bytes,
+                size_bytes: union_layout.size_bytes,
+                fields: union_layout
+                    .fields
+                    .iter()
+                    .map(|(name, union_field)| C0AggregateUnionField {
+                        name: name.clone(),
+                        offset_bytes: union_field.offset_bytes,
+                        c_type: union_field.c_type,
+                    })
+                    .collect(),
+            });
         } else {
             aggregate_fields.push(C0AggregateField {
                 name: field_name.clone(),
@@ -3208,7 +3317,7 @@ fn flatten_aggregate_fields(
             });
         }
     }
-    aggregate_fields
+    (aggregate_fields, aggregate_unions)
 }
 
 fn struct_value_type(layout: &C0StructLayout) -> C0Type {
@@ -3984,6 +4093,9 @@ impl Parser {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         for field in layout.fields.values() {
+            if field.union_name.is_some() {
+                continue;
+            }
             if let Some(nested_name) = field.struct_name.as_deref()
                 && field.array_element_width.is_some()
                 && field.array_shape.is_some()
@@ -4031,7 +4143,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, and embedded struct fields; `struct {struct_name}` contains a function pointer, an unsupported field shape, or a union field"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, embedded struct fields, and named union fields; `struct {struct_name}` contains a function pointer or unsupported field shape"
                 )));
             }
         }
@@ -5451,7 +5563,8 @@ impl Parser {
         }
         let size_bytes = align_up(offset_bytes, struct_alignment)
             .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
-        let aggregate_fields = flatten_aggregate_fields(&fields, &self.structs);
+        let (aggregate_fields, aggregate_unions) =
+            flatten_aggregate_layout(&fields, &self.structs, &self.unions);
         if self
             .structs
             .insert(
@@ -5459,6 +5572,7 @@ impl Parser {
                 C0StructLayout {
                     fields,
                     aggregate_fields,
+                    aggregate_unions,
                     size_bytes,
                     alignment_bytes: struct_alignment,
                 },
@@ -8501,6 +8615,13 @@ impl Parser {
             .structs
             .get(target_struct)
             .expect("validated struct value has a layout");
+        if !layout.aggregate_unions.is_empty() {
+            return Ok(C0Statement::AggregateCopy {
+                target: target_pointer,
+                source: source_pointer,
+                layout: layout.clone(),
+            });
+        }
         let mut stores = Vec::new();
         for field in layout.aggregate_fields() {
             let (element_type, element_count) = match field.c_type {
@@ -9436,6 +9557,13 @@ impl Parser {
                         return true;
                     }
                 }
+                C0Statement::AggregateCopy { target, source, .. } => {
+                    if self.expression_contains_lowerable_expression(target)
+                        || self.expression_contains_lowerable_expression(source)
+                    {
+                        return true;
+                    }
+                }
                 C0Statement::Update {
                     target, operand, ..
                 } => {
@@ -9693,6 +9821,21 @@ impl Parser {
                         pointer,
                         value,
                         value_type,
+                    },
+                ))
+            }
+            C0Statement::AggregateCopy {
+                target,
+                source,
+                layout,
+            } => {
+                let (prefix, target, source) = self.lower_expression_pair(target, source)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::AggregateCopy {
+                        target,
+                        source,
+                        layout,
                     },
                 ))
             }
@@ -12280,6 +12423,7 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
+        | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }) => statement,
     }
 }

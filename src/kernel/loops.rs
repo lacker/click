@@ -612,6 +612,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 }
                 CStatement::Declare { .. } => "verification statement: declare",
                 CStatement::DeclareAggregate { .. } => "verification statement: declare aggregate",
+                CStatement::CopyAggregate { .. } => "verification statement: aggregate copy",
                 CStatement::Assign { .. } => "verification statement: assign",
                 CStatement::CallAssign { .. } => "verification statement: call assign",
                 CStatement::Call { .. } => "verification statement: call",
@@ -1798,6 +1799,21 @@ pub(super) fn prepare_loop_top_state(
                 .insert(pointer.clone(), value.clone());
         }
     }
+    for ((pointer, c_type), value) in entry_state.memory().union_cells.iter() {
+        if pointer.block.starts_with("local:") {
+            continue;
+        }
+        let is_stable = summaries.iter().any(|summary| {
+            let Proposition::CMemoryEffectSummary { mutable_ranges, .. } = summary else {
+                return false;
+            };
+            assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        if is_stable {
+            std::sync::Arc::make_mut(&mut framed_memory.union_cells)
+                .insert((pointer.clone(), *c_type), value.clone());
+        }
+    }
 
     if framed_memory != *top_state.memory() {
         top_state = top_state.with_memory(framed_memory);
@@ -2409,6 +2425,7 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => true,
         CStatement::Seq(first, second) => {
             statement_may_write_memory(first) || statement_may_write_memory(second)
@@ -2436,7 +2453,8 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => {}
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. } => {}
         CStatement::Update { target, .. } => {
             if let CExpression::Variable(name) = target {
                 names.insert(name.clone());
@@ -2503,6 +2521,9 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
     for value in state.memory.cells.values() {
         record_pointer(value, &mut escaped);
     }
+    for value in state.memory.union_cells.values() {
+        record_pointer(value, &mut escaped);
+    }
     escaped
 }
 
@@ -2541,6 +2562,10 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::TypedStore { pointer, value, .. } => {
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);
+        }
+        CStatement::CopyAggregate { target, source, .. } => {
+            collect_address_taken_in_expression(target, names);
+            collect_address_taken_in_expression(source, names);
         }
         CStatement::Update {
             target, operand, ..

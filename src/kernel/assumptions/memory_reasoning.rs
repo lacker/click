@@ -285,6 +285,24 @@ impl PureFactContext {
                 )
             })
         }));
+        regions.extend(
+            memory
+                .union_cells
+                .iter()
+                .filter_map(|((pointer, _), value)| {
+                    let byte_width = value.byte_width();
+                    (byte_width > 0 && memory.is_loadable_concretely(pointer, byte_width)).then(
+                        || {
+                            (
+                                None,
+                                crate::kernel::api::canonicalize_pointer_loads(pointer),
+                                Bitvector32Term::Constant(byte_width),
+                                true,
+                            )
+                        },
+                    )
+                }),
+        );
         let base = crate::kernel::api::canonicalize_pointer_loads(base);
         for (prefix_index, (prefix_fact, prefix_base, prefix_bytes, prefix_current)) in
             regions.iter().enumerate()

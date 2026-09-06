@@ -273,6 +273,27 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
         };
         std::sync::Arc::make_mut(&mut canonical.cells).insert(key, value);
     }
+    let union_cells = std::mem::take(&mut canonical.union_cells);
+    for ((pointer, c_type), value) in union_cells.iter() {
+        let key = canonicalize_pointer_loads(pointer);
+        let value = match value {
+            CValue::Void => CValue::Void,
+            CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
+            CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
+            CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
+            CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(term)),
+            CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
+            CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
+            CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
+            CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
+            CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(term)),
+            CValue::Pointer(pointer) => CValue::typed_pointer(
+                canonicalize_pointer_loads(pointer.pointer()),
+                pointer.c_type(),
+            ),
+        };
+        std::sync::Arc::make_mut(&mut canonical.union_cells).insert((key, *c_type), value);
+    }
     canonical
 }
 

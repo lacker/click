@@ -930,6 +930,13 @@ pub enum CStatement {
         name: String,
         layout: CAggregateLayout,
     },
+    /// Copy an address-backed aggregate, preserving typed views for any
+    /// overlapping union members in its layout.
+    CopyAggregate {
+        target: CExpression,
+        source: CExpression,
+        layout: CAggregateLayout,
+    },
     Assign {
         name: String,
         expression: CExpression,
@@ -1182,6 +1189,75 @@ pub struct CAggregateField {
     pub(super) c_type: CType,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateUnionField {
+    pub(super) name: String,
+    pub(super) offset_bytes: u32,
+    pub(super) c_type: CType,
+}
+
+impl CAggregateUnionField {
+    pub fn new(name: impl Into<String>, offset_bytes: u32, c_type: CType) -> Self {
+        Self {
+            name: name.into(),
+            offset_bytes,
+            c_type,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn c_type(&self) -> CType {
+        self.c_type
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateUnion {
+    pub(super) name: String,
+    pub(super) offset_bytes: u32,
+    pub(super) size_bytes: u32,
+    pub(super) fields: Vec<CAggregateUnionField>,
+}
+
+impl CAggregateUnion {
+    pub fn new(
+        name: impl Into<String>,
+        offset_bytes: u32,
+        size_bytes: u32,
+        fields: Vec<CAggregateUnionField>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            offset_bytes,
+            size_bytes,
+            fields,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn size_bytes(&self) -> u32 {
+        self.size_bytes
+    }
+
+    pub fn fields(&self) -> &[CAggregateUnionField] {
+        &self.fields
+    }
+}
+
 impl CAggregateField {
     pub fn new(name: impl Into<String>, offset_bytes: u32, c_type: CType) -> Self {
         Self {
@@ -1235,6 +1311,7 @@ pub struct CAggregateLayout {
     pub(super) size_bytes: u32,
     pub(super) alignment_bytes: u32,
     pub(super) fields: Vec<CAggregateField>,
+    pub(super) unions: Vec<CAggregateUnion>,
 }
 
 impl CAggregateLayout {
@@ -1244,6 +1321,22 @@ impl CAggregateLayout {
             size_bytes,
             alignment_bytes,
             fields,
+            unions: Vec::new(),
+        }
+    }
+
+    pub fn with_unions(
+        size_bytes: u32,
+        alignment_bytes: u32,
+        fields: Vec<CAggregateField>,
+        unions: Vec<CAggregateUnion>,
+    ) -> Self {
+        assert!(alignment_bytes.is_power_of_two());
+        Self {
+            size_bytes,
+            alignment_bytes,
+            fields,
+            unions,
         }
     }
 
@@ -1257,6 +1350,10 @@ impl CAggregateLayout {
 
     pub fn fields(&self) -> &[CAggregateField] {
         &self.fields
+    }
+
+    pub fn unions(&self) -> &[CAggregateUnion] {
+        &self.unions
     }
 }
 
@@ -1700,11 +1797,47 @@ pub(super) enum CLocalBinding {
     },
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CMemory {
     pub(super) blocks: std::sync::Arc<BTreeMap<PointerBlock, CBlock>>,
     pub(super) cells: std::sync::Arc<BTreeMap<Pointer, CValue>>,
+    /// Typed views of address-overlapping union storage. A union member is
+    /// keyed by its address and type rather than placed in `cells`, because
+    /// two members at one address must remain independently readable after a
+    /// by-value aggregate copy.
+    pub(super) union_cells: std::sync::Arc<BTreeMap<(Pointer, CType), CValue>>,
     pub(super) heap: std::sync::Arc<CHeapMemory>,
+}
+
+impl std::hash::Hash for CMemory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Keep the hash of memories without union overlays identical to the
+        // pre-overlay representation. Memory-load identities are used inside
+        // proof terms, so adding an empty auxiliary map must not perturb all
+        // existing symbolic memory identities.
+        self.blocks.hash(state);
+        self.cells.hash(state);
+        if !self.union_cells.is_empty() {
+            self.union_cells.hash(state);
+        }
+        self.heap.hash(state);
+    }
+}
+
+impl Ord for CMemory {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.blocks
+            .cmp(&other.blocks)
+            .then_with(|| self.cells.cmp(&other.cells))
+            .then_with(|| self.union_cells.cmp(&other.union_cells))
+            .then_with(|| self.heap.cmp(&other.heap))
+    }
+}
+
+impl PartialOrd for CMemory {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2031,6 +2164,7 @@ struct CMemoryArena {
 struct CMemoryShallowIdentity {
     blocks: usize,
     cells: usize,
+    union_cells: usize,
     heap: usize,
 }
 
@@ -2039,6 +2173,7 @@ impl CMemoryShallowIdentity {
         Self {
             blocks: std::sync::Arc::as_ptr(&memory.blocks) as usize,
             cells: std::sync::Arc::as_ptr(&memory.cells) as usize,
+            union_cells: std::sync::Arc::as_ptr(&memory.union_cells) as usize,
             heap: std::sync::Arc::as_ptr(&memory.heap) as usize,
         }
     }
@@ -2118,6 +2253,7 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
     crate::instrumentation::record_deterministic_work(
         memory.blocks.len()
             + memory.cells.len()
+            + memory.union_cells.len()
             + memory.heap.live_allocations.len()
             + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()

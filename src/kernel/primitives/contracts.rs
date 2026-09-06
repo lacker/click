@@ -249,8 +249,8 @@ impl CGlobalAggregate {
             "C global aggregates must have positive size"
         );
         assert!(
-            !layout.fields().is_empty(),
-            "C global aggregates must have at least one modeled field"
+            !layout.fields().is_empty() || !layout.unions().is_empty(),
+            "C global aggregates must have at least one modeled field or union"
         );
         Self {
             source_name: source_name.into(),
@@ -304,8 +304,8 @@ impl CGlobalAggregateArray {
             "C global aggregate arrays must have positive element size"
         );
         assert!(
-            !layout.fields().is_empty(),
-            "C global aggregate arrays must have at least one modeled field"
+            !layout.fields().is_empty() || !layout.unions().is_empty(),
+            "C global aggregate arrays must have at least one modeled field or union"
         );
         Self {
             source_name: source_name.into(),
@@ -527,8 +527,8 @@ impl CStaticAggregate {
             "C static aggregates must have positive size"
         );
         assert!(
-            !layout.fields().is_empty(),
-            "C static aggregates must have at least one modeled field"
+            !layout.fields().is_empty() || !layout.unions().is_empty(),
+            "C static aggregates must have at least one modeled field or union"
         );
         Self {
             source_name: source_name.into(),
@@ -582,8 +582,8 @@ impl CStaticAggregateArray {
             "C static aggregate arrays must have positive element size"
         );
         assert!(
-            !layout.fields().is_empty(),
-            "C static aggregate arrays must have at least one modeled field"
+            !layout.fields().is_empty() || !layout.unions().is_empty(),
+            "C static aggregate arrays must have at least one modeled field or union"
         );
         Self {
             source_name: source_name.into(),

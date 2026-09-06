@@ -376,6 +376,10 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             collect_c_expression_bitvector_variables(pointer, variables);
             collect_c_expression_bitvector_variables(value, variables);
         }
+        CStatement::CopyAggregate { target, source, .. } => {
+            collect_c_expression_bitvector_variables(target, variables);
+            collect_c_expression_bitvector_variables(source, variables);
+        }
         CStatement::Update {
             target, operand, ..
         } => {
@@ -1121,6 +1125,10 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
         collect_bitvector_variables(contents.size(), variables);
     }
     for (pointer, value) in memory.cells.iter() {
+        collect_pointer_bitvector_variables(pointer, variables);
+        collect_c_value_bitvector_variables(value, variables);
+    }
+    for ((pointer, _), value) in memory.union_cells.iter() {
         collect_pointer_bitvector_variables(pointer, variables);
         collect_c_value_bitvector_variables(value, variables);
     }

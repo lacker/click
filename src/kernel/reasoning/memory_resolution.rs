@@ -536,6 +536,9 @@ fn stored_value_at_equal_pointer(
     if let Some(value) = memory.known_value(pointer) {
         return Some(value);
     }
+    if let Some(value) = memory.known_union_value(pointer, CType::Int32) {
+        return Some(value);
+    }
     if let PointerOffsetTerm::Int32Scaled {
         value: index,
         byte_width,
@@ -544,13 +547,26 @@ fn stored_value_at_equal_pointer(
             .recorded_equality_class(index)
             .into_iter()
             .find_map(|member| {
-                memory.known_value(&Pointer {
-                    block: pointer.block.clone(),
-                    offset: PointerOffsetTerm::Int32Scaled {
-                        value: Box::new(member),
-                        byte_width: *byte_width,
-                    },
-                })
+                memory
+                    .known_value(&Pointer {
+                        block: pointer.block.clone(),
+                        offset: PointerOffsetTerm::Int32Scaled {
+                            value: Box::new(member.clone()),
+                            byte_width: *byte_width,
+                        },
+                    })
+                    .or_else(|| {
+                        memory.known_union_value(
+                            &Pointer {
+                                block: pointer.block.clone(),
+                                offset: PointerOffsetTerm::Int32Scaled {
+                                    value: Box::new(member),
+                                    byte_width: *byte_width,
+                                },
+                            },
+                            CType::Int32,
+                        )
+                    })
             })
     {
         return Some(value);
@@ -563,6 +579,17 @@ fn stored_value_at_equal_pointer(
                 && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
         })
         .map(|(_, value)| value.clone())
+        .or_else(|| {
+            memory
+                .union_cells
+                .iter()
+                .find(|((stored, value_type), _)| {
+                    *value_type == CType::Int32
+                        && stored.block == pointer.block
+                        && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
+                })
+                .map(|(_, value)| value.clone())
+        })
 }
 
 fn bitvector_terms_equal_for_memory_resolution_unmemoized(
@@ -779,6 +806,25 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
                 }
             }
         })
+        && left
+            .union_cells
+            .keys()
+            .chain(right.union_cells.keys())
+            .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .all(|(pointer, value_type)| {
+                match (
+                    left.union_cells.get(&(pointer.clone(), *value_type)),
+                    right.union_cells.get(&(pointer.clone(), *value_type)),
+                ) {
+                    (Some(left), Some(right)) => {
+                        c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                    }
+                    (None, None) => true,
+                    _ => false,
+                }
+            })
 }
 
 pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
@@ -1012,6 +1058,14 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
                 .cells
                 .iter()
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
+        && left
+            .union_cells
+            .iter()
+            .filter(|((cell_pointer, _), _)| cell_pointer.block == pointer.block)
+            .eq(right
+                .union_cells
+                .iter()
+                .filter(|((cell_pointer, _), _)| cell_pointer.block == pointer.block))
 }
 
 fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock, &CBlock)> {
@@ -1100,6 +1154,10 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
         block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
     });
     std::sync::Arc::make_mut(&mut canonical.cells).retain(|cell_pointer, value| {
+        cell_pointer.block == pointer.block
+            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+    });
+    std::sync::Arc::make_mut(&mut canonical.union_cells).retain(|(cell_pointer, _), value| {
         cell_pointer.block == pointer.block
             && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
     });

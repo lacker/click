@@ -3049,6 +3049,11 @@ fn describe_statement_head(statement: &CStatement) -> String {
                 describe_c_expression(value)
             )
         }
+        CStatement::CopyAggregate { target, source, .. } => format!(
+            "copy aggregate {} <- {}",
+            describe_c_expression(target),
+            describe_c_expression(source)
+        ),
         CStatement::Update {
             target, operand, ..
         } => format!(

@@ -471,6 +471,31 @@ fn memory_cells_definitionally_contained(
             return false;
         }
     }
+    for ((source_pointer, source_type), source_value) in source
+        .union_cells
+        .iter()
+        .filter(|((pointer, _), _)| !pointer.block.starts_with("local:"))
+    {
+        let matching = target
+            .union_cells
+            .iter()
+            .find(|((target_pointer, target_type), _)| {
+                source_type == target_type
+                    && pointers_proven_equal_for_memory_resolution(
+                        source_pointer,
+                        target_pointer,
+                        assumptions,
+                    )
+            });
+        let equal = if let Some((_, target_value)) = matching {
+            c_values_proven_equal_for_memory_resolution(source_value, target_value, assumptions)
+        } else {
+            materialized_load_is_unchanged(source_value, target, source_pointer, assumptions)
+        };
+        if !equal {
+            return false;
+        }
+    }
     true
 }
 

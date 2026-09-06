@@ -138,6 +138,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. }
         | CStatement::Assert { .. } => None,
         CStatement::ContinueWithStep { .. } => None,

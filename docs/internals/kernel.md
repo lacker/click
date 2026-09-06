@@ -344,8 +344,11 @@ shallow copies of typed
 eight-byte pointer values: the destination aggregate gets the same pointer
 provenance, not a duplicate pointee allocation or ownership transfer. The
 aggregate still has no runtime `CValue`: expressions decay to its address for
-field loads and stores, while function-pointer fields, unions, and
-other unsupported aggregate shapes remain outside this by-value slice.
+field loads and stores. Union-containing layouts retain a separate typed
+overlay for each overlapping member, so aggregate copies preserve all member
+views without pretending the members occupy disjoint cells. Direct whole-union
+values and member writes remain outside this by-value slice; other unsupported
+aggregate shapes remain outside it as well.
 
 Aggregate returns supplied by a pointer-backed whole-object expression have a
 small ABI boundary: C0's struct-pointer view is `int32*`, while the internal
