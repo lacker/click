@@ -1,9 +1,10 @@
 # Sequence Transform
 
 This synthetic project fixes a small ordinary C implementation for the
-specification sequence type. The C is the implementation boundary: future
-proof work must add sequence expressions, contracts, and tactics without
-rewriting these functions into a verifier-specific form.
+logical list model tracked by the algebraic-data-type work. The C is the
+implementation boundary: future proof work must add logical expressions,
+contracts, and tactics without rewriting these functions into a
+verifier-specific form.
 
 The functions isolate four sequence properties over fixed-size integer arrays:
 
@@ -21,5 +22,6 @@ in-order traversal.
 `sequence_transform.click` now verifies the finite-literal sequence slices
 without changing the C: exact three-cell copying, fixed two-by-two
 concatenation, in-place reversal, and exact membership observation. The
-remaining symbolic range projection and first-class sequence-value work is tracked by
-[`sequence-type.md`](../../issues/sequence-type.md).
+remaining algebraic-data-type, symbolic-list, and range-projection work is
+tracked by
+[`algebraic-data-types.md`](../../issues/algebraic-data-types.md).

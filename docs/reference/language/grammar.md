@@ -145,8 +145,9 @@ ensures [destination[0], destination[1], destination[2]]
 ```
 
 This initial slice exposes literal sequence values in equality and membership
-propositions. Typed `seq<T>` binders, general indexing, and projection of a
-symbolic memory range are not yet surface forms.
+propositions. The planned public model is a library-defined algebraic
+`List<T>` with `Nil` and `Cons`; typed list binders, general indexing, and
+projection of a symbolic memory range are not yet surface forms.
 
 ## C0-expression precedence
 

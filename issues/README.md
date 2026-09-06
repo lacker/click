@@ -63,7 +63,7 @@ C import and execution:
 Specification and proof:
 
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
-- [Add a specification sequence type](sequence-type.md)
+- [Add algebraic data types to specifications](algebraic-data-types.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
@@ -105,7 +105,7 @@ Semantics and reasoning:
 
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
-- [Add a specification sequence type](sequence-type.md)
+- [Add algebraic data types to specifications](algebraic-data-types.md)
 - [Give function-pointer parameters checked callback contracts](higher-order-callback-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)
