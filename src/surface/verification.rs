@@ -2246,7 +2246,10 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for global array `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && array.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && array.is_initialized_definition() =>
+                {
                     if previous != array {
                         return Err(ClickError::new(format!(
                             "conflicting definitions for global array `{name}` in `{source_path}`"
@@ -2255,10 +2258,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 }
                 _ => {
                     let merged = match source_arrays.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if array.is_defined() => array.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if array.is_initialized_definition() => array.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => array.clone(),
+                        Some(_) => array.clone(),
                     };
                     source_arrays.insert(name.clone(), merged);
                 }
@@ -2282,17 +2286,21 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for global array `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && array.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && array.is_initialized_definition() =>
+                {
                     return Err(ClickError::new(format!(
                         "multiple definitions of global array `{name}`"
                     )));
                 }
                 _ => {
                     let merged = match global_arrays.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if array.is_defined() => array.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if array.is_initialized_definition() => array.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => array.clone(),
+                        Some(_) => array.clone(),
                     };
                     global_arrays.insert(name.clone(), merged);
                 }

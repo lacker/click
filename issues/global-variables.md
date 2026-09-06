@@ -12,8 +12,9 @@ constant expressions in those initializers are folded before storage lowering;
 comparisons, short-circuit logical expressions, selected conditional branches,
 and checked integer casts are included; runtime loads and calls remain rejected.
 Fixed-size
-one-dimensional scalar arrays now use the same stable linkage and
-element-initialization model. Function-local scalar `static` objects and
+one-dimensional scalar arrays now use the same stable linkage,
+coalesced tentative-definition, and element-initialization model.
+Function-local scalar `static` objects and
 fixed-size one-dimensional scalar `static` arrays are also initialized once
 per program state with stable function-qualified storage.
 Basic ASCII C string literals are now lowered to function-owned,
@@ -99,6 +100,10 @@ short-circuiting, selected conditional branches, and checked integer casts.
 `mdtests/file_scope_tentative_globals.md` covers repeated tentative scalar
 declarations across translation units and their replacement by one initialized
 definition.
+`mdtests/file_scope_tentative_arrays.md` covers the same linkage behavior for
+fixed-size scalar arrays.
+`mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
+bounds remaining rejected during cross-translation-unit linking.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -112,8 +117,8 @@ propagation, and indirect-write rejection.
   scalar-array index designators,
   `extern` declarations, coalesced tentative definitions, and internal-linkage
   `static` definitions, including const-qualified scalar objects and scalar arrays, and
-  rejects multiple initialized or missing external definitions across the source
-  bundle.
+  rejects incompatible declarations, multiple initialized, or missing external
+  definitions across the source bundle.
 - The kernel models each externally linked scalar as one stable global block
   and each file-scope `static` scalar as one stable translation-unit-qualified
   block, materialized at entry with its folded integer literal, null, or stable address
@@ -122,6 +127,10 @@ propagation, and indirect-write rejection.
 - The kernel models each fixed-size one-dimensional scalar global as one stable
   array block, initialized element-by-element with bounded integer constant
   expressions folded to literals and omitted values set to zero;
+  compatible tentative declarations coalesce across translation units and one
+  initialized definition supersedes them;
+  incompatible array bounds and multiple initialized definitions remain
+  rejected;
   literal index designators select sparse elements without changing the block
   identity or linkage;
   external definitions are shared across translation units and file-scope

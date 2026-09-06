@@ -355,7 +355,9 @@ impl C0Global {
 /// A fixed-size file-scope scalar array collected from one C translation unit.
 /// `initializer` is absent for an `extern` declaration and present for the
 /// definition that supplies storage. Missing elements in a definition are
-/// represented explicitly as zero values.
+/// represented explicitly as zero values. A definition without an initializer
+/// is marked tentative so repeated declarations can be coalesced before a real
+/// initializer is selected.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0GlobalArray {
     name: String,
@@ -363,6 +365,7 @@ pub struct C0GlobalArray {
     element_type: C0Type,
     length: u32,
     initializer: Option<Vec<C0Expression>>,
+    tentative: bool,
     file_static: bool,
     constant: bool,
 }
@@ -381,6 +384,7 @@ impl C0GlobalArray {
             element_type,
             length,
             initializer: None,
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -400,6 +404,7 @@ impl C0GlobalArray {
             element_type,
             length,
             initializer: Some(initializer),
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -430,6 +435,18 @@ impl C0GlobalArray {
         self.initializer.is_some()
     }
 
+    /// Returns whether this is a C tentative definition such as `int x[3];`.
+    /// Tentative definitions have storage and are lowered with implicit zero
+    /// initializers, but may coalesce with other tentative declarations or
+    /// with one initialized definition.
+    pub fn is_tentative(&self) -> bool {
+        self.tentative
+    }
+
+    pub(crate) fn is_initialized_definition(&self) -> bool {
+        self.is_defined() && !self.is_tentative()
+    }
+
     pub fn is_file_static(&self) -> bool {
         self.file_static
     }
@@ -440,6 +457,11 @@ impl C0GlobalArray {
 
     fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    fn with_tentative(mut self, tentative: bool) -> Self {
+        self.tentative = tentative;
         self
     }
 
@@ -5768,7 +5790,8 @@ impl Parser {
                 ));
             }
             if let Some(length) = array_length {
-                let initializer = if self.peek() == Some(&Token::Equal) {
+                let has_initializer = self.peek() == Some(&Token::Equal);
+                let initializer = if has_initializer {
                     if is_extern {
                         return Err(self.error_here(
                             "`extern` global array declarations may not have an initializer",
@@ -5781,6 +5804,7 @@ impl Parser {
                 } else {
                     Some(vec![zero_initializer(parsed_type.c_type); length as usize])
                 };
+                let tentative = !has_initializer && !is_extern;
                 self.register_global_array_declaration(
                     name.clone(),
                     parsed_type.c_type,
@@ -5796,6 +5820,7 @@ impl Parser {
                                 is_file_static,
                             )
                             .with_constant(parsed_type.is_constant)
+                            .with_tentative(tentative)
                         })
                         .unwrap_or_else(|| {
                             C0GlobalArray::declaration(
@@ -6169,15 +6194,16 @@ impl Parser {
                     "conflicting linkage declarations for global array `{name}`"
                 )));
             }
-            if previous.is_defined() && declaration.is_defined() {
+            if previous.is_initialized_definition() && declaration.is_initialized_definition() {
                 return Err(
                     self.error_here(format!("duplicate definition of global array `{name}`"))
                 );
             }
         }
-        let merged = match (self.global_arrays.get(&name), declaration.is_defined()) {
-            (Some(previous), true) if !previous.is_defined() => declaration,
-            (Some(previous), false) => previous.clone(),
+        let merged = match self.global_arrays.get(&name) {
+            Some(previous) if previous.is_initialized_definition() => previous.clone(),
+            Some(_) if declaration.is_initialized_definition() => declaration,
+            Some(previous) if previous.is_tentative() => previous.clone(),
             _ => declaration,
         };
         self.global_arrays.insert(name, merged);

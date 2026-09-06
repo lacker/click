@@ -117,7 +117,9 @@ Likely additions:
   translation-unit-qualified storage, while function-local scalar `static`
   objects use stable function-qualified storage; both support one-time
   literal/zero initialization and explicit contract footprints. Fixed-size
-  one-dimensional scalar arrays are also supported for function-local statics;
+  one-dimensional scalar arrays now include coalesced tentative declarations
+  and one initialized definition across translation units, and are also
+  supported for function-local statics;
   aggregate, multidimensional, incomplete, and dynamic-initialization cases
   remain open; zero-initialized and positional compile-time initialized
   scalar-field aggregate globals, aggregate arrays, and function-local statics

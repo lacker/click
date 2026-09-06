@@ -538,6 +538,7 @@ fn c0_collects_file_scope_scalar_arrays() {
 
     assert_eq!(functions[0].global_arrays().len(), 2);
     let table = &functions[0].global_arrays()["table"];
+    assert!(!table.is_tentative());
     assert_eq!(table.element_type(), syntax::C0Type::Int32);
     assert_eq!(table.length(), 3);
     assert_eq!(
@@ -568,6 +569,86 @@ fn c0_collects_file_scope_scalar_arrays() {
             crate::kernel::int32(0)
         ]
     );
+}
+
+#[test]
+fn c0_coalesces_tentative_scalar_array_declarations_before_initialization() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        extern int32 table[3];
+        int32 table[3];
+        int32 table[3];
+
+        int32 read_table() {
+            return table[0];
+        }
+        "#,
+        "tentative-array.c",
+    )
+    .expect("repeated tentative scalar-array declarations should parse");
+
+    let table = &functions[0].global_arrays()["table"];
+    assert!(table.is_defined());
+    assert!(table.is_tentative());
+    assert_eq!(
+        functions[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(0),
+            crate::kernel::int32(0),
+            crate::kernel::int32(0)
+        ]
+    );
+
+    let initialized = syntax::parse_functions_for_source(
+        r#"
+        int32 table[3];
+        int32 table[3] = {4, 5};
+        extern int32 table[3];
+
+        int32 read_table() {
+            return table[1];
+        }
+        "#,
+        "initialized-array.c",
+    )
+    .expect("an initialized array definition should supersede tentative declarations");
+    let table = &initialized[0].global_arrays()["table"];
+    assert!(table.is_defined());
+    assert!(!table.is_tentative());
+    assert_eq!(
+        initialized[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(4),
+            crate::kernel::int32(5),
+            crate::kernel::int32(0)
+        ]
+    );
+}
+
+#[test]
+fn c0_rejects_conflicting_tentative_scalar_array_declarations() {
+    for (source, expected) in [
+        (
+            r#"
+            int32 table[3] = {1};
+            int32 table[3] = {2};
+            int32 read_table() { return table[0]; }
+            "#,
+            "duplicate definition of global array `table`",
+        ),
+        (
+            r#"
+            int32 table[3];
+            int32 table[2];
+            int32 read_table() { return table[0]; }
+            "#,
+            "conflicting declarations for global array `table`",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("conflicting scalar-array declarations should be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
 }
 
 #[test]
