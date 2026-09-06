@@ -2467,6 +2467,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             .map(|definition| CCompositeResourceDefinition {
                 name: definition.name.clone(),
                 parameters: definition.parameters.clone(),
+                witnesses: definition.witnesses.clone(),
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_bitvector_variable_in_spec_proposition(condition, from, to)
                 }),
@@ -4917,6 +4918,7 @@ fn substitute_pointer_variable_in_c_function(
             .map(|definition| CCompositeResourceDefinition {
                 name: definition.name.clone(),
                 parameters: definition.parameters.clone(),
+                witnesses: definition.witnesses.clone(),
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_pointer_variable_in_spec_proposition(condition, from, to)
                 }),

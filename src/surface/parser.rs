@@ -607,8 +607,34 @@ impl Parser {
         };
         let mut contains = Vec::new();
         let mut facts = Vec::new();
+        let mut witnesses: Vec<ResourceWitness> = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
+                Some("let") => {
+                    let binding = self.parse_contract_let_binding()?;
+                    let ContractLetBindingKind::Where(condition) = binding.kind else {
+                        return Err(self.error(
+                            "a resource body `let` must be `let name: type where proposition;`",
+                        ));
+                    };
+                    let c_type = binding.c_type.expect("`let ... where` carries its type");
+                    if !c_type.is_pointer() {
+                        return Err(self.error(format!(
+                            "resource witness `{}` must have a pointer type",
+                            binding.name
+                        )));
+                    }
+                    if witnesses.iter().any(|witness| witness.name == binding.name) {
+                        return Err(
+                            self.error(format!("duplicate resource witness `{}`", binding.name))
+                        );
+                    }
+                    witnesses.push(ResourceWitness {
+                        name: binding.name,
+                        c_type,
+                    });
+                    facts.push(condition);
+                }
                 Some("contains") => {
                     self.position += 1;
                     contains.push(self.parse_composite_resource_contains_clause()?);
@@ -631,12 +657,12 @@ impl Parser {
                 }
                 Some(name) => {
                     return Err(self.error(format!(
-                        "expected `contains`, `owns`, `views`, or `fact` in resource body, got `{name}`"
+                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got `{name}`"
                     )));
                 }
                 None => {
                     return Err(self.error(
-                        "expected `contains`, `owns`, `views`, or `fact` in resource body, got end of input",
+                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got end of input",
                     ));
                 }
             }
@@ -653,6 +679,7 @@ impl Parser {
             condition,
             contains,
             facts,
+            witnesses,
         })
     }
 

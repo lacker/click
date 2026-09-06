@@ -210,6 +210,25 @@ Regressions are `mdtests/tagged_pointer_*.md`. The C0 front end no longer
 carries a struct identity through a cast to an integer, so
 `(unsigned long)p + 1` is integer arithmetic.
 
+Slice 4 landed the same day: a resource body binds a pointer witness with
+`let next: struct node* where ...;` (`docs/reference/language/index.md`);
+its identity is inferred from the `where` fact's word when the word is a
+recorded tagged address, otherwise from the unique held child fact a fold
+would consume, and otherwise a fresh symbolic pointer named by the
+instantiating body; `object(p)` cells take the struct layout's field types
+so a `uint64` word reads back as itself (pointer fields keep their int32
+words); and `decreases resource` accepts a recursive call whose argument
+the pure kernel decides equal to a witness child from the instantiated
+definition. `examples/marked-linked-list/` verifies with a README.
+Regressions are `mdtests/resource_witness_*.md`,
+`mdtests/object_resource_uint64_field.md`, and
+`mdtests/c_decreases_resource_witness_child.md`. Not yet covered from the
+intended negative regressions: modification of an address bit under a mask
+and a tag mask that leaves a tag bit set as separate fixtures (the unmasked
+cast-back and carry fixtures reject the resulting casts), and the
+`rb_parent`-family functions verified against `rb_node` itself; those remain
+open under this issue.
+
 1. The provenance-carrying integer term, the pointer-to-`unsigned long`
    cast, cast-back when the term is syntactically an untagged address, and
    the equality rule. Covers `rb_link_node` and `RB_EMPTY_NODE`.

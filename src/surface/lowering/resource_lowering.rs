@@ -253,7 +253,7 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
     memory
 }
 
-fn visit_struct_field_cells(
+pub(in crate::surface) fn visit_struct_field_cells(
     field: &syntax::C0StructField,
     element_pointer: &Pointer,
     mut memory: CMemory,
@@ -333,6 +333,31 @@ fn materialize_access_segment_cells(
         )));
     }
 
+    // A complete object (`object(p)`) is one struct at the base: its cells
+    // take the field types of the layout, so a `uint64` or pointer field
+    // reads back with its own type rather than as int32 words.
+    if let Some(layout) = object_segment_layout(parameters, source_segment) {
+        let base_memory = memory.clone();
+        for field in layout.fields().values() {
+            memory = visit_struct_field_cells(
+                field,
+                &segment.base,
+                memory,
+                |memory, pointer, element_type| {
+                    if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                        return memory;
+                    }
+                    let load = crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(base_memory.clone()),
+                        pointer.clone(),
+                    );
+                    let value = symbolic_value_from_load(&pointer, element_type, load);
+                    memory.store(pointer, value)
+                },
+            );
+        }
+        return Ok(memory);
+    }
     if let Some(layout) = contract_segment_struct_layout(parameters, source_segment) {
         let base_memory = memory.clone();
         for index in *start..*end {
@@ -1209,6 +1234,12 @@ pub(in crate::surface) fn concrete_loadable_block(
             let Bitvector32Term::Constant(end) = segment.end else {
                 return Ok(None);
             };
+            if let Some(layout) = object_segment_layout(parameters, source_segment) {
+                return Ok(Some((
+                    format!("{:?}", segment.source),
+                    object_range_seed(segment.base, layout),
+                )));
+            }
             let element_width = contract_segment_element_width(parameters, &segment.source);
             let bytes = end
                 .checked_mul(element_width)
@@ -1268,6 +1299,15 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
                 "resource segment has an end before its start: {start}..{end}"
             )));
         }
+        if let Some(layout) = object_segment_layout(parameters, source_segment)
+            && *start == 0
+        {
+            result.push((
+                format!("{:?}", segment.source),
+                object_range_seed(segment.base, layout),
+            ));
+            continue;
+        }
         let element_width = contract_segment_element_width(parameters, &segment.source);
         let element_count = end - start;
         let bytes = element_count
@@ -1323,6 +1363,50 @@ pub(in crate::surface) fn loadable_base_and_bytes(
         Requirement::Labeled { .. } | Requirement::Proposition(_) | Requirement::Resource(_) => {
             Err(ClickError::new("expected loadable requirement"))
         }
+    }
+}
+
+/// The struct layout behind `object(p)` for a struct-pointer parameter `p`.
+/// Such a segment is one complete object, not a run of int32 words, so its
+/// cells take the field types of the layout.
+pub(in crate::surface) fn object_segment_layout<'a>(
+    parameters: &'a [syntax::C0Parameter],
+    segment: &ContractSegment,
+) -> Option<&'a syntax::C0StructLayout> {
+    let ContractSegmentSurface::Object(struct_name) = &segment.surface else {
+        return None;
+    };
+    // The base is the named parameter while the clause is written against
+    // it, and a pointer value once a body has been instantiated for a held
+    // resource; in both cases the surface names the struct, whose layout
+    // any parameter of that struct type carries.
+    if let CExpression::Variable(name) = &segment.base
+        && let Some(layout) = parameters
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .and_then(syntax::C0Parameter::pointee_struct_layout)
+    {
+        return Some(layout);
+    }
+    parameters
+        .iter()
+        .find(|parameter| parameter.struct_name() == Some(struct_name.as_str()))
+        .and_then(|parameter| {
+            parameter
+                .pointee_struct_layout()
+                .or_else(|| parameter.struct_layout())
+        })
+}
+
+/// One complete struct object as a memory range seed: a single element of
+/// the layout's size, materialized field by field.
+fn object_range_seed(base: Pointer, layout: &syntax::C0StructLayout) -> ConcreteMemoryRangeSeed {
+    ConcreteMemoryRangeSeed {
+        base,
+        bytes: layout.size_bytes(),
+        element_width: layout.size_bytes(),
+        element_type: None,
+        struct_layout: Some(layout.clone()),
     }
 }
 
@@ -1491,7 +1575,7 @@ fn symbolic_value_for_element(memory: &CMemory, pointer: &Pointer, element_type:
     symbolic_value_from_load(pointer, element_type, load)
 }
 
-fn symbolic_value_from_load(
+pub(in crate::surface) fn symbolic_value_from_load(
     pointer: &Pointer,
     element_type: CType,
     load: Bitvector32Term,

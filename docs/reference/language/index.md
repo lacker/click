@@ -625,6 +625,27 @@ resource list(node: struct node*) {
 }
 ```
 
+A body may also bind an existential pointer with `let name: type where
+proposition;`. The witness is in scope for every later clause, and the `where`
+proposition is one of the body's pure facts:
+
+<!-- verified-example: mdtests/resource_witness_unfold_fold.md -->
+```click
+resource packed(node: struct node*) {
+    owns node->word;
+    let next: struct node* where aligned(next, 8) and node->word == address(next) + (node->word & 1);
+}
+```
+
+This is how a resource describes a pointer packed into an integer word, such
+as a tail pointer with a mark bit or an `rb_node` parent with its color. The
+witness needs no syntax at `fold` or `unfold`. Unfolding binds it to a fresh
+symbolic pointer constrained by the `where` fact, and the program's own cast
+`(struct node*)(node->word & ~1)` then recovers exactly that pointer. Folding
+binds it to the recorded origin of the word the `where` fact relates it to, so
+after `node->word = (unsigned long)tail;` the witness is `tail`. A word with no
+recorded origin cannot fold, and the diagnostic names the missing body fact.
+
 There is no `else`: when the guard is false, the body is empty. The guard must
 be load-free, because it decides which memory resource facts exist and therefore
 cannot depend on reading that same memory. A guarded body may directly contain

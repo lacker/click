@@ -926,12 +926,22 @@ impl CCompositeResourceDefinition {
         Self {
             name: name.into(),
             parameters,
+            witnesses: Vec::new(),
             condition,
             recursive,
             counted_population: false,
             contains,
             facts,
         }
+    }
+
+    pub fn with_witnesses(mut self, witnesses: Vec<CParameter>) -> Self {
+        self.witnesses = witnesses;
+        self
+    }
+
+    pub fn witnesses(&self) -> &[CParameter] {
+        &self.witnesses
     }
 
     pub fn counted_population(
@@ -944,6 +954,7 @@ impl CCompositeResourceDefinition {
         Self {
             name: name.into(),
             parameters,
+            witnesses: Vec::new(),
             condition,
             recursive: false,
             counted_population: true,

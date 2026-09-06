@@ -5,6 +5,9 @@ mod contract_environment;
 mod contract_substitution;
 mod proposition_lowering;
 mod resource_lowering;
+pub(in crate::surface) use resource_lowering::{
+    object_segment_layout, symbolic_value_from_load, visit_struct_field_cells,
+};
 mod source_layout;
 pub(super) use annotations::*;
 pub(super) use contract_environment::*;

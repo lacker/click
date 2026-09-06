@@ -2068,6 +2068,8 @@ pub(super) fn initial_claim_context(
         &arguments,
         state,
         claim_label,
+        predicate_environment,
+        click_function_environment,
     )?;
     let include_owned_composite_cores = function_block
         .structural_clauses()

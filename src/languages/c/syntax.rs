@@ -1163,6 +1163,10 @@ pub struct C0Parameter {
     pointee_constant: bool,
     struct_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
+    /// The layout of the pointee when the parameter is a pointer to a struct,
+    /// so `object(p)` resources can type the object's cells field by field.
+    /// Distinct from `struct_layout`, which marks struct values and arrays.
+    pointee_struct_layout: Option<C0StructLayout>,
     function_pointer_signature: Option<C0FunctionPointerSignature>,
     /// The ABI width of one element when the source parameter was declared as
     /// an array of structs. The public C0 type remains the compatible
@@ -2057,6 +2061,7 @@ impl C0Parameter {
             pointee_constant: false,
             struct_name,
             struct_layout: None,
+            pointee_struct_layout: None,
             function_pointer_signature: None,
             array_element_width: None,
         }
@@ -2102,6 +2107,10 @@ impl C0Parameter {
 
     pub fn struct_layout(&self) -> Option<&C0StructLayout> {
         self.struct_layout.as_ref()
+    }
+
+    pub fn pointee_struct_layout(&self) -> Option<&C0StructLayout> {
+        self.pointee_struct_layout.as_ref()
     }
 
     pub fn array_element_width(&self) -> Option<u32> {
@@ -5502,6 +5511,7 @@ impl Parser {
                     constant: false,
                     pointee_constant: false,
                     struct_layout: None,
+                    pointee_struct_layout: None,
                     function_pointer_signature: Some(signature),
                     struct_name: None,
                     array_element_width: None,
@@ -5580,6 +5590,13 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         struct_layout: struct_value_layout,
+                        pointee_struct_layout: (c_type.is_pointer() && !array_parameter)
+                            .then(|| {
+                                struct_name
+                                    .as_ref()
+                                    .and_then(|name| self.structs.get(name).cloned())
+                            })
+                            .flatten(),
                         function_pointer_signature: None,
                         struct_name,
                         array_element_width: None,
@@ -5610,6 +5627,7 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
+                        pointee_struct_layout: None,
                         function_pointer_signature: None,
                         struct_name,
                         array_element_width: Some(element_width),
@@ -5632,6 +5650,7 @@ impl Parser {
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
                     .cloned(),
+                pointee_struct_layout: None,
                 function_pointer_signature: None,
                 struct_name,
                 array_element_width: None,

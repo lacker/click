@@ -2756,25 +2756,35 @@ pub(in crate::surface) fn composite_resource_definitions(
             predicate_environment,
             click_function_environment,
         )?;
+        let witnesses = body
+            .witnesses()
+            .iter()
+            .map(|witness| {
+                crate::kernel::CParameter::new(witness.name(), witness.c_type().to_kernel_type())
+            })
+            .collect();
         let observes_its_population = body.facts().iter().any(proposition_contains_resource_count);
-        definitions.push(if observes_its_population {
-            CCompositeResourceDefinition::counted_population(
-                definition.name(),
-                parameters,
-                condition,
-                contains,
-                facts,
-            )
-        } else {
-            CCompositeResourceDefinition::new(
-                definition.name(),
-                parameters,
-                condition,
-                recursive,
-                contains,
-                facts,
-            )
-        });
+        definitions.push(
+            if observes_its_population {
+                CCompositeResourceDefinition::counted_population(
+                    definition.name(),
+                    parameters,
+                    condition,
+                    contains,
+                    facts,
+                )
+            } else {
+                CCompositeResourceDefinition::new(
+                    definition.name(),
+                    parameters,
+                    condition,
+                    recursive,
+                    contains,
+                    facts,
+                )
+            }
+            .with_witnesses(witnesses),
+        );
     }
     Ok(definitions)
 }

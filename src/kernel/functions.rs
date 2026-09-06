@@ -1788,7 +1788,7 @@ fn coerce_function_return_value(
     coerce_c_value_to_type(value, function.return_type(), obligations, assumptions)
 }
 
-fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
+pub(super) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
         CType::VoidPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
@@ -3848,6 +3848,196 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
     ))
 }
 
+/// Binds a composite definition's existential witnesses as locals of the
+/// body-evaluation state, after its parameters. A witness related to a word
+/// by a `where` fact of the shape `word == address(witness) + tag` is bound
+/// to that word's recorded origin, so folding and unfolding the same body
+/// agree on it; a witness with no recorded origin yet (an unfold whose facts
+/// are about to introduce it) is bound to a fresh symbolic pointer chosen
+/// deterministically from the variables already in use.
+pub(super) fn bind_composite_witnesses(
+    definition: &CCompositeResourceDefinition,
+    arguments: &[CValue],
+    state: &mut CState,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CValue>> {
+    let held = state.resources.clone();
+    bind_composite_witnesses_with_held(definition, arguments, state, &held, assumptions)
+}
+
+/// [`bind_composite_witnesses`] with the held resource facts supplied
+/// separately, for callers whose evaluation state carries no resources.
+pub(super) fn bind_composite_witnesses_with_held(
+    definition: &CCompositeResourceDefinition,
+    arguments: &[CValue],
+    state: &mut CState,
+    held: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CValue>> {
+    if definition.witnesses().is_empty() {
+        return Some(Vec::new());
+    }
+    let mut values = Vec::new();
+    for (index, witness) in definition.witnesses().iter().enumerate() {
+        let word = definition
+            .facts()
+            .iter()
+            .find_map(|fact| witness_origin_word(fact, witness.name()))
+            .and_then(|word| {
+                let mut budget = ExecutionBudget::default();
+                let paths = super::spec::evaluate_spec_expression_paths_with_loop_entry(
+                    state,
+                    word,
+                    None,
+                    assumptions,
+                    &mut budget,
+                )
+                .ok()?;
+                let [path] = paths.as_slice() else {
+                    return None;
+                };
+                match &path.value {
+                    CValue::UInt64(term) | CValue::Int64(term) => Some(term.clone()),
+                    _ => None,
+                }
+            });
+        let origin = word
+            .as_ref()
+            .and_then(|term| {
+                if term.uint64_as_const() == Some(0) {
+                    return Some(Pointer::null());
+                }
+                let mut used = super::eval::pointer_tags::UsedFacts::new();
+                super::eval::pointer_tags::tagged_address_form(term, assumptions, &mut used)
+                    .map(|form| form.pointer)
+            })
+            // A body that contains a composite resource under the witness
+            // names it through the resource context: when exactly one held
+            // fact of that composite exists, its argument is the witness a
+            // fold consumes. This is the fold's own obligation read back,
+            // not a search.
+            .or_else(|| {
+                held_child_witness(definition, witness.name(), arguments, held, assumptions)
+            });
+        // A witness with no recorded origin is named by the content of the
+        // instance that introduces it: the definition, the witness position,
+        // the argument values, and the word's own value term. The word term
+        // survives materializing the body's cells, which store that same
+        // symbolic load, and changes when the word is stored, so every site
+        // that instantiates the same body at the same word names the same
+        // pointer while a later store names another.
+        let pointer = origin.unwrap_or_else(|| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            definition.name().hash(&mut hasher);
+            index.hash(&mut hasher);
+            arguments.hash(&mut hasher);
+            // The canonical form names a load by its cell rather than by
+            // the snapshot it was read from, so the key is the same before
+            // and after the body's cells are materialized.
+            word.as_ref()
+                .map(super::eval::canonical_term)
+                .hash(&mut hasher);
+            Pointer::symbolic(Variable(4_000_000_000 + hasher.finish() % 4_000_000_000))
+        });
+        let value = CValue::typed_pointer(pointer, witness.c_type());
+        state
+            .locals
+            .set_typed(witness.name().to_string(), value.clone(), witness.c_type());
+        values.push(value);
+    }
+    Some(values)
+}
+
+/// The unique held composite fact that a `contains name(witness)` clause of
+/// the body would consume, if the body has such a clause and exactly one
+/// held fact of that composite exists.
+fn held_child_witness(
+    definition: &CCompositeResourceDefinition,
+    witness: &str,
+    arguments: &[CValue],
+    resources: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> Option<Pointer> {
+    // The body's own instance is never its own child.
+    let own_pointers = arguments
+        .iter()
+        .filter_map(|argument| match argument {
+            CValue::Pointer(pointer) => Some(pointer.pointer().clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let child_name = definition.contains().iter().find_map(|spec| match spec {
+        CResourceSpec::Composite {
+            name, arguments, ..
+        } if matches!(arguments.as_slice(), [CExpression::Variable(argument)] if argument == witness) => {
+            Some(name.as_str())
+        }
+        _ => None,
+    })?;
+    let mut candidates = resources
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Composite { name, arguments } if name == child_name => {
+                match arguments.as_slice() {
+                    [CValue::Pointer(pointer)] => Some(pointer.pointer().clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        // A candidate in the block of one of the body's own pointers must be
+        // proven a different pointer.
+        .filter(|pointer| {
+            own_pointers.iter().all(|own| {
+                own.block != pointer.block
+                    || assumptions
+                        .decide(&ConditionTerm::pointer_equal(pointer.clone(), own.clone()))
+                        == Some(false)
+            })
+        });
+    let first = candidates.next()?;
+    candidates.all(|other| other == first).then_some(first)
+}
+
+/// The word a `where` fact relates `witness` to: for `E == address(witness)`
+/// or `E == address(witness) + t` (either operand order, under `and`), the
+/// expression `E`.
+fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&'a SpecExpression> {
+    fn mentions_witness_address(expression: &SpecExpression, witness: &str) -> bool {
+        match expression {
+            SpecExpression::CExpression(CExpression::Cast {
+                expression,
+                target_type: CType::UInt64 | CType::Int64,
+            }) => matches!(expression.as_ref(), CExpression::Variable(name) if name == witness),
+            SpecExpression::Add(left, right) => {
+                mentions_witness_address(left, witness) || mentions_witness_address(right, witness)
+            }
+            _ => false,
+        }
+    }
+    match fact {
+        SpecProposition::And(left, right) => {
+            witness_origin_word(left, witness).or_else(|| witness_origin_word(right, witness))
+        }
+        SpecProposition::Comparison {
+            left,
+            operator: CComparisonOperator::Equal,
+            right,
+        } => {
+            if mentions_witness_address(right, witness) {
+                Some(left)
+            } else if mentions_witness_address(left, witness) {
+                Some(right)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn expand_composite_resource_fact(
     context: &ResourceContext,
     composite: &CResourceFact,
@@ -3895,6 +4085,7 @@ pub(super) fn expand_composite_resource_fact_with_children(
             parameter.c_type(),
         );
     }
+    bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut budget = ExecutionBudget::default();
     let evaluation_assumptions = assumptions
         .clone()
@@ -4401,6 +4592,12 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                         parameter.c_type(),
                     );
                 }
+                bind_composite_witnesses(
+                    definition,
+                    &arguments,
+                    &mut population_state,
+                    assumptions,
+                )?;
                 let mut budget = ExecutionBudget::default();
                 let evaluation_assumptions = assumptions
                     .clone()
@@ -4425,6 +4622,12 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                         parameter.c_type(),
                     );
                 }
+                bind_composite_witnesses(
+                    definition,
+                    &arguments,
+                    &mut population_state,
+                    assumptions,
+                )?;
                 let mut budget = ExecutionBudget::default();
                 let evaluation_assumptions = assumptions
                     .clone()
@@ -4456,6 +4659,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                 parameter.c_type(),
             );
         }
+        bind_composite_witnesses(definition, &arguments, &mut population_state, assumptions)?;
         let mut budget = ExecutionBudget::default();
         let evaluation_assumptions = assumptions
             .clone()
@@ -4594,6 +4798,7 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
             parameter.c_type(),
         );
     }
+    bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut budget = ExecutionBudget::default();
     let evaluation_assumptions = assumptions
         .clone()
@@ -4675,6 +4880,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
             parameter.c_type(),
         );
     }
+    bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut budget = ExecutionBudget::default();
     let evaluation_assumptions = assumptions
         .clone()
@@ -4753,6 +4959,7 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
             parameter.c_type(),
         );
     }
+    bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut result = Vec::new();
     let mut budget = ExecutionBudget::default();
     let mut fact_assumptions = assumptions.clone();

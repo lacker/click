@@ -275,6 +275,26 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
 /// The equality-graph vertex key for a term is its canonical form, so a raw
 /// load term and the load variable for it share one vertex: the graph
 /// joins equal terms by construction rather than by per-query bridging.
+/// The memory snapshot and cell a load term reads, for a raw load or a
+/// registered load variable.
+fn load_snapshot_and_pointer(term: &Bitvector32Term) -> Option<(CMemory, Pointer)> {
+    match term {
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Some(((**memory).clone(), pointer.as_ref().clone()))
+        }
+        // A load variable's canonical registration carries a placeholder
+        // snapshot; its origin registration is the live snapshot it was
+        // first minted from, which frame evidence can relate to later
+        // snapshots.
+        Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable) => {
+            crate::kernel::eval::registered_load_origin_for_variable(variable)
+                .or_else(|| crate::kernel::registered_load_for_variable(variable))
+                .map(|(memory, pointer)| ((*memory).clone(), pointer))
+        }
+        _ => None,
+    }
+}
+
 fn equality_graph_term_key(term: &Bitvector32Term) -> Bitvector32Term {
     crate::kernel::eval::canonical_term(term)
 }
@@ -1448,20 +1468,54 @@ impl PureFactContext {
     }
 
     /// The terms recorded as 64-bit equal to `term` by one exact fact, each
-    /// with the stored fact so a certificate can cite it exactly.
+    /// with the stored fact so a certificate can cite it exactly. A load is
+    /// also matched against facts about the same cell in another memory
+    /// snapshot when the kernel's frame evidence shows the cell unchanged
+    /// between them, so a resource fact recorded at entry still describes
+    /// the word after resource rewrites that touched no memory.
     pub(in crate::kernel) fn recorded_uint64_equals(
         &self,
         term: &Bitvector32Term,
     ) -> Vec<(Bitvector32Term, ConditionTerm)> {
-        self.bitvector64_equality_index()
+        let exact = self
+            .bitvector64_equality_index()
             .get(term)
             .map(|neighbors| {
                 neighbors
                     .iter()
                     .map(|(equal, fact)| (equal.clone(), fact.clone()))
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !exact.is_empty() {
+            return exact;
+        }
+        let Some((query_memory, pointer)) = load_snapshot_and_pointer(term) else {
+            return exact;
+        };
+        let mut transported = Vec::new();
+        for (condition, value) in self.condition_facts.iter() {
+            let (ConditionTerm::Bitvector64Equal(left, right), true) = (condition, value) else {
+                continue;
+            };
+            for (side, other) in [(left, right), (right, left)] {
+                let Some((fact_memory, fact_pointer)) = load_snapshot_and_pointer(side) else {
+                    continue;
+                };
+                if fact_pointer != pointer
+                    || !crate::kernel::memory_provenance::c_memory_load_is_unchanged(
+                        &fact_memory,
+                        &query_memory,
+                        &pointer,
+                        self,
+                    )
+                {
+                    continue;
+                }
+                transported.push((other.as_ref().clone(), condition.clone()));
+            }
+        }
+        transported
     }
 
     fn bitvector_equality_index(

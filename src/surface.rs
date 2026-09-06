@@ -298,6 +298,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "requires",
     "resource",
     "resource-clause",
+    "resource-witness",
     "separate",
     "theorem",
     "verifying",
@@ -426,6 +427,27 @@ pub struct CompositeResourceBody {
     condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
+    /// Existential witnesses (`let next: struct node* where P;`). The
+    /// `where` proposition is also one of `facts`; the witness name is in
+    /// scope for every later clause of the body.
+    witnesses: Vec<ResourceWitness>,
+}
+
+/// A pointer the body of a composite resource asserts to exist.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceWitness {
+    name: String,
+    c_type: C0Type,
+}
+
+impl ResourceWitness {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3478,6 +3500,10 @@ impl CompositeResourceBody {
 
     pub fn facts(&self) -> &[ClickProposition] {
         &self.facts
+    }
+
+    pub fn witnesses(&self) -> &[ResourceWitness] {
+        &self.witnesses
     }
 }
 

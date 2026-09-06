@@ -1293,6 +1293,11 @@ pub struct CPredicateUnfolding {
 pub struct CCompositeResourceDefinition {
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
+    /// Existential witnesses bound inside the body (`let next: T where P`).
+    /// Each is bound like a parameter when the body is instantiated: to the
+    /// recorded origin of the word its `where` fact relates it to, or to a
+    /// fresh symbolic pointer when no origin is recorded yet.
+    pub(super) witnesses: Vec<CParameter>,
     pub(super) condition: Option<SpecProposition>,
     pub(super) recursive: bool,
     pub(super) counted_population: bool,

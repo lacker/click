@@ -181,6 +181,7 @@ fn expand_declared_composite_resource_body(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
+        witnesses: composite_body.witnesses.clone(),
         condition: composite_body
             .condition
             .map(|condition| expand_declared_resource_proposition(condition, resource_definitions))

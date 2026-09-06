@@ -1473,6 +1473,48 @@ impl Bitvector32Term {
     }
 
     pub(crate) fn uint64_bitwise_and(left: Self, right: Self) -> Self {
+        // Masking a masked term masks by the intersection, an exact bit
+        // identity that keeps tag arithmetic such as `(w & 1) & ~1` in a
+        // shape the decision rules recognize.
+        if let (Self::UInt64BitwiseAnd(inner_left, inner_right), Some(outer)) =
+            (&left, right.uint64_as_const())
+        {
+            match (inner_left.uint64_as_const(), inner_right.uint64_as_const()) {
+                (None, Some(inner)) => {
+                    return Self::uint64_bitwise_and(
+                        inner_left.as_ref().clone(),
+                        Self::UInt64Constant(inner & outer),
+                    );
+                }
+                (Some(inner), None) => {
+                    return Self::uint64_bitwise_and(
+                        inner_right.as_ref().clone(),
+                        Self::UInt64Constant(inner & outer),
+                    );
+                }
+                _ => {}
+            }
+        }
+        if right.uint64_as_const() == Some(0) || left.uint64_as_const() == Some(0) {
+            return Self::UInt64Constant(0);
+        }
+        // A mask distributes over an or with a constant: `(x | c) & m` is
+        // `(x & m) | (c & m)`, so a tag set inside the mask reads back.
+        if let (Self::UInt64BitwiseOr(inner_left, inner_right), Some(mask)) =
+            (&left, right.uint64_as_const())
+        {
+            let inner = match (inner_left.uint64_as_const(), inner_right.uint64_as_const()) {
+                (None, Some(constant)) => Some((inner_left.as_ref().clone(), constant)),
+                (Some(constant), None) => Some((inner_right.as_ref().clone(), constant)),
+                _ => None,
+            };
+            if let Some((other, constant)) = inner {
+                return Self::uint64_bitwise_or(
+                    Self::uint64_bitwise_and(other, Self::UInt64Constant(mask)),
+                    Self::UInt64Constant(constant & mask),
+                );
+            }
+        }
         match (uint64_constant(&left), uint64_constant(&right)) {
             (Some(left), Some(right)) => Self::UInt64Constant(left & right),
             _ => Self::UInt64BitwiseAnd(Box::new(left), Box::new(right)),
@@ -1480,6 +1522,24 @@ impl Bitvector32Term {
     }
 
     pub(crate) fn uint64_bitwise_or(left: Self, right: Self) -> Self {
+        // An or with a constant that covers every bit a masked term can
+        // have is that constant: `(x & m) | k` is `k` when `m` lies inside
+        // `k`.
+        if let (Self::UInt64BitwiseAnd(masked_left, masked_right), Some(constant)) =
+            (&left, right.uint64_as_const())
+            && let Some(mask) = masked_left
+                .uint64_as_const()
+                .or_else(|| masked_right.uint64_as_const())
+            && mask & !constant == 0
+        {
+            return Self::UInt64Constant(constant);
+        }
+        if left.uint64_as_const() == Some(0) {
+            return right;
+        }
+        if right.uint64_as_const() == Some(0) {
+            return left;
+        }
         match (uint64_constant(&left), uint64_constant(&right)) {
             (Some(left), Some(right)) => Self::UInt64Constant(left | right),
             _ => Self::UInt64BitwiseOr(Box::new(left), Box::new(right)),

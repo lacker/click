@@ -443,11 +443,23 @@ fn validate_resource_definition(
     let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
-    let variables = definition
+    let mut variables = definition
         .parameters()
         .iter()
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
+    for witness in composite_body.witnesses() {
+        if variables
+            .insert(witness.name().to_string(), witness.c_type())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "resource `{}` witness `{}` shadows a parameter",
+                definition.name(),
+                witness.name()
+            )));
+        }
+    }
     if let Some(condition) = composite_body.condition() {
         if proposition_contains_old_expression(condition) {
             return Err(ClickError::new(format!(
@@ -588,38 +600,59 @@ fn validate_resource_fact_memory_ownership(
         &mut reads,
         definition.name(),
     )?;
-    let values = pure_theorem_parameter_values(definition.parameters());
-    let arguments = definition
-        .parameters()
-        .iter()
-        .map(|parameter| {
-            CExpression::Value(
-                values
-                    .get(parameter.name())
-                    .expect("resource parameter value should exist")
-                    .clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let substitutions = definition
+    let mut values = pure_theorem_parameter_values(definition.parameters());
+    // Witnesses are validated as opaque symbolic pointers: they exist for
+    // the body's own clauses exactly as parameters do.
+    for (index, witness) in composite_body.witnesses().iter().enumerate() {
+        values.insert(
+            witness.name().to_string(),
+            crate::kernel::CValue::typed_pointer(
+                crate::kernel::Pointer::symbolic(crate::kernel::Variable(4_100_000 + index as u64)),
+                witness.c_type().to_kernel_type(),
+            ),
+        );
+    }
+    let bound_names = definition
         .parameters()
         .iter()
         .map(|parameter| {
             (
                 parameter.name().to_string(),
-                ContractExpression::CFragment(CExpression::Variable(parameter.name().to_string())),
+                parameter.c_type(),
+                parameter.struct_name().map(str::to_string),
+            )
+        })
+        .chain(
+            composite_body
+                .witnesses()
+                .iter()
+                .map(|witness| (witness.name().to_string(), witness.c_type(), None)),
+        )
+        .collect::<Vec<_>>();
+    let arguments = bound_names
+        .iter()
+        .map(|(name, _, _)| {
+            CExpression::Value(
+                values
+                    .get(name)
+                    .expect("resource parameter value should exist")
+                    .clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let substitutions = bound_names
+        .iter()
+        .map(|(name, _, _)| {
+            (
+                name.clone(),
+                ContractExpression::CFragment(CExpression::Variable(name.clone())),
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let validation_parameters = definition
-        .parameters()
+    let validation_parameters = bound_names
         .iter()
-        .map(|parameter| {
-            syntax::C0Parameter::new(
-                parameter.c_type(),
-                parameter.name().to_string(),
-                parameter.struct_name().map(str::to_string),
-            )
+        .map(|(name, c_type, struct_name)| {
+            syntax::C0Parameter::new(*c_type, name.clone(), struct_name.clone())
         })
         .collect::<Vec<_>>();
     let (memory, _) = instantiate_composite_resource_body_resources(

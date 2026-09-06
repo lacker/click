@@ -666,6 +666,47 @@ pub fn c_function_address(name: impl Into<String>) -> CExpression {
     CExpression::FunctionAddress(name.into())
 }
 
+/// The values a composite definition binds its existential witnesses to for
+/// `composite` under `memory` and `assumptions`, in declaration order. This
+/// is the same deterministic choice body instantiation makes, so a surface
+/// substitution of witness names agrees with the kernel's own expansion.
+pub fn composite_resource_witness_values(
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    resources: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CValue>> {
+    let CResource::Composite { name, arguments } = composite.resource() else {
+        return None;
+    };
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.name() == name)?;
+    if definition.parameters().len() != arguments.len() {
+        return None;
+    }
+    let mut state = CState::new().with_memory(memory.clone());
+    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        state.locals.set_typed(
+            parameter.name().to_string(),
+            argument.clone(),
+            parameter.c_type(),
+        );
+    }
+    let assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    super::functions::bind_composite_witnesses_with_held(
+        definition,
+        arguments,
+        &mut state,
+        resources,
+        &assumptions,
+    )
+}
+
 pub fn c_cast(expression: CExpression, target_type: CType) -> CExpression {
     CExpression::Cast {
         expression: Box::new(expression),

@@ -182,6 +182,12 @@ children, checks that control flow establishes the active guard before every
 recursive edge, and compares every direct self-call's instantiated measure
 with a direct child. C-local aliases, logical negation, equivalent comparisons,
 scalar truthiness, and branch polarity are normalized from the source body.
+A direct child named through a `let` witness is compared semantically instead:
+the definition's guard and `where` facts are lowered over a symbolic entry
+state with no memory, the call's measure arguments are evaluated there, and
+the pure kernel decides the argument equals the witness pointer. Loadability
+obligations are assumed, as the syntactic comparison already treats loads as
+uninterpreted; every other obligation must be decided.
 The already certified partial contract remains responsible
 for the actual resource transfer and memory safety, so a structurally ranked
 function may consume or mutate its witness, including freeing a parent after

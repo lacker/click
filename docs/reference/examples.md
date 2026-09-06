@@ -540,6 +540,11 @@ sequence:
   independent child mutation, logical concatenation reads, and metadata-only
   permutation of the two child resources.
 
+`examples/marked-linked-list/` is a singly linked list whose tail pointer is
+packed into an `unsigned long` word with the low bit as a deletion mark. Its
+resource binds the tail as an existential witness, and every mark, read,
+clear, and cast back is a checked rewrite on the word's address form.
+
 ## Library-shaped mdtests
 
 - `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,

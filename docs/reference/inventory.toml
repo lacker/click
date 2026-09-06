@@ -968,6 +968,10 @@ id = "language.resource-clause"
 path = "reference/language/index.md#read-and-write-resources"
 
 [[item]]
+id = "language.resource-witness"
+path = "reference/language/index.md#read-and-write-resources"
+
+[[item]]
 id = "language.immutable"
 path = "reference/language/index.md#read-and-write-resources"
 

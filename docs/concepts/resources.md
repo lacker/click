@@ -92,7 +92,10 @@ useful for index reasoning.
 
 When the same loadability fact must appear as a proposition, use
 `loadable(segment)`. This is common in composite resource definitions, where
-`fact` clauses are pure propositions rather than structural requirements.
+`fact` clauses are pure propositions rather than structural requirements. A
+`let name: type where proposition;` clause binds an existential pointer for the
+rest of the body, which is how a resource names a tail pointer packed into an
+integer word; the language reference describes how fold and unfold bind it.
 
 ## Viewed memory
 
@@ -343,6 +346,17 @@ guard (for example, `node != 0` or the equivalent nonnull arm of
 `if (!node)`), either from an entry requirement or from C control flow. The
 ordinary partial-correctness proof checks resource transfer,
 so the traversal may consume and deallocate nodes after descending.
+
+A child named through a `let` witness has no C spelling, so the checker
+cannot compare it with the call's argument syntactically. It instead
+instantiates the exact definition over a symbolic entry state: the guard and
+the witness's `where` facts are assumed, the call's argument is evaluated in
+that state, and the pure kernel must decide that the argument is the witness
+pointer. In the marked list, `(struct node *)(node->word & ~1)` is the
+witness because the `where` fact and the alignment evidence determine it.
+Loads on the call path are the same uninterpreted reads the syntactic
+comparison relies on; the partial-correctness proof remains responsible for
+the actual resource the call receives.
 
 When code needs the contained owned resources, use `unfold(resource)`. When
 the proof has rebuilt the body, use `fold(resource)`:

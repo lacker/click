@@ -29,7 +29,14 @@ pub(in crate::kernel) struct TaggedAddress {
 pub(in crate::kernel) struct UsedFacts {
     pub(in crate::kernel) premises: Vec<Proposition>,
     pub(in crate::kernel) complete: bool,
+    /// Nesting of citing decisions in progress; a decision that re-enters
+    /// itself through a tag relation stops here instead of recursing.
+    pub(in crate::kernel) depth: u32,
 }
+
+/// How deep citing decisions may nest before falling back to the general
+/// decider; a tagged word needs at most a few levels.
+const MAX_CITING_DEPTH: u32 = 6;
 
 impl Default for UsedFacts {
     fn default() -> Self {
@@ -42,6 +49,7 @@ impl UsedFacts {
         Self {
             premises: Vec::new(),
             complete: true,
+            depth: 0,
         }
     }
 
@@ -122,6 +130,16 @@ impl PureFactContext {
             }
             if left.blocks_proven_distinct(right) {
                 return Some(false);
+            }
+        }
+        if let ConditionTerm::Bitvector64Equal(left, right) = condition
+            && used.depth < MAX_CITING_DEPTH
+        {
+            used.depth += 1;
+            let nested = self.decide_pointer_word_equality_citing(left, right, used);
+            used.depth -= 1;
+            if let Some(decided) = nested {
+                return Some(decided);
             }
         }
         let decided = self.decide(condition);
@@ -337,10 +355,11 @@ pub(in crate::kernel) fn masked_tag_value(
     )
     .ok()
     .filter(|decided| *decided)?;
-    Some(Bitvector32Term::uint64_bitwise_and(
-        form.tag,
-        Bitvector32Term::UInt64Constant(mask),
-    ))
+    let value =
+        Bitvector32Term::uint64_bitwise_and(form.tag, Bitvector32Term::UInt64Constant(mask));
+    // A tag read that rewrites to itself makes no progress; deciding it
+    // again would only recurse.
+    (&value != term).then_some(value)
 }
 
 /// The pointer a 64-bit word converts back to: its recorded address with the

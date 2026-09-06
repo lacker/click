@@ -251,12 +251,16 @@ pub(super) fn materialize_folded_composite_resource_cells(
     arguments: &[CExpression],
     state: CState,
     claim_label: &str,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CState, ClickError> {
     let memory = materialize_folded_composite_resource_memory(
         resource_environment,
         parameters,
         arguments,
         &state,
+        predicate_environment,
+        click_function_environment,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     Ok(state.with_memory(memory))
@@ -267,6 +271,8 @@ fn materialize_folded_composite_resource_memory(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
     for resource in state.resources().facts() {
@@ -285,10 +291,19 @@ fn materialize_folded_composite_resource_memory(
         if composite_body.condition().is_some() {
             continue;
         }
-        let substitutions =
-            resource_value_substitutions(definition, resource_arguments).map_err(|message| {
-                format!("could not instantiate composite resource `{name}` body: {message}")
-            })?;
+        let substitutions = resource_value_substitutions_with_witnesses(
+            definition,
+            resource_arguments,
+            state.memory(),
+            state.resources(),
+            &PureFactContext::new(),
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            format!("could not instantiate composite resource `{name}` body: {message}")
+        })?;
         memory = materialize_composite_resource_memory(
             name,
             composite_body,
@@ -332,12 +347,21 @@ pub(super) fn project_initial_composite_resource_cores(
         if is_owned && !include_owned {
             continue;
         }
-        let substitutions =
-            resource_value_substitutions(definition, &resource_arguments).map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` setup failed: could not project composite resource core `{name}`: {message}"
-                ))
-            })?;
+        let substitutions = resource_value_substitutions_with_witnesses(
+            definition,
+            &resource_arguments,
+            state.memory(),
+            state.resources(),
+            &assumptions,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` setup failed: could not project composite resource core `{name}`: {message}"
+            ))
+        })?;
         let Some(body_active) = try_select_composite_resource_body(
             definition,
             &substitutions,
@@ -817,10 +841,24 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             "`{claim_label}` tactic {tactic_index}: `observe` expects a composite resource"
         )));
     };
-    let surface_substitutions =
+    let mut surface_substitutions =
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
+    extend_substitutions_with_witnesses(
+        &mut surface_substitutions,
+        definition,
+        resource,
+        parameters,
+        arguments,
+        &state,
+        None,
+        available_pure_facts.assumptions(),
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
     let observation_pre_state = state.clone();
     let (memory, contained_resources) = apply_composite_observation_law_with_facts(
+        resource_environment,
         definition,
         resource_arguments,
         parameters,
@@ -1062,9 +1100,23 @@ pub(super) fn record_initial_composite_surface_facts(
         return Ok(());
     }
     let result = (|| {
-        let substitutions =
+        let mut substitutions =
             resource_argument_substitutions(definition, resource, "initial resource projection", 0)
                 .map_err(|error| error.message().to_string())?;
+        extend_substitutions_with_witnesses(
+            &mut substitutions,
+            definition,
+            resource,
+            parameters,
+            arguments,
+            state,
+            None,
+            &assumptions,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|error| error.message().to_string())?;
         let Some(true) = try_select_composite_resource_body(
             definition,
             &substitutions,
@@ -1130,6 +1182,7 @@ fn project_held_resource_observable_facts(
         return Ok(state.memory().clone());
     };
     apply_composite_observation_law(
+        resource_environment,
         definition,
         resource_arguments,
         parameters,
@@ -1270,6 +1323,7 @@ fn composite_resource_body_is_active_with_assumptions(
 /// definitional layer because it requires source-level substitution and fact
 /// lowering.
 pub(super) fn apply_composite_observation_law(
+    resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
     parameters: &[syntax::C0Parameter],
@@ -1283,6 +1337,7 @@ pub(super) fn apply_composite_observation_law(
 ) -> Result<(CMemory, ResourceContext), String> {
     let mut facts = LegacyResourcePureFacts::new(available_pure_facts);
     apply_composite_observation_law_with_facts(
+        resource_environment,
         definition,
         resource_arguments,
         parameters,
@@ -1298,6 +1353,7 @@ pub(super) fn apply_composite_observation_law(
 
 #[allow(clippy::too_many_arguments)]
 fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
+    resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
     parameters: &[syntax::C0Parameter],
@@ -1313,13 +1369,22 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         return Ok((state.memory().clone(), ResourceContext::new()));
     };
 
-    let substitutions =
-        resource_value_substitutions(definition, resource_arguments).map_err(|message| {
-            format!(
-                "could not instantiate resource `{}` facts: {message}",
-                definition.name()
-            )
-        })?;
+    let substitutions = resource_value_substitutions_with_witnesses(
+        definition,
+        resource_arguments,
+        state.memory(),
+        state.resources(),
+        available_pure_facts.assumptions(),
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        format!(
+            "could not instantiate resource `{}` facts: {message}",
+            definition.name()
+        )
+    })?;
     let Some(body_active) = try_select_composite_resource_body(
         definition,
         &substitutions,
@@ -1706,6 +1771,58 @@ fn resource_value_substitutions(
         .collect())
 }
 
+/// Value substitutions for a held composite resource fact, with its
+/// existential witnesses bound to the values the kernel binds them to under
+/// `memory` and `assumptions`.
+fn resource_value_substitutions_with_witnesses(
+    definition: &ResourceDefinition,
+    arguments: &[CValue],
+    memory: &CMemory,
+    resources: &ResourceContext,
+    assumptions: &PureFactContext,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<BTreeMap<String, ContractExpression>, String> {
+    let mut substitutions = resource_value_substitutions(definition, arguments)?;
+    let Some(body) = definition.composite_body() else {
+        return Ok(substitutions);
+    };
+    if body.witnesses().is_empty() {
+        return Ok(substitutions);
+    }
+    let definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|error| error.message().to_string())?;
+    let fact = CResourceFact::own(CResource::Composite {
+        name: definition.name().to_string(),
+        arguments: arguments.to_vec(),
+    });
+    let values = crate::kernel::composite_resource_witness_values(
+        &fact,
+        &definitions,
+        memory,
+        resources,
+        assumptions,
+    )
+    .ok_or_else(|| {
+        format!(
+            "could not bind the witnesses of resource `{}`",
+            definition.name()
+        )
+    })?;
+    for (witness, value) in body.witnesses().iter().zip(values) {
+        substitutions.insert(
+            witness.name().to_string(),
+            ContractExpression::CFragment(CExpression::Value(value)),
+        );
+    }
+    Ok(substitutions)
+}
+
 pub(super) struct CheckedResourceUnfold {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,
@@ -1838,8 +1955,21 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     let composite_body = definition
         .composite_body()
         .expect("composite_resource_law_definition should require a composite body");
-    let substitutions =
+    let mut substitutions =
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
+    extend_substitutions_with_witnesses(
+        &mut substitutions,
+        definition,
+        resource,
+        parameters,
+        arguments,
+        &state,
+        None,
+        available_pure_facts.assumptions(),
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
     let body_active = composite_resource_body_is_active_with_assumptions(
         definition,
         &substitutions,
@@ -2250,7 +2380,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         let composite_body = definition
             .composite_body()
             .expect("composite_resource_law_definition should require a composite body");
-        let substitutions =
+        let mut substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
         let (guard_result, guard_state) = match &outcome {
             CFunctionOutcome::Return { value, state } => (value, state),
@@ -2262,6 +2392,19 @@ fn fold_composite_resources_on_outcome_with_facts(
                 )));
             }
         };
+        extend_substitutions_with_witnesses(
+            &mut substitutions,
+            definition,
+            resource,
+            parameters,
+            arguments,
+            guard_state,
+            Some(guard_result),
+            pure_facts.assumptions(),
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )?;
         let mut body_active = composite_resource_body_is_active_with_assumptions(
             definition,
             &substitutions,
@@ -2912,6 +3055,67 @@ fn composite_resource_law_definition<'a>(
     Ok(definition)
 }
 
+/// Extends the parameter substitutions of a composite body with its
+/// existential witnesses, bound to the values the kernel binds them to for
+/// this resource under `state` and `assumptions`. The substitution is a
+/// value literal, so later clauses mention exactly the pointer the kernel's
+/// own body instantiation uses.
+fn extend_substitutions_with_witnesses(
+    substitutions: &mut BTreeMap<String, ContractExpression>,
+    definition: &ResourceDefinition,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    result: Option<&CValue>,
+    assumptions: &PureFactContext,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), ClickError> {
+    let Some(body) = definition.composite_body() else {
+        return Ok(());
+    };
+    if body.witnesses().is_empty() {
+        return Ok(());
+    }
+    let resource = match resource {
+        ResourceClause::Quantified { resource, .. } => resource.as_ref(),
+        _ => resource,
+    };
+    let fact = match result {
+        Some(result) => lower_resource_clause_at_state_with_result(
+            resource, parameters, arguments, state, result,
+        )?,
+        None => lower_resource_clause(resource, parameters, arguments, state.memory())?,
+    };
+    let definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let values = crate::kernel::composite_resource_witness_values(
+        &fact,
+        &definitions,
+        state.memory(),
+        state.resources(),
+        assumptions,
+    )
+    .ok_or_else(|| {
+        ClickError::new(format!(
+            "could not bind the witnesses of resource `{}`",
+            definition.name()
+        ))
+    })?;
+    for (witness, value) in body.witnesses().iter().zip(values) {
+        substitutions.insert(
+            witness.name().to_string(),
+            ContractExpression::CFragment(CExpression::Value(value)),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn resource_argument_substitutions(
     definition: &ResourceDefinition,
     resource: &ResourceClause,
@@ -3054,8 +3258,55 @@ fn materialize_composite_resource_cells(
         return memory;
     }
 
-    let element_width = contract_segment_element_width(parameters, segment);
     let base_memory = memory.clone();
+    // `object(p)` is one complete struct: its cells take the layout's field
+    // types, so a wide integer field reads back as itself. Pointer fields
+    // keep the int32 words this projection uses everywhere: a pointer cell
+    // must carry its load variable, which the load itself mints, whereas a
+    // raw load term embedded in a pointer offset is not canonical.
+    if let Some(layout) = crate::surface::lowering::object_segment_layout(parameters, segment)
+        && *start == 0
+    {
+        for field in layout.fields().values() {
+            memory = crate::surface::lowering::visit_struct_field_cells(
+                field,
+                range.base(),
+                memory,
+                |mut memory, pointer, element_type| {
+                    let word_cells = if element_type.is_pointer() {
+                        (0..element_type.byte_width())
+                            .step_by(4)
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![0]
+                    };
+                    for word in word_cells {
+                        let pointer = pointer.offset_by_bytes(word);
+                        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                            continue;
+                        }
+                        let load = crate::kernel::canonical_form_of_load(
+                            crate::kernel::intern_c_memory(base_memory.clone()),
+                            pointer.clone(),
+                        );
+                        let value = if element_type.is_pointer() {
+                            CValue::Int32(load)
+                        } else {
+                            crate::surface::lowering::symbolic_value_from_load(
+                                &pointer,
+                                element_type,
+                                load,
+                            )
+                        };
+                        memory = memory.store(pointer, value);
+                    }
+                    memory
+                },
+            );
+        }
+        return memory;
+    }
+    let element_width = contract_segment_element_width(parameters, segment);
     for index in *start..*end {
         let pointer = offset_pointer_by_elements(
             range.base().clone(),

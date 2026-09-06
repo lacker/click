@@ -485,7 +485,9 @@ fn materialized_load_is_unchanged(
         | CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer))
         | CValue::UInt16(Bitvector32Term::MemoryLoad(memory, load_pointer))
-        | CValue::UInt32(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
+        | CValue::UInt32(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::Int64(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::UInt64(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
             (memory.clone(), load_pointer.as_ref().clone())
         }
         // With terms canonical at creation a materialized cell holds the
@@ -496,12 +498,41 @@ fn materialized_load_is_unchanged(
         | CValue::UInt8(Bitvector32Term::Variable(variable))
         | CValue::UInt16(Bitvector32Term::Variable(variable))
         | CValue::UInt32(Bitvector32Term::Variable(variable))
+        | CValue::Int64(Bitvector32Term::Variable(variable))
+        | CValue::UInt64(Bitvector32Term::Variable(variable))
             if crate::kernel::eval::is_load_variable(variable) =>
         {
             let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) else {
                 return false;
             };
             load
+        }
+        // A pointer-typed cell materialized from a load scales the load (or
+        // its load variable) by the pointee width, as the kernel's own
+        // symbolic pointer loads do.
+        CValue::Pointer(pointer_value) => {
+            let Pointer {
+                offset: PointerOffsetTerm::Int32Scaled { value: bits, .. },
+                ..
+            } = pointer_value.pointer()
+            else {
+                return false;
+            };
+            match bits.as_ref() {
+                Bitvector32Term::MemoryLoad(memory, load_pointer) => {
+                    (memory.clone(), load_pointer.as_ref().clone())
+                }
+                Bitvector32Term::Variable(variable)
+                    if crate::kernel::eval::is_load_variable(variable) =>
+                {
+                    let Some(load) = crate::kernel::eval::registered_load_for_variable(variable)
+                    else {
+                        return false;
+                    };
+                    load
+                }
+                _ => return false,
+            }
         }
         _ => return false,
     };

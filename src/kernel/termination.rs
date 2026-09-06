@@ -210,8 +210,17 @@ struct StructuralRecursionPath {
 struct StructuralResourceMeasure {
     arguments: Vec<CExpression>,
     children: Vec<Vec<CExpression>>,
+    /// Direct recursive children named through a `let` witness of the
+    /// definition rather than a C expression of its parameters.
+    witness_children: Vec<WitnessChildMeasure>,
     guard: CExpression,
     guard_is_precondition: bool,
+}
+
+struct WitnessChildMeasure {
+    definition: CCompositeResourceDefinition,
+    /// Each child argument: a witness of `definition`, or a body expression.
+    arguments: Vec<CExpression>,
 }
 
 fn structural_guard_expression(proposition: &SpecProposition) -> Option<CExpression> {
@@ -302,19 +311,15 @@ fn check_structural_recursive_call(
     function_name: &str,
     arguments: &[CExpression],
     function: &CFunction,
-    measure_arguments: &[CExpression],
-    child_arguments: &[Vec<CExpression>],
-    guard: &CExpression,
+    measure: &StructuralResourceMeasure,
     path: &StructuralRecursionPath,
 ) -> Result<(), CTerminationError> {
     if function_name != function.name() {
         return Ok(());
     }
-    if !path
-        .conditions
-        .iter()
-        .any(|(condition, value)| branch_establishes_structural_guard(condition, *value, guard))
-    {
+    if !path.conditions.iter().any(|(condition, value)| {
+        branch_establishes_structural_guard(condition, *value, &measure.guard)
+    }) {
         return Err(error(format!(
             "recursive call to `{function_name}` is reachable without establishing the active structural resource guard"
         )));
@@ -330,11 +335,14 @@ fn check_structural_recursive_call(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let call_measure_arguments = measure_arguments
+    let call_measure_arguments = measure
+        .arguments
         .iter()
         .map(|argument| substitute_c_expression_variables(argument, &parameter_substitutions))
         .collect::<Vec<_>>();
-    if !child_arguments.contains(&call_measure_arguments) {
+    if !measure.children.contains(&call_measure_arguments)
+        && !call_passes_witness_child(function, measure, &call_measure_arguments)
+    {
         return Err(error(format!(
             "recursive call to `{function_name}` does not pass a direct contained child of its structural resource measure"
         )));
@@ -345,9 +353,7 @@ fn check_structural_recursive_call(
 fn structural_recursion_paths(
     statement: &CStatement,
     function: &CFunction,
-    measure_arguments: &[CExpression],
-    child_arguments: &[Vec<CExpression>],
-    guard: &CExpression,
+    measure: &StructuralResourceMeasure,
     paths: Vec<StructuralRecursionPath>,
 ) -> Result<Vec<StructuralRecursionPath>, CTerminationError> {
     match statement {
@@ -359,14 +365,9 @@ fn structural_recursion_paths(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Update { .. } => Ok(paths),
-        CStatement::ContinueWithStep { step } => structural_recursion_paths(
-            step,
-            function,
-            measure_arguments,
-            child_arguments,
-            guard,
-            paths,
-        ),
+        CStatement::ContinueWithStep { step } => {
+            structural_recursion_paths(step, function, measure, paths)
+        }
         CStatement::Return(_) => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
@@ -408,9 +409,7 @@ fn structural_recursion_paths(
                     function_name,
                     arguments,
                     function,
-                    measure_arguments,
-                    child_arguments,
-                    guard,
+                    measure,
                     &path,
                 )?;
                 path.aliases.remove(target);
@@ -423,32 +422,15 @@ fn structural_recursion_paths(
             arguments,
         } => {
             for path in &paths {
-                check_structural_recursive_call(
-                    function_name,
-                    arguments,
-                    function,
-                    measure_arguments,
-                    child_arguments,
-                    guard,
-                    path,
-                )?;
+                check_structural_recursive_call(function_name, arguments, function, measure, path)?;
             }
             Ok(paths)
         }
         CStatement::Seq(first, second) => structural_recursion_paths(
             second,
             function,
-            measure_arguments,
-            child_arguments,
-            guard,
-            structural_recursion_paths(
-                first,
-                function,
-                measure_arguments,
-                child_arguments,
-                guard,
-                paths,
-            )?,
+            measure,
+            structural_recursion_paths(first, function, measure, paths)?,
         ),
         CStatement::If {
             condition,
@@ -466,20 +448,11 @@ fn structural_recursion_paths(
                 else_path.conditions.push((condition, false));
                 else_paths.push(else_path);
             }
-            let mut paths = structural_recursion_paths(
-                then_branch,
-                function,
-                measure_arguments,
-                child_arguments,
-                guard,
-                then_paths,
-            )?;
+            let mut paths = structural_recursion_paths(then_branch, function, measure, then_paths)?;
             paths.extend(structural_recursion_paths(
                 else_branch,
                 function,
-                measure_arguments,
-                child_arguments,
-                guard,
+                measure,
                 else_paths,
             )?);
             Ok(paths)
@@ -494,14 +467,7 @@ fn structural_recursion_paths(
                 body_path.conditions.push((condition, true));
                 body_paths.push(body_path);
             }
-            structural_recursion_paths(
-                body,
-                function,
-                measure_arguments,
-                child_arguments,
-                guard,
-                body_paths,
-            )?;
+            structural_recursion_paths(body, function, measure, body_paths)?;
             Ok(paths)
         }
         CStatement::Switch { cases, .. } => {
@@ -511,15 +477,192 @@ fn structural_recursion_paths(
                 paths.extend(structural_recursion_paths(
                     &case.body,
                     function,
-                    measure_arguments,
-                    child_arguments,
-                    guard,
+                    measure,
                     incoming_paths.clone(),
                 )?);
             }
             Ok(paths)
         }
     }
+}
+
+fn c_expression_mentions_variable(expression: &CExpression, variable: &str) -> bool {
+    let mut substitutions = BTreeMap::new();
+    substitutions.insert(
+        variable.to_string(),
+        CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+    );
+    substitute_c_expression_variables(expression, &substitutions) != *expression
+}
+
+/// Assumes one evaluation path's facts. Loadability obligations are the
+/// uninterpreted reads the structural comparison already relies on; every
+/// other obligation must already be decided.
+fn assume_structural_path(
+    assumptions: &mut PureFactContext,
+    facts: &[ExecutionPureFact],
+    obligations: &[ProofObligation],
+) -> Option<()> {
+    for obligation in obligations {
+        let proposition = obligation.proposition();
+        let decided = match proposition {
+            Proposition::CMemoryLoadable { .. } => true,
+            Proposition::ConditionIs(condition, value) => {
+                assumptions.decide(condition) == Some(*value)
+            }
+            proposition => assumptions.proves(proposition),
+        };
+        if !decided {
+            return None;
+        }
+        *assumptions = assumptions.clone().assume_proposition(proposition.clone());
+    }
+    for fact in facts {
+        *assumptions = assumptions
+            .clone()
+            .assume_proposition(fact.proposition().clone());
+    }
+    Some(())
+}
+
+fn evaluate_structural_c_expression(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &mut PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Option<CValue> {
+    let paths = evaluate_c_expression_paths(state, expression, assumptions, budget).ok()?;
+    let [path] = paths.as_slice() else {
+        return None;
+    };
+    let CExpressionOutcome::Value(value) = &path.outcome else {
+        return None;
+    };
+    assume_structural_path(assumptions, &path.facts, &path.obligations)?;
+    Some(value.clone())
+}
+
+/// Whether a recursive call's measure arguments name a witness child of the
+/// entry measure. A `let` witness has no C spelling, so the exact definition
+/// is instantiated over a symbolic entry state with no memory: its guard and
+/// `where` facts are assumed, the call's arguments are evaluated there, and
+/// the pure kernel decides the argument is the witness pointer. Loads are
+/// the same uninterpreted reads the syntactic child comparison relies on.
+fn call_passes_witness_child(
+    function: &CFunction,
+    measure: &StructuralResourceMeasure,
+    call_measure_arguments: &[CExpression],
+) -> bool {
+    const PARAMETER_VARIABLE_BASE: u64 = 4_200_000_000;
+    const WITNESS_VARIABLE_BASE: u64 = 4_250_000_000;
+    if measure.witness_children.is_empty() {
+        return false;
+    }
+    let mut budget = ExecutionBudget::default();
+    let entry_assumptions = PureFactContext::new()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    let mut parameter_state = CState::new();
+    for (index, parameter) in function.parameters().iter().enumerate() {
+        let variable = Variable(PARAMETER_VARIABLE_BASE + index as u64);
+        let value = if parameter.c_type().is_pointer() {
+            CValue::typed_pointer(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(variable), 1),
+                },
+                parameter.c_type(),
+            )
+        } else {
+            symbolic_call_result(parameter.c_type(), variable)
+        };
+        parameter_state
+            .locals
+            .set_typed(parameter.name().to_string(), value, parameter.c_type());
+    }
+    'children: for child in &measure.witness_children {
+        let definition = &child.definition;
+        if child.arguments.len() != call_measure_arguments.len() {
+            continue;
+        }
+        let mut assumptions = entry_assumptions.clone();
+        let mut body_state = CState::new();
+        for (parameter, argument) in definition.parameters().iter().zip(&measure.arguments) {
+            let Some(value) = evaluate_structural_c_expression(
+                &parameter_state,
+                argument,
+                &mut assumptions,
+                &mut budget,
+            ) else {
+                continue 'children;
+            };
+            if value.c_type() != parameter.c_type() {
+                continue 'children;
+            }
+            body_state
+                .locals
+                .set_typed(parameter.name().to_string(), value, parameter.c_type());
+        }
+        for (index, witness) in definition.witnesses().iter().enumerate() {
+            let pointer = Pointer::symbolic(Variable(WITNESS_VARIABLE_BASE + index as u64));
+            body_state.locals.set_typed(
+                witness.name().to_string(),
+                CValue::typed_pointer(pointer, witness.c_type()),
+                witness.c_type(),
+            );
+        }
+        for fact in definition.condition().into_iter().chain(definition.facts()) {
+            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                &body_state,
+                fact,
+                None,
+                &assumptions,
+                &mut budget,
+            ) else {
+                continue 'children;
+            };
+            let [path] = paths.as_slice() else {
+                continue 'children;
+            };
+            if assume_structural_path(&mut assumptions, &path.facts, &path.obligations).is_none() {
+                continue 'children;
+            }
+            assumptions = assumptions.assume_proposition(path.proposition.clone());
+        }
+        for (expected, actual) in child.arguments.iter().zip(call_measure_arguments) {
+            let Some(expected) = evaluate_structural_c_expression(
+                &body_state,
+                expected,
+                &mut assumptions,
+                &mut budget,
+            ) else {
+                continue 'children;
+            };
+            let Some(actual) = evaluate_structural_c_expression(
+                &parameter_state,
+                actual,
+                &mut assumptions,
+                &mut budget,
+            ) else {
+                continue 'children;
+            };
+            let (CValue::Pointer(expected), CValue::Pointer(actual)) = (expected, actual) else {
+                continue 'children;
+            };
+            let expected = expected.pointer();
+            let actual = actual.pointer();
+            if expected != actual
+                && assumptions.decide(&ConditionTerm::pointer_equal(
+                    actual.clone(),
+                    expected.clone(),
+                )) != Some(true)
+            {
+                continue 'children;
+            }
+        }
+        return true;
+    }
+    false
 }
 
 fn structural_resource_children(
@@ -570,24 +713,41 @@ fn structural_resource_children(
             "resource measure `{name}` currently requires a simple comparison guard"
         ))
     })?;
-    let children = definition
-        .contains()
-        .iter()
-        .filter_map(|contained| match contained {
-            CResourceSpec::Composite {
-                name: child_name,
-                arguments,
-                ..
-            } if child_name == name => Some(
-                arguments
+    let mentions_witness = |expression: &CExpression| {
+        definition
+            .witnesses()
+            .iter()
+            .any(|witness| c_expression_mentions_variable(expression, witness.name()))
+    };
+    let mut children = Vec::new();
+    let mut witness_children = Vec::new();
+    for contained in definition.contains() {
+        let CResourceSpec::Composite {
+            name: child_name,
+            arguments: child_arguments,
+            ..
+        } = contained
+        else {
+            continue;
+        };
+        if child_name != name {
+            continue;
+        }
+        if child_arguments.iter().any(mentions_witness) {
+            witness_children.push(WitnessChildMeasure {
+                definition: definition.clone(),
+                arguments: child_arguments.clone(),
+            });
+        } else {
+            children.push(
+                child_arguments
                     .iter()
                     .map(|argument| substitute_c_expression_variables(argument, &substitutions))
                     .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if children.is_empty() {
+            );
+        }
+    }
+    if children.is_empty() && witness_children.is_empty() {
         return Err(error(format!(
             "resource measure `{name}` has no direct recursive child"
         )));
@@ -595,6 +755,7 @@ fn structural_resource_children(
     Ok(StructuralResourceMeasure {
         arguments: arguments.clone(),
         children,
+        witness_children,
         guard,
         guard_is_precondition,
     })
@@ -2404,9 +2565,7 @@ pub fn c_verified_function_termination_rules(
                     structural_recursion_paths(
                         &function.source_body,
                         function,
-                        &measure.arguments,
-                        &measure.children,
-                        &measure.guard,
+                        &measure,
                         vec![StructuralRecursionPath {
                             aliases: BTreeMap::new(),
                             conditions,
