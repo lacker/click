@@ -247,7 +247,8 @@ pub(in crate::surface) fn annotated_function(
         count_assumptions: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
-    let source_body = parsed_function.to_kernel_function().body().clone();
+    let parsed_kernel_function = parsed_function.to_kernel_function();
+    let source_body = parsed_kernel_function.body().clone();
     let mut function = c_function(
         if parsed_function.return_struct_name().is_some() {
             CType::UInt8Pointer
@@ -272,62 +273,14 @@ pub(in crate::surface) fn annotated_function(
         function = function.with_return_aggregate_layout(layout);
     }
     let function = function
-        .with_global_variables(
-            parsed_function
-                .globals()
-                .values()
-                .filter_map(syntax::C0Global::to_kernel_global)
-                .collect(),
-        )
-        .with_global_arrays(
-            parsed_function
-                .global_arrays()
-                .values()
-                .filter_map(syntax::C0GlobalArray::to_kernel_global_array)
-                .collect(),
-        )
-        .with_global_aggregates(
-            parsed_function
-                .global_aggregates()
-                .values()
-                .filter_map(syntax::C0GlobalAggregate::to_kernel_global_aggregate)
-                .collect(),
-        )
-        .with_global_aggregate_arrays(
-            parsed_function
-                .global_aggregate_arrays()
-                .values()
-                .filter_map(syntax::C0GlobalAggregateArray::to_kernel_global_aggregate_array)
-                .collect(),
-        )
-        .with_static_variables(
-            parsed_function
-                .static_locals()
-                .values()
-                .filter_map(syntax::C0StaticLocal::to_kernel_static)
-                .collect(),
-        )
-        .with_static_arrays(
-            parsed_function
-                .static_arrays()
-                .values()
-                .filter_map(syntax::C0StaticArray::to_kernel_static_array)
-                .collect(),
-        )
-        .with_static_aggregates(
-            parsed_function
-                .static_aggregates()
-                .values()
-                .map(syntax::C0StaticAggregate::to_kernel_static_aggregate)
-                .collect(),
-        )
-        .with_static_aggregate_arrays(
-            parsed_function
-                .static_aggregate_arrays()
-                .values()
-                .map(syntax::C0StaticAggregateArray::to_kernel_static_aggregate_array)
-                .collect(),
-        )
+        .with_global_variables(parsed_kernel_function.global_variables().to_vec())
+        .with_global_arrays(parsed_kernel_function.global_arrays().to_vec())
+        .with_global_aggregates(parsed_kernel_function.global_aggregates().to_vec())
+        .with_global_aggregate_arrays(parsed_kernel_function.global_aggregate_arrays().to_vec())
+        .with_static_variables(parsed_kernel_function.static_variables().to_vec())
+        .with_static_arrays(parsed_kernel_function.static_arrays().to_vec())
+        .with_static_aggregates(parsed_kernel_function.static_aggregates().to_vec())
+        .with_static_aggregate_arrays(parsed_kernel_function.static_aggregate_arrays().to_vec())
         .with_string_literals(
             parsed_function
                 .string_literals()

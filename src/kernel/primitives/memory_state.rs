@@ -957,15 +957,28 @@ impl CLocalEnvironment {
         volatile: bool,
         constant: bool,
     ) {
+        self.set_global_with_all_qualifiers(name, c_type, slot, volatile, false, constant, false);
+    }
+
+    pub(in crate::kernel) fn set_global_with_all_qualifiers(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+        volatile: bool,
+        pointee_volatile: bool,
+        constant: bool,
+        pointee_constant: bool,
+    ) {
         self.insert_binding(
             name.into(),
             CLocalBinding::GlobalObject {
                 c_type,
                 slot,
                 volatile,
-                pointee_volatile: false,
+                pointee_volatile,
                 constant,
-                pointee_constant: false,
+                pointee_constant,
             },
         );
     }
@@ -2159,7 +2172,7 @@ impl CMemory {
         }
     }
 
-    pub(in crate::kernel) fn global_pointer(name: &str) -> Pointer {
+    pub(crate) fn global_pointer(name: &str) -> Pointer {
         Pointer {
             block: format!("global:{name}").into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -2173,7 +2186,7 @@ impl CMemory {
         }
     }
 
-    pub(in crate::kernel) fn static_pointer(function: &str, name: &str) -> Pointer {
+    pub(crate) fn static_pointer(function: &str, name: &str) -> Pointer {
         Pointer {
             block: format!("static:{function}:{name}").into(),
             offset: PointerOffsetTerm::Constant(0),

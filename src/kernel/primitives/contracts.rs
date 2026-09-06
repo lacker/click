@@ -122,6 +122,7 @@ impl CGlobal {
             initial_value,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -156,6 +157,15 @@ impl CGlobal {
 
     pub fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
+    pub fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 }
@@ -354,8 +364,26 @@ impl CStaticLocal {
                     | CType::UInt32
                     | CType::Float32
                     | CType::Float64
+                    | CType::Int16Pointer
+                    | CType::UInt16Pointer
+                    | CType::Int32Pointer
+                    | CType::UInt8Pointer
+                    | CType::UInt32Pointer
+                    | CType::Int64Pointer
+                    | CType::UInt64Pointer
+                    | CType::Float32Pointer
+                    | CType::Float64Pointer
+                    | CType::Int16PointerPointer
+                    | CType::UInt16PointerPointer
+                    | CType::Int32PointerPointer
+                    | CType::UInt8PointerPointer
+                    | CType::UInt32PointerPointer
+                    | CType::Int64PointerPointer
+                    | CType::UInt64PointerPointer
+                    | CType::Float32PointerPointer
+                    | CType::Float64PointerPointer
             ),
-            "C static locals currently support scalar integer and floating-point types only"
+            "C static locals currently support scalar integer, floating-point, and pointer types"
         );
         assert_eq!(
             initial_value.c_type(),
@@ -369,6 +397,7 @@ impl CStaticLocal {
             initial_value,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -403,6 +432,15 @@ impl CStaticLocal {
 
     pub fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
+    pub fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 }

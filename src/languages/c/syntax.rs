@@ -177,6 +177,7 @@ pub struct C0Global {
     file_static: bool,
     volatile: bool,
     constant: bool,
+    pointee_constant: bool,
 }
 
 impl C0Global {
@@ -190,6 +191,7 @@ impl C0Global {
             file_static: false,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -208,6 +210,7 @@ impl C0Global {
             file_static: false,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -227,6 +230,7 @@ impl C0Global {
             file_static: true,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -266,6 +270,10 @@ impl C0Global {
         self.constant
     }
 
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
         self
@@ -273,6 +281,11 @@ impl C0Global {
 
     fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 
@@ -293,16 +306,19 @@ impl C0Global {
             },
             _ => kernel_integer_literal_value(self.c_type, initializer)?,
         };
-        Some(
-            crate::kernel::CGlobal::new_with_kernel_name(
-                self.name.clone(),
-                self.kernel_name.clone(),
-                self.c_type.to_kernel_type(),
-                value,
-            )
-            .with_volatile(self.is_volatile())
-            .with_constant(self.is_constant()),
+        Some(self.to_kernel_global_with_value(value))
+    }
+
+    fn to_kernel_global_with_value(&self, value: crate::kernel::CValue) -> crate::kernel::CGlobal {
+        crate::kernel::CGlobal::new_with_kernel_name(
+            self.name.clone(),
+            self.kernel_name.clone(),
+            self.c_type.to_kernel_type(),
+            value,
         )
+        .with_volatile(self.is_volatile())
+        .with_constant(self.is_constant())
+        .with_pointee_constant(self.pointee_is_constant())
     }
 }
 
@@ -802,6 +818,7 @@ pub struct C0StaticLocal {
     initializer: C0Expression,
     volatile: bool,
     constant: bool,
+    pointee_constant: bool,
 }
 
 /// A function-local fixed-size scalar array with static storage duration.
@@ -900,6 +917,7 @@ impl C0StaticLocal {
             initializer,
             volatile: false,
             constant: false,
+            pointee_constant: false,
         }
     }
 
@@ -927,6 +945,10 @@ impl C0StaticLocal {
         self.constant
     }
 
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
         self
@@ -934,6 +956,11 @@ impl C0StaticLocal {
 
     fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    fn with_pointee_constant(mut self, pointee_constant: bool) -> Self {
+        self.pointee_constant = pointee_constant;
         self
     }
 
@@ -958,16 +985,22 @@ impl C0StaticLocal {
             C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(&self.initializer)?),
             _ => return None,
         };
-        Some(
-            crate::kernel::CStaticLocal::new(
-                self.source_name.clone(),
-                self.kernel_name.clone(),
-                self.c_type.to_kernel_type(),
-                value,
-            )
-            .with_volatile(self.is_volatile())
-            .with_constant(self.is_constant()),
+        Some(self.to_kernel_static_with_value(value))
+    }
+
+    fn to_kernel_static_with_value(
+        &self,
+        value: crate::kernel::CValue,
+    ) -> crate::kernel::CStaticLocal {
+        crate::kernel::CStaticLocal::new(
+            self.source_name.clone(),
+            self.kernel_name.clone(),
+            self.c_type.to_kernel_type(),
+            value,
         )
+        .with_volatile(self.is_volatile())
+        .with_constant(self.is_constant())
+        .with_pointee_constant(self.pointee_is_constant())
     }
 }
 
@@ -1839,6 +1872,80 @@ impl C0Function {
         self.body.to_kernel_statement()
     }
 
+    fn static_object_address(&self, name: &str) -> Option<(crate::kernel::Pointer, C0Type, bool)> {
+        if let Some(global) = self
+            .globals
+            .values()
+            .find(|global| global.name() == name || global.kernel_name() == name)
+        {
+            return Some((
+                crate::kernel::CMemory::global_pointer(global.kernel_name()),
+                global.c_type(),
+                global.is_constant(),
+            ));
+        }
+        self.static_locals
+            .values()
+            .find(|static_local| static_local.name() == name || static_local.kernel_name() == name)
+            .map(|static_local| {
+                (
+                    crate::kernel::CMemory::static_pointer(&self.name, static_local.kernel_name()),
+                    static_local.c_type(),
+                    static_local.is_constant(),
+                )
+            })
+    }
+
+    fn static_address_initializer_value(
+        &self,
+        declared_type: C0Type,
+        declared_pointee_constant: bool,
+        initializer: &C0Expression,
+    ) -> Option<crate::kernel::CValue> {
+        let C0Expression::AddressOf(target) = initializer else {
+            return None;
+        };
+        let C0Expression::Variable(name) = target.as_ref() else {
+            return None;
+        };
+        let (pointer, target_type, _) = self.static_object_address(name)?;
+        if target_type.pointer_type()? != declared_type {
+            return None;
+        }
+        Some(crate::kernel::CValue::typed_pointer_with_pointee_constant(
+            pointer,
+            declared_type.to_kernel_type(),
+            declared_pointee_constant,
+        ))
+    }
+
+    fn to_kernel_global(&self, global: &C0Global) -> Option<crate::kernel::CGlobal> {
+        let initializer = global.initializer()?;
+        if let Some(value) = self.static_address_initializer_value(
+            global.c_type(),
+            global.pointee_is_constant(),
+            initializer,
+        ) {
+            return Some(global.to_kernel_global_with_value(value));
+        }
+        global.to_kernel_global()
+    }
+
+    fn to_kernel_static(
+        &self,
+        static_local: &C0StaticLocal,
+    ) -> Option<crate::kernel::CStaticLocal> {
+        let initializer = static_local.initializer();
+        if let Some(value) = self.static_address_initializer_value(
+            static_local.c_type(),
+            static_local.pointee_is_constant(),
+            initializer,
+        ) {
+            return Some(static_local.to_kernel_static_with_value(value));
+        }
+        static_local.to_kernel_static()
+    }
+
     pub fn to_kernel_function(&self) -> crate::kernel::CFunction {
         let mut function = crate::kernel::c_function(
             if self.return_struct_name.is_some() {
@@ -1868,7 +1975,7 @@ impl C0Function {
             .with_global_variables(
                 self.globals
                     .values()
-                    .filter_map(C0Global::to_kernel_global)
+                    .filter_map(|global| self.to_kernel_global(global))
                     .collect(),
             )
             .with_global_arrays(
@@ -1892,7 +1999,7 @@ impl C0Function {
             .with_static_variables(
                 self.static_locals
                     .values()
-                    .filter_map(C0StaticLocal::to_kernel_static)
+                    .filter_map(|static_local| self.to_kernel_static(static_local))
                     .collect(),
             )
             .with_static_arrays(
@@ -2166,6 +2273,8 @@ impl C0Type {
                 | Self::UInt32Pointer
                 | Self::Int64Pointer
                 | Self::UInt64Pointer
+                | Self::Float32Pointer
+                | Self::Float64Pointer
                 | Self::Int16PointerPointer
                 | Self::UInt16PointerPointer
                 | Self::Int32PointerPointer
@@ -2193,6 +2302,37 @@ impl C0Type {
                 | Self::UInt32Pointer
                 | Self::Int64Pointer
                 | Self::UInt64Pointer
+        )
+    }
+
+    fn is_supported_static_scalar(self) -> bool {
+        matches!(
+            self,
+            Self::Int16
+                | Self::Int32
+                | Self::UInt8
+                | Self::UInt16
+                | Self::UInt32
+                | Self::Float32
+                | Self::Float64
+                | Self::Int16Pointer
+                | Self::UInt16Pointer
+                | Self::Int32Pointer
+                | Self::UInt8Pointer
+                | Self::UInt32Pointer
+                | Self::Int64Pointer
+                | Self::UInt64Pointer
+                | Self::Float32Pointer
+                | Self::Float64Pointer
+                | Self::Int16PointerPointer
+                | Self::UInt16PointerPointer
+                | Self::Int32PointerPointer
+                | Self::UInt8PointerPointer
+                | Self::UInt32PointerPointer
+                | Self::Int64PointerPointer
+                | Self::UInt64PointerPointer
+                | Self::Float32PointerPointer
+                | Self::Float64PointerPointer
         )
     }
 
@@ -2229,6 +2369,50 @@ impl C0Type {
             | Self::Float64
             | Self::FunctionPointer(_) => None,
         }
+    }
+
+    fn pointer_type(self) -> Option<Self> {
+        Some(match self {
+            Self::Int16 => Self::Int16Pointer,
+            Self::Int32 => Self::Int32Pointer,
+            Self::UInt8 => Self::UInt8Pointer,
+            Self::UInt16 => Self::UInt16Pointer,
+            Self::UInt32 => Self::UInt32Pointer,
+            Self::Int64 => Self::Int64Pointer,
+            Self::UInt64 => Self::UInt64Pointer,
+            Self::Float32 => Self::Float32Pointer,
+            Self::Float64 => Self::Float64Pointer,
+            Self::Int16Pointer => Self::Int16PointerPointer,
+            Self::UInt16Pointer => Self::UInt16PointerPointer,
+            Self::Int32Pointer => Self::Int32PointerPointer,
+            Self::UInt8Pointer => Self::UInt8PointerPointer,
+            Self::UInt32Pointer => Self::UInt32PointerPointer,
+            Self::Int64Pointer => Self::Int64PointerPointer,
+            Self::UInt64Pointer => Self::UInt64PointerPointer,
+            Self::Float32Pointer => Self::Float32PointerPointer,
+            Self::Float64Pointer => Self::Float64PointerPointer,
+            Self::Void
+            | Self::VoidPointer
+            | Self::Int16PointerPointer
+            | Self::UInt16PointerPointer
+            | Self::Int32PointerPointer
+            | Self::UInt8PointerPointer
+            | Self::UInt32PointerPointer
+            | Self::Int64PointerPointer
+            | Self::UInt64PointerPointer
+            | Self::Float32PointerPointer
+            | Self::Float64PointerPointer
+            | Self::FunctionPointer(_)
+            | Self::Int32Array(_)
+            | Self::UInt8Array(_)
+            | Self::Int16Array(_)
+            | Self::UInt16Array(_)
+            | Self::UInt32Array(_)
+            | Self::Int64Array(_)
+            | Self::UInt64Array(_)
+            | Self::Float32Array(_)
+            | Self::Float64Array(_) => return None,
+        })
     }
 
     pub fn to_kernel_type(self) -> crate::kernel::CType {
@@ -2713,6 +2897,7 @@ fn validate_function_returns(
 fn validate_global_initializer(
     parser: &Parser,
     c_type: C0Type,
+    pointee_constant: bool,
     initializer: &C0Expression,
 ) -> Result<(), C0SyntaxError> {
     if matches!(c_type, C0Type::Float32 | C0Type::Float64) {
@@ -2728,13 +2913,7 @@ fn validate_global_initializer(
         };
     }
     if c_type.is_pointer() {
-        return if matches!(initializer, C0Expression::Int32Literal(0)) {
-            Ok(())
-        } else {
-            Err(parser.error_here(
-                "pointer global initializers currently support only the null pointer literal",
-            ))
-        };
+        return parser.validate_static_pointer_initializer(c_type, pointee_constant, initializer);
     }
     let bits = match initializer {
         C0Expression::Int32Literal(value) => u64::from(*value),
@@ -2766,6 +2945,7 @@ fn validate_global_initializer(
 fn validate_static_initializer(
     parser: &Parser,
     c_type: C0Type,
+    pointee_constant: bool,
     initializer: &C0Expression,
 ) -> Result<(), C0SyntaxError> {
     if matches!(c_type, C0Type::Float32 | C0Type::Float64) {
@@ -2779,6 +2959,9 @@ fn validate_static_initializer(
         } else {
             Err(parser.error_here("floating-point static initializer has the wrong type"))
         };
+    }
+    if c_type.is_pointer() {
+        return parser.validate_static_pointer_initializer(c_type, pointee_constant, initializer);
     }
     let bits = match initializer {
         C0Expression::Int32Literal(value) => u64::from(*value),
@@ -2860,7 +3043,7 @@ fn validate_aggregate_initializer(
                 ))
             }
         }
-        _ => validate_global_initializer(parser, c_type, initializer).map_err(|error| {
+        _ => validate_global_initializer(parser, c_type, false, initializer).map_err(|error| {
             if error.message().contains("out of range") {
                 error
             } else {
@@ -3521,16 +3704,36 @@ impl Parser {
         self.variable_constants.contains(name)
             || self.globals.get(name).is_some_and(C0Global::is_constant)
             || self
+                .globals
+                .values()
+                .find(|global| global.kernel_name() == name)
+                .is_some_and(C0Global::is_constant)
+            || self
                 .global_arrays
                 .get(name)
+                .is_some_and(C0GlobalArray::is_constant)
+            || self
+                .global_arrays
+                .values()
+                .find(|global| global.kernel_name() == name)
                 .is_some_and(C0GlobalArray::is_constant)
             || self
                 .global_aggregates
                 .get(name)
                 .is_some_and(C0GlobalAggregate::is_constant)
             || self
+                .global_aggregates
+                .values()
+                .find(|global| global.kernel_name() == name)
+                .is_some_and(C0GlobalAggregate::is_constant)
+            || self
                 .global_aggregate_arrays
                 .get(name)
+                .is_some_and(C0GlobalAggregateArray::is_constant)
+            || self
+                .global_aggregate_arrays
+                .values()
+                .find(|global| global.kernel_name() == name)
                 .is_some_and(C0GlobalAggregateArray::is_constant)
     }
 
@@ -3612,6 +3815,55 @@ impl Parser {
             && !declared_pointee_constant
             && self.expression_pointee_is_constant(expression)
         {
+            return Err(
+                self.error_here("cannot discard const qualification from a pointer initializer")
+            );
+        }
+        Ok(())
+    }
+
+    fn static_address_target(&self, expression: &C0Expression) -> Option<(C0Type, bool)> {
+        let C0Expression::AddressOf(target) = expression else {
+            return None;
+        };
+        let C0Expression::Variable(name) = target.as_ref() else {
+            return None;
+        };
+        let resolved_name = self.resolve_name(name);
+        let c_type = self
+            .variable_types
+            .get(&resolved_name)
+            .copied()
+            .or_else(|| self.variable_types.get(name).copied())?;
+        Some((c_type, self.expression_is_constant_lvalue(target)))
+    }
+
+    fn validate_static_pointer_initializer(
+        &self,
+        declared_type: C0Type,
+        declared_pointee_constant: bool,
+        initializer: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if matches!(initializer, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        let Some((target_type, target_is_constant)) = self.static_address_target(initializer)
+        else {
+            return Err(self.error_here(
+                "static pointer initializers currently support only null or the address of a declared scalar object",
+            ));
+        };
+        let Some(expected_type) = target_type.pointer_type() else {
+            return Err(self.error_here(
+                "static pointer initializers currently support only addresses of scalar objects",
+            ));
+        };
+        if expected_type != declared_type {
+            return Err(self.error_here(format!(
+                "address initializer has type `{expected_type:?}`, but `{declared_type:?}` is required"
+            )));
+        }
+        if target_is_constant && !declared_pointee_constant {
             return Err(
                 self.error_here("cannot discard const qualification from a pointer initializer")
             );
@@ -4318,16 +4570,7 @@ impl Parser {
                 || parsed_type.enum_name.is_some()
                 || parsed_type.union_name.is_some()
                 || (struct_pointer_name.is_none()
-                    && !matches!(
-                        parsed_type.c_type,
-                        C0Type::Int16
-                            | C0Type::Int32
-                            | C0Type::UInt8
-                            | C0Type::UInt16
-                            | C0Type::UInt32
-                            | C0Type::Float32
-                            | C0Type::Float64
-                    ))
+                    && !parsed_type.c_type.is_supported_static_scalar())
             {
                 return Err(self.error_here(
                     "file-scope declarations currently support only scalar integer, floating-point, struct-pointer, or supported struct globals",
@@ -4531,7 +4774,12 @@ impl Parser {
                     }
                     self.position += 1;
                     let initializer = self.parse_expression()?;
-                    validate_global_initializer(self, parsed_type.c_type, &initializer)?;
+                    validate_global_initializer(
+                        self,
+                        parsed_type.c_type,
+                        parsed_type.pointee_constant,
+                        &initializer,
+                    )?;
                     Some(initializer)
                 } else if is_extern {
                     None
@@ -4553,6 +4801,7 @@ impl Parser {
                                 )
                                 .with_volatile(parsed_type.is_volatile)
                                 .with_constant(parsed_type.is_constant)
+                                .with_pointee_constant(parsed_type.pointee_constant)
                             } else {
                                 C0Global::definition(
                                     name.clone(),
@@ -4562,6 +4811,7 @@ impl Parser {
                                 )
                                 .with_volatile(parsed_type.is_volatile)
                                 .with_constant(parsed_type.is_constant)
+                                .with_pointee_constant(parsed_type.pointee_constant)
                             }
                         })
                         .unwrap_or_else(|| {
@@ -4572,6 +4822,7 @@ impl Parser {
                             )
                             .with_volatile(parsed_type.is_volatile)
                             .with_constant(parsed_type.is_constant)
+                            .with_pointee_constant(parsed_type.pointee_constant)
                         }),
                 )?;
                 self.variable_types
@@ -4652,7 +4903,7 @@ impl Parser {
                     )));
                 }
                 let value = self.parse_expression()?;
-                validate_global_initializer(self, element_type, &value)?;
+                validate_global_initializer(self, element_type, false, &value)?;
                 values.push(value);
                 match self.peek() {
                     Some(Token::Comma) => {
@@ -4711,6 +4962,11 @@ impl Parser {
                 return Err(
                     self.error_here(format!("conflicting const qualifiers for global `{name}`"))
                 );
+            }
+            if previous.pointee_is_constant() != declaration.pointee_is_constant() {
+                return Err(self.error_here(format!(
+                    "conflicting pointee const qualifiers for global `{name}`"
+                )));
             }
             if previous.is_file_static() != declaration.is_file_static() {
                 return Err(self.error_here(format!(
@@ -7929,16 +8185,7 @@ impl Parser {
             if parsed_type.struct_name.is_some()
                 || parsed_type.enum_name.is_some()
                 || parsed_type.union_name.is_some()
-                || !matches!(
-                    parsed_type.c_type,
-                    C0Type::Int16
-                        | C0Type::Int32
-                        | C0Type::UInt8
-                        | C0Type::UInt16
-                        | C0Type::UInt32
-                        | C0Type::Float32
-                        | C0Type::Float64
-                )
+                || !parsed_type.c_type.is_supported_static_scalar()
             {
                 return Err(self.error_here(
                     "function-local `static` declarations currently support scalar integer, floating-point, or supported structs",
@@ -8068,7 +8315,12 @@ impl Parser {
                 let initializer = if self.peek() == Some(&Token::Equal) {
                     self.position += 1;
                     let initializer = self.parse_expression()?;
-                    validate_static_initializer(self, parsed_type.c_type, &initializer)?;
+                    validate_static_initializer(
+                        self,
+                        parsed_type.c_type,
+                        parsed_type.pointee_constant,
+                        &initializer,
+                    )?;
                     initializer
                 } else {
                     zero_initializer(parsed_type.c_type)
@@ -8077,7 +8329,8 @@ impl Parser {
                     kernel_name.clone(),
                     C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
                         .with_volatile(parsed_type.is_volatile)
-                        .with_constant(parsed_type.is_constant),
+                        .with_constant(parsed_type.is_constant)
+                        .with_pointee_constant(parsed_type.pointee_constant),
                 );
             }
             if self.peek() != Some(&Token::Comma) {
@@ -8149,7 +8402,7 @@ impl Parser {
                     )));
                 }
                 let value = self.parse_expression()?;
-                validate_static_initializer(self, element_type, &value)?;
+                validate_static_initializer(self, element_type, false, &value)?;
                 values.push(value);
                 match self.peek() {
                     Some(Token::Comma) => {

@@ -101,6 +101,9 @@ Likely additions:
   compatible cross-file qualifiers are checked; non-literal designators,
   incomplete, multidimensional, and dynamically
   initialized aggregate tables remain open.
+  Static-storage pointers now also accept address constants for declared scalar
+  objects, preserving stable global or function-qualified static provenance and
+  pointee-`const` views across translation units.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
   declarations, one linked definition, shared state across calls, and contract
   footprints. File-scope scalar `static` objects now use

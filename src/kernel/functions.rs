@@ -2217,20 +2217,24 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 )
                 .store(slot.clone(), global.initial_value().clone());
         }
-        state.locals.set_global_with_qualifiers(
+        state.locals.set_global_with_all_qualifiers(
             global.kernel_name().to_string(),
             global.c_type(),
             slot.clone(),
             global.is_volatile(),
+            false,
             global.is_constant(),
+            global.pointee_is_constant(),
         );
         if global.kernel_name() != global.name() && !state.locals.contains_name(global.name()) {
-            state.locals.set_global_with_qualifiers(
+            state.locals.set_global_with_all_qualifiers(
                 global.name().to_string(),
                 global.c_type(),
                 slot,
                 global.is_volatile(),
+                false,
                 global.is_constant(),
+                global.pointee_is_constant(),
             );
         }
     }
@@ -2366,12 +2370,14 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
                 )
                 .store(slot.clone(), static_local.initial_value().clone());
         }
-        state.locals.set_global_with_qualifiers(
+        state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),
             static_local.c_type(),
             slot.clone(),
             static_local.is_volatile(),
+            false,
             static_local.is_constant(),
+            static_local.pointee_is_constant(),
         );
         // Contract C fragments use the source spelling. A nested static may
         // have a kernel-only name to distinguish it from another object in a
@@ -2380,12 +2386,14 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
         if static_local.kernel_name() != static_local.source_name()
             && !state.locals.contains_name(static_local.source_name())
         {
-            state.locals.set_global_with_qualifiers(
+            state.locals.set_global_with_all_qualifiers(
                 static_local.source_name().to_string(),
                 static_local.c_type(),
                 slot,
                 static_local.is_volatile(),
+                false,
                 static_local.is_constant(),
+                static_local.pointee_is_constant(),
             );
         }
     }

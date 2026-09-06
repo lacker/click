@@ -2134,6 +2134,13 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for global `{name}`"
                     )));
                 }
+                Some(previous)
+                    if previous.pointee_is_constant() != global.pointee_is_constant() =>
+                {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global `{name}`"
+                    )));
+                }
                 Some(previous) if previous.is_defined() && global.is_defined() => {
                     if previous != global {
                         return Err(ClickError::new(format!(
@@ -2161,6 +2168,13 @@ pub(in crate::surface) fn parse_verified_sources(
             }
             match globals.get(name) {
                 Some(previous) if previous.c_type() != global.c_type() => {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for global `{name}`"
+                    )));
+                }
+                Some(previous)
+                    if previous.pointee_is_constant() != global.pointee_is_constant() =>
+                {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global `{name}`"
                     )));

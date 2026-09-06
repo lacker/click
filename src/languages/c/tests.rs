@@ -206,6 +206,97 @@ fn c0_collects_scalar_file_scope_globals() {
 }
 
 #[test]
+fn c0_lowers_static_address_initializers_with_pointer_provenance() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 target = 3;
+        const int32 *alias = &target;
+        static int32 private_target = 4;
+        static int32 *private_alias = &private_target;
+
+        int32 read() {
+            static const int32 *local_alias = &target;
+            return *alias + *local_alias;
+        }
+        "#,
+        "static-pointers.c",
+    )
+    .expect("static address initializers should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("address-initializer reader function");
+    assert!(function.globals()["alias"].pointee_is_constant());
+    assert!(function.globals()["private_alias"].is_file_static());
+    assert!(
+        function
+            .static_locals()
+            .values()
+            .find(|static_local| static_local.name() == "local_alias")
+            .expect("static pointer metadata")
+            .pointee_is_constant()
+    );
+
+    let expected_pointer = crate::kernel::CMemory::global_pointer("target");
+    let kernel = function.to_kernel_function();
+    let global = kernel
+        .global_variables()
+        .iter()
+        .find(|global| global.name() == "alias")
+        .expect("kernel global address initializer");
+    let global_value = global.initial_value();
+    let crate::kernel::CValue::Pointer(global_pointer) = global_value else {
+        panic!("global address initializer should lower to a pointer value");
+    };
+    assert_eq!(global_pointer.pointer(), &expected_pointer);
+    assert_eq!(global_pointer.c_type(), crate::kernel::CType::Int32Pointer);
+    assert!(global_pointer.pointee_constant());
+
+    let private_target = &function.globals()["private_target"];
+    let private_alias = kernel
+        .global_variables()
+        .iter()
+        .find(|global| global.name() == "private_alias")
+        .expect("kernel file-static pointer initializer");
+    let crate::kernel::CValue::Pointer(private_pointer) = private_alias.initial_value() else {
+        panic!("file-static address initializer should lower to a pointer value");
+    };
+    assert_eq!(
+        private_pointer.pointer(),
+        &crate::kernel::CMemory::global_pointer(private_target.kernel_name())
+    );
+    assert_eq!(private_pointer.c_type(), crate::kernel::CType::Int32Pointer);
+    assert!(!private_pointer.pointee_constant());
+
+    let static_local = kernel
+        .static_variables()
+        .iter()
+        .find(|static_local| static_local.source_name() == "local_alias")
+        .expect("kernel static address initializer");
+    let static_value = static_local.initial_value();
+    let crate::kernel::CValue::Pointer(static_pointer) = static_value else {
+        panic!("static address initializer should lower to a pointer value");
+    };
+    assert_eq!(static_pointer.pointer(), &expected_pointer);
+    assert_eq!(static_pointer.c_type(), crate::kernel::CType::Int32Pointer);
+    assert!(static_pointer.pointee_constant());
+}
+
+#[test]
+fn c0_rejects_static_address_initializers_that_discard_const() {
+    let error = syntax::parse_functions(
+        "const int32 target = 3; int32 *alias = &target; int32 read() { return *alias; }",
+    )
+    .expect_err("static pointer initializers must preserve pointee constness");
+    assert!(
+        error
+            .message()
+            .contains("cannot discard const qualification")
+    );
+}
+
+#[test]
 fn c0_collects_file_scope_scalar_arrays() {
     let functions = syntax::parse_functions(
         r#"

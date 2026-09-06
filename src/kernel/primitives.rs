@@ -1063,6 +1063,7 @@ pub struct CGlobal {
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
     pub(super) constant: bool,
+    pub(super) pointee_constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1108,6 +1109,7 @@ pub struct CStaticLocal {
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
     pub(super) constant: bool,
+    pub(super) pointee_constant: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
