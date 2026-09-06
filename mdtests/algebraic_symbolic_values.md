@@ -28,6 +28,30 @@ function rebuild(m: Maybe<int32>) -> Maybe<int32> {
     }
 }
 
+function inferred_let(value: int32) -> Maybe<int32> {
+    let m = wrap(value);
+    m
+}
+
+function annotated_let(value: int32) -> Maybe<int32> {
+    let m: Maybe<int32> = Maybe<int32>::Some(value);
+    m
+}
+
+function chained_let(value: int32) -> Maybe<int32> {
+    let first = wrap(value);
+    let second = first;
+    second
+}
+
+function match_through_let(value: int32, fallback: int32) -> int32 {
+    let m = wrap(value);
+    match m {
+        Maybe::None => fallback,
+        Maybe::Some(inner) => inner,
+    }
+}
+
 predicate same_maybe(left: Maybe<int32>, right: Maybe<int32>) {
     left == right
 }
@@ -59,6 +83,28 @@ theorem algebraic_function_result(value: int32) {
         simp();
     }
     ensures wrap(value) == wrap(value) by simp;
+}
+
+theorem algebraic_lets_are_first_class(value: int32, fallback: int32) {
+    ensures inferred_let(value) == Maybe<int32>::Some(value) by {
+        unfold(inferred_let(value));
+        unfold(wrap(value));
+        simp();
+    }
+    ensures annotated_let(value) == Maybe<int32>::Some(value) by {
+        unfold(annotated_let(value));
+        simp();
+    }
+    ensures chained_let(value) == Maybe<int32>::Some(value) by {
+        unfold(chained_let(value));
+        unfold(wrap(value));
+        simp();
+    }
+    ensures match_through_let(value, fallback) == value by {
+        unfold(match_through_let(value, fallback));
+        unfold(wrap(value));
+        simp();
+    }
 }
 
 theorem algebraic_function_parameter(m: Maybe<int32>, fallback: int32) {

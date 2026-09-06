@@ -2040,7 +2040,7 @@ pub(super) fn click_function_applications(
         applications: &mut Vec<ClickFunctionApplication>,
     ) {
         match term {
-            ContractExpression::AlgebraicVariable { .. } => {}
+            ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {}
             ContractExpression::AlgebraicConstructor { arguments, .. } => {
                 for argument in arguments {
                     expression(argument, known_facts, applications);

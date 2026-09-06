@@ -131,6 +131,28 @@ enum SpecValueType {
     Algebraic(AlgebraicTypeApplication),
 }
 
+fn spec_value_matches_click_type(actual: &SpecValueType, expected: &ClickType) -> bool {
+    match (actual, expected) {
+        (SpecValueType::Scalar(None), ClickType::C(_)) => true,
+        (SpecValueType::Scalar(Some(actual)), ClickType::C(expected)) => {
+            click_types_compatible(*actual, *expected)
+        }
+        (SpecValueType::Algebraic(actual), ClickType::Algebraic(expected)) => actual == expected,
+        _ => false,
+    }
+}
+
+fn describe_spec_value_type(value_type: &SpecValueType) -> String {
+    match value_type {
+        SpecValueType::Scalar(Some(c_type)) => describe_c0_type(*c_type),
+        SpecValueType::Scalar(None) => "a C value".to_string(),
+        SpecValueType::Sequence(_) => "a sequence".to_string(),
+        SpecValueType::Algebraic(application) => {
+            describe_click_type(&ClickType::Algebraic(application.clone()))
+        }
+    }
+}
+
 fn validate_comparison_expression_types(
     left: &ContractExpression,
     operator: ComparisonOperator,
@@ -294,6 +316,29 @@ fn infer_spec_value_type(
         | ContractExpression::At {
             expression: inner, ..
         } => infer_spec_value_type(inner, variables, click_functions, context),
+        ContractExpression::Let {
+            name,
+            click_type,
+            value,
+            body,
+        } => {
+            let value_type = infer_spec_value_type(value, variables, click_functions, context)?;
+            if let Some(expected) = click_type
+                && !spec_value_matches_click_type(&value_type, expected)
+            {
+                return Err(ClickError::new(format!(
+                    "let binding `{name}` expects {}, got {} in {context}",
+                    describe_click_type(expected),
+                    describe_spec_value_type(&value_type)
+                )));
+            }
+            let substituted = substitute_contract_expression(
+                body,
+                &BTreeMap::from([(name.clone(), value.as_ref().clone())]),
+            )
+            .map_err(ClickError::new)?;
+            infer_spec_value_type(&substituted, variables, click_functions, context)
+        }
         ContractExpression::Call { name, .. }
             if matches!(
                 click_functions
@@ -742,6 +787,7 @@ pub(super) fn infer_contract_expression_type(
             }
             Ok(infer_c_expression_type(expression, variables))
         }
+        ContractExpression::Binding(name) => Ok(variables.get(name).copied()),
         // C locals are resolved against the concrete program state during
         // lowering, not against the contract namespace used here. In
         // particular, `c(result)` must not inherit the type of built-in
@@ -835,26 +881,26 @@ pub(super) fn infer_contract_expression_type(
         }
         ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value,
             body,
         } => {
-            let value_type =
-                infer_contract_expression_type(value, variables, click_functions, context)?;
-            if let (Some(expected), Some(actual)) = (*c_type, value_type)
-                && !click_types_compatible(actual, expected)
+            let value_type = infer_spec_value_type(value, variables, click_functions, context)?;
+            if let Some(expected) = click_type
+                && !spec_value_matches_click_type(&value_type, expected)
             {
                 return Err(ClickError::new(format!(
                     "let binding `{name}` expects {}, got {} in {context}",
-                    describe_c0_type(expected),
-                    describe_c0_type(actual)
+                    describe_click_type(expected),
+                    describe_spec_value_type(&value_type)
                 )));
             }
-            let mut body_variables = variables.clone();
-            if let Some(binding_type) = c_type.or(value_type) {
-                body_variables.insert(name.clone(), binding_type);
-            }
-            infer_contract_expression_type(body, &body_variables, click_functions, context)
+            let substituted = substitute_contract_expression(
+                body,
+                &BTreeMap::from([(name.clone(), value.as_ref().clone())]),
+            )
+            .map_err(ClickError::new)?;
+            infer_contract_expression_type(&substituted, variables, click_functions, context)
         }
         ContractExpression::Call { name, arguments } => {
             let Some(function) = click_functions.get(name) else {
@@ -1477,7 +1523,7 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } => Ok(()),
+        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 validate_contract_expression_calls(argument, click_functions, context)?;

@@ -164,6 +164,7 @@ struct Parser {
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
+    current_contract_bindings: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -281,7 +282,7 @@ struct ResolvedField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ContractLetBinding {
     pub(super) name: String,
-    pub(super) c_type: Option<C0Type>,
+    pub(super) click_type: Option<ClickType>,
     kind: ContractLetBindingKind,
 }
 
@@ -348,6 +349,7 @@ impl Parser {
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
             current_algebraic_params: BTreeMap::new(),
+            current_contract_bindings: BTreeSet::new(),
         })
     }
 
@@ -681,7 +683,15 @@ impl Parser {
                             "a resource body `let` must be `let name: type where proposition;`",
                         ));
                     };
-                    let c_type = binding.c_type.expect("`let ... where` carries its type");
+                    let click_type = binding
+                        .click_type
+                        .as_ref()
+                        .expect("`let ... where` carries its type");
+                    let Some(c_type) = click_type.c_type() else {
+                        return Err(self.error(
+                            "resource witnesses must have a C pointer type, not an algebraic type",
+                        ));
+                    };
                     if !c_type.is_pointer() {
                         return Err(self.error(format!(
                             "resource witness `{}` must have a pointer type",
@@ -1295,13 +1305,16 @@ impl Parser {
     fn parse_contract_let_binding(&mut self) -> Result<ContractLetBinding, ClickError> {
         self.expect_ident_spelling("let")?;
         let name = self.expect_ident("let binding name")?;
-        let c_type = if self.peek() == Some(&Token::Colon) {
+        let click_type = if self.peek() == Some(&Token::Colon) {
             self.position += 1;
-            let parsed_type = self.parse_type()?;
-            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+            let (click_type, parsed_type) = self.parse_click_type()?;
+            if let Some(parsed_type) = parsed_type
+                && parsed_type.struct_name.is_some()
+                && !parsed_type.struct_pointer
+            {
                 return Err(self.error("only pointer-to-struct types are supported"));
             }
-            Some(parsed_type.c_type)
+            Some(click_type)
         } else {
             None
         };
@@ -1310,7 +1323,7 @@ impl Parser {
             ContractLetBindingKind::Value(self.parse_contract_expression()?)
         } else if self.peek_ident() == Some("where") {
             self.position += 1;
-            if c_type.is_none() {
+            if click_type.is_none() {
                 return Err(self.error("`let ... where` requires an explicit type annotation"));
             }
             ContractLetBindingKind::Where(self.parse_proposition()?)
@@ -1318,7 +1331,11 @@ impl Parser {
             return Err(self.error("expected `=` or `where` in `let` binding"));
         };
         self.expect(Token::Semicolon)?;
-        Ok(ContractLetBinding { name, c_type, kind })
+        Ok(ContractLetBinding {
+            name,
+            click_type,
+            kind,
+        })
     }
 
     fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
@@ -2121,8 +2138,13 @@ impl Parser {
                 self.position = start;
                 return self.parse_proposition_comparison();
             };
-            let Some(c_type) = binding.c_type else {
+            let Some(click_type) = binding.click_type else {
                 unreachable!("`let ... where` parser requires an explicit type")
+            };
+            let ClickType::C(c_type) = click_type else {
+                return Err(self.error(
+                    "`let ... where` quantifies a C value; algebraic quantifiers are not supported yet",
+                ));
             };
             let body = self.parse_proposition()?;
             return Ok(ClickProposition::Exists {
@@ -3220,7 +3242,8 @@ impl Parser {
             (ContractExpression::CFragment(base.clone()), base)
         };
         let mut struct_name = match &surface_base {
-            ContractExpression::CFragment(CExpression::Variable(name)) => self
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
                 .current_struct_params
                 .get(name)
                 .or_else(|| self.current_aggregate_objects.get(name))
@@ -3229,7 +3252,8 @@ impl Parser {
         };
         let mut union_name: Option<String> = None;
         let mut struct_array_element_width = match &surface_base {
-            ContractExpression::CFragment(CExpression::Variable(name))
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name))
                 if self.current_struct_array_params.contains(name) =>
             {
                 struct_name
@@ -4100,7 +4124,8 @@ impl Parser {
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_primary()?;
         let mut struct_name = match &expression {
-            ContractExpression::CFragment(CExpression::Variable(name)) => self
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
                 .current_struct_params
                 .get(name)
                 .or_else(|| self.current_aggregate_objects.get(name))
@@ -4109,7 +4134,8 @@ impl Parser {
         };
         let mut union_name: Option<String> = None;
         let mut struct_array_element_width = match &expression {
-            ContractExpression::CFragment(CExpression::Variable(name)) => self
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
                 .current_struct_array_params
                 .contains(name)
                 .then(|| {
@@ -4420,10 +4446,15 @@ impl Parser {
                     self.error("`let ... where` is a proposition binding, not an expression")
                 );
             };
-            let body = self.parse_contract_expression()?;
+            let binding_was_in_scope = !self.current_contract_bindings.insert(binding.name.clone());
+            let body = self.parse_contract_expression();
+            if !binding_was_in_scope {
+                self.current_contract_bindings.remove(&binding.name);
+            }
+            let body = body?;
             return Ok(ContractExpression::Let {
                 name: binding.name,
-                c_type: binding.c_type,
+                click_type: binding.click_type,
                 value: Box::new(value),
                 body: Box::new(body),
             });
@@ -4571,6 +4602,9 @@ impl Parser {
                     algebraic_type: algebraic_type.clone(),
                     binder_index: *binder_index,
                 }),
+                None if self.current_contract_bindings.contains(&name) => {
+                    Ok(ContractExpression::Binding(name))
+                }
                 None => Ok(ContractExpression::CFragment(CExpression::Variable(name))),
             },
             Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(

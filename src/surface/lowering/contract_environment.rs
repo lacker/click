@@ -96,7 +96,8 @@ pub(in crate::surface) fn contract_array_ref_element_type(
     expression: &ContractExpression,
 ) -> Option<CType> {
     match expression {
-        ContractExpression::CFragment(CExpression::Variable(name))
+        ContractExpression::Binding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name))
         | ContractExpression::CBinding(name) => {
             array_refs.get(name).map(|array_ref| array_ref.element_type)
         }

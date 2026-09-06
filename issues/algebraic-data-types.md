@@ -64,7 +64,11 @@ unchanged.
 - checked constructor formation, disjointness, congruence, and injectivity,
   with explicit surface certificates and indexed exact-hypothesis lookup; and
 - theorem application with symbolic algebraic variables, constructors, and
-  pure-function results as checked, type-preserving arguments.
+  pure-function results as checked, type-preserving arguments; and
+- expression-local algebraic `let` bindings with either an explicit
+  `ClickType` annotation or inference from constructors and algebraic-returning
+  pure functions. Bound values remain symbolic through equality, calls, and
+  `match`.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -72,9 +76,8 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic `let` bindings and quantifiers, resource arguments,
-nested and strictly positive recursive fields, structural decreases and
-induction, the library-defined
+Still open are algebraic quantifiers, resource arguments, nested and strictly
+positive recursive fields, structural decreases and induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
 Recursive algebraic-valued pure functions also wait on that recursive
 representation. All pure calls remain logical applications during lowering;

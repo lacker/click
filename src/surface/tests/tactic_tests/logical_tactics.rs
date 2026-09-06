@@ -641,7 +641,7 @@ fn parses_rust_style_let_annotations() {
         body,
         ContractExpression::Let {
             name,
-            c_type: Some(C0Type::Int32),
+            click_type: Some(ClickType::C(C0Type::Int32)),
             ..
         } if name == "next"
     ));
@@ -666,7 +666,7 @@ fn parses_contract_level_let_bindings() {
         Ensure::Proposition(ClickProposition::Comparison {
             right: ContractExpression::Let {
                 name,
-                c_type: Some(C0Type::Int32),
+                click_type: Some(ClickType::C(C0Type::Int32)),
                 ..
             },
             ..

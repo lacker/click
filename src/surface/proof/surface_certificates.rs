@@ -5687,6 +5687,7 @@ pub(super) fn contract_expression_mentions_c_local(
 ) -> bool {
     match expression {
         ContractExpression::AlgebraicVariable { .. } => false,
+        ContractExpression::Binding(name) => !parameter_names.contains(name.as_str()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => arguments
             .iter()
             .any(|argument| contract_expression_mentions_c_local(argument, parameter_names)),

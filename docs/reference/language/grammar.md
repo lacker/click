@@ -166,6 +166,21 @@ arity, and keep field bindings local to the arm. Generic arguments and fields
 currently use modeled C scalar and data-pointer types. See the pure, C-free
 first-class regression in `mdtests/algebraic_symbolic_values.md`.
 
+Expression-local `let` bindings use the same Click type family as parameters
+and results. The annotation may name an algebraic type, or it may be omitted
+when the value determines the type:
+
+<!-- verified-example: mdtests/algebraic_symbolic_values.md -->
+```click
+let explicit: Maybe<int32> = Maybe<int32>::Some(value);
+let inferred = wrap(value);
+inferred
+```
+
+The bound name is a lexical specification binding. Lowering keeps an
+algebraic value symbolic; it does not turn the binding into a C local or
+execute the Click expression.
+
 An algebraic parameter is one typed logical variable. Click does not encode an
 unknown value by allocating a runtime-like tag or by eagerly constructing one
 symbolic payload for every variant. Constructors and matches remain logical
@@ -173,9 +188,9 @@ terms; a match introduces constructor cases only when its definition is used
 by a proof. This is specification elaboration, not execution of Click code or
 of a logical value.
 
-Algebraic `let` bindings and quantifiers, resource arguments, theorem
-application with algebraic arguments, nested/recursive fields, and structural
-recursion/induction remain tracked in the algebraic data types issue. Reusing
+Algebraic quantifiers, resource arguments, nested/recursive fields, and
+structural recursion/induction remain tracked in the algebraic data types
+issue. Reusing
 one constructor refinement across repeated matches is tracked separately in
 the algebraic match path-correlation issue.
 

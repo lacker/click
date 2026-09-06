@@ -946,6 +946,9 @@ fn collect_current_contract_expression_variables(
             collect_current_contract_expression_variables(base, names);
             collect_c_expression_variables(lowered, names);
         }
+        ContractExpression::Binding(name) => {
+            names.insert(name.clone());
+        }
         ContractExpression::CBinding(_) | ContractExpression::ResourceWildcard => {}
         ContractExpression::ResourceCount(resource) => {
             collect_current_resource_clause_variables(resource, names);
@@ -1373,6 +1376,10 @@ pub enum ContractExpression {
         algebraic_type: AlgebraicTypeApplication,
         binder_index: usize,
     },
+    /// A bare source-level name whose Click type is resolved from its lexical
+    /// environment. Unlike `CBinding`, this can denote either a C value or a
+    /// specification-only value such as an algebraic datatype.
+    Binding(String),
     /// Exhaustive elimination of an algebraic value. Its arms may produce a
     /// common C or algebraic result type.
     AlgebraicMatch {
@@ -1441,7 +1448,7 @@ pub enum ContractExpression {
     },
     Let {
         name: String,
-        c_type: Option<C0Type>,
+        click_type: Option<ClickType>,
         value: Box<ContractExpression>,
         body: Box<ContractExpression>,
     },

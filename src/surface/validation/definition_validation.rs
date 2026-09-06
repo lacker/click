@@ -1356,7 +1356,7 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } => Ok(()),
+        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_resource_fact_reads_from_contract_expression(

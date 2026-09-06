@@ -1006,7 +1006,9 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
         ),
         ContractExpression::CFragment(expression) => Ok(expression.clone()),
         ContractExpression::Field { lowered, .. } => Ok(lowered.clone()),
-        ContractExpression::CBinding(name) => Ok(CExpression::Variable(name.clone())),
+        ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
+            Ok(CExpression::Variable(name.clone()))
+        }
         ContractExpression::Add(left, right) => Ok(CExpression::Add(
             Box::new(resource_argument_to_c_expression(left)?),
             Box::new(resource_argument_to_c_expression(right)?),
