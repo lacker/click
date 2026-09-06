@@ -3242,6 +3242,19 @@ fn is_static_integer_type(c_type: C0Type) -> bool {
     )
 }
 
+fn static_integer_type_info(c_type: C0Type) -> Option<(StaticIntegerKind, u32)> {
+    match c_type {
+        C0Type::Int16 => Some((StaticIntegerKind::Signed, 16)),
+        C0Type::Int32 => Some((StaticIntegerKind::Signed, 32)),
+        C0Type::UInt8 => Some((StaticIntegerKind::Unsigned, 8)),
+        C0Type::UInt16 => Some((StaticIntegerKind::Unsigned, 16)),
+        C0Type::UInt32 => Some((StaticIntegerKind::Unsigned, 32)),
+        C0Type::Int64 => Some((StaticIntegerKind::Signed, 64)),
+        C0Type::UInt64 => Some((StaticIntegerKind::Unsigned, 64)),
+        _ => None,
+    }
+}
+
 fn static_integer_value_kind(value: StaticIntegerValue) -> StaticIntegerKind {
     match value {
         StaticIntegerValue::Signed { .. } => StaticIntegerKind::Signed,
@@ -3383,6 +3396,70 @@ fn evaluate_static_integer_binary(
     }
 }
 
+fn evaluate_static_integer_comparison(
+    left: StaticIntegerValue,
+    right: StaticIntegerValue,
+    signed_operation: fn(i128, i128) -> bool,
+    unsigned_operation: fn(u128, u128) -> bool,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    let (kind, bits) = static_integer_common_kind(left, right);
+    let left = convert_static_integer_for_comparison(left, kind, bits)?;
+    let right = convert_static_integer_for_comparison(right, kind, bits)?;
+    let result = match (kind, left, right) {
+        (
+            StaticIntegerKind::Signed,
+            StaticIntegerValue::Signed { value: left, .. },
+            StaticIntegerValue::Signed { value: right, .. },
+        ) => signed_operation(left, right),
+        (
+            StaticIntegerKind::Unsigned,
+            StaticIntegerValue::Unsigned { value: left, .. },
+            StaticIntegerValue::Unsigned { value: right, .. },
+        ) => unsigned_operation(left, right),
+        _ => unreachable!("static integer conversion preserves the common kind"),
+    };
+    checked_static_signed(i128::from(result), 32)
+}
+
+fn convert_static_integer_for_comparison(
+    value: StaticIntegerValue,
+    kind: StaticIntegerKind,
+    bits: u32,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    match (kind, value) {
+        (StaticIntegerKind::Unsigned, StaticIntegerValue::Signed { value, .. }) if value < 0 => {
+            let modulus = 1i128
+                .checked_shl(bits)
+                .ok_or(StaticIntegerEvaluationError::Overflow)?;
+            checked_static_unsigned(value.rem_euclid(modulus) as u128, bits)
+        }
+        _ => convert_static_integer(value, kind, bits),
+    }
+}
+
+fn static_integer_is_true(value: StaticIntegerValue) -> bool {
+    match value {
+        StaticIntegerValue::Signed { value, .. } => value != 0,
+        StaticIntegerValue::Unsigned { value, .. } => value != 0,
+    }
+}
+
+fn static_integer_boolean(value: bool) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    checked_static_signed(i128::from(value), 32)
+}
+
+fn cast_static_integer(
+    value: StaticIntegerValue,
+    c_type: C0Type,
+) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
+    let (kind, bits) =
+        static_integer_type_info(c_type).ok_or(StaticIntegerEvaluationError::NotConstant)?;
+    convert_static_integer(value, kind, bits).map_err(|error| match error {
+        StaticIntegerEvaluationError::Overflow => StaticIntegerEvaluationError::OutOfRange,
+        error => error,
+    })
+}
+
 fn evaluate_static_integer_expression(
     expression: &C0Expression,
 ) -> Result<StaticIntegerValue, StaticIntegerEvaluationError> {
@@ -3399,11 +3476,7 @@ fn evaluate_static_integer_expression(
         | C0Expression::SizeOfType { bytes, .. } => checked_static_signed(i128::from(*bytes), 32),
         C0Expression::Not(expression) => {
             let value = evaluate_static_integer_expression(expression)?;
-            let is_zero = match value {
-                StaticIntegerValue::Signed { value, .. } => value == 0,
-                StaticIntegerValue::Unsigned { value, .. } => value == 0,
-            };
-            checked_static_signed(i128::from(is_zero as u8), 32)
+            static_integer_boolean(!static_integer_is_true(value))
         }
         C0Expression::BitwiseNot(expression) => {
             let value = evaluate_static_integer_expression(expression)?;
@@ -3527,24 +3600,75 @@ fn evaluate_static_integer_expression(
             |left, right| Some(left ^ right),
             |left, right| Some(left ^ right),
         ),
-        C0Expression::LessThan(left, right)
-        | C0Expression::LessEqual(left, right)
-        | C0Expression::GreaterThan(left, right)
-        | C0Expression::GreaterEqual(left, right)
-        | C0Expression::Equal(left, right)
-        | C0Expression::NotEqual(left, right)
-        | C0Expression::And(left, right)
-        | C0Expression::Or(left, right)
-        | C0Expression::Conditional {
-            condition: left,
-            then_branch: right,
-            else_branch: _,
-        } => {
-            let _ = (left, right);
-            Err(StaticIntegerEvaluationError::NotConstant)
+        C0Expression::LessThan(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left < right,
+            |left, right| left < right,
+        ),
+        C0Expression::LessEqual(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left <= right,
+            |left, right| left <= right,
+        ),
+        C0Expression::GreaterThan(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left > right,
+            |left, right| left > right,
+        ),
+        C0Expression::GreaterEqual(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left >= right,
+            |left, right| left >= right,
+        ),
+        C0Expression::Equal(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left == right,
+            |left, right| left == right,
+        ),
+        C0Expression::NotEqual(left, right) => evaluate_static_integer_comparison(
+            evaluate_static_integer_expression(left)?,
+            evaluate_static_integer_expression(right)?,
+            |left, right| left != right,
+            |left, right| left != right,
+        ),
+        C0Expression::And(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            if !static_integer_is_true(left) {
+                return static_integer_boolean(false);
+            }
+            static_integer_boolean(static_integer_is_true(evaluate_static_integer_expression(
+                right,
+            )?))
         }
-        C0Expression::Cast { .. }
-        | C0Expression::Void
+        C0Expression::Or(left, right) => {
+            let left = evaluate_static_integer_expression(left)?;
+            if static_integer_is_true(left) {
+                return static_integer_boolean(true);
+            }
+            static_integer_boolean(static_integer_is_true(evaluate_static_integer_expression(
+                right,
+            )?))
+        }
+        C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            if static_integer_is_true(evaluate_static_integer_expression(condition)?) {
+                evaluate_static_integer_expression(then_branch)
+            } else {
+                evaluate_static_integer_expression(else_branch)
+            }
+        }
+        C0Expression::Cast {
+            expression, c_type, ..
+        } => cast_static_integer(evaluate_static_integer_expression(expression)?, *c_type),
+        C0Expression::Void
         | C0Expression::Variable(_)
         | C0Expression::Call { .. }
         | C0Expression::IndirectCall { .. }

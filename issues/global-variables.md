@@ -8,7 +8,9 @@ declarations, exactly one linked external definition, per-translation-unit
 file-scope `static` storage, literal or zero initialization, shared storage
 across calls, `old(global)`, and one-cell contract footprints. Bounded integer
 constant expressions in those initializers are folded before storage lowering;
-runtime loads and calls remain rejected. Fixed-size
+comparisons, short-circuit logical expressions, selected conditional branches,
+and checked integer casts are included; runtime loads and calls remain rejected.
+Fixed-size
 one-dimensional scalar arrays now use the same stable linkage and
 element-initialization model. Function-local scalar `static` objects and
 fixed-size one-dimensional scalar `static` arrays are also initialized once
@@ -90,7 +92,9 @@ duplicate designators. `mdtests/static_integer_constant_initializers.md`
 covers bounded arithmetic, bitwise, and shift expressions in scalar static
 initializers and arrays, while
 `mdtests/static_integer_constant_initializers_rejected.md` covers the
-runtime-load boundary.
+runtime-load boundary, and
+`mdtests/static_integer_constant_expression_control.md` covers comparisons,
+short-circuiting, selected conditional branches, and checked integer casts.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -98,8 +102,10 @@ propagation, and indirect-write rejection.
 ## Acceptance criteria
 
 - The parser accepts supported scalar file-scope declarations with optional
-  bounded integer constant-expression, literal, null-pointer, or stable
-  object/subobject-address initializers, literal scalar-array index designators,
+  bounded integer constant-expressions (including comparisons, short-circuit
+  logical and conditional operators, and checked integer casts), literal,
+  null-pointer, or stable object/subobject-address initializers, literal
+  scalar-array index designators,
   `extern` declarations, and internal-linkage
   `static` definitions, including const-qualified scalar objects and scalar arrays, and
   rejects duplicate or missing external definitions across the source bundle.

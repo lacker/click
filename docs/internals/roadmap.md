@@ -95,7 +95,9 @@ Likely additions:
   static zero fill. Fixed-size
   one-dimensional scalar global arrays now use stable cross-translation-unit
   or translation-unit-private storage with literal/zero element initialization
-  and literal index designators with static zero fill. Fixed-size
+  and literal index designators with static zero fill. Integer scalar static
+  initializers also fold bounded comparisons, short-circuit logical operators,
+  selected conditional branches, and checked integer casts. Fixed-size
   one-dimensional arrays of supported scalar-field
   aggregates now use the same stable linkage and ABI-sized element storage;
   const-qualified static-storage aggregates now use read-only backing and

@@ -1286,6 +1286,64 @@ fn c0_folds_integer_constant_static_initializers() {
 }
 
 #[test]
+fn c0_folds_comparison_logical_conditional_and_cast_static_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 values[5] = {
+            1 < 2,
+            (0 && (1 / 0)) ? 10 : 20,
+            (1 || (1 / 0)) ? 30 : 40,
+            ((3 == 3) && (4 != 5)) ? (uint8) 255 : 0,
+            (int16) (6 * 7)
+        };
+        static int32 private_value = (2 <= 2) + (4 >= 4) + (0 ? (1 / 0) : (4 > 3));
+        static int32 mixed_value = (-1 < 1u) ? 2 : 1;
+
+        int32 read() {
+            static uint16 local_value = (uint16) ((3 < 4) ? 9 : (1 / 0));
+            return values[0] + values[1] + values[2] + values[3] + values[4]
+                + private_value + local_value;
+        }
+        "#,
+    )
+    .expect("richer integer constant static initializers should parse");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .expect("reader function");
+    assert_eq!(
+        function.global_arrays()["values"].initializer(),
+        Some(
+            &[
+                syntax::C0Expression::Int32Literal(1),
+                syntax::C0Expression::Int32Literal(20),
+                syntax::C0Expression::Int32Literal(30),
+                syntax::C0Expression::Int32Literal(255),
+                syntax::C0Expression::Int32Literal(42),
+            ][..]
+        )
+    );
+    assert_eq!(
+        function.globals()["private_value"].initializer(),
+        Some(&syntax::C0Expression::Int32Literal(3))
+    );
+    assert_eq!(
+        function.globals()["mixed_value"].initializer(),
+        Some(&syntax::C0Expression::Int32Literal(1))
+    );
+    assert_eq!(
+        function
+            .static_locals()
+            .values()
+            .find(|local| local.name() == "local_value")
+            .expect("folded static local")
+            .initializer(),
+        &syntax::C0Expression::UInt32Literal(9)
+    );
+}
+
+#[test]
 fn c0_rejects_invalid_static_integer_constant_initializers() {
     for (source, expected) in [
         (
@@ -1307,6 +1365,10 @@ fn c0_rejects_invalid_static_integer_constant_initializers() {
         (
             "int32 value = 2147483647 + 1; int32 read() { return value; }",
             "overflows",
+        ),
+        (
+            "int32 value = (uint8) 256; int32 read() { return value; }",
+            "out of range",
         ),
     ] {
         let error = syntax::parse_functions(source)
