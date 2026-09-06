@@ -115,6 +115,7 @@ impl VerificationSession {
         if outermost {
             primitives::start_fresh_c_memory_arena();
             eval::clear_load_variable_registry();
+            primitives::clear_block_alignment_registry();
             eval::clear_load_canonicalization_caches();
             memory_provenance::clear_canonical_form_caches();
             memory_provenance::clear_provenance_memos();

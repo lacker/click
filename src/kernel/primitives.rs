@@ -16,6 +16,9 @@ use std::sync::{Arc, OnceLock};
 mod contracts;
 mod derivations;
 mod memory_state;
+pub(crate) use memory_state::{
+    clear_block_alignment_registry, register_block_alignment, registered_block_alignment,
+};
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;

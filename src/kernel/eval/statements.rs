@@ -2642,6 +2642,10 @@ pub(in crate::kernel) fn declare_local(
     pointee_constant: bool,
 ) -> CState {
     let mut state = state.clone();
+    // A declared local's block is placed at its type's alignment; record it
+    // with the block so the alignment decision is intrinsic, as for heap
+    // and file-scope blocks, rather than a path fact at each address-of.
+    register_block_alignment(&CMemory::local_pointer(name).block, c_type.abi_alignment());
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
         CType::VoidPointer => C_POINTER_BYTE_WIDTH,
@@ -2827,6 +2831,7 @@ pub(in crate::kernel) fn declare_aggregate_local(
 ) -> CState {
     let mut state = state.clone();
     let pointer = CMemory::local_pointer(name);
+    register_block_alignment(&pointer.block, layout.alignment_bytes());
     state.memory = state
         .memory
         .with_block(pointer.block.clone(), layout.size_bytes());

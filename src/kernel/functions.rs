@@ -2176,6 +2176,7 @@ pub(super) fn bind_c_function_arguments(
             }
             let source = pointer.pointer().clone();
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
+            register_block_alignment(&slot.block, layout.alignment_bytes());
             // Preserve the caller's memory snapshot for symbolic source
             // loads. Declaring the destination first would make an unknown
             // external field load depend on the callee's fresh block and
@@ -2197,6 +2198,7 @@ pub(super) fn bind_c_function_arguments(
             .with_pointer_pointee_constant(parameter.pointee_is_constant());
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
+            register_block_alignment(&slot.block, parameter.c_type().abi_alignment());
             callee_state.memory = callee_state
                 .memory
                 .with_block(slot.block.clone(), value.byte_width())
@@ -2314,6 +2316,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for global in function.global_variables() {
         let slot = CMemory::global_pointer(global.kernel_name());
+        register_block_alignment(&slot.block, global.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory
@@ -2347,6 +2350,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for global_array in function.global_arrays() {
         let slot = CMemory::global_pointer(global_array.kernel_name());
+        register_block_alignment(&slot.block, global_array.element_type().abi_alignment());
         let bytes = global_array
             .length()
             .checked_mul(global_array.element_type().byte_width())
@@ -2389,6 +2393,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for global_aggregate in function.global_aggregates() {
         let slot = CMemory::global_pointer(global_aggregate.kernel_name());
+        register_block_alignment(&slot.block, global_aggregate.layout().alignment_bytes());
         if !state.memory.has_block(&slot.block) {
             state.memory = state.memory.with_block_or_read_only(
                 slot.block.clone(),
@@ -2422,6 +2427,10 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for global_aggregate_array in function.global_aggregate_arrays() {
         let slot = CMemory::global_pointer(global_aggregate_array.kernel_name());
+        register_block_alignment(
+            &slot.block,
+            global_aggregate_array.layout().alignment_bytes(),
+        );
         let bytes = global_aggregate_array
             .length()
             .checked_mul(global_aggregate_array.layout().size_bytes())
@@ -2467,6 +2476,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for static_local in function.static_variables() {
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
+        register_block_alignment(&slot.block, static_local.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory
@@ -2506,6 +2516,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for static_array in function.static_arrays() {
         let slot = CMemory::static_pointer(function.name(), static_array.kernel_name());
+        register_block_alignment(&slot.block, static_array.element_type().abi_alignment());
         let bytes = static_array
             .length()
             .checked_mul(static_array.element_type().byte_width())
@@ -2548,6 +2559,7 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for static_aggregate in function.static_aggregates() {
         let slot = CMemory::static_pointer(function.name(), static_aggregate.kernel_name());
+        register_block_alignment(&slot.block, static_aggregate.layout().alignment_bytes());
         if !state.memory.has_block(&slot.block) {
             state.memory = state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
@@ -2581,6 +2593,10 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
     }
     for static_aggregate_array in function.static_aggregate_arrays() {
         let slot = CMemory::static_pointer(function.name(), static_aggregate_array.kernel_name());
+        register_block_alignment(
+            &slot.block,
+            static_aggregate_array.layout().alignment_bytes(),
+        );
         let bytes = static_aggregate_array
             .length()
             .checked_mul(static_aggregate_array.layout().size_bytes())

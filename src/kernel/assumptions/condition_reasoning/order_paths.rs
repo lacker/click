@@ -987,27 +987,43 @@ impl PureFactContext {
             return Some((true, Some(Proposition::ConditionIs(null_fact, true))));
         }
         let (base, displacement) = split_constant_displacement(&pointer.offset);
-        let premise = if matches!(pointer.block, PointerBlock::Heap(_))
-            && base.as_const() == Some(0)
-            && alignment <= HEAP_ALLOCATION_ALIGNMENT
+        let intrinsic_block_alignment = match &pointer.block {
+            PointerBlock::Heap(_) => Some(HEAP_ALLOCATION_ALIGNMENT),
+            // A file-scope or static object's block is placed by the
+            // compiler at its type's alignment, recorded when the block was
+            // created.
+            block => crate::kernel::primitives::registered_block_alignment(block),
+        };
+        let premise = if base.as_const() == Some(0)
+            && intrinsic_block_alignment.is_some_and(|intrinsic| alignment <= intrinsic)
         {
             None
         } else {
-            let base_pointer = Pointer {
-                block: pointer.block.clone(),
-                offset: base,
-            };
-            let mut probe = alignment;
-            loop {
-                if probe > MAX_PROBED_ALIGNMENT {
-                    return None;
+            // A displacement that is a scaled index whose scale the alignment
+            // divides (an element step of a struct pointer, say) cannot
+            // change the residue, so the fact may be recorded on the pointer
+            // without it.
+            let reduced = drop_aligned_scaled_addends(&base, alignment);
+            let candidates = std::iter::once(base.clone())
+                .chain(reduced.filter(|reduced| *reduced != base))
+                .collect::<Vec<_>>();
+            let mut found = None;
+            'candidates: for candidate in candidates {
+                let base_pointer = Pointer {
+                    block: pointer.block.clone(),
+                    offset: candidate,
+                };
+                let mut probe = alignment;
+                while probe <= MAX_PROBED_ALIGNMENT {
+                    let fact = ConditionTerm::pointer_aligned(base_pointer.clone(), probe);
+                    if self.exact_condition_value(&fact) == Some(true) {
+                        found = Some(Proposition::ConditionIs(fact, true));
+                        break 'candidates;
+                    }
+                    probe *= 2;
                 }
-                let fact = ConditionTerm::pointer_aligned(base_pointer.clone(), probe);
-                if self.exact_condition_value(&fact) == Some(true) {
-                    break Some(Proposition::ConditionIs(fact, true));
-                }
-                probe *= 2;
             }
+            Some(found?)
         };
         Some((displacement.rem_euclid(alignment as i64) == 0, premise))
     }
@@ -1173,6 +1189,60 @@ impl PureFactContext {
 /// Separates the constant byte addends of an offset from its symbolic part,
 /// rebuilding the symbolic part with the canonical constructor so it matches
 /// the shape a recorded fact about the base pointer has.
+/// The offset without its scaled-index addends whose byte scale `alignment`
+/// divides; `None` when there is no such addend.
+fn drop_aligned_scaled_addends(
+    offset: &crate::kernel::PointerOffsetTerm,
+    alignment: u64,
+) -> Option<crate::kernel::PointerOffsetTerm> {
+    use crate::kernel::PointerOffsetTerm;
+    fn addends(offset: &PointerOffsetTerm, out: &mut Vec<PointerOffsetTerm>) {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                addends(left, out);
+                addends(right, out);
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    let mut parts = Vec::new();
+    addends(offset, &mut parts);
+    let alignment = i64::try_from(alignment).ok()?;
+    // A struct pointer steps by `(uint8 *)p + i * sizeof(struct)`, so the
+    // scale may sit inside the index as a constant factor.
+    fn constant_factor(term: &Bitvector32Term) -> Option<i64> {
+        match term {
+            Bitvector32Term::Multiply(left, right) => left
+                .as_const()
+                .map(|constant| i64::from(constant as i32))
+                .or_else(|| right.as_const().map(|constant| i64::from(constant as i32))),
+            _ => None,
+        }
+    }
+    let divisible = |part: &PointerOffsetTerm| match part {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
+            let scale = constant_factor(value)
+                .and_then(|factor| factor.checked_mul(*byte_width))
+                .unwrap_or(*byte_width);
+            scale != 0 && scale % alignment == 0
+        }
+        _ => false,
+    };
+    if !parts.iter().any(|part| divisible(part)) {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .filter(|part| !divisible(part))
+            .reduce(PointerOffsetTerm::add)
+            .unwrap_or(PointerOffsetTerm::Constant(0)),
+    )
+}
+
 fn split_constant_displacement(
     offset: &crate::kernel::PointerOffsetTerm,
 ) -> (crate::kernel::PointerOffsetTerm, i64) {

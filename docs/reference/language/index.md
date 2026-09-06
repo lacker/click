@@ -478,14 +478,21 @@ calls inside `defined(...)` are not yet supported.
 `aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
 a power of two. It is sugar for `address(pointer) & (n - 1) == 0`. Click
 decides it from how the pointer was formed, never from its pointee type: a
-successful heap allocation is 16-byte aligned, taking the address of a
-declared scalar local records that local's type alignment, and a pointer
-reached through a parameter needs an `aligned` clause in a contract or a
-`fact` in a resource. Globals, statics, and struct locals do not yet record
-alignment. A constant byte displacement
-from such a base is then decided exactly, so `aligned(p + 1, 8)` is refuted
-when `aligned(p, 8)` holds. Symbolic displacements and pointers without
-evidence stay undecided.
+successful heap allocation is 16-byte aligned; a declared local's block is
+aligned for its type from its declaration, a struct local's for its
+layout; a file-scope or static object's block is aligned for its type from
+its creation; and a pointer reached through a parameter
+needs an `aligned` clause in a contract or a `fact` in a resource. A
+required complete-object clause `object(p)` for a struct type carries
+`aligned(p, alignof(struct))` as a generated requirement: the caller proves
+it and the function relies on it. A produced object and a resource body
+state alignment explicitly, with `ensures aligned(result, n)` and
+`fact aligned(p, n)`. A
+constant byte displacement from such a base is then decided exactly, so
+`aligned(p + 1, 8)` is refuted when `aligned(p, 8)` holds, and a symbolic
+element step whose scale the alignment divides keeps it, so `aligned(p + i, 8)`
+holds for an 8-aligned `struct pair *p`. Other symbolic displacements and
+pointers without evidence stay undecided.
 
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,
@@ -1065,7 +1072,10 @@ fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 `object(owner)` is layout-aware: it denotes the imported C struct's aligned
 size without exposing byte offsets or pretending that a pointer field is a
 pair of source-level `int32` fields. Use `owner->field` for one field and
-`object(owner)` for the complete object. Explicit ranges such as
+`object(owner)` for the complete object. When a proof exposes the object's
+cells, wide integer fields take their own type while pointer fields are
+held as pointer-width words that read back as pointers; the field's source
+spelling is unaffected. Explicit ranges such as
 `p[0..count]` remain the normal spelling for array storage.
 
 Surface Click also has documented low-level memory reads for addresses that do
@@ -1088,7 +1098,9 @@ pointer are checked rewrites whose obligations come from `aligned`; the
 memory model describes the rules. The tag set with `|` may be a constant or
 a masked read `x & m`, as in rbtree's `rb_color(rb) | (unsigned long)p`,
 whose bound is the mask; two words whose tags are so bounded compare unequal
-when their pointers are distinct and both aligned past the bound.
+when their pointers are distinct and both aligned past the bound. A mask
+must clear the whole tag: `& ~1` on a word tagged with 3 is refuted rather
+than producing a word that still carries bit 1.
 
 The low-level reads and `byte_offset` are Surface Click escape hatches, not
 Kernel Click syntax. The canonical

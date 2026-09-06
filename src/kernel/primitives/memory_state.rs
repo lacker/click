@@ -2242,6 +2242,10 @@ impl CMemory {
     }
 
     pub(crate) fn global_pointer(name: &str) -> Pointer {
+        Self::global_pointer_named(name)
+    }
+
+    fn global_pointer_named(name: &str) -> Pointer {
         Pointer {
             block: format!("global:{name}").into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -2683,4 +2687,32 @@ impl CState {
             ..Self::new()
         }
     }
+}
+
+thread_local! {
+    /// The alignment the compiler gives each file-scope or static object's
+    /// block, recorded once when the block is created. Alignment of such a
+    /// block is intrinsic, like a heap block's, so the decision consults
+    /// this instead of a path fact on every implicit address-of read.
+    static BLOCK_ALIGNMENT_REGISTRY: std::cell::RefCell<BTreeMap<PointerBlock, u64>> =
+        std::cell::RefCell::new(BTreeMap::new());
+}
+
+pub(crate) fn register_block_alignment(block: &PointerBlock, alignment: u32) {
+    if alignment < 2 {
+        return;
+    }
+    BLOCK_ALIGNMENT_REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .insert(block.clone(), u64::from(alignment));
+    });
+}
+
+pub(crate) fn registered_block_alignment(block: &PointerBlock) -> Option<u64> {
+    BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow().get(block).copied())
+}
+
+pub(crate) fn clear_block_alignment_registry() {
+    BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow_mut().clear());
 }

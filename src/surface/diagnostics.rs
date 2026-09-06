@@ -852,14 +852,23 @@ pub(super) fn describe_c_value(
                 describe_bitvector_with_context(value, parameters, arguments)
             )
         }
-        CValue::Int64(value) => format!(
-            "{}i64",
-            describe_bitvector_with_context(value, parameters, arguments)
-        ),
-        CValue::UInt64(value) => format!(
-            "{}u64",
-            describe_bitvector_with_context(value, parameters, arguments)
-        ),
+        // A 64-bit constant already carries its suffix.
+        CValue::Int64(value) => {
+            let inner = describe_bitvector_with_context(value, parameters, arguments);
+            if inner.ends_with("i64") {
+                inner
+            } else {
+                format!("{inner}i64")
+            }
+        }
+        CValue::UInt64(value) => {
+            let inner = describe_bitvector_with_context(value, parameters, arguments);
+            if inner.ends_with("u64") {
+                inner
+            } else {
+                format!("{inner}u64")
+            }
+        }
         CValue::Float32(value) => format!(
             "{}f32",
             describe_bitvector_with_context(value, parameters, arguments)
@@ -1213,7 +1222,41 @@ pub(super) fn describe_binary_contract_expression(
     )
 }
 
+/// The `aligned(p, n)` sugar behind `address(p) & (n - 1) == 0`, so a
+/// generated or expanded alignment fact renders in its source spelling.
+fn aligned_sugar(proposition: &ClickProposition) -> Option<(&CExpression, u64)> {
+    let ClickProposition::Comparison {
+        left: ContractExpression::BitwiseAnd(address, mask),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(CValue::UInt64(zero))),
+    } = proposition
+    else {
+        return None;
+    };
+    if zero.uint64_as_const() != Some(0) {
+        return None;
+    }
+    let ContractExpression::CFragment(CExpression::Cast {
+        expression: pointer,
+        target_type: CType::UInt64,
+    }) = address.as_ref()
+    else {
+        return None;
+    };
+    let ContractExpression::CFragment(CExpression::Value(CValue::UInt64(mask))) = mask.as_ref()
+    else {
+        return None;
+    };
+    let alignment = mask.uint64_as_const()?.checked_add(1)?;
+    alignment
+        .is_power_of_two()
+        .then_some((pointer.as_ref(), alignment))
+}
+
 pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> String {
+    if let Some((pointer, alignment)) = aligned_sugar(proposition) {
+        return format!("aligned({}, {alignment})", describe_c_expression(pointer));
+    }
     match proposition {
         ClickProposition::Comparison {
             left,

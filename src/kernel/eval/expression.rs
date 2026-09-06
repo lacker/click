@@ -1540,9 +1540,11 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
-                Some(CLocalBinding::AggregateObject { .. }) => {
-                    CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-                }
+                // A struct object is an lvalue whose address is the object's
+                // slot; its value type is the byte array holding it.
+                Some(CLocalBinding::AggregateObject { layout, .. }) => CLValueOutcome::LValue(
+                    CLValue::local(name.clone(), CType::UInt8Array(layout.size_bytes())),
+                ),
                 None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
             },
             facts: Vec::new(),
@@ -1856,34 +1858,47 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
     for lvalue_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
         paths.push(match lvalue_path.outcome {
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
-                Some(pointer) => match lvalue.value_type().pointer_to() {
-                    Some(pointer_type) => {
-                        let mut facts = lvalue_path.facts;
-                        record_declared_object_alignment(
-                            &pointer,
-                            lvalue.value_type(),
-                            &mut facts,
-                            assumptions,
-                        );
-                        CExpressionPath {
-                            outcome: CExpressionOutcome::Value(
-                                CValue::typed_pointer_with_pointee_volatile(
-                                    pointer,
-                                    pointer_type,
-                                    lvalue.is_volatile(),
-                                )
-                                .with_pointer_pointee_constant(lvalue.is_constant()),
-                            ),
-                            facts,
-                            obligations: lvalue_path.obligations,
+                Some(pointer) => {
+                    // A struct object is stored as its byte array; its
+                    // address is a struct pointer, which the C0 front end
+                    // spells with the int32-pointer placeholder. Alignment
+                    // of any declared object is intrinsic to its block,
+                    // recorded when the block was created.
+                    let is_aggregate = match &lvalue.storage {
+                        CLValueStorage::Local { name } => matches!(
+                            state.locals.binding(name),
+                            Some(CLocalBinding::AggregateObject { .. })
+                        ),
+                        CLValueStorage::Memory { .. } => false,
+                    };
+                    let pointer_type = if is_aggregate {
+                        Some(CType::Int32Pointer)
+                    } else {
+                        lvalue.value_type().pointer_to()
+                    };
+                    match pointer_type {
+                        Some(pointer_type) => {
+                            let facts = lvalue_path.facts;
+                            CExpressionPath {
+                                outcome: CExpressionOutcome::Value(
+                                    CValue::typed_pointer_with_pointee_volatile(
+                                        pointer,
+                                        pointer_type,
+                                        lvalue.is_volatile(),
+                                    )
+                                    .with_pointer_pointee_constant(lvalue.is_constant()),
+                                ),
+                                facts,
+                                obligations: lvalue_path.obligations,
+                            }
                         }
+                        None => CExpressionPath {
+                            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: lvalue_path.facts,
+                            obligations: lvalue_path.obligations,
+                        },
                     }
-                    None => CExpressionPath {
-                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                        facts: lvalue_path.facts,
-                        obligations: lvalue_path.obligations,
-                    },
-                },
+                }
                 None => CExpressionPath {
                     outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
                         format!("{target:?}"),
@@ -1906,32 +1921,6 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
-}
-
-/// Taking the address of a declared local is alignment evidence: the
-/// compiler places the object at an address aligned for its type. Argument
-/// memory and other opaque blocks get no such fact; their alignment must
-/// come from a contract. Globals and statics are read through an implicit
-/// address-of, so recording a fact here on every read would reshape the
-/// path facts of unrelated proofs; their alignment belongs with block
-/// creation and is not recorded yet.
-fn record_declared_object_alignment(
-    pointer: &Pointer,
-    value_type: CType,
-    facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &PureFactContext,
-) {
-    let declared = pointer.block.starts_with("local:");
-    let alignment = u64::from(value_type.abi_alignment());
-    if !declared || alignment < 2 || pointer.offset.as_const() != Some(0) {
-        return;
-    }
-    let _ = add_internal_condition_path_fact(
-        facts,
-        assumptions,
-        ConditionTerm::pointer_aligned(pointer.clone(), alignment),
-        true,
-    );
 }
 
 pub(in crate::kernel) fn is_external_memory_pointer(pointer: &Pointer) -> bool {

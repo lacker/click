@@ -1256,6 +1256,20 @@ impl Parser {
             .flat_map(expand_aggregate_ensure_clause)
             .collect();
 
+        let mut object_alignment_facts = Vec::new();
+        for requirement in &requires {
+            requirement_object_alignment_facts(
+                requirement,
+                &self.struct_layouts,
+                &mut object_alignment_facts,
+            );
+        }
+        let mut requires = requires;
+        requires.extend(
+            object_alignment_facts
+                .into_iter()
+                .map(Requirement::Proposition),
+        );
         let requirement_label_indices = requires
             .iter()
             .enumerate()
@@ -2237,24 +2251,7 @@ impl Parser {
                 }
             };
             self.expect(Token::RParen)?;
-            // `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the
-            // kernel decides that shape from the pointer's formation.
-            let uint64 = |value: u64| {
-                ContractExpression::CFragment(CExpression::Value(CValue::UInt64(
-                    Bitvector32Term::UInt64Constant(value),
-                )))
-            };
-            return Ok(ClickProposition::Comparison {
-                left: ContractExpression::BitwiseAnd(
-                    Box::new(ContractExpression::CFragment(CExpression::Cast {
-                        expression: Box::new(pointer),
-                        target_type: CType::UInt64,
-                    })),
-                    Box::new(uint64(u64::from(alignment) - 1)),
-                ),
-                operator: ComparisonOperator::Equal,
-                right: uint64(0),
-            });
+            return Ok(aligned_proposition(pointer, u64::from(alignment)));
         }
 
         if self.peek_ident() == Some("defined") && self.peek_next() == Some(&Token::LParen) {
@@ -5277,4 +5274,61 @@ fn validate_parenthesis_nesting(
         }
     }
     Ok(matching)
+}
+
+/// `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the kernel
+/// decides that shape from the pointer's formation.
+fn aligned_proposition(pointer: CExpression, alignment: u64) -> ClickProposition {
+    let uint64 = |value: u64| {
+        ContractExpression::CFragment(CExpression::Value(CValue::UInt64(
+            Bitvector32Term::UInt64Constant(value),
+        )))
+    };
+    ClickProposition::Comparison {
+        left: ContractExpression::BitwiseAnd(
+            Box::new(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(pointer),
+                target_type: CType::UInt64,
+            })),
+            Box::new(uint64(alignment - 1)),
+        ),
+        operator: ComparisonOperator::Equal,
+        right: uint64(0),
+    }
+}
+
+/// The alignment fact a required complete-object clause carries: a live
+/// object of a struct type is placed at that type's alignment, so a
+/// required `object(p)` states `aligned(p, alignof(struct))`, which the
+/// caller proves and the function relies on. A produced object and a
+/// resource body state alignment explicitly (`ensures aligned(result, n)`,
+/// `fact aligned(p, n)`): a function may return an object it received
+/// inside a resource without knowing its alignment, and a generated body
+/// fact would make a counted population require a positive witness.
+fn object_alignment_fact(
+    clause: &ResourceClause,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) -> Option<ClickProposition> {
+    let (ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment)) = clause else {
+        return None;
+    };
+    let ContractSegmentSurface::Object(struct_name) = &segment.surface else {
+        return None;
+    };
+    let alignment = u64::from(struct_layouts.get(struct_name)?.alignment_bytes());
+    (alignment >= 2).then(|| aligned_proposition(segment.base.clone(), alignment))
+}
+
+fn requirement_object_alignment_facts(
+    requirement: &Requirement,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    out: &mut Vec<ClickProposition>,
+) {
+    match requirement {
+        Requirement::Labeled { requirement, .. } => {
+            requirement_object_alignment_facts(requirement, struct_layouts, out);
+        }
+        Requirement::Resource(clause) => out.extend(object_alignment_fact(clause, struct_layouts)),
+        Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => {}
+    }
 }
