@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn function_contract_lookup_ignores_unrelated_pointer_facts() {
+    fn contract_fact(name: &str, pointer: Pointer) -> Proposition {
+        Proposition::Predicate {
+            name: CFunctionContract::predicate_name_for(name),
+            arguments: vec![
+                Term::CState(CState::new()),
+                Term::CValue(CValue::typed_pointer(
+                    pointer,
+                    CType::FunctionPointer(90_000),
+                )),
+            ],
+        }
+    }
+
+    let samples = [16, 64, 256, 1024]
+        .into_iter()
+        .map(|size| {
+            let target = Pointer::symbolic_function(Variable(90_001));
+            let mut assumptions =
+                PureFactContext::new().assume_proposition(contract_fact("Target", target.clone()));
+            for index in 0..size {
+                assumptions = assumptions.assume_proposition(contract_fact(
+                    "Unrelated",
+                    Pointer::symbolic_function(Variable(91_000 + index as u64)),
+                ));
+            }
+            let (contracts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions
+                    .function_contract_facts_for(&target)
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(contracts, vec!["Target".to_string()]);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 == pair[0].1),
+        "exact contract lookup must not scan unrelated pointer facts: {samples:?}"
+    );
+}
+
+#[test]
 fn pointer_substitution_replaces_the_block_and_preserves_the_offset() {
     let from = Variable(90_100);
     let replacement = Pointer {

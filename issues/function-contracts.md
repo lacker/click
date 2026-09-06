@@ -1,4 +1,4 @@
-# Give function-pointer parameters checked callback contracts
+# Give function-pointer values checked named contracts
 
 Found by the 2026-09-04 MVR audit. Click can dispatch a function-pointer call
 when its exact concrete target is known. Calls through abstract callback
@@ -10,12 +10,26 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
 `copy`, and `rotate` through a caller-supplied
 `struct rb_augment_callbacks`.
 
-## Implemented precursor
+## Implemented first slice
 
 - Exact concrete function-pointer targets continue to dispatch normally.
 - An abstract function-pointer call without a behavioral contract fails
   promptly with a source-level diagnostic. It does not scan or branch over
   same-signature functions in the verified project.
+- Top-level named `contract` blocks describe pure requirements and guarantees,
+  resource transfers, and effect footprints independently of a C body.
+- `Contract(pointer)` facts are indexed by the exact symbolic pointer and
+  authorize abstract calls through parameters and pointer-backed struct
+  fields without enumerating project functions.
+- A verified or explicitly external concrete function forms a named contract
+  fact when its normalized contract matches exactly. Signature and behavioral
+  mismatches are rejected.
+
+The remaining semantic step is behavioral refinement at concrete-pointer
+formation. Exact matching is sound but unnecessarily restrictive: a concrete
+function should eventually be allowed to require no more, guarantee no less,
+and stay within the named effect/resource interface. The Linux augmented
+rbtree regressions below also remain to be added on top of that rule.
 
 ## Violated invariant
 

@@ -20,9 +20,39 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         }
     }
 
+    let mut contracts = BTreeMap::new();
+    for definition in file.contract_definitions() {
+        if predicates.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a predicate and a contract",
+                definition.name()
+            )));
+        }
+        if contracts
+            .insert(
+                definition.name().to_string(),
+                definition.function_pointer_type(),
+            )
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "duplicate contract definition `{}`",
+                definition.name()
+            )));
+        }
+    }
+    let mut proposition_calls = predicates.clone();
+    proposition_calls.extend(contracts.keys().map(|name| (name.clone(), 1)));
+
     let mut click_functions = BTreeMap::new();
     let mut click_function_types = BTreeMap::new();
     for definition in &click_function_definitions {
+        if contracts.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a contract and a function",
+                definition.name()
+            )));
+        }
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a function",
@@ -59,6 +89,12 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a resource",
+                definition.name()
+            )));
+        }
+        if contracts.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a contract and a resource",
                 definition.name()
             )));
         }
@@ -99,6 +135,12 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 definition.name()
             )));
         }
+        if contracts.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a contract and a theorem",
+                definition.name()
+            )));
+        }
         if click_functions.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a function and a theorem",
@@ -130,7 +172,8 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
-    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
+        .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         file.algebraic_type_definitions(),
@@ -141,7 +184,8 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             definition,
             &resources,
             &recursive_resources,
-            &predicates,
+            &proposition_calls,
+            &contracts,
             &click_functions,
             &click_function_types,
             &predicate_definition_map,
@@ -153,10 +197,27 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     reject_composite_resource_cycles(&resource_definitions)?;
 
     for definition in &predicate_definitions {
+        let variables = definition
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                parameter
+                    .click_type()
+                    .c_type()
+                    .map(|c_type| (parameter.name().to_string(), c_type))
+            })
+            .collect::<BTreeMap<_, _>>();
         validate_predicate_calls_in_proposition(
             definition.body(),
-            &predicates,
+            &proposition_calls,
             &click_functions,
+            &format!("predicate `{}`", definition.name()),
+        )?;
+        validate_contract_applications_in_proposition(
+            definition.body(),
+            &contracts,
+            &variables,
+            &click_function_types,
             &format!("predicate `{}`", definition.name()),
         )?;
     }
@@ -177,7 +238,8 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     for theorem in &theorem_definitions {
         validate_theorem_definition(
             theorem,
-            &predicates,
+            &proposition_calls,
+            &contracts,
             &click_functions,
             &click_function_types,
         )?;
@@ -190,10 +252,16 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .collect::<BTreeSet<_>>();
 
     let mut function_specs = BTreeSet::new();
-    for function in combined_external_function_blocks(file)? {
+    let mut contract_and_function_blocks = file
+        .contract_definitions()
+        .iter()
+        .map(|definition| definition.function_block().clone())
+        .collect::<Vec<_>>();
+    contract_and_function_blocks.extend(combined_external_function_blocks(file)?);
+    for function in contract_and_function_blocks {
         if !function_specs.insert(function.signature().name().to_string()) {
             return Err(ClickError::new(format!(
-                "duplicate C function spec `{}`",
+                "duplicate contract or C function spec `{}`",
                 function.signature().name()
             )));
         }
@@ -206,18 +274,6 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         if theorems.contains_key(function.signature().name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a theorem and a C function spec",
-                function.signature().name()
-            )));
-        }
-        if function.ensures().is_empty()
-            && function.effects().is_empty()
-            && !function
-                .requires()
-                .iter()
-                .any(requirement_contains_resource)
-        {
-            return Err(ClickError::new(format!(
-                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or resource-consuming `requires` clause",
                 function.signature().name()
             )));
         }
@@ -292,11 +348,19 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 )));
             }
             if let Some(proposition) = requirement.proposition() {
+                let context = format!("requires clause in `{}`", function.signature().name());
                 validate_predicate_calls_in_proposition(
                     proposition,
-                    &predicates,
+                    &proposition_calls,
                     &click_functions,
-                    &format!("requires clause in `{}`", function.signature().name()),
+                    &context,
+                )?;
+                validate_contract_applications_in_proposition(
+                    proposition,
+                    &contracts,
+                    &requires_type_environment,
+                    &click_function_types,
+                    &context,
                 )?;
             } else if let Requirement::Resource(resource) = requirement.inner() {
                 validate_resource_clause(
@@ -314,15 +378,23 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         for structural_clause in function.structural_clauses() {
             for item in structural_clause.items() {
                 if let Some(proposition) = item.proposition() {
+                    let context = format!(
+                        "{:?} clause in `{}`",
+                        item.kind(),
+                        function.signature().name()
+                    );
                     validate_predicate_calls_in_proposition(
                         proposition,
-                        &predicates,
+                        &proposition_calls,
                         &click_functions,
-                        &format!(
-                            "{:?} clause in `{}`",
-                            item.kind(),
-                            function.signature().name()
-                        ),
+                        &context,
+                    )?;
+                    validate_contract_applications_in_proposition(
+                        proposition,
+                        &contracts,
+                        &requires_type_environment,
+                        &click_function_types,
+                        &context,
                     )?;
                 }
             }
@@ -331,11 +403,19 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         for ensure in function.ensures() {
             match ensure.ensure() {
                 Ensure::Proposition(proposition) => {
+                    let context = format!("ensures clause in `{}`", function.signature().name());
                     validate_predicate_calls_in_proposition(
                         proposition,
-                        &predicates,
+                        &proposition_calls,
                         &click_functions,
-                        &format!("ensures clause in `{}`", function.signature().name()),
+                        &context,
+                    )?;
+                    validate_contract_applications_in_proposition(
+                        proposition,
+                        &contracts,
+                        &ensures_type_environment,
+                        &click_function_types,
+                        &context,
                     )?;
                     if function.signature().return_type() == C0Type::Void {
                         validate_proposition_expression_types(
@@ -357,14 +437,117 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 )?,
             }
         }
+
+        if function.ensures().is_empty()
+            && function.effects().is_empty()
+            && !function
+                .requires()
+                .iter()
+                .any(requirement_contains_resource)
+        {
+            return Err(ClickError::new(format!(
+                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or resource-consuming `requires` clause",
+                function.signature().name()
+            )));
+        }
     }
 
     Ok(())
 }
 
+fn validate_contract_applications_in_proposition(
+    proposition: &ClickProposition,
+    contracts: &BTreeMap<String, C0Type>,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::PredicateCall { name, arguments } => {
+            let Some(expected) = contracts.get(name) else {
+                return Ok(());
+            };
+            let [argument] = arguments.as_slice() else {
+                return Err(ClickError::new(format!(
+                    "contract `{name}` expects one function-pointer argument in {context}"
+                )));
+            };
+            let actual =
+                infer_contract_expression_type(argument, variables, click_functions, context)?;
+            if actual != Some(*expected) {
+                return Err(ClickError::new(format!(
+                    "contract `{name}` expects {}, got {} in {context}",
+                    describe_c0_type(*expected),
+                    actual.map_or_else(|| "an unknown type".to_string(), describe_c0_type),
+                )));
+            }
+            Ok(())
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_contract_applications_in_proposition(
+                left,
+                contracts,
+                variables,
+                click_functions,
+                context,
+            )?;
+            validate_contract_applications_in_proposition(
+                right,
+                contracts,
+                variables,
+                click_functions,
+                context,
+            )
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        } => validate_contract_applications_in_proposition(
+            body,
+            contracts,
+            variables,
+            click_functions,
+            context,
+        ),
+        ClickProposition::ForAll { c_type, name, body }
+        | ClickProposition::Exists { c_type, name, body } => {
+            let mut variables = variables.clone();
+            variables.insert(name.clone(), *c_type);
+            validate_contract_applications_in_proposition(
+                body,
+                contracts,
+                &variables,
+                click_functions,
+                context,
+            )
+        }
+        ClickProposition::RangeAll { item, body, .. }
+        | ClickProposition::RangeAny { item, body, .. } => {
+            let mut variables = variables.clone();
+            variables.insert(item.clone(), C0Type::Int32);
+            validate_contract_applications_in_proposition(
+                body,
+                contracts,
+                &variables,
+                click_functions,
+                context,
+            )
+        }
+        ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => Ok(()),
+    }
+}
+
 fn validate_theorem_definition(
     theorem: &TheoremDefinition,
     predicates: &BTreeMap<String, usize>,
+    contracts: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, usize>,
     click_function_types: &BTreeMap<String, ClickFunctionType>,
 ) -> Result<(), ClickError> {
@@ -398,6 +581,13 @@ fn validate_theorem_definition(
             click_functions,
             &format!("requires clause in theorem `{}`", theorem.name()),
         )?;
+        validate_contract_applications_in_proposition(
+            proposition,
+            contracts,
+            &variables,
+            click_function_types,
+            &format!("requires clause in theorem `{}`", theorem.name()),
+        )?;
         validate_proposition_expression_types(
             proposition,
             &variables,
@@ -419,6 +609,13 @@ fn validate_theorem_definition(
             click_functions,
             &format!("ensures clause in theorem `{}`", theorem.name()),
         )?;
+        validate_contract_applications_in_proposition(
+            proposition,
+            contracts,
+            &variables,
+            click_function_types,
+            &format!("ensures clause in theorem `{}`", theorem.name()),
+        )?;
         validate_proposition_expression_types(
             proposition,
             &variables,
@@ -436,6 +633,7 @@ fn validate_resource_definition(
     resources: &BTreeMap<String, usize>,
     recursive_resources: &BTreeSet<String>,
     predicates: &BTreeMap<String, usize>,
+    contracts: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, usize>,
     click_function_types: &BTreeMap<String, ClickFunctionType>,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
@@ -480,6 +678,13 @@ fn validate_resource_definition(
             condition,
             predicates,
             click_functions,
+            &format!("resource `{}` condition", definition.name()),
+        )?;
+        validate_contract_applications_in_proposition(
+            condition,
+            contracts,
+            &variables,
+            click_function_types,
             &format!("resource `{}` condition", definition.name()),
         )?;
         validate_proposition_expression_types(
@@ -539,6 +744,13 @@ fn validate_resource_definition(
             fact,
             predicates,
             click_functions,
+            &format!("resource `{}` fact", definition.name()),
+        )?;
+        validate_contract_applications_in_proposition(
+            fact,
+            contracts,
+            &variables,
+            click_function_types,
             &format!("resource `{}` fact", definition.name()),
         )?;
         validate_proposition_expression_types(

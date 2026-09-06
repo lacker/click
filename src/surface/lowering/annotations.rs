@@ -711,9 +711,13 @@ pub(in crate::surface) fn function_contract_summary(
             },
             Requirement::Resource(_) | Requirement::Labeled { .. } => continue,
         };
-        let opaque_predicate = matches!(proposition, ClickProposition::PredicateCall { .. })
-            .then(|| lowerer.click_proposition_to_spec_proposition(&proposition, &context))
-            .transpose();
+        let opaque_predicate = matches!(
+            &proposition,
+            ClickProposition::PredicateCall { name, .. }
+                if predicate_environment.get(name).is_some()
+        )
+        .then(|| lowerer.click_proposition_to_spec_proposition(&proposition, &context))
+        .transpose();
         let Ok(proposition) = unfold_contract_predicates(&proposition) else {
             opaque_contract_supported = false;
             continue;
@@ -742,9 +746,13 @@ pub(in crate::surface) fn function_contract_summary(
             Ensure::Resource(_) => None,
         })
     {
-        let opaque_predicate = matches!(proposition, ClickProposition::PredicateCall { .. })
-            .then(|| lowerer.click_proposition_to_spec_proposition(proposition, &context))
-            .transpose();
+        let opaque_predicate = matches!(
+            proposition,
+            ClickProposition::PredicateCall { name, .. }
+                if predicate_environment.get(name).is_some()
+        )
+        .then(|| lowerer.click_proposition_to_spec_proposition(proposition, &context))
+        .transpose();
         let Ok(proposition) = unfold_contract_predicates(proposition) else {
             opaque_contract_supported = false;
             continue;
@@ -1469,6 +1477,23 @@ impl AnnotationLowerer<'_> {
                 })
             }
             ClickProposition::PredicateCall { name, arguments } => {
+                if self
+                    .predicate_environment
+                    .contract_signature(name)
+                    .is_some()
+                {
+                    let [function] = arguments.as_slice() else {
+                        return Err(format!(
+                            "contract `{name}` expects one function-pointer argument"
+                        ));
+                    };
+                    return Ok(SpecProposition::Predicate {
+                        name: CFunctionContract::predicate_name_for(name),
+                        arguments: vec![SpecPredicateArgument::Value(
+                            self.lower_contract_expression_to_spec(function, environment)?,
+                        )],
+                    });
+                }
                 let definition = self
                     .predicate_environment
                     .get(name)

@@ -12,9 +12,9 @@ use crate::kernel::{
     Bitvector32Term, BitvectorEqualityDerivationStep, CCheckedFunctionExecution,
     CCheckedFunctionProposition, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
-    CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractClaimTarget,
-    CFunctionContractExecutionMode, CFunctionExecutionCandidates, CFunctionOutcome,
-    CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan,
+    CFunction, CFunctionContract, CFunctionContractClaim, CFunctionContractClaimKey,
+    CFunctionContractClaimTarget, CFunctionContractExecutionMode, CFunctionExecutionCandidates,
+    CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan,
     CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
     CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
     CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
@@ -142,6 +142,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "constructs",
     "consumes",
     "contains",
+    "contract",
     "contradiction",
     "count",
     "counted",
@@ -251,6 +252,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "c-fragment",
     "contains",
     "contains-proposition",
+    "contract",
     "decreases",
     "defined",
     "effect",
@@ -360,6 +362,7 @@ pub struct ClickFile {
     click_function_definitions: Vec<ClickFunctionDefinition>,
     resource_definitions: Vec<ResourceDefinition>,
     theorem_definitions: Vec<TheoremDefinition>,
+    contract_definitions: Vec<ContractDefinition>,
     function_blocks: Vec<FunctionBlock>,
 }
 
@@ -483,6 +486,14 @@ pub struct TheoremDefinition {
     parameters: Vec<FunctionParameter>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
+}
+
+/// A named behavioral interface for a function pointer. The embedded block
+/// deliberately reuses ordinary C-function contract syntax; unlike a
+/// `FunctionBlock`, it is not attached to a C definition and carries no proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractDefinition {
+    function_block: FunctionBlock,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3235,6 +3246,7 @@ pub enum SmartTactic {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PredicateEnvironment {
     definitions: BTreeMap<String, PredicateDefinition>,
+    contract_signatures: BTreeMap<String, C0Type>,
 }
 
 impl PredicateEnvironment {
@@ -3244,11 +3256,29 @@ impl PredicateEnvironment {
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            contract_signatures: BTreeMap::new(),
         }
+    }
+
+    fn with_contracts(mut self, definitions: &[ContractDefinition]) -> Self {
+        self.contract_signatures = definitions
+            .iter()
+            .map(|definition| {
+                (
+                    definition.name().to_string(),
+                    definition.function_pointer_type(),
+                )
+            })
+            .collect();
+        self
     }
 
     fn get(&self, name: &str) -> Option<&PredicateDefinition> {
         self.definitions.get(name)
+    }
+
+    fn contract_signature(&self, name: &str) -> Option<C0Type> {
+        self.contract_signatures.get(name).copied()
     }
 }
 
@@ -3461,6 +3491,10 @@ impl ClickFile {
         &self.theorem_definitions
     }
 
+    pub fn contract_definitions(&self) -> &[ContractDefinition] {
+        &self.contract_definitions
+    }
+
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
     }
@@ -3573,6 +3607,33 @@ impl TheoremDefinition {
 
     pub fn ensures(&self) -> &[EnsureClause] {
         &self.ensures
+    }
+}
+
+impl ContractDefinition {
+    pub fn name(&self) -> &str {
+        self.function_block.signature().name()
+    }
+
+    pub fn function_block(&self) -> &FunctionBlock {
+        &self.function_block
+    }
+
+    pub fn function_pointer_type(&self) -> C0Type {
+        let parameter_types = self
+            .function_block
+            .signature()
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.c_type().to_kernel_type())
+            .collect::<Vec<_>>();
+        C0Type::FunctionPointer(crate::kernel::CType::function_pointer_signature(
+            self.function_block
+                .signature()
+                .return_type()
+                .to_kernel_type(),
+            &parameter_types,
+        ))
     }
 }
 

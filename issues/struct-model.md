@@ -197,7 +197,7 @@ Staged mdtests, each with an unchanged C file:
     C0 field metadata, assignment-validation, and execution regressions.
     Direct calls through the field expression are covered by
     `mdtests/struct_function_pointer_field_direct_call.md` and the C0 direct-call
-    execution and argument-validation regressions. Abstract callback contracts
+    execution and argument-validation regressions. Abstract named contracts
     and by-value structs containing callback fields remain separate.
 23. ~~Taking the address of a supported scalar or pointer-valued union member
     preserves the containing allocation, the union's ABI offset, and the

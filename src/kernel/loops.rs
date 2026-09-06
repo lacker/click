@@ -294,15 +294,44 @@ fn execute_c_indirect_call_paths(
                         vec![Ok(name.clone())]
                     }
                     PointerBlock::FunctionSymbolic(_) => {
-                        paths.push(CFunctionPath {
-                            outcome: CFunctionOutcome::RuntimeError(
-                                CRuntimeError::AbstractFunctionPointerCall(
-                                    function_name.to_string(),
+                        let target_assumptions =
+                            assumptions_with_path_context(assumptions, &facts, &obligations);
+                        let contracts = target_assumptions
+                            .function_contract_facts_for(pointer.pointer())
+                            .filter_map(|(name, _)| environment.get_function_contract(name))
+                            .filter(|contract| contract.function_pointer_type() == function_type)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if contracts.is_empty() {
+                            paths.push(CFunctionPath {
+                                outcome: CFunctionOutcome::RuntimeError(
+                                    CRuntimeError::AbstractFunctionPointerCall(
+                                        function_name.to_string(),
+                                    ),
                                 ),
-                            ),
-                            facts,
-                            obligations,
-                        });
+                                facts,
+                                obligations,
+                            });
+                            continue;
+                        }
+                        for contract in contracts {
+                            for mut call_path in execute_c_function_contract_paths(
+                                state,
+                                &contract,
+                                arguments,
+                                &target_assumptions,
+                                environment,
+                                budget,
+                            )? {
+                                let mut merged_facts = facts.clone();
+                                merged_facts.extend(call_path.facts);
+                                let mut merged_obligations = obligations.clone();
+                                merged_obligations.extend(call_path.obligations);
+                                call_path.facts = merged_facts;
+                                call_path.obligations = merged_obligations;
+                                paths.push(call_path);
+                            }
+                        }
                         continue;
                     }
                     _ => vec![Err(CRuntimeError::TypeMismatch)],

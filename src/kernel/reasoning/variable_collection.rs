@@ -898,6 +898,9 @@ fn collect_execution_environment_variables_uncached(
     for function in environment.functions.values() {
         collect_c_function_bitvector_variables(function, variables);
     }
+    for contract in environment.function_contracts.values() {
+        collect_c_function_bitvector_variables(&contract.function, variables);
+    }
     for rule in environment.verified_function_rules.values() {
         collect_c_function_bitvector_variables(&rule.function, variables);
     }
@@ -1132,8 +1135,14 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
     pointer: &Pointer,
     variables: &mut BTreeSet<Variable>,
 ) {
-    if let PointerBlock::Symbolic(variable) = pointer.block {
-        variables.insert(variable);
+    match &pointer.block {
+        PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+            variables.insert(*variable);
+        }
+        PointerBlock::Concrete(_)
+        | PointerBlock::Function(_)
+        | PointerBlock::ExternalArgument
+        | PointerBlock::Heap(_) => {}
     }
     collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
 }
@@ -1143,8 +1152,14 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     for (block, contents) in memory.blocks.iter() {
-        if let PointerBlock::Symbolic(variable) = block {
-            variables.insert(*variable);
+        match block {
+            PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+                variables.insert(*variable);
+            }
+            PointerBlock::Concrete(_)
+            | PointerBlock::Function(_)
+            | PointerBlock::ExternalArgument
+            | PointerBlock::Heap(_) => {}
         }
         collect_bitvector_variables(contents.size(), variables);
     }

@@ -33,7 +33,7 @@ unsupported deeper indirection.
 - Loads and stores through `struct S **` preserve the stored pointer's
   provenance and update precisely one pointer-width cell.
 - Function parameters, returns where supported, function-pointer signatures,
-  and resource footprints can name the type; higher-order callback contracts
+  and resource footprints can name the type; higher-order function contracts
   remain separately tracked.
 - Incompatible struct identities are rejected rather than collapsed to the
   existing generic `int32 **` representation at the C0 boundary. The generic
@@ -45,10 +45,10 @@ objects, direct and nested field addresses, `*link` pointer-cell stores, and
 nominal identity across pointer-valued function returns. Function-pointer
 parameters and locals now retain nominal struct-pointer tags in callback
 metadata, check known callback targets and indirect arguments before lowering,
-and keep the kernel's generic pointer representation. Contract effects for
-abstract callbacks remain tracked separately in
-`issues/higher-order-callback-contracts.md`. Click contract signatures spell
-the type as `struct S** name` (2026-09-05, `mdtests/rb_parent_family.md`
-passes a link slot to `rb_link_node`).
+and keep the kernel's generic pointer representation. Named contracts for
+abstract function-pointer values are tracked separately in
+`issues/function-contracts.md`. Click contract signatures spell the type as
+`struct S** name` (2026-09-05, `mdtests/rb_parent_family.md` passes a link slot
+to `rb_link_node`).
 
 Related: [struct-model.md](struct-model.md).

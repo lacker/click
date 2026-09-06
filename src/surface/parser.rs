@@ -364,6 +364,7 @@ impl Parser {
         let mut click_function_definitions = Vec::new();
         let mut resource_definitions = Vec::new();
         let mut theorem_definitions = Vec::new();
+        let mut contract_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
@@ -377,6 +378,8 @@ impl Parser {
                 click_function_definitions.push(self.parse_click_function_definition()?);
             } else if self.peek_ident() == Some("theorem") {
                 theorem_definitions.push(self.parse_theorem_definition()?);
+            } else if self.peek_ident() == Some("contract") {
+                contract_definitions.push(self.parse_contract_definition()?);
             } else if self.peek_ident() == Some("abstract") {
                 resource_definitions.push(self.parse_resource_definition(true)?);
             } else if self.peek_ident() == Some("resource") {
@@ -398,9 +401,32 @@ impl Parser {
             click_function_definitions,
             resource_definitions,
             theorem_definitions,
+            contract_definitions,
             function_blocks,
         };
         Ok(file)
+    }
+
+    fn parse_contract_definition(&mut self) -> Result<ContractDefinition, ClickError> {
+        self.expect_ident_spelling("contract")?;
+        let function_block = self.parse_function_block(false)?;
+        if function_block.decreases().is_some()
+            || function_block.grouped_proof().is_some()
+            || !function_block.constructs().is_empty()
+            || function_block
+                .ensures()
+                .iter()
+                .any(|clause| !matches!(clause.proof(), SourceProof::Default))
+            || function_block
+                .effects()
+                .iter()
+                .any(|clause| !matches!(clause.proof(), SourceProof::Default))
+        {
+            return Err(self.error(
+                "named contracts cannot carry proofs, `decreases`, or `constructs` clauses",
+            ));
+        }
+        Ok(ContractDefinition { function_block })
     }
 
     fn parse_algebraic_type_definition(&mut self) -> Result<AlgebraicTypeDefinition, ClickError> {

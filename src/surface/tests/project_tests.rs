@@ -182,7 +182,7 @@ int32 caller() {
         .expect_err("an abstract callback call must require a declared contract");
     assert!(
         error.message().contains(
-            "cannot verify call through function pointer `callback`: its behavior has no declared callback contract"
+            "cannot verify call through function pointer `callback`: no matching named contract is available for this value"
         ),
         "{}",
         error.message()

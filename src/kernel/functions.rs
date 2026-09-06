@@ -922,6 +922,12 @@ fn execute_verified_function_rule(
                 }
                 let requirement_is_proven =
                     super::assumptions::capture_implicit_reasoning_provenance(|| {
+                        if function_contract_requirement_is_proven(
+                            &requirement_path.proposition,
+                            environment,
+                        ) {
+                            return true;
+                        }
                         match &requirement_path.proposition {
                             Proposition::ConditionIs(condition, value) => {
                                 path_assumptions.proves_exact(&requirement_path.proposition)
@@ -1247,6 +1253,67 @@ fn execute_verified_function_rule(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+pub(super) fn execute_c_function_contract_paths(
+    caller_state: &CState,
+    contract: &CFunctionContract,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    execute_verified_function_rule(
+        caller_state,
+        &CVerifiedFunctionRule {
+            function: contract.template().clone(),
+        },
+        arguments,
+        assumptions,
+        environment,
+        budget,
+    )
+}
+
+fn function_contract_requirement_is_proven(
+    proposition: &Proposition,
+    environment: &CExecutionEnvironment,
+) -> bool {
+    match proposition {
+        Proposition::And(left, right) => {
+            function_contract_requirement_is_proven(left, environment)
+                && function_contract_requirement_is_proven(right, environment)
+        }
+        Proposition::Predicate { name, arguments } => {
+            let Some(contract_name) = CFunctionContract::surface_name_from_predicate(name) else {
+                return false;
+            };
+            let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice()
+            else {
+                return false;
+            };
+            let Pointer {
+                block: PointerBlock::Function(target),
+                offset: PointerOffsetTerm::Constant(0),
+            } = pointer.pointer()
+            else {
+                return false;
+            };
+            let Some(contract) = environment.get_function_contract(contract_name) else {
+                return false;
+            };
+            if pointer.c_type() != contract.function_pointer_type() {
+                return false;
+            }
+            if let Some(rule) = environment.get_verified_function_rule(target) {
+                return contract.exactly_matches(&rule.function);
+            }
+            environment
+                .get_external_function_rule(target)
+                .is_some_and(|rule| contract.exactly_matches(&rule.function))
+        }
+        _ => false,
+    }
 }
 
 fn add_verified_function_ensure_facts(

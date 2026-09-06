@@ -277,6 +277,12 @@ pub(super) fn describe_derivation_failure(
 ) -> String {
     if matches!(proposition, Proposition::ConditionIs(_, _)) {
         describe_condition_search_miss(proposition, available, &[], &[])
+    } else if matches!(
+        proposition,
+        Proposition::Predicate { name, .. }
+            if crate::kernel::CFunctionContract::surface_name_from_predicate(name).is_some()
+    ) {
+        describe_pure_fact(proposition, &[], &[])
     } else {
         bounded_debug(proposition)
     }

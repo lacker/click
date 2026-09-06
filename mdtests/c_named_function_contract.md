@@ -1,10 +1,9 @@
-# Abstract function-pointer calls require named contracts
+# Named contracts authorize abstract function-pointer calls
 
-The C signature of `callback` does not specify its behavior. Even though this
-project contains one compatible concrete function, verifying `apply`
-independently must not infer a callback contract by enumerating the project.
-Checked higher-order function contracts are tracked in
-`issues/function-contracts.md`.
+A named contract describes callable behavior independently of any concrete C
+function. A function-pointer parameter carrying that contract can be called
+modularly, and a concrete function address satisfies it when the concrete
+function has the same verified contract.
 
 ```c filename=compare.c
 int32 compare(int32 left, int32 right) {
@@ -33,6 +32,13 @@ verifying "compare.c";
 verifying "apply.c";
 verifying "caller.c";
 
+contract int32 Comparator(int32 left, int32 right) {
+    requires 0 <= left;
+    requires 0 <= right;
+    requires right <= left;
+    ensures result == left - right;
+}
+
 int32 compare(int32 left, int32 right) {
     requires 0 <= left;
     requires 0 <= right;
@@ -41,6 +47,7 @@ int32 compare(int32 left, int32 right) {
 }
 
 int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
+    requires Comparator(callback);
     requires 0 <= left;
     requires 0 <= right;
     requires right <= left;
@@ -53,5 +60,5 @@ int32 caller() {
 ```
 
 ```expect
-fail: cannot verify call through function pointer `callback`: no matching named contract is available for this value
+pass
 ```

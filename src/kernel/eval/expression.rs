@@ -613,6 +613,13 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         return Some(value);
     }
 
+    if matches!(target_type, CType::FunctionPointer(_))
+        && let CValue::Pointer(pointer) = &value
+        && pointer.c_type() == target_type
+    {
+        return Some(value);
+    }
+
     // A direct function address starts with the intentionally untyped
     // FunctionPointer(0) marker. Call arguments retag it from the declared
     // parameter type before binding; typed stores need the same destination

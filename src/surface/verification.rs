@@ -148,7 +148,8 @@ pub(in crate::surface) fn verify_click_file_theorems(
     let click_function_definitions = combined_click_function_definitions(file)?;
     let (theorem_definitions, stdlib_theorem_ensure_count) =
         combined_theorem_definitions_with_stdlib_ensure_count(file)?;
-    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
+        .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         file.algebraic_type_definitions(),
@@ -658,7 +659,8 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             selected_functions.as_ref(),
             verification_target.as_ref(),
         );
-        let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+        let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
+            .with_contracts(file.contract_definitions());
         let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
             &click_function_definitions,
             file.algebraic_type_definitions(),
@@ -674,6 +676,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         let built_function_environment = build_function_environment(
             &parsed_sources,
             &external_and_user_function_blocks,
+            file.contract_definitions(),
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
@@ -2605,11 +2608,55 @@ fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
 pub(in crate::surface) fn build_function_environment(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_blocks: &[FunctionBlock],
+    contract_definitions: &[ContractDefinition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<CExecutionEnvironment, ClickError> {
     let mut environment = CExecutionEnvironment::new();
+    for definition in contract_definitions {
+        let function_block = definition.function_block();
+        let parsed_function = external_c0_function(function_block);
+        let (state, arguments, _, _) = initial_claim_context(
+            function_block,
+            &parsed_function,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            &format!("{}.named contract", definition.name()),
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "could not prepare named contract `{}`: {}",
+                definition.name(),
+                error.message()
+            ))
+        })?;
+        let function = annotated_function(
+            function_block,
+            &parsed_function,
+            &state,
+            &arguments,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            false,
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "could not lower named contract `{}`: {}",
+                definition.name(),
+                error.message()
+            ))
+        })?;
+        let contract = CFunctionContract::new(definition.name(), function).ok_or_else(|| {
+            ClickError::new(format!(
+                "named contract `{}` cannot be applied opaquely",
+                definition.name()
+            ))
+        })?;
+        environment = environment.with_function_contract(contract);
+    }
     for (_, function) in parsed_sources.values() {
         let function = match function_blocks
             .iter()

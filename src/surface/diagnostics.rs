@@ -246,6 +246,28 @@ pub(super) fn describe_pure_fact(
             };
             format!("{kind} is {value}")
         }
+        Proposition::Predicate {
+            name,
+            arguments: predicate_arguments,
+        } if crate::kernel::CFunctionContract::surface_name_from_predicate(name).is_some() => {
+            let contract = crate::kernel::CFunctionContract::surface_name_from_predicate(name)
+                .expect("guarded contract predicate");
+            match predicate_arguments.as_slice() {
+                [_, Term::CValue(CValue::Pointer(pointer))] => match pointer.pointer() {
+                    Pointer {
+                        block: PointerBlock::Function(target),
+                        offset: PointerOffsetTerm::Constant(0),
+                    } => {
+                        format!("function `{target}` does not satisfy named contract `{contract}`")
+                    }
+                    pointer => format!(
+                        "named contract `{contract}` is not established for {}",
+                        describe_pointer(pointer, parameters, arguments)
+                    ),
+                },
+                _ => format!("malformed named contract fact `{contract}`"),
+            }
+        }
         _ => bounded_debug(fact),
     }
 }
@@ -456,7 +478,7 @@ pub(super) fn describe_runtime_error(
             "cannot execute call to `{name}` opaquely: its contract refers to an internal program point that is unavailable at the call site"
         ),
         crate::kernel::CRuntimeError::AbstractFunctionPointerCall(name) => format!(
-            "cannot verify call through function pointer `{name}`: its behavior has no declared callback contract"
+            "cannot verify call through function pointer `{name}`: no matching named contract is available for this value"
         ),
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")

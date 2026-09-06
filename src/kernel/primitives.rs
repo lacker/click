@@ -1492,6 +1492,7 @@ pub struct CFunctionSpecification {
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
+    pub(super) function_contracts: std::sync::Arc<BTreeMap<String, CFunctionContract>>,
     pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
     pub(super) verified_function_rules: std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
@@ -1505,6 +1506,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
         formatter
             .debug_struct("CExecutionEnvironment")
             .field("functions", &self.functions)
+            .field("function_contracts", &self.function_contracts)
             .field("external_function_rules", &self.external_function_rules)
             .field("verified_function_rules", &self.verified_function_rules)
             .field(
@@ -1519,6 +1521,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
         self.functions == other.functions
+            && self.function_contracts == other.function_contracts
             && self.external_function_rules == other.external_function_rules
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
@@ -1565,6 +1568,17 @@ impl CExecutionSemantics {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
+    pub(super) function: CFunction,
+}
+
+/// A nominal, body-independent behavioral interface for an indirect call.
+///
+/// The contained function is a contract template: its parameters, result,
+/// requirements, resource transition, effects, and ensures are meaningful;
+/// its name and body are not a concrete call target.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunctionContract {
+    pub(super) name: String,
     pub(super) function: CFunction,
 }
 
@@ -3108,6 +3122,11 @@ pub struct PureFactContext {
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,
     >,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    /// Nominal function-contract witnesses keyed by the exact pointer value.
+    /// This keeps indirect-call lookup proportional to contracts explicitly
+    /// known for that pointer, never to project-wide declarations.
+    pub(super) function_contract_facts:
+        std::sync::Arc<BTreeMap<Pointer, BTreeMap<String, Proposition>>>,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every
     /// unrelated proposition in the context.

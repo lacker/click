@@ -1591,6 +1591,22 @@ pub(in crate::surface) fn symbolic_value_from_load(
         CType::UInt64 => CValue::UInt64(load),
         CType::Float32 => CValue::Float32(load),
         CType::Float64 => CValue::Float64(load),
+        CType::FunctionPointer(_) => {
+            let variable = match &load {
+                Bitvector32Term::Variable(variable)
+                    if crate::kernel::is_load_variable(variable) =>
+                {
+                    *variable
+                }
+                Bitvector32Term::MemoryLoad(_, _) => crate::kernel::load_variable_for_term(&load)
+                    .map(|(variable, _)| variable)
+                    .expect("exact function-pointer loads have canonical identities"),
+                _ => unreachable!(
+                    "symbolic function-pointer fields use raw or canonical exact loads"
+                ),
+            };
+            CValue::typed_pointer(Pointer::symbolic_function(variable), element_type)
+        }
         c_type if c_type.is_pointer() => CValue::typed_pointer(
             Pointer {
                 block: pointer.block.clone(),
@@ -1656,7 +1672,12 @@ pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
     }
     let (lowered, _, obligations) =
         crate::kernel::c_lower_spec_proposition_at_state(&lowering_state, &spec, None, assumptions)
-            .map_err(ClickError::new)?;
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not lower requirement `{}`: {message}",
+                    crate::surface::diagnostics::describe_click_proposition(proposition)
+                ))
+            })?;
     // A requirement may read only memory the function's entry justifies:
     // cells the entry holds, a resource it views or owns, or a loadability
     // the requirements state.

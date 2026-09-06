@@ -161,10 +161,21 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // load below — its load-term form relates across snapshots — instead
     // of failing the load.
     let pointer_cell_defers_to_symbolic = |value: &CValue| {
-        matches!(value, CValue::Int32(_))
+        (matches!(value, CValue::Int32(_))
+            || (matches!(value_type, CType::FunctionPointer(_))
+                && matches!(
+                    value,
+                    CValue::Int16(_)
+                        | CValue::UInt8(_)
+                        | CValue::UInt16(_)
+                        | CValue::UInt32(_)
+                        | CValue::Int64(_)
+                        | CValue::UInt64(_)
+                )))
             && value_type.is_pointer()
             && has_external_read_resource
-            && assumptions.should_prefer_symbolic_external_loads()
+            && (assumptions.should_prefer_symbolic_external_loads()
+                || matches!(value_type, CType::FunctionPointer(_)))
     };
     // An exact materialized cell is already the authoritative value for this
     // pointer. Avoid proving every other symbolic cell distinct before the
@@ -2183,7 +2194,17 @@ pub(in crate::kernel) fn symbolic_load_value(
             value_type.pointee_type()?.byte_width(),
             value_type,
         )),
-        CType::FunctionPointer(_) => None,
+        CType::FunctionPointer(_) => {
+            let load = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory.clone()),
+                Box::new(pointer.clone()),
+            );
+            let (variable, _) = load_variable_for_term(&load)?;
+            Some(CValue::typed_pointer(
+                Pointer::symbolic_function(variable),
+                value_type,
+            ))
+        }
         CType::Int32Array(_)
         | CType::UInt8Array(_)
         | CType::Int16Array(_)

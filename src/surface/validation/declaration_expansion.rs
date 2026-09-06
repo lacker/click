@@ -98,51 +98,15 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             expand_declared_resource_proposition(predicate.body.clone(), &resource_definitions)?;
     }
 
+    for contract in &mut file.contract_definitions {
+        expand_declared_resources_in_function_block(
+            &mut contract.function_block,
+            &resource_definitions,
+        )?;
+    }
+
     for function in &mut file.function_blocks {
-        function.decreases = function
-            .decreases
-            .take()
-            .map(|decreases| match decreases {
-                CFunctionDecrease::Numeric(expression) => {
-                    Ok(CFunctionDecrease::Numeric(expression))
-                }
-                CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
-                    expand_declared_resource_clause(resource, &resource_definitions)?,
-                )),
-            })
-            .transpose()?;
-        function.requires = function
-            .requires
-            .drain(..)
-            .map(|requirement| {
-                expand_declared_resource_requirement(requirement, &resource_definitions)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        function.ensures = function
-            .ensures
-            .drain(..)
-            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
-            .collect::<Result<Vec<_>, _>>()?;
-        function.effects = function
-            .effects
-            .drain(..)
-            .map(|clause| expand_declared_resource_effect_clause(clause, &resource_definitions))
-            .collect::<Result<Vec<_>, _>>()?;
-        function.constructs = function
-            .constructs
-            .drain(..)
-            .map(|resource| expand_declared_resource_clause(resource, &resource_definitions))
-            .collect::<Result<Vec<_>, _>>()?;
-        function.structural_clauses = function
-            .structural_clauses
-            .drain(..)
-            .map(|clause| expand_declared_resource_structural_clause(clause, &resource_definitions))
-            .collect::<Result<Vec<_>, _>>()?;
-        function.grouped_proof = function
-            .grouped_proof
-            .take()
-            .map(|proof| expand_declared_resource_proof(proof, &resource_definitions))
-            .transpose()?;
+        expand_declared_resources_in_function_block(function, &resource_definitions)?;
     }
 
     for theorem in &mut file.theorem_definitions {
@@ -161,6 +125,53 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
     }
 
     Ok(file)
+}
+
+fn expand_declared_resources_in_function_block(
+    function: &mut FunctionBlock,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<(), ClickError> {
+    function.decreases = function
+        .decreases
+        .take()
+        .map(|decreases| match decreases {
+            CFunctionDecrease::Numeric(expression) => Ok(CFunctionDecrease::Numeric(expression)),
+            CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
+                expand_declared_resource_clause(resource, &resource_definitions)?,
+            )),
+        })
+        .transpose()?;
+    function.requires = function
+        .requires
+        .drain(..)
+        .map(|requirement| expand_declared_resource_requirement(requirement, &resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
+    function.ensures = function
+        .ensures
+        .drain(..)
+        .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
+    function.effects = function
+        .effects
+        .drain(..)
+        .map(|clause| expand_declared_resource_effect_clause(clause, &resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
+    function.constructs = function
+        .constructs
+        .drain(..)
+        .map(|resource| expand_declared_resource_clause(resource, &resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
+    function.structural_clauses = function
+        .structural_clauses
+        .drain(..)
+        .map(|clause| expand_declared_resource_structural_clause(clause, &resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
+    function.grouped_proof = function
+        .grouped_proof
+        .take()
+        .map(|proof| expand_declared_resource_proof(proof, &resource_definitions))
+        .transpose()?;
+    Ok(())
 }
 
 fn expand_declared_resource_definition(

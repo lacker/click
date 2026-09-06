@@ -3,7 +3,7 @@
 `void *` and `const void *` carry an object pointer's identity without
 inventing an element width. They can be compared and converted back to a
 modeled typed pointer. Abstract calls through a generic callback require the
-separately tracked higher-order callback-contract feature.
+separately tracked higher-order function-contract feature.
 
 ```c filename=c_void_pointers.c
 int32 compare_keys(const void *left, const void *right) {

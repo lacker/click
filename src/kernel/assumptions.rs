@@ -1621,6 +1621,7 @@ impl PureFactContext {
 
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1642,7 +1643,62 @@ impl PureFactContext {
         );
         self.rebuild_memory_loadable_facts();
         self.rebuild_memory_separation_facts();
+        self.rebuild_function_contract_facts();
         self.recompute_content_fingerprint();
+    }
+
+    fn proposition_function_contract(proposition: &Proposition) -> Option<(Pointer, String)> {
+        let Proposition::Predicate { name, arguments } = proposition else {
+            return None;
+        };
+        let contract_name = CFunctionContract::surface_name_from_predicate(name)?;
+        let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice() else {
+            return None;
+        };
+        Some((pointer.pointer().clone(), contract_name.to_string()))
+    }
+
+    fn adjust_function_contract_fact(&mut self, proposition: &Proposition, insert: bool) {
+        let Some((pointer, name)) = Self::proposition_function_contract(proposition) else {
+            return;
+        };
+        let index = std::sync::Arc::make_mut(&mut self.function_contract_facts);
+        if insert {
+            index
+                .entry(pointer)
+                .or_default()
+                .insert(name, proposition.clone());
+            return;
+        }
+        let remove_pointer = if let Some(contracts) = index.get_mut(&pointer) {
+            contracts.remove(&name);
+            contracts.is_empty()
+        } else {
+            false
+        };
+        if remove_pointer {
+            index.remove(&pointer);
+        }
+    }
+
+    fn rebuild_function_contract_facts(&mut self) {
+        self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
+        let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
+        for proposition in facts {
+            self.adjust_function_contract_fact(&proposition, true);
+        }
+    }
+
+    pub(crate) fn function_contract_facts_for(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = (&String, &Proposition)> {
+        crate::instrumentation::record_deterministic_work(1);
+        self.function_contract_facts
+            .get(pointer)
+            .into_iter()
+            .flat_map(|contracts| contracts.iter())
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
     }
 
     fn proposition_memory_separation(
@@ -1884,6 +1940,7 @@ impl PureFactContext {
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
+            self.adjust_function_contract_fact(&proposition, true);
             self.content_fingerprint ^= Self::fingerprint(2, &proposition);
         }
     }
@@ -1896,6 +1953,7 @@ impl PureFactContext {
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.adjust_nonmemory_separation_fact(proposition, false);
+            self.adjust_function_contract_fact(proposition, false);
             self.content_fingerprint ^= Self::fingerprint(2, proposition);
         }
     }
@@ -1959,6 +2017,10 @@ impl PureFactContext {
                 &other.memory_load_condition_facts,
             )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.function_contract_facts,
+                &other.function_contract_facts,
+            )
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(

@@ -1264,6 +1264,59 @@ impl CFunctionSpecification {
     }
 }
 
+impl CFunctionContract {
+    const PREDICATE_PREFIX: &'static str = "__click_function_contract::";
+
+    pub fn new(name: impl Into<String>, function: CFunction) -> Option<Self> {
+        let name = name.into();
+        (function.opaque_contract_supported() && !name.is_empty())
+            .then_some(Self { name, function })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn function_pointer_type(&self) -> CType {
+        self.function.function_pointer_type()
+    }
+
+    pub fn predicate_name(&self) -> String {
+        Self::predicate_name_for(&self.name)
+    }
+
+    pub fn predicate_name_for(name: &str) -> String {
+        format!("{}{name}", Self::PREDICATE_PREFIX)
+    }
+
+    pub(crate) fn surface_name_from_predicate(name: &str) -> Option<&str> {
+        name.strip_prefix(Self::PREDICATE_PREFIX)
+    }
+
+    pub(crate) fn template(&self) -> &CFunction {
+        &self.function
+    }
+
+    /// First-slice formation rule: a concrete target must expose exactly the
+    /// same normalized interface. Behavioral refinement is intentionally a
+    /// later rule; exact equality is restrictive but sound.
+    pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
+        self.function.return_type == function.return_type
+            && self.function.return_aggregate_layout == function.return_aggregate_layout
+            && self.function.parameters == function.parameters
+            && self.function.resource_requires == function.resource_requires
+            && self.function.resource_ensures == function.resource_ensures
+            && self.function.contract_requires == function.contract_requires
+            && self.function.contract_ensures == function.contract_ensures
+            && self.function.contract_mutable == function.contract_mutable
+            && self.function.contract_effect_claim_required
+                == function.contract_effect_claim_required
+            && self.function.composite_resource_definitions
+                == function.composite_resource_definitions
+            && self.function.predicate_unfoldings == function.predicate_unfoldings
+    }
+}
+
 impl CExecutionEnvironment {
     pub fn new() -> Self {
         Self::default()
@@ -1273,6 +1326,17 @@ impl CExecutionEnvironment {
         std::sync::Arc::make_mut(&mut self.functions).insert(function.name().to_string(), function);
         self.variable_index = CExecutionEnvironmentVariableIndex::default();
         self
+    }
+
+    pub fn with_function_contract(mut self, contract: CFunctionContract) -> Self {
+        std::sync::Arc::make_mut(&mut self.function_contracts)
+            .insert(contract.name().to_string(), contract);
+        self.variable_index = CExecutionEnvironmentVariableIndex::default();
+        self
+    }
+
+    pub(crate) fn get_function_contract(&self, name: &str) -> Option<&CFunctionContract> {
+        self.function_contracts.get(name)
     }
 
     pub fn with_external_function_rule(mut self, rule: CExternalFunctionRule) -> Self {
@@ -1345,6 +1409,7 @@ impl CExecutionEnvironment {
     #[cfg(test)]
     pub(crate) fn shares_project_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.functions, &other.functions)
+            && std::sync::Arc::ptr_eq(&self.function_contracts, &other.function_contracts)
             && std::sync::Arc::ptr_eq(
                 &self.external_function_rules,
                 &other.external_function_rules,
