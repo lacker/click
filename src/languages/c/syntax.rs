@@ -1449,6 +1449,14 @@ pub enum C0Statement {
         function_name: String,
         arguments: Vec<C0Expression>,
     },
+    /// A statement-form call through a modeled function-pointer expression.
+    /// Parsing expands this to a typed callback local before kernel lowering.
+    IndirectCall {
+        function: C0Expression,
+        signature: C0FunctionPointerSignature,
+        arguments: Vec<C0Expression>,
+        position: Option<SourcePosition>,
+    },
     HeapAllocate {
         target: String,
         bytes: C0Expression,
@@ -1528,6 +1536,15 @@ pub enum C0Expression {
     /// for diagnostics emitted while performing that lowering.
     Call {
         function_name: String,
+        arguments: Vec<C0Expression>,
+        position: Option<SourcePosition>,
+    },
+    /// A call through a modeled function-pointer expression. The parser keeps
+    /// the expression until lowering can materialize it in a typed callback
+    /// local, then reuses the kernel's existing indirect-call statement path.
+    IndirectCall {
+        function: Box<C0Expression>,
+        signature: C0FunctionPointerSignature,
         arguments: Vec<C0Expression>,
         position: Option<SourcePosition>,
     },
@@ -2247,6 +2264,9 @@ impl C0Statement {
                     .map(C0Expression::to_kernel_expression)
                     .collect(),
             ),
+            Self::IndirectCall { .. } => {
+                unreachable!("indirect call statements must be lowered before kernel conversion")
+            }
             Self::HeapAllocate {
                 target,
                 bytes,
@@ -2353,6 +2373,9 @@ impl C0Expression {
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
             Self::Call { .. } => {
                 unreachable!("call expressions must be lowered before kernel conversion")
+            }
+            Self::IndirectCall { .. } => {
+                unreachable!("indirect call expressions must be lowered before kernel conversion")
             }
             Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
             Self::Cast {
@@ -2616,6 +2639,7 @@ fn validate_function_returns(
         | C0Statement::Assign { .. }
         | C0Statement::CallAssign { .. }
         | C0Statement::Call { .. }
+        | C0Statement::IndirectCall { .. }
         | C0Statement::HeapAllocate { .. }
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
@@ -2990,7 +3014,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         // while they are parsed. In particular, a direct aggregate lvalue is
         // valid when the corresponding parameter is a copyable struct, so it
         // must not be rejected again by the enclosing expression check.
-        C0Expression::Call { .. } => false,
+        C0Expression::Call { .. } | C0Expression::IndirectCall { .. } => false,
         C0Expression::AddressOf(_) => false,
         C0Expression::Cast { expression, .. }
         | C0Expression::FloatNegate(expression)
@@ -6164,6 +6188,24 @@ impl Parser {
                 Ok(statement)
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
+                let start = self.position;
+                if let Ok(C0Expression::IndirectCall {
+                    function,
+                    signature,
+                    arguments,
+                    position,
+                }) = self.parse_expression()
+                    && self.peek() == Some(&Token::Semicolon)
+                {
+                    self.position += 1;
+                    return Ok(C0Statement::IndirectCall {
+                        function: *function,
+                        signature,
+                        arguments,
+                        position,
+                    });
+                }
+                self.position = start;
                 let statement = self.parse_memory_lvalue_statement("statement", None)?;
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
@@ -8712,6 +8754,7 @@ impl Parser {
             C0Expression::Call { function_name, .. } => self
                 .function_declaration(function_name)
                 .and_then(|function| function.return_struct_name.clone()),
+            C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
             C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
             C0Expression::Field {
                 field_type: C0Type::Int32,
@@ -8781,6 +8824,7 @@ impl Parser {
         }
         match expression {
             C0Expression::Call { .. }
+            | C0Expression::IndirectCall { .. }
             | C0Expression::AddressOf(_)
             | C0Expression::Void
             | C0Expression::Variable(_)
@@ -8962,6 +9006,7 @@ impl Parser {
                         return true;
                     }
                 }
+                C0Statement::IndirectCall { .. } => return true,
                 C0Statement::Store { pointer, value, .. } => {
                     if self.expression_contains_lowerable_expression(pointer)
                         || self.expression_contains_lowerable_expression(value)
@@ -9038,7 +9083,7 @@ impl Parser {
                 return true;
             }
             match expression {
-                C0Expression::Call { .. } => return true,
+                C0Expression::Call { .. } | C0Expression::IndirectCall { .. } => return true,
                 C0Expression::Cast { expression, .. }
                 | C0Expression::FloatNegate(expression)
                 | C0Expression::FloatClassification { expression, .. }
@@ -9147,6 +9192,42 @@ impl Parser {
                         arguments,
                     },
                 ))
+            }
+            C0Statement::IndirectCall {
+                function,
+                signature,
+                arguments,
+                position,
+            } => {
+                let (mut prefix, function) = self.lower_expression_calls(function)?;
+                let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
+                if !prefix.is_empty() && !argument_prefix.is_empty() {
+                    return Err(self.error_at_position(
+                        position,
+                        "multiple unsequenced calls in one expression are not supported",
+                    ));
+                }
+                prefix.extend(argument_prefix);
+                let (callback_name, callback_type) =
+                    self.declare_synthesized_function_pointer(&signature);
+                prefix.push(C0Statement::Declare {
+                    c_type: callback_type,
+                    name: callback_name.clone(),
+                    volatile: false,
+                    pointee_volatile: false,
+                    constant: false,
+                    pointee_constant: false,
+                });
+                prefix.push(C0Statement::Assign {
+                    name: callback_name.clone(),
+                    expression: function,
+                });
+                prefix.push(C0Statement::Call {
+                    function_name: callback_name,
+                    arguments,
+                });
+                Ok(balanced_statement_sequence(prefix)
+                    .expect("indirect call has a non-empty prefix"))
             }
             C0Statement::HeapAllocate {
                 target,
@@ -9427,6 +9508,12 @@ impl Parser {
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
+            C0Expression::IndirectCall {
+                function,
+                signature,
+                arguments,
+                position,
+            } => self.lower_function_pointer_call(*function, signature, arguments, position),
             C0Expression::Cast {
                 expression,
                 c_type,
@@ -9678,6 +9765,58 @@ impl Parser {
         }
     }
 
+    fn lower_function_pointer_call(
+        &mut self,
+        function: C0Expression,
+        signature: C0FunctionPointerSignature,
+        arguments: Vec<C0Expression>,
+        position: Option<SourcePosition>,
+    ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        let (mut prefix, function) = self.lower_expression_calls(function)?;
+        let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
+        if !prefix.is_empty() && !argument_prefix.is_empty() {
+            return Err(self.error_at_position(
+                position,
+                "multiple unsequenced calls in one expression are not supported",
+            ));
+        }
+        prefix.extend(argument_prefix);
+
+        let (callback_name, callback_type) = self.declare_synthesized_function_pointer(&signature);
+        prefix.push(C0Statement::Declare {
+            c_type: callback_type,
+            name: callback_name.clone(),
+            volatile: false,
+            pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
+        });
+        prefix.push(C0Statement::Assign {
+            name: callback_name.clone(),
+            expression: function,
+        });
+        let (call_prefix, result) = self.lower_expression_calls(C0Expression::Call {
+            function_name: callback_name,
+            arguments,
+            position,
+        })?;
+        prefix.extend(call_prefix);
+        Ok((prefix, result))
+    }
+
+    fn declare_synthesized_function_pointer(
+        &mut self,
+        signature: &C0FunctionPointerSignature,
+    ) -> (String, C0Type) {
+        let callback_name = self.fresh_synthesized_call_name();
+        let callback_type = function_pointer_type(signature);
+        self.variable_types
+            .insert(callback_name.clone(), callback_type);
+        self.variable_function_pointers
+            .insert(callback_name.clone(), signature.clone());
+        (callback_name, callback_type)
+    }
+
     fn lower_binary_calls(
         &mut self,
         left: C0Expression,
@@ -9801,6 +9940,22 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn parse_function_pointer_call_arguments(
+        &mut self,
+        signature: &C0FunctionPointerSignature,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        let arguments = self.parse_call_arguments(None)?;
+        for (argument, parameter) in arguments.iter().zip(signature.parameters()) {
+            let expected_struct = parameter.struct_name().map(str::to_owned);
+            self.validate_struct_pointer_assignment(
+                expected_struct.as_ref(),
+                Some(parameter.c_type()),
+                argument,
+            )?;
+        }
+        Ok(arguments)
     }
 
     fn call_parameter_metadata(
@@ -10220,6 +10375,21 @@ impl Parser {
                 Some(Token::LParen) => {
                     let call_position =
                         self.positions.get(self.position.saturating_sub(1)).copied();
+                    if let C0Expression::Field {
+                        function_pointer_signature: Some(signature),
+                        ..
+                    } = &expression
+                    {
+                        let signature = signature.clone();
+                        let arguments = self.parse_function_pointer_call_arguments(&signature)?;
+                        expression = C0Expression::IndirectCall {
+                            function: Box::new(expression),
+                            signature,
+                            arguments,
+                            position: call_position,
+                        };
+                        continue;
+                    }
                     let source_name = match &expression {
                         C0Expression::Variable(name) => name.clone(),
                         _ => {
@@ -10494,6 +10664,7 @@ impl Parser {
             }
             C0Expression::Void
             | C0Expression::Call { .. }
+            | C0Expression::IndirectCall { .. }
             | C0Expression::FunctionAddress(_)
             | C0Expression::FloatClassification { .. }
             | C0Expression::AddressOf(_)
@@ -10569,6 +10740,7 @@ impl Parser {
                         .map(|signature| signature.return_struct_name.clone())
                 })
                 .flatten(),
+            C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
             C0Expression::Field {
                 field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 field_struct_name: Some(struct_name),
@@ -10628,6 +10800,7 @@ impl Parser {
                         .map(|signature| signature.return_struct_name.clone())
                 })
                 .flatten(),
+            C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
             C0Expression::Field {
                 field_type:
                     C0Type::Int16PointerPointer
@@ -11173,6 +11346,17 @@ fn function_pointer_signature_from_header(header: &C0FunctionHeader) -> C0Functi
     )
 }
 
+fn function_pointer_type(signature: &C0FunctionPointerSignature) -> C0Type {
+    C0Type::FunctionPointer(crate::kernel::CType::function_pointer_signature(
+        signature.return_type().to_kernel_type(),
+        &signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.c_type().to_kernel_type())
+            .collect::<Vec<_>>(),
+    ))
+}
+
 fn describe_function_pointer_signature(signature: &C0FunctionPointerSignature) -> String {
     let parameters = signature
         .parameters
@@ -11669,6 +11853,7 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::Assign { .. }
         | C0Statement::CallAssign { .. }
         | C0Statement::Call { .. }
+        | C0Statement::IndirectCall { .. }
         | C0Statement::HeapAllocate { .. }
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
@@ -11684,6 +11869,14 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             arguments,
             ..
         } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
+        C0Expression::IndirectCall {
+            function,
+            position,
+            arguments,
+            ..
+        } => position
+            .or_else(|| first_embedded_call_position(function))
+            .or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::Cast { expression, .. }
         | C0Expression::FloatNegate(expression)
         | C0Expression::FloatClassification { expression, .. }

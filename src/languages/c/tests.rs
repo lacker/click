@@ -1998,6 +1998,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::Call { .. }
             | syntax::C0Statement::CallAssign { .. }
+            | syntax::C0Statement::IndirectCall { .. }
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
@@ -7323,6 +7324,104 @@ fn c0_struct_function_pointer_fields_load_and_dispatch_known_targets() {
         );
     };
     assert_eq!(value, &crate::kernel::int32(38));
+}
+
+#[test]
+fn c0_struct_function_pointer_fields_support_direct_calls() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct callback_table {
+            int32 (*compare)(int32, int32);
+        };
+
+        int32 compare(int32 left, int32 right) {
+            return left - right;
+        }
+
+        int32 apply(struct callback_table* table) {
+            return table->compare(40, 2);
+        }
+
+        int32 discard(struct callback_table* table) {
+            table->compare(40, 2);
+            return 0;
+        }
+        "#,
+    )
+    .expect("direct callback field call should parse");
+    let compare = functions
+        .iter()
+        .find(|function| function.name() == "compare")
+        .expect("compare function")
+        .to_kernel_function();
+    let apply = functions
+        .iter()
+        .find(|function| function.name() == "apply")
+        .expect("apply function")
+        .to_kernel_function();
+    let table = crate::kernel::Pointer {
+        block: "table".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let callback = crate::kernel::CValue::typed_pointer(
+        crate::kernel::Pointer::function("compare"),
+        compare.function_pointer_type(),
+    );
+    let state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("table", 8)
+                .store(table.clone(), callback),
+        )
+        .with_resource_context(own_memory_context(table.clone(), 0, 8));
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        state,
+        apply,
+        vec![crate::kernel::c_typed_pointer_value(
+            table,
+            crate::kernel::CType::Int32Pointer,
+        )],
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new().with_function(compare),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("direct callback field call should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!(
+            "expected direct callback field execution theorem, got {:#?}",
+            theorem
+        );
+    };
+    assert_eq!(value, &crate::kernel::int32(38));
+}
+
+#[test]
+fn c0_struct_function_pointer_fields_reject_nominally_wrong_direct_arguments() {
+    let error = syntax::parse_functions(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+
+        struct callback_table {
+            int32 (*read)(struct left*);
+        };
+
+        int32 bad(struct callback_table* table, struct right* node) {
+            return table->read(node);
+        }
+        "#,
+    )
+    .expect_err("a direct callback call should enforce nominal pointer arguments");
+    assert!(
+        error
+            .message()
+            .contains("cannot use `struct right *` where `struct left *` is required"),
+        "{error}"
+    );
 }
 
 #[test]

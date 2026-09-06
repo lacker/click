@@ -1548,6 +1548,7 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::CallAssign { .. }
             | syntax::C0Statement::Call { .. }
+            | syntax::C0Statement::IndirectCall { .. }
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
@@ -1559,6 +1560,16 @@ pub(in crate::surface) fn c0_statement_calls(
     fn collect_function_addresses(expression: &syntax::C0Expression, names: &mut BTreeSet<String>) {
         match expression {
             syntax::C0Expression::Call { arguments, .. } => {
+                for argument in arguments {
+                    collect_function_addresses(argument, names);
+                }
+            }
+            syntax::C0Expression::IndirectCall {
+                function,
+                arguments,
+                ..
+            } => {
+                collect_function_addresses(function, names);
                 for argument in arguments {
                     collect_function_addresses(argument, names);
                 }
@@ -1721,6 +1732,18 @@ pub(in crate::surface) fn c0_statement_calls(
                 if !function_pointer_names.contains(function_name) {
                     dependencies.insert(function_name.clone());
                 }
+                for argument in arguments {
+                    collect_function_addresses(argument, &mut dependencies);
+                }
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::IndirectCall {
+                function,
+                arguments,
+                ..
+            } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(function, &mut dependencies);
                 for argument in arguments {
                     collect_function_addresses(argument, &mut dependencies);
                 }

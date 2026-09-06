@@ -194,8 +194,10 @@ Staged mdtests, each with an unchanged C file:
     callback, and dispatches the known target; incompatible targets are
     rejected.~~ Covered by `mdtests/struct_function_pointer_field.md` and the
     C0 field metadata, assignment-validation, and execution regressions.
-    Abstract callback contracts, direct calls through the field expression, and
-    by-value structs containing callback fields remain separate.
+    Direct calls through the field expression are covered by
+    `mdtests/struct_function_pointer_field_direct_call.md` and the C0 direct-call
+    execution and argument-validation regressions. Abstract callback contracts
+    and by-value structs containing callback fields remain separate.
 
 ## Acceptance criteria
 
@@ -211,8 +213,9 @@ Staged mdtests, each with an unchanged C file:
   provenance without copying the pointee or transferring ownership.
 - Pointer-backed callback fields preserve their structural signature key,
   nominal signature metadata, and LP64 slot; compatible concrete function
-  addresses can be stored and loaded for known-target dispatch, while
-  incompatible known targets and by-value callback fields remain rejected.
+  addresses can be stored, loaded, and called directly for known-target
+  dispatch, while incompatible known targets and by-value callback fields
+  remain rejected.
 - Address-taking of modeled scalar leaf fields preserves the original
   allocation block, adds every ABI field offset in the chain, and returns the
   correct modeled pointer type; unsupported pointer forms are rejected rather

@@ -159,6 +159,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/struct_function_pointer_field.md`: a pointer-backed struct retains a
   callback field's signature, stores a concrete function address, and dispatches
   it after loading the field.
+- `mdtests/struct_function_pointer_field_direct_call.md`: a known concrete
+  callback field can be called directly through `table->compare(...)`.
 - `mdtests/struct_array_parameter_fields.md`: a one-dimensional struct array
   parameter retains the ABI stride for indexed field loads and stores.
 - `mdtests/struct_by_value_embedded_copy.md`: by-value structs recursively copy

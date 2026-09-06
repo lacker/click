@@ -331,7 +331,7 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
         syntax::C0Statement::CallAssign { target, .. } => {
             names.insert(target.clone());
         }
-        syntax::C0Statement::Call { .. } => {}
+        syntax::C0Statement::Call { .. } | syntax::C0Statement::IndirectCall { .. } => {}
         syntax::C0Statement::HeapAllocate { target, .. } => {
             names.insert(target.clone());
         }
