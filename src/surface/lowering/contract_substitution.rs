@@ -573,6 +573,18 @@ fn collect_contract_expression_binding_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_binding_names(argument, names);
+            }
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_contract_expression_binding_names(scrutinee, names);
+            for arm in arms {
+                names.extend(arm.bindings.iter().cloned());
+                collect_contract_expression_binding_names(&arm.body, names);
+            }
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 collect_contract_expression_binding_names(element, names);
@@ -996,6 +1008,52 @@ fn rewrite_contract_expression_exact(
         (left, right, left_changed || right_changed)
     };
     match expression {
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => {
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    let (argument, argument_changed) = unary(argument);
+                    changed |= argument_changed;
+                    argument
+                })
+                .collect();
+            (
+                ContractExpression::AlgebraicConstructor {
+                    algebraic_type: algebraic_type.clone(),
+                    variant: variant.clone(),
+                    arguments,
+                },
+                changed,
+            )
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let (scrutinee, mut changed) = unary(scrutinee);
+            let arms = arms
+                .iter()
+                .map(|arm| {
+                    let (body, body_changed) = unary(&arm.body);
+                    changed |= body_changed;
+                    AlgebraicMatchArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        body,
+                    }
+                })
+                .collect();
+            (
+                ContractExpression::AlgebraicMatch {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                },
+                changed,
+            )
+        }
         ContractExpression::SequenceLiteral(elements) => {
             let mut changed = false;
             let elements = elements
@@ -1639,6 +1697,22 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_referenced_names(argument, names);
+            }
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_contract_expression_referenced_names(scrutinee, names);
+            for arm in arms {
+                let mut arm_names = BTreeSet::new();
+                collect_contract_expression_referenced_names(&arm.body, &mut arm_names);
+                for binding in &arm.bindings {
+                    arm_names.remove(binding);
+                }
+                names.extend(arm_names);
+            }
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 collect_contract_expression_referenced_names(element, names);
@@ -1816,6 +1890,38 @@ pub(in crate::surface) fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => Ok(ContractExpression::AlgebraicConstructor {
+            algebraic_type: algebraic_type.clone(),
+            variant: variant.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            Ok(ContractExpression::AlgebraicMatch {
+                scrutinee: Box::new(substitute_contract_expression(scrutinee, substitutions)?),
+                arms: arms
+                    .iter()
+                    .map(|arm| {
+                        let mut arm_substitutions = substitutions.clone();
+                        for binding in &arm.bindings {
+                            arm_substitutions.remove(binding);
+                        }
+                        Ok(AlgebraicMatchArm {
+                            type_name: arm.type_name.clone(),
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            body: substitute_contract_expression(&arm.body, &arm_substitutions)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            })
+        }
         ContractExpression::SequenceLiteral(elements) => Ok(ContractExpression::SequenceLiteral(
             elements
                 .iter()
@@ -2199,6 +2305,8 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::AlgebraicConstructor { .. }
+        | ContractExpression::AlgebraicMatch { .. } => None,
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
@@ -2279,6 +2387,8 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::AlgebraicConstructor { .. }
+        | ContractExpression::AlgebraicMatch { .. } => None,
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),

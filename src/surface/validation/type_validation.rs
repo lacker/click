@@ -120,10 +120,11 @@ pub(super) fn validate_proposition_expression_types(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum SpecValueType {
     Scalar(Option<C0Type>),
     Sequence(Option<C0Type>),
+    Algebraic(AlgebraicTypeApplication),
 }
 
 fn validate_comparison_expression_types(
@@ -180,6 +181,23 @@ fn validate_comparison_expression_types(
             }
             Ok(())
         }
+        (SpecValueType::Algebraic(left), SpecValueType::Algebraic(right)) => {
+            if !matches!(
+                operator,
+                ComparisonOperator::Equal | ComparisonOperator::NotEqual
+            ) {
+                return Err(ClickError::new(format!(
+                    "algebraic values support only `==` and `!=` comparisons in {context}"
+                )));
+            }
+            if left != right {
+                return Err(ClickError::new(format!(
+                    "algebraic comparison type mismatch in {context}: `{}<...>` and `{}<...>`",
+                    left.name, right.name
+                )));
+            }
+            Ok(())
+        }
         _ if operator == ComparisonOperator::In => Err(ClickError::new(format!(
             "`in` requires a scalar element on the left and a sequence on the right in {context}"
         ))),
@@ -196,6 +214,12 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
+            Ok(SpecValueType::Algebraic(algebraic_type.clone()))
+        }
+        ContractExpression::AlgebraicMatch { .. } => Ok(SpecValueType::Scalar(
+            infer_contract_expression_type(expression, variables, click_functions, context)?,
+        )),
         ContractExpression::SequenceLiteral(elements) => {
             let mut element_type = None;
             for element in elements {
@@ -544,7 +568,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
     }
 }
 
-fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
+pub(super) fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
     match (actual, expected) {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
@@ -616,13 +640,36 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
     click_types_compatible(actual, expected)
 }
 
-fn infer_contract_expression_type(
+pub(super) fn infer_contract_expression_type(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
     match expression {
+        ContractExpression::AlgebraicConstructor { .. } => Err(ClickError::new(format!(
+            "algebraic values are only valid in algebraic equality or as a `match` scrutinee in {context}"
+        ))),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let ContractExpression::AlgebraicConstructor {
+                variant, arguments, ..
+            } = scrutinee.as_ref()
+            else {
+                return Ok(None);
+            };
+            let Some(arm) = arms.iter().find(|arm| &arm.variant == variant) else {
+                return Ok(None);
+            };
+            let mut arm_variables = variables.clone();
+            for (binding, argument) in arm.bindings.iter().zip(arguments) {
+                if let Some(c_type) =
+                    infer_contract_expression_type(argument, variables, click_functions, context)?
+                {
+                    arm_variables.insert(binding.clone(), c_type);
+                }
+            }
+            infer_contract_expression_type(&arm.body, &arm_variables, click_functions, context)
+        }
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
             Err(ClickError::new(format!(
                 "sequence values are only valid as operands of `==` or `!=` in {context}"
@@ -1374,6 +1421,19 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                validate_contract_expression_calls(argument, click_functions, context)?;
+            }
+            Ok(())
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            validate_contract_expression_calls(scrutinee, click_functions, context)?;
+            for arm in arms {
+                validate_contract_expression_calls(&arm.body, click_functions, context)?;
+            }
+            Ok(())
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 validate_contract_expression_calls(element, click_functions, context)?;

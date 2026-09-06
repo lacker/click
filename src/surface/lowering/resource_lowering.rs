@@ -971,6 +971,10 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
+        ContractExpression::AlgebraicConstructor { .. }
+        | ContractExpression::AlgebraicMatch { .. } => Err(ClickError::new(
+            "declared resource arguments do not yet accept algebraic values",
+        )),
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => Err(
             ClickError::new("declared resource arguments do not yet accept sequence values"),
         ),

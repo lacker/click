@@ -5,10 +5,12 @@ use crate::surface::proof::{
     pure_theorem_parameter_values,
 };
 
+mod algebraic_types;
 mod declaration_expansion;
 mod definition_validation;
 mod expression_analysis;
 mod type_validation;
+use algebraic_types::*;
 pub(super) use declaration_expansion::*;
 pub(super) use definition_validation::*;
 pub(super) use expression_analysis::*;

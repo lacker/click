@@ -57,12 +57,14 @@ enum Token {
     LBracket,
     RBracket,
     Colon,
+    ColonColon,
     Comma,
     Semicolon,
     Dot,
     DotDot,
     Arrow,
     Equal,
+    FatArrow,
     EqualEqual,
     BangEqual,
     LessThan,
@@ -119,12 +121,14 @@ impl Token {
             Self::LBracket => "[",
             Self::RBracket => "]",
             Self::Colon => ":",
+            Self::ColonColon => "::",
             Self::Comma => ",",
             Self::Semicolon => ";",
             Self::Dot => ".",
             Self::DotDot => "..",
             Self::Arrow => "->",
             Self::Equal => "=",
+            Self::FatArrow => "=>",
             Self::EqualEqual => "==",
             Self::BangEqual => "!=",
             Self::LessThan => "<",
@@ -196,6 +200,23 @@ fn is_c_type_keyword(name: &str) -> bool {
             | "double"
             | "const"
             | "volatile"
+    )
+}
+
+fn algebraic_field_c_type_supported(c_type: C0Type) -> bool {
+    !matches!(
+        c_type,
+        C0Type::Void
+            | C0Type::FunctionPointer(_)
+            | C0Type::Int16Array(_)
+            | C0Type::Int32Array(_)
+            | C0Type::UInt8Array(_)
+            | C0Type::UInt16Array(_)
+            | C0Type::UInt32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_)
+            | C0Type::Float32Array(_)
+            | C0Type::Float64Array(_)
     )
 }
 
@@ -316,6 +337,7 @@ impl Parser {
 
     fn parse_file_items(&mut self) -> Result<ClickFile, ClickError> {
         let mut verifying_sources = Vec::new();
+        let mut algebraic_type_definitions = Vec::new();
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
         let mut resource_definitions = Vec::new();
@@ -325,6 +347,8 @@ impl Parser {
         while self.peek().is_some() {
             if self.peek_ident() == Some("verifying") {
                 verifying_sources.push(self.parse_verifying_source()?);
+            } else if self.peek_ident() == Some("spec") {
+                algebraic_type_definitions.push(self.parse_algebraic_type_definition()?);
             } else if self.peek_ident() == Some("predicate") {
                 predicate_definitions.push(self.parse_predicate_definition()?);
             } else if self.peek_ident() == Some("function") {
@@ -347,6 +371,7 @@ impl Parser {
 
         let file = ClickFile {
             verifying_sources,
+            algebraic_type_definitions,
             predicate_definitions,
             click_function_definitions,
             resource_definitions,
@@ -354,6 +379,95 @@ impl Parser {
             function_blocks,
         };
         Ok(file)
+    }
+
+    fn parse_algebraic_type_definition(&mut self) -> Result<AlgebraicTypeDefinition, ClickError> {
+        self.expect_ident_spelling("spec")?;
+        self.expect_ident_spelling("enum")?;
+        let name = self.expect_ident("algebraic datatype name")?;
+        let mut type_parameters = Vec::new();
+        if self.peek() == Some(&Token::LessThan) {
+            self.position += 1;
+            loop {
+                type_parameters.push(self.expect_ident("type parameter")?);
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::GreaterThan) => {
+                        self.position += 1;
+                        break;
+                    }
+                    Some(token) => {
+                        return Err(self.error(format!(
+                            "expected `,` or `>` after type parameter, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => return Err(self.error("expected `>` after type parameter")),
+                }
+            }
+        }
+        self.expect(Token::LBrace)?;
+        let mut variants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let variant_name = self.expect_ident("variant name")?;
+            let mut fields = Vec::new();
+            if self.peek() == Some(&Token::LParen) {
+                self.position += 1;
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        let field_name = self
+                            .peek_ident()
+                            .ok_or_else(|| self.error("expected algebraic variant field type"))?
+                            .to_string();
+                        if type_parameters
+                            .iter()
+                            .any(|parameter| parameter == &field_name)
+                        {
+                            self.position += 1;
+                            fields.push(AlgebraicFieldType::Parameter(field_name));
+                        } else if !is_c_type_keyword(&field_name) {
+                            self.position += 1;
+                            fields.push(AlgebraicFieldType::Algebraic(field_name));
+                        } else {
+                            let parsed = self.parse_type()?;
+                            if !algebraic_field_c_type_supported(parsed.c_type) {
+                                return Err(self.error(
+                                    "algebraic datatype fields must be C scalar or data-pointer values in this slice",
+                                ));
+                            }
+                            fields.push(AlgebraicFieldType::C(parsed.c_type));
+                        }
+                        match self.peek() {
+                            Some(Token::Comma) => self.position += 1,
+                            Some(Token::RParen) => break,
+                            Some(token) => {
+                                return Err(self.error(format!(
+                                    "expected `,` or `)` after variant field, got {}",
+                                    token.describe()
+                                )));
+                            }
+                            None => return Err(self.error("expected `)` after variant fields")),
+                        }
+                    }
+                }
+                self.expect(Token::RParen)?;
+            }
+            variants.push(AlgebraicVariantDefinition {
+                name: variant_name,
+                fields,
+            });
+            if self.peek() == Some(&Token::Comma) {
+                self.position += 1;
+            } else if self.peek() != Some(&Token::RBrace) {
+                return Err(self.error("expected `,` or `}` after algebraic datatype variant"));
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(AlgebraicTypeDefinition {
+            name,
+            type_parameters,
+            variants,
+        })
     }
 
     fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
@@ -4052,6 +4166,82 @@ impl Parser {
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("match") {
+            self.position += 1;
+            let scrutinee = self.parse_contract_expression()?;
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let type_name = self.expect_ident("match pattern datatype")?;
+                self.expect(Token::ColonColon)?;
+                let variant = self.expect_ident("match pattern variant")?;
+                let mut bindings = Vec::new();
+                if self.peek() == Some(&Token::LParen) {
+                    self.position += 1;
+                    if self.peek() != Some(&Token::RParen) {
+                        loop {
+                            bindings.push(self.expect_ident("match pattern binding")?);
+                            match self.peek() {
+                                Some(Token::Comma) => self.position += 1,
+                                Some(Token::RParen) => break,
+                                Some(token) => {
+                                    return Err(self.error(format!(
+                                        "expected `,` or `)` after match binding, got {}",
+                                        token.describe()
+                                    )));
+                                }
+                                None => {
+                                    return Err(self.error("expected `)` after match bindings"));
+                                }
+                            }
+                        }
+                    }
+                    self.expect(Token::RParen)?;
+                }
+                self.expect(Token::FatArrow)?;
+                let body = self.parse_contract_expression()?;
+                arms.push(AlgebraicMatchArm {
+                    type_name,
+                    variant,
+                    bindings,
+                    body,
+                });
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                } else if self.peek() != Some(&Token::RBrace) {
+                    return Err(self.error("expected `,` or `}` after match arm"));
+                }
+            }
+            self.expect(Token::RBrace)?;
+            return Ok(ContractExpression::AlgebraicMatch {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            });
+        }
+
+        if self.looks_like_algebraic_constructor() {
+            let algebraic_type = self.parse_algebraic_type_application()?;
+            self.expect(Token::ColonColon)?;
+            let variant = self.expect_ident("algebraic constructor variant")?;
+            let mut arguments = Vec::new();
+            if self.peek() == Some(&Token::LParen) {
+                self.position += 1;
+                if self.peek() != Some(&Token::RParen) {
+                    arguments.push(self.parse_contract_expression()?);
+                    while self.peek() == Some(&Token::Comma) {
+                        self.position += 1;
+                        arguments.push(self.parse_contract_expression()?);
+                    }
+                }
+                self.expect(Token::RParen)?;
+            }
+            return Ok(ContractExpression::AlgebraicConstructor {
+                algebraic_type,
+                variant,
+                arguments,
+            });
+        }
+
         if self.peek() == Some(&Token::LBracket) {
             self.position += 1;
             let mut elements = Vec::new();
@@ -4275,6 +4465,66 @@ impl Parser {
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
         }
+    }
+
+    fn looks_like_algebraic_constructor(&self) -> bool {
+        if !matches!(self.peek(), Some(Token::Ident(_))) {
+            return false;
+        }
+        if self.peek_next() == Some(&Token::ColonColon) {
+            return true;
+        }
+        if self.peek_next() != Some(&Token::LessThan) {
+            return false;
+        }
+        let mut index = self.position + 2;
+        let mut nested = 1usize;
+        while let Some(token) = self.tokens.get(index) {
+            match token {
+                Token::LessThan => nested += 1,
+                Token::GreaterThan => {
+                    nested -= 1;
+                    if nested == 0 {
+                        return self.tokens.get(index + 1) == Some(&Token::ColonColon);
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn parse_algebraic_type_application(&mut self) -> Result<AlgebraicTypeApplication, ClickError> {
+        let name = self.expect_ident("algebraic datatype name")?;
+        let mut arguments = Vec::new();
+        if self.peek() == Some(&Token::LessThan) {
+            self.position += 1;
+            loop {
+                let parsed = self.parse_type()?;
+                if !algebraic_field_c_type_supported(parsed.c_type) {
+                    return Err(self.error(
+                        "algebraic datatype arguments must be C scalar or data-pointer types in this slice",
+                    ));
+                }
+                arguments.push(parsed.c_type);
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::GreaterThan) => {
+                        self.position += 1;
+                        break;
+                    }
+                    Some(token) => {
+                        return Err(self.error(format!(
+                            "expected `,` or `>` after datatype argument, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => return Err(self.error("expected `>` after datatype arguments")),
+                }
+            }
+        }
+        Ok(AlgebraicTypeApplication { name, arguments })
     }
 
     fn parse_snapshot_selector(&mut self) -> Result<SnapshotSelector, ClickError> {

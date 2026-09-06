@@ -697,6 +697,10 @@ impl SpecPureFunctionDefinitions {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecExpression {
     Value(CValue),
+    AlgebraicMatch {
+        scrutinee: Box<SpecAlgebraicExpression>,
+        arms: Vec<SpecAlgebraicMatchArm>,
+    },
     CExpression(CExpression),
     CountedResourceCount {
         name: String,
@@ -749,6 +753,21 @@ pub enum SpecExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecAlgebraicExpression {
+    pub type_name: String,
+    pub type_arguments: Vec<CType>,
+    pub variant: String,
+    pub fields: Vec<SpecExpression>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecAlgebraicMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub body: SpecExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecSequenceExpression {
     Literal(Vec<SpecExpression>),
     Concat(Box<SpecSequenceExpression>, Box<SpecSequenceExpression>),
@@ -765,6 +784,11 @@ pub enum SpecPredicateArgument {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
+    AlgebraicComparison {
+        left: SpecAlgebraicExpression,
+        equal: bool,
+        right: SpecAlgebraicExpression,
+    },
     SequenceMembership {
         element: SpecExpression,
         sequence: SpecSequenceExpression,

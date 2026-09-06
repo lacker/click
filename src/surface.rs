@@ -152,6 +152,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "ensures",
     "ensuring",
     "entry",
+    "enum",
     "enumerate",
     "execute",
     "execute_else_step",
@@ -188,6 +189,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "loadable",
     "loop",
     "mark",
+    "match",
     "memory",
     "mutable",
     "normalize",
@@ -211,6 +213,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "separate",
     "simp",
     "sizeof",
+    "spec",
     "split",
     "statement",
     "step",
@@ -236,6 +239,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
 /// contract, proposition, expression, and operator families. Individual word
 /// forms are tracked separately in [`SURFACE_CLICK_WORDS`].
 pub const SURFACE_CLICK_FORMS: &[&str] = &[
+    "algebraic-constructor",
+    "algebraic-declaration",
     "all",
     "and",
     "any",
@@ -259,6 +264,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "implies",
     "let-where",
     "loadable",
+    "match-expression",
     "modifies",
     "mutable",
     "not",
@@ -348,11 +354,48 @@ fn check_verification_deadline() -> Result<(), ClickError> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
     verifying_sources: Vec<String>,
+    algebraic_type_definitions: Vec<AlgebraicTypeDefinition>,
     predicate_definitions: Vec<PredicateDefinition>,
     click_function_definitions: Vec<ClickFunctionDefinition>,
     resource_definitions: Vec<ResourceDefinition>,
     theorem_definitions: Vec<TheoremDefinition>,
     function_blocks: Vec<FunctionBlock>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlgebraicTypeDefinition {
+    name: String,
+    type_parameters: Vec<String>,
+    variants: Vec<AlgebraicVariantDefinition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlgebraicVariantDefinition {
+    name: String,
+    fields: Vec<AlgebraicFieldType>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AlgebraicFieldType {
+    Parameter(String),
+    C(C0Type),
+    /// Parsed so the validator can issue a focused first-slice diagnostic for
+    /// recursive or nested algebraic fields.
+    Algebraic(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlgebraicTypeApplication {
+    name: String,
+    arguments: Vec<C0Type>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlgebraicMatchArm {
+    type_name: String,
+    variant: String,
+    bindings: Vec<String>,
+    body: ContractExpression,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -808,6 +851,22 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_current_contract_expression_variables(argument, names);
+            }
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_current_contract_expression_variables(scrutinee, names);
+            for arm in arms {
+                let mut arm_names = BTreeSet::new();
+                collect_current_contract_expression_variables(&arm.body, &mut arm_names);
+                for binding in &arm.bindings {
+                    arm_names.remove(binding);
+                }
+                names.extend(arm_names);
+            }
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 collect_current_contract_expression_variables(element, names);
@@ -1238,6 +1297,20 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    /// A fully type-applied constructor of a specification-only algebraic
+    /// datatype. The first slice permits C scalar and data-pointer fields.
+    AlgebraicConstructor {
+        algebraic_type: AlgebraicTypeApplication,
+        variant: String,
+        arguments: Vec<ContractExpression>,
+    },
+    /// Exhaustive elimination of a constructed algebraic value into an
+    /// ordinary scalar expression. Arbitrary algebraic binders are a later
+    /// slice; retaining the match here keeps that extension source-compatible.
+    AlgebraicMatch {
+        scrutinee: Box<ContractExpression>,
+        arms: Vec<AlgebraicMatchArm>,
+    },
     /// An immutable, finite specification sequence. Elements remain ordinary
     /// scalar contract expressions and are evaluated at the surrounding
     /// snapshot.
@@ -3295,6 +3368,10 @@ impl ClickFile {
         &self.verifying_sources
     }
 
+    pub fn algebraic_type_definitions(&self) -> &[AlgebraicTypeDefinition] {
+        &self.algebraic_type_definitions
+    }
+
     pub fn predicate_definitions(&self) -> &[PredicateDefinition] {
         &self.predicate_definitions
     }
@@ -3313,6 +3390,30 @@ impl ClickFile {
 
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
+    }
+}
+
+impl AlgebraicTypeDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn type_parameters(&self) -> &[String] {
+        &self.type_parameters
+    }
+
+    pub fn variants(&self) -> &[AlgebraicVariantDefinition] {
+        &self.variants
+    }
+}
+
+impl AlgebraicVariantDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fields(&self) -> &[AlgebraicFieldType] {
+        &self.fields
     }
 }
 

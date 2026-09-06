@@ -575,6 +575,10 @@ id = "language.word.entry"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.enum"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.enumerate"
 path = "reference/language/grammar.md#word-index"
 
@@ -719,6 +723,10 @@ id = "language.word.mark"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.match"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.memory"
 path = "reference/language/grammar.md#word-index"
 
@@ -811,6 +819,10 @@ id = "language.word.sizeof"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.spec"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.split"
 path = "reference/language/grammar.md#word-index"
 
@@ -894,6 +906,18 @@ path = "reference/library/index.md#allocation"
 [[item]]
 id = "language.verifying"
 path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.algebraic-declaration"
+path = "reference/language/grammar.md#algebraic-datatypes"
+
+[[item]]
+id = "language.algebraic-constructor"
+path = "reference/language/grammar.md#algebraic-datatypes"
+
+[[item]]
+id = "language.match-expression"
+path = "reference/language/grammar.md#algebraic-datatypes"
 
 [[item]]
 id = "language.predicate"

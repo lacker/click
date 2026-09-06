@@ -43,6 +43,13 @@ unchanged.
 - proposition-level `element in sequence` membership over literals and
   concatenations; and
 - a checked exact-result contract for `sequence_contains3`.
+- generic nonrecursive `spec enum` declarations with nullary and product
+  variants;
+- fully type-applied constructors, structural `==`/`!=`, and exhaustive
+  `match` expressions over constructed values whose fields may be symbolic C
+  values; and
+- checked rejection of wrong constructor field types, nonexhaustive matches,
+  and recursive fields in this initial datatype slice.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -50,9 +57,9 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic-data-type declarations, generic type parameters,
-constructors and exhaustive matching, strictly positive recursion, structural
-decreases and induction, typed `List<T>` binders and function boundaries,
+Still open are arbitrary algebraic-typed variables and boundaries, nested and
+strictly positive recursive fields, matching an unknown symbolic variant,
+structural decreases and induction, the library-defined `List<T>`,
 recursive-resource use, and symbolic typed-memory-range projection.
 
 ## Violated invariant

@@ -5662,6 +5662,17 @@ pub(super) fn contract_expression_mentions_c_local(
     parameter_names: &BTreeSet<&str>,
 ) -> bool {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => arguments
+            .iter()
+            .any(|argument| contract_expression_mentions_c_local(argument, parameter_names)),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            contract_expression_mentions_c_local(scrutinee, parameter_names)
+                || arms.iter().any(|arm| {
+                    let mut arm_names = parameter_names.clone();
+                    arm_names.extend(arm.bindings.iter().map(String::as_str));
+                    contract_expression_mentions_c_local(&arm.body, &arm_names)
+                })
+        }
         ContractExpression::SequenceLiteral(elements) => elements
             .iter()
             .any(|element| contract_expression_mentions_c_local(element, parameter_names)),

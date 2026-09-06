@@ -39,8 +39,13 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                 index += 1;
             }
             ':' => {
-                tokens.push(Token::Colon);
-                index += 1;
+                if chars.get(index + 1) == Some(&':') {
+                    tokens.push(Token::ColonColon);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Colon);
+                    index += 1;
+                }
             }
             ',' => {
                 tokens.push(Token::Comma);
@@ -142,6 +147,9 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
             '=' => {
                 if chars.get(index + 1) == Some(&'=') {
                     tokens.push(Token::EqualEqual);
+                    index += 2;
+                } else if chars.get(index + 1) == Some(&'>') {
+                    tokens.push(Token::FatArrow);
                     index += 2;
                 } else {
                     tokens.push(Token::Equal);

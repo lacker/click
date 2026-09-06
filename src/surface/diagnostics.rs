@@ -1024,6 +1024,48 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => {
+            let type_arguments = if algebraic_type.arguments.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<{}>",
+                    algebraic_type
+                        .arguments
+                        .iter()
+                        .map(|c_type| describe_c0_type(*c_type))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            format!(
+                "{}{type_arguments}::{variant}({})",
+                algebraic_type.name,
+                arguments
+                    .iter()
+                    .map(describe_contract_expression)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => format!(
+            "match {} {{ {} }}",
+            describe_contract_expression(scrutinee),
+            arms.iter()
+                .map(|arm| format!(
+                    "{}::{}({}) => {}",
+                    arm.type_name,
+                    arm.variant,
+                    arm.bindings.join(", "),
+                    describe_contract_expression(&arm.body)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ContractExpression::SequenceLiteral(elements) => format!(
             "[{}]",
             elements

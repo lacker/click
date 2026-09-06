@@ -1,6 +1,7 @@
 use super::*;
 
 pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
+    validate_algebraic_type_declarations(file)?;
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
     let resource_definitions = combined_resource_definitions(file)?;
@@ -45,6 +46,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             },
         );
     }
+    validate_algebraic_type_uses(file, &click_function_types)?;
 
     let mut resources = BTreeMap::new();
     for definition in &resource_definitions {
@@ -1106,6 +1108,43 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_resource_fact_reads_from_contract_expression(
+                    argument,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_resource_fact_reads_from_contract_expression(
+                scrutinee,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            for arm in arms {
+                collect_resource_fact_reads_from_contract_expression(
+                    &arm.body,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 collect_resource_fact_reads_from_contract_expression(

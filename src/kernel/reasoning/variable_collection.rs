@@ -437,6 +437,14 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
 ) {
     match expression {
         SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
+        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            for field in &scrutinee.fields {
+                collect_spec_expression_bitvector_variables(field, variables);
+            }
+            for arm in arms {
+                collect_spec_expression_bitvector_variables(&arm.body, variables);
+            }
+        }
         SpecExpression::CExpression(expression) => {
             collect_c_expression_bitvector_variables(expression, variables);
         }
@@ -523,6 +531,11 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
+        SpecProposition::AlgebraicComparison { left, right, .. } => {
+            for field in left.fields.iter().chain(&right.fields) {
+                collect_spec_expression_bitvector_variables(field, variables);
+            }
+        }
         SpecProposition::SequenceMembership { element, sequence } => {
             collect_spec_expression_bitvector_variables(element, variables);
             collect_spec_sequence_bitvector_variables(sequence, variables);

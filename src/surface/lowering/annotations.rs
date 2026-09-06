@@ -10,9 +10,20 @@ fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
         _ => false,
     }
 }
+fn contract_expression_is_algebraic(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::AlgebraicConstructor { .. } => true,
+        ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => contract_expression_is_algebraic(inner),
+        _ => false,
+    }
+}
 use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
 use crate::kernel::SpecSequenceExpression;
+use crate::kernel::{SpecAlgebraicExpression, SpecAlgebraicMatchArm};
 
 type FunctionContractSummary = (
     Vec<SpecProposition>,
@@ -1192,6 +1203,23 @@ impl AnnotationLowerer<'_> {
                         sequence: self.lower_contract_sequence_to_spec(right, environment)?,
                     });
                 }
+                let has_algebraic = contract_expression_is_algebraic(left)
+                    || contract_expression_is_algebraic(right);
+                if has_algebraic {
+                    let equal = match operator {
+                        ComparisonOperator::Equal => true,
+                        ComparisonOperator::NotEqual => false,
+                        _ => {
+                            return Err("algebraic values support only `==` and `!=` comparisons"
+                                .to_string());
+                        }
+                    };
+                    return Ok(SpecProposition::AlgebraicComparison {
+                        left: self.lower_contract_algebraic_to_spec(left, environment)?,
+                        equal,
+                        right: self.lower_contract_algebraic_to_spec(right, environment)?,
+                    });
+                }
                 let has_sequence =
                     contract_expression_is_sequence(left) || contract_expression_is_sequence(right);
                 if has_sequence {
@@ -1500,6 +1528,35 @@ impl AnnotationLowerer<'_> {
             ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
                 Err("a sequence value is only valid as an operand of `==` or `!=`".to_string())
             }
+            ContractExpression::AlgebraicConstructor { .. } => Err(
+                "an algebraic value is valid only as a comparison operand or match scrutinee"
+                    .to_string(),
+            ),
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let mut body_environment = environment.clone();
+                        for binding in &arm.bindings {
+                            body_environment.values.insert(
+                                binding.clone(),
+                                SpecExpression::CExpression(CExpression::Variable(binding.clone())),
+                            );
+                        }
+                        Ok(SpecAlgebraicMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            body: self
+                                .lower_contract_expression_to_spec(&arm.body, &body_environment)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(SpecExpression::AlgebraicMatch {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                })
+            }
             ContractExpression::CFragment(expression)
             | ContractExpression::Field {
                 lowered: expression,
@@ -1740,6 +1797,48 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Call { name, arguments } => {
                 self.lower_click_function_call_to_spec(name, arguments, environment)
             }
+        }
+    }
+
+    fn lower_contract_algebraic_to_spec(
+        &mut self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecAlgebraicExpression, String> {
+        match expression {
+            ContractExpression::AlgebraicConstructor {
+                algebraic_type,
+                variant,
+                arguments,
+            } => Ok(SpecAlgebraicExpression {
+                type_name: algebraic_type.name.clone(),
+                type_arguments: algebraic_type
+                    .arguments
+                    .iter()
+                    .map(|c_type| c_type.to_kernel_type())
+                    .collect(),
+                variant: variant.clone(),
+                fields: arguments
+                    .iter()
+                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            ContractExpression::Old(inner) => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_contract_algebraic_to_spec(inner, &old_environment)
+            }
+            ContractExpression::At {
+                selector,
+                expression,
+            } => {
+                let snapshot = self.snapshot_environment(selector, environment).ok_or_else(|| {
+                    "algebraic values at unresolved program points are not supported in this slice"
+                        .to_string()
+                })?;
+                self.lower_contract_algebraic_to_spec(expression, &snapshot)
+            }
+            _ => Err("expected a constructed algebraic value".to_string()),
         }
     }
 

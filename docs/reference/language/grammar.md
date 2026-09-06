@@ -28,6 +28,7 @@ documentation inventory keep the following accepted words synchronized.
 | --- | --- |
 | `verifying` | C-source declaration. |
 | `predicate`, `function`, `theorem` | Top-level logic declarations; `function` also starts a C contract. |
+| `spec`, `enum`, `match` | Specification-only algebraic datatype declarations and exhaustive elimination. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
 | `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `long`, `long long`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
@@ -69,12 +70,17 @@ language-reference page:
 ```text
 click-file       := item*
 item             := verifying-declaration
+                  | algebraic-declaration
                   | predicate-declaration
                   | function-declaration
                   | resource-declaration
                   | theorem-declaration
                   | c-function-contract
 verifying-declaration := "verifying" string-literal ";"
+algebraic-declaration := "spec" "enum" identifier type-parameters?
+                         "{" variant ("," variant)* ","? "}"
+type-parameters       := "<" identifier ("," identifier)* ">"
+variant               := identifier ("(" field-type ("," field-type)* ")")?
 predicate-declaration := "predicate" identifier parameters proposition-block
 function-declaration  := "function" identifier parameters
                          ("->" type)? decreases-clause? expression-block
@@ -118,10 +124,41 @@ From lowest to highest precedence:
 | 7 | `*`, `/`, `%` | Left |
 | 8 | unary `-`, `~`, dereference `*` | Prefix |
 | 9 | indexing `[]`, field access `->` | Left, postfix |
-| 10 | literals, names, calls, ranges, conditionals, folds | Not applicable |
+| 10 | literals, names, calls, constructors, matches, ranges, conditionals, folds | Not applicable |
 
 Comparisons form propositions rather than contract expressions. See
 [Propositions](index.md#propositions) for their syntax and typing rules.
+
+## Algebraic datatypes
+
+The initial algebraic-datatype slice supports generic, specification-only,
+nonrecursive sum-of-products declarations. A constructor is fully type-applied
+at its use site, and an exhaustive `match` returns an ordinary C scalar or
+data-pointer value:
+
+<!-- verified-example: mdtests/algebraic_maybe.md -->
+```click
+spec enum Maybe<T> {
+    None,
+    Some(T),
+}
+
+ensures match Maybe<int32>::Some(value) {
+    Maybe::None => fallback,
+    Maybe::Some(inner) => inner,
+} == value;
+```
+
+Constructor equality is structural: different variants are unequal, while
+equal variants compare corresponding fields. Pattern arms must name every
+variant exactly once, use the declared field arity, and keep field bindings
+local to the arm. Generic arguments and fields currently use modeled C scalar
+and data-pointer types.
+
+This slice intentionally has no algebraic-typed parameters, quantifiers,
+function results, or nested/recursive fields. Those require a representation
+for arbitrary symbolic algebraic values and are tracked in the algebraic data
+types issue.
 
 ## Specification sequences
 

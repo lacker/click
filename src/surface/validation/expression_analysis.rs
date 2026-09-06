@@ -57,6 +57,13 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
 
 pub(in crate::surface) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            arguments.iter().any(contains_old_expression)
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            contains_old_expression(scrutinee)
+                || arms.iter().any(|arm| contains_old_expression(&arm.body))
+        }
         ContractExpression::SequenceLiteral(elements) => {
             elements.iter().any(contains_old_expression)
         }
@@ -119,6 +126,13 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
 
 pub(in crate::surface) fn contains_resource_count(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            arguments.iter().any(contains_resource_count)
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            contains_resource_count(scrutinee)
+                || arms.iter().any(|arm| contains_resource_count(&arm.body))
+        }
         ContractExpression::SequenceLiteral(elements) => {
             elements.iter().any(contains_resource_count)
         }
@@ -225,6 +239,17 @@ pub(in crate::surface) fn collect_resource_count_families(
 ) {
     fn collect_expression(expression: &ContractExpression, families: &mut BTreeSet<String>) {
         match expression {
+            ContractExpression::AlgebraicConstructor { arguments, .. } => {
+                for argument in arguments {
+                    collect_expression(argument, families);
+                }
+            }
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                collect_expression(scrutinee, families);
+                for arm in arms {
+                    collect_expression(&arm.body, families);
+                }
+            }
             ContractExpression::SequenceLiteral(elements) => {
                 for element in elements {
                     collect_expression(element, families);
@@ -449,6 +474,13 @@ pub(in crate::surface) fn proposition_contains_old_expression(
 
 pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            arguments.iter().any(contains_at_expression)
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            contains_at_expression(scrutinee)
+                || arms.iter().any(|arm| contains_at_expression(&arm.body))
+        }
         ContractExpression::SequenceLiteral(elements) => {
             elements.iter().any(contains_at_expression)
         }
@@ -575,6 +607,17 @@ pub(in crate::surface) fn collect_click_function_calls(
     calls: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_click_function_calls(argument, calls);
+            }
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_click_function_calls(scrutinee, calls);
+            for arm in arms {
+                collect_click_function_calls(&arm.body, calls);
+            }
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 collect_click_function_calls(element, calls);
@@ -943,6 +986,19 @@ fn validate_recursive_calls_in_expression(
         )
     };
     match expression {
+        ContractExpression::AlgebraicConstructor { arguments, .. } => {
+            for argument in arguments {
+                recurse(argument, lower_bounds)?;
+            }
+            Ok(())
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            recurse(scrutinee, lower_bounds)?;
+            for arm in arms {
+                recurse(&arm.body, lower_bounds)?;
+            }
+            Ok(())
+        }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
                 recurse(element, lower_bounds)?;

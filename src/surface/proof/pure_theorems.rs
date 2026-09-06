@@ -1996,6 +1996,17 @@ fn click_function_applications(
         applications: &mut Vec<ClickFunctionApplication>,
     ) {
         match term {
+            ContractExpression::AlgebraicConstructor { arguments, .. } => {
+                for argument in arguments {
+                    expression(argument, known_facts, applications);
+                }
+            }
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                expression(scrutinee, known_facts, applications);
+                for arm in arms {
+                    expression(&arm.body, known_facts, applications);
+                }
+            }
             ContractExpression::SequenceLiteral(elements) => {
                 for element in elements {
                     expression(element, known_facts, applications);

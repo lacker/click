@@ -24,6 +24,16 @@ struct SpecSequencePath {
     obligations: Vec<ProofObligation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpecAlgebraicPath {
+    type_name: String,
+    type_arguments: Vec<CType>,
+    variant: String,
+    fields: Vec<CValue>,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+}
+
 pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     state: &CState,
     proposition: &SpecProposition,
@@ -32,6 +42,17 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
+        SpecProposition::AlgebraicComparison { left, equal, right } => {
+            lower_spec_algebraic_comparison_at_state(
+                state,
+                left,
+                *equal,
+                right,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )
+        }
         SpecProposition::SequenceMembership { element, sequence } => {
             lower_spec_sequence_membership_at_state(
                 state,
@@ -451,6 +472,128 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
             }])
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_spec_algebraic_comparison_at_state(
+    state: &CState,
+    left: &SpecAlgebraicExpression,
+    equal: bool,
+    right: &SpecAlgebraicExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let mut paths = Vec::new();
+    for left_path in
+        evaluate_spec_algebraic_at_state(state, left, loop_entry_state, assumptions, budget)?
+    {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_algebraic_at_state(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
+            if left_path.type_name != right_path.type_name
+                || left_path.type_arguments != right_path.type_arguments
+            {
+                continue;
+            }
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let equality = if left_path.variant != right_path.variant
+                || left_path.fields.len() != right_path.fields.len()
+            {
+                Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+            } else {
+                let comparisons = left_path
+                    .fields
+                    .iter()
+                    .zip(&right_path.fields)
+                    .filter_map(|(left, right)| {
+                        c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
+                    })
+                    .collect::<Vec<_>>();
+                if comparisons.len() != left_path.fields.len() {
+                    continue;
+                }
+                proposition_and_all(comparisons)
+            };
+            paths.push(SpecPropositionPath {
+                proposition: if equal {
+                    equality
+                } else {
+                    Proposition::Not(Box::new(equality))
+                },
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(paths)
+}
+
+fn evaluate_spec_algebraic_at_state(
+    state: &CState,
+    expression: &SpecAlgebraicExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecAlgebraicPath>> {
+    budget.consume_expression_step()?;
+    let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+    for field in &expression.fields {
+        let mut next = Vec::new();
+        for (values, facts, obligations) in paths {
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            for field_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                field,
+                loop_entry_state,
+                &path_assumptions,
+                budget,
+            )? {
+                let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &field_path.facts,
+                        &field_path.obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                let mut next_values = values.clone();
+                next_values.push(field_path.value);
+                next.push((next_values, merged_facts, merged_obligations));
+            }
+        }
+        paths = next;
+    }
+    let paths = paths
+        .into_iter()
+        .map(|(fields, facts, obligations)| SpecAlgebraicPath {
+            type_name: expression.type_name.clone(),
+            type_arguments: expression.type_arguments.clone(),
+            variant: expression.variant.clone(),
+            fields,
+            facts,
+            obligations,
+        })
+        .collect::<Vec<_>>();
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
 }
 
 fn lower_spec_sequence_membership_at_state(
@@ -1320,6 +1463,57 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
+        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            let mut paths = Vec::new();
+            for scrutinee_path in evaluate_spec_algebraic_at_state(
+                state,
+                scrutinee,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
+                let Some(arm) = arms
+                    .iter()
+                    .find(|arm| arm.variant == scrutinee_path.variant)
+                else {
+                    continue;
+                };
+                if arm.bindings.len() != scrutinee_path.fields.len() {
+                    continue;
+                }
+                let mut body_state = state.clone();
+                for (binding, field) in arm.bindings.iter().zip(&scrutinee_path.fields) {
+                    body_state.locals.set(binding.clone(), field.clone());
+                }
+                let body_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &scrutinee_path.facts,
+                    &scrutinee_path.obligations,
+                );
+                for body_path in evaluate_spec_expression_paths_with_loop_entry(
+                    &body_state,
+                    &arm.body,
+                    loop_entry_state,
+                    &body_assumptions,
+                    budget,
+                )? {
+                    if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &scrutinee_path.facts,
+                        &scrutinee_path.obligations,
+                        &body_path.facts,
+                        &body_path.obligations,
+                        assumptions,
+                    ) {
+                        paths.push(SpecExpressionPath {
+                            value: body_path.value,
+                            facts,
+                            obligations,
+                        });
+                    }
+                }
+            }
+            paths
+        }
         SpecExpression::CExpression(expression) => {
             evaluate_c_expression_paths(state, expression, assumptions, budget)?
                 .into_iter()
