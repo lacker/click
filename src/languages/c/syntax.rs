@@ -174,6 +174,8 @@ impl C0StringLiteral {
 /// A file-scope scalar declaration collected from one C translation unit.
 /// `initializer` is absent for an `extern` declaration and present for the
 /// definition that supplies storage (including an implicit zero initializer).
+/// A definition without an initializer is marked tentative so repeated
+/// declarations can be coalesced before a real initializer is selected.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Global {
     name: String,
@@ -181,6 +183,7 @@ pub struct C0Global {
     c_type: C0Type,
     struct_name: Option<String>,
     initializer: Option<C0Expression>,
+    tentative: bool,
     file_static: bool,
     volatile: bool,
     constant: bool,
@@ -195,6 +198,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: None,
+            tentative: false,
             file_static: false,
             volatile: false,
             constant: false,
@@ -214,6 +218,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: Some(initializer),
+            tentative: false,
             file_static: false,
             volatile: false,
             constant: false,
@@ -234,6 +239,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: Some(initializer),
+            tentative: false,
             file_static: true,
             volatile: false,
             constant: false,
@@ -261,6 +267,18 @@ impl C0Global {
         self.initializer.is_some()
     }
 
+    /// Returns whether this is a C tentative definition such as `int x;`.
+    /// Tentative definitions have storage and are lowered with their implicit
+    /// zero initializer, but may coalesce with other tentative declarations or
+    /// with one initialized definition.
+    pub fn is_tentative(&self) -> bool {
+        self.tentative
+    }
+
+    pub(crate) fn is_initialized_definition(&self) -> bool {
+        self.is_defined() && !self.is_tentative()
+    }
+
     pub fn is_file_static(&self) -> bool {
         self.file_static
     }
@@ -283,6 +301,11 @@ impl C0Global {
 
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    fn with_tentative(mut self, tentative: bool) -> Self {
+        self.tentative = tentative;
         self
     }
 
@@ -5791,7 +5814,8 @@ impl Parser {
                         .expect("validated global array element type"),
                 );
             } else {
-                let initializer = if self.peek() == Some(&Token::Equal) {
+                let has_initializer = self.peek() == Some(&Token::Equal);
+                let initializer = if has_initializer {
                     if is_extern {
                         return Err(self.error_here(
                             "`extern` global declarations may not have an initializer",
@@ -5813,6 +5837,7 @@ impl Parser {
                 } else {
                     Some(zero_initializer(parsed_type.c_type))
                 };
+                let tentative = !has_initializer && !is_extern;
                 self.register_global_declaration(
                     name.clone(),
                     parsed_type.c_type,
@@ -5829,6 +5854,7 @@ impl Parser {
                                 .with_volatile(parsed_type.is_volatile)
                                 .with_constant(parsed_type.is_constant)
                                 .with_pointee_constant(parsed_type.pointee_constant)
+                                .with_tentative(tentative)
                             } else {
                                 C0Global::definition(
                                     name.clone(),
@@ -5839,6 +5865,7 @@ impl Parser {
                                 .with_volatile(parsed_type.is_volatile)
                                 .with_constant(parsed_type.is_constant)
                                 .with_pointee_constant(parsed_type.pointee_constant)
+                                .with_tentative(tentative)
                             }
                         })
                         .unwrap_or_else(|| {
@@ -6096,13 +6123,14 @@ impl Parser {
                     "conflicting linkage declarations for global `{name}`"
                 )));
             }
-            if previous.is_defined() && declaration.is_defined() {
+            if previous.is_initialized_definition() && declaration.is_initialized_definition() {
                 return Err(self.error_here(format!("duplicate definition of global `{name}`")));
             }
         }
-        let merged = match (self.globals.get(&name), declaration.is_defined()) {
-            (Some(previous), true) if !previous.is_defined() => declaration,
-            (Some(previous), false) => previous.clone(),
+        let merged = match self.globals.get(&name) {
+            Some(previous) if previous.is_initialized_definition() => previous.clone(),
+            Some(_) if declaration.is_initialized_definition() => declaration,
+            Some(previous) if previous.is_tentative() => previous.clone(),
             _ => declaration,
         };
         self.globals.insert(name, merged);

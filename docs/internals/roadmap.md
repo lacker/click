@@ -111,8 +111,9 @@ Likely additions:
   linking, so declaration and translation-unit definition order does not change
   their stable block identities.
   Scalar file-scope globals now cover integer definitions, compatible `extern`
-  declarations, one linked definition, shared state across calls, and contract
-  footprints. File-scope scalar `static` objects now use
+  declarations, coalesced tentative definitions, one linked initialized
+  definition, shared state across calls, and contract footprints. File-scope
+  scalar `static` objects now use
   translation-unit-qualified storage, while function-local scalar `static`
   objects use stable function-qualified storage; both support one-time
   literal/zero initialization and explicit contract footprints. Fixed-size

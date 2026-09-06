@@ -194,6 +194,7 @@ fn c0_collects_scalar_file_scope_globals() {
     assert_eq!(functions[0].globals().len(), 2);
     let global = &functions[0].globals()["counter"];
     assert!(global.is_defined());
+    assert!(!global.is_tentative());
     assert_eq!(global.c_type(), syntax::C0Type::Int32);
     assert_eq!(
         functions[1].to_kernel_function().global_variables()[0].initial_value(),
@@ -202,6 +203,52 @@ fn c0_collects_scalar_file_scope_globals() {
     assert_eq!(
         functions[0].to_kernel_function().global_variables()[1].initial_value(),
         &crate::kernel::uint16(0)
+    );
+}
+
+#[test]
+fn c0_coalesces_tentative_scalar_declarations_before_initialization() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        extern int32 counter;
+        int32 counter;
+        int32 counter;
+
+        int32 read_counter() {
+            return counter;
+        }
+        "#,
+        "tentative.c",
+    )
+    .expect("repeated tentative scalar declarations should parse");
+
+    let counter = &functions[0].globals()["counter"];
+    assert!(counter.is_defined());
+    assert!(counter.is_tentative());
+    assert_eq!(
+        functions[0].to_kernel_function().global_variables()[0].initial_value(),
+        &crate::kernel::int32(0)
+    );
+
+    let initialized = syntax::parse_functions_for_source(
+        r#"
+        int32 counter;
+        int32 counter = 7;
+        extern int32 counter;
+
+        int32 read_counter() {
+            return counter;
+        }
+        "#,
+        "initialized.c",
+    )
+    .expect("an initialized definition should supersede tentative declarations");
+    let counter = &initialized[0].globals()["counter"];
+    assert!(counter.is_defined());
+    assert!(!counter.is_tentative());
+    assert_eq!(
+        initialized[0].to_kernel_function().global_variables()[0].initial_value(),
+        &crate::kernel::int32(7)
     );
 }
 

@@ -2157,7 +2157,10 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for global `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && global.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && global.is_initialized_definition() =>
+                {
                     if previous != global {
                         return Err(ClickError::new(format!(
                             "conflicting definitions for global `{name}` in `{source_path}`"
@@ -2166,10 +2169,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 }
                 _ => {
                     let merged = match source_globals.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if global.is_defined() => global.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if global.is_initialized_definition() => global.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => global.clone(),
+                        Some(_) => global.clone(),
                     };
                     source_globals.insert(name.clone(), merged);
                 }
@@ -2195,17 +2199,21 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting declarations for global `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && global.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && global.is_initialized_definition() =>
+                {
                     return Err(ClickError::new(format!(
                         "multiple definitions of global `{name}`"
                     )));
                 }
                 _ => {
                     let merged = match globals.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if global.is_defined() => global.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if global.is_initialized_definition() => global.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => global.clone(),
+                        Some(_) => global.clone(),
                     };
                     globals.insert(name.clone(), merged);
                 }

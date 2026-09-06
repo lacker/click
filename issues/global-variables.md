@@ -4,9 +4,10 @@ Found by the 2026-09-01 kernel audit at cb034b21.
 
 The scalar file-scope slice is now implemented for both externally linked and
 internal-linkage objects: supported integer globals, compatible `extern`
-declarations, exactly one linked external definition, per-translation-unit
-file-scope `static` storage, literal or zero initialization, shared storage
-across calls, `old(global)`, and one-cell contract footprints. Bounded integer
+declarations, coalesced tentative definitions, exactly one linked initialized
+external definition, per-translation-unit file-scope `static` storage, literal
+or zero initialization, shared storage across calls, `old(global)`, and
+one-cell contract footprints. Bounded integer
 constant expressions in those initializers are folded before storage lowering;
 comparisons, short-circuit logical expressions, selected conditional branches,
 and checked integer casts are included; runtime loads and calls remain rejected.
@@ -95,6 +96,9 @@ initializers and arrays, while
 runtime-load boundary, and
 `mdtests/static_integer_constant_expression_control.md` covers comparisons,
 short-circuiting, selected conditional branches, and checked integer casts.
+`mdtests/file_scope_tentative_globals.md` covers repeated tentative scalar
+declarations across translation units and their replacement by one initialized
+definition.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -106,9 +110,10 @@ propagation, and indirect-write rejection.
   logical and conditional operators, and checked integer casts), literal,
   null-pointer, or stable object/subobject-address initializers, literal
   scalar-array index designators,
-  `extern` declarations, and internal-linkage
+  `extern` declarations, coalesced tentative definitions, and internal-linkage
   `static` definitions, including const-qualified scalar objects and scalar arrays, and
-  rejects duplicate or missing external definitions across the source bundle.
+  rejects multiple initialized or missing external definitions across the source
+  bundle.
 - The kernel models each externally linked scalar as one stable global block
   and each file-scope `static` scalar as one stable translation-unit-qualified
   block, materialized at entry with its folded integer literal, null, or stable address
