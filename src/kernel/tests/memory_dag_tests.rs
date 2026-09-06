@@ -7,6 +7,49 @@ fn retained_memory_dag_path(cell: &MemoryDagCell) -> &[MemoryDagHop] {
 }
 
 #[test]
+fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
+    let before = CMemory::new().with_block("arg-memory", 16);
+    let after = before.clone().with_block("local:temporary", 4);
+    let pointer = arc_pointer(0);
+    let assumptions = PureFactContext::new();
+
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_memory_load_equality(
+        &before,
+        &after,
+        &pointer,
+        &assumptions,
+    ));
+    let equalities = capture.finish();
+
+    assert_eq!(equalities.len(), 1);
+    assert!(equalities[0].checks(&assumptions));
+}
+
+#[test]
+fn nested_checked_load_equality_captures_keep_evidence_with_the_inner_owner() {
+    let before = CMemory::new().with_block("arg-memory", 16);
+    let after = before.clone().with_block("local:temporary", 4);
+    let pointer = arc_pointer(0);
+    let assumptions = PureFactContext::new();
+
+    let outer = CheckedLoadEqualityCapture::start();
+    let inner = CheckedLoadEqualityCapture::start();
+    assert!(checked_memory_load_equality(
+        &before,
+        &after,
+        &pointer,
+        &assumptions,
+    ));
+    let inner_equalities = inner.finish();
+    let outer_equalities = outer.finish();
+
+    assert_eq!(inner_equalities.len(), 1);
+    assert!(inner_equalities[0].checks(&assumptions));
+    assert!(outer_equalities.is_empty());
+}
+
+#[test]
 fn reinterning_retained_memory_uses_shallow_component_identity() {
     let samples = [16, 32, 64, 128]
         .into_iter()
@@ -345,7 +388,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         "the snapshot-diff matcher is expected not to cross the marker block"
     );
     assert!(
-        c_memory_load_is_unchanged(&base, &called, &read, &PureFactContext::new()),
+        checked_memory_load_equality(&base, &called, &read, &PureFactContext::new()),
         "a call that may only write a disjoint range preserves the load"
     );
 
@@ -353,7 +396,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         .clone()
         .with_loop_memory_havoc(Variable(7), &BTreeSet::new(), None);
     assert!(
-        !c_memory_load_is_unchanged(&base, &havoced, &read, &PureFactContext::new()),
+        !checked_memory_load_equality(&base, &havoced, &read, &PureFactContext::new()),
         "loop havoc must never be crossed without explicit frame evidence"
     );
 
@@ -361,7 +404,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         .clone()
         .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)));
     assert!(
-        !c_memory_load_is_unchanged(&base, &havoced_then_stored, &read, &PureFactContext::new()),
+        !checked_memory_load_equality(&base, &havoced_then_stored, &read, &PureFactContext::new(),),
         "a crossable store must not smuggle a walk past an intervening havoc"
     );
 }
@@ -407,7 +450,7 @@ fn loop_havoc_carries_a_verified_write_set_for_disjoint_loads() {
         &BTreeSet::new(),
         Some(&overlapping_ranges),
     );
-    assert!(!c_memory_load_is_unchanged(
+    assert!(!checked_memory_load_equality(
         &base,
         &overlapping,
         &read,
@@ -719,7 +762,7 @@ fn a_store_to_the_loaded_cell_is_not_crossable() {
         .store(read.clone(), CValue::Int32(Bitvector32Term::Constant(9)));
 
     assert!(
-        !c_memory_load_is_unchanged(&base, &stored, &read, &PureFactContext::new()),
+        !checked_memory_load_equality(&base, &stored, &read, &PureFactContext::new()),
         "the walk must refuse the very cell that was written"
     );
 }
@@ -825,7 +868,7 @@ fn sibling_materialization_cells_must_not_launder_a_havoc() {
     );
 
     assert!(
-        !c_memory_load_is_unchanged(&materialized, &havocked, &loaded, &PureFactContext::new()),
+        !checked_memory_load_equality(&materialized, &havocked, &loaded, &PureFactContext::new(),),
         "a havoc of the loaded pointer must not be laundered by sibling \
          materialization cells jumping to their common source"
     );
@@ -981,7 +1024,7 @@ fn memory_dag_walks_follow_chains_of_any_length() {
             }
             let read = arc_pointer(0);
             let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
-                c_memory_load_is_unchanged(&entry, &memory, &read, &PureFactContext::new())
+                checked_memory_load_equality(&entry, &memory, &read, &PureFactContext::new())
             });
             assert!(equal, "the cell is untouched across {size} stores");
             (size, work)

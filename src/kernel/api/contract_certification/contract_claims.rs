@@ -505,8 +505,13 @@ fn materialized_load_is_unchanged(
         }
         _ => return false,
     };
+    let left = Bitvector32Term::MemoryLoad(load.0, Box::new(load.1.clone()));
+    let right = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(symbolic_memory.clone()),
+        Box::new(pointer.clone()),
+    );
     pointers_proven_equal_for_memory_resolution(&load.1, pointer, assumptions)
-        && c_memory_load_is_unchanged(&load.0, symbolic_memory, pointer, assumptions)
+        && crate::kernel::checked_atomic_load_equality(&left, &right, assumptions)
 }
 
 struct CertifiedFunctionClaimPath {
@@ -1753,6 +1758,7 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
         .iter()
         .map(|claim| {
             let claim_started = std::time::Instant::now();
+            let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
             let operation_name = match claim.target() {
                 CFunctionContractClaimTarget::BodySafety => "contract claim: body safety",
                 CFunctionContractClaimTarget::EnsureProposition(_) => "contract claim: proposition",
@@ -1782,9 +1788,11 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                     },
                 );
             }
+            let load_equalities = load_equality_capture.finish();
             holds.then(|| CVerifiedFunctionContractClaim {
                 function: function.clone(),
                 key: claim.key().clone(),
+                load_equalities,
             })
         })
         .collect::<Option<Vec<_>>>();

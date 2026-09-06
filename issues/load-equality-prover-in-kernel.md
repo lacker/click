@@ -125,20 +125,33 @@ endpoints, and the ordinary contract certification helpers. It also deletes
 the now-unused bounded-snapshot-comparison mode and its conditional reasoning
 paths.
 
-Two production consumers remain. They are not mechanically replaceable with
-the current recorded-DAG check:
+The third migration slice establishes ownership for checked load-equality
+evidence. Resource rewrites and observations capture each exact checked query
+and its canonical or typed memory-DAG witness while the event is constructed,
+retain the witness on that event, and recheck it when the event advances its
+proof. Contract finalization uses the same scoped capture and retains its
+witnesses on the exact `CVerifiedFunctionContractClaim` it mints. The capture
+is nested, so a resource event owns its own witnesses rather than duplicating
+them on an enclosing contract claim. Contract materialization now uses this
+checked route, and `arena` verifies through the new boundary.
 
-- contract materialization needs a load equality checked while establishing a
-  function claim; replacing its global query makes `arena_read.contract` fail
-  at proof step 6 (`observe`);
-- framed atomic term transport needs an `owner->data` load equality established
-  across an earlier call; replacing its global query makes owned-string fail
-  at proof step 20 (`unfold`).
+Framed atomic transport is not yet migrated. The bounded-pool regression needs
+a memory-DAG path containing an assumption-dependent `StoreExplicitRange` hop;
+`AtomicMemoryLoadEqualityEvidence::is_fully_typed` correctly rejects that hop,
+so replacing the remaining direct `c_memory_load_is_unchanged` call makes
+`pool_pipeline.contract` fail at `transport`. The global prover and its search
+machinery must remain until that edge has a typed, locally checkable witness.
 
-Both failures have the same boundary: a simple step checked the relevant
-framing relationship, but later resource checking cannot consume it as
-retained equality evidence. Reconstructing the answer with ambient search at
-the later boundary would preserve the violated invariant under another name.
+Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
+relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
+60,000–120,000 distinct recursive equality subqueries at a maximum active
+depth of only six. The roots are registered load variables whose load
+addresses themselves contain other registered loads. An exact-query cycle
+guard therefore terminates but does not control the branching search. The next
+certificate shape must cover both the framed `StoreExplicitRange` hop and
+typed congruence/equality-path evidence for dependent load addresses; treating
+two registered load variables as direct atomic DAG queries is insufficient
+because their pointers are not structurally equal.
 
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
@@ -181,17 +194,20 @@ comparisons do not invoke a framed-load planner.
 - **Partial:** fixed-state restricted `simp` retains a snapshot-anchored
   `transport`, and fact matching no longer calls the global framed-load prover.
   The independently re-parsed input-cursor expansion is the regression.
-- **Partial:** all consumers already decided by the recorded memory DAG use
-  explicit equality, and the special bounded-snapshot-comparison mode is
-  deleted. The two remaining production consumers are the contract
-  materialization and framed-resource cases above.
+- **Partial:** checked resource events own and recheck any checked equality they
+  consume, and contract materialization retains its typed equality witnesses
+  on the function-claim proof object. Framed atomic transport still needs typed
+  `StoreExplicitRange` evidence before its final direct global-prover call can
+  migrate.
 - A surface tactic (transport, frame, or a completion of the call step)
   records the snapshot-equality fact the kernel needs, as a checkable
   certificate.
-- `memory_loads_proven_equal` decides from recorded evidence only; the
-  framed-load reconstruction is deleted from the kernel or moved behind a
-  surface certificate, and `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` is deleted
-  with no counter, depth, or tier in its place.
+- **Partial:** `memory_loads_proven_equal` no longer has the framed-load
+  reconstruction fallback, but framed atomic transport remains a direct
+  consumer of that prover. Its dependent-load-address congruence search still
+  uses `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`; replace both remaining routes with
+  typed evidence and delete the limit with no counter, depth, or tier in its
+  place.
 - The scaling regression above lands, both harnesses pass, and the
   `click profile` work units of perpetual-service and owned-vector do not
   rise.

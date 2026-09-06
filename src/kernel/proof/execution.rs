@@ -73,6 +73,7 @@ pub(crate) struct CheckedResourceRewrite {
     pub(crate) before_facts: ProofFacts,
     pub(crate) after_facts: ProofFacts,
     definition: CCompositeResourceDefinition,
+    load_equalities: Vec<crate::kernel::CheckedLoadEquality>,
 }
 
 impl CheckedResourceRewrite {
@@ -88,6 +89,7 @@ impl CheckedResourceRewrite {
         after_state: &CState,
         after_facts: &ProofFacts,
     ) -> Result<Self, &'static str> {
+        let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
         let assumptions = before_facts.assumptions();
         if before_state
             .resources()
@@ -270,17 +272,25 @@ impl CheckedResourceRewrite {
             return Err("resource rewrite produced an unchecked pure-fact delta");
         }
 
+        let load_equalities = load_equality_capture.finish();
         Ok(Self {
             before_state: before_state.clone(),
             after_state: after_state.clone(),
             before_facts: before_facts.clone(),
             after_facts: after_facts.clone(),
             definition,
+            load_equalities,
         })
     }
 
     fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
-        if state != &self.before_state || facts.introduced_since(&self.before_facts).is_none() {
+        if state != &self.before_state
+            || facts.introduced_since(&self.before_facts).is_none()
+            || self
+                .load_equalities
+                .iter()
+                .any(|equality| !equality.checks(self.before_facts.assumptions()))
+        {
             return None;
         }
         Some(
@@ -314,6 +324,7 @@ pub(crate) struct CheckedResourceObservation {
     pub(crate) before_facts: ProofFacts,
     pub(crate) after_facts: ProofFacts,
     definition: CCompositeResourceDefinition,
+    load_equalities: Vec<crate::kernel::CheckedLoadEquality>,
 }
 
 impl CheckedResourceObservation {
@@ -330,6 +341,7 @@ impl CheckedResourceObservation {
         after_facts: &ProofFacts,
         derivations: &PersistentOrderedSet<Theorem>,
     ) -> Result<Self, &'static str> {
+        let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
         let assumptions = before_facts.assumptions();
         let zero_quantity = observed.has_proven_zero_quantity(assumptions);
         if !zero_quantity
@@ -473,17 +485,25 @@ impl CheckedResourceObservation {
             return Err("resource observation produced an unchecked pure-fact delta");
         }
 
+        let load_equalities = load_equality_capture.finish();
         Ok(Self {
             before_state: before_state.clone(),
             after_state: after_state.clone(),
             before_facts: before_facts.clone(),
             after_facts: after_facts.clone(),
             definition,
+            load_equalities,
         })
     }
 
     fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
-        if state != &self.before_state || facts.introduced_since(&self.before_facts).is_none() {
+        if state != &self.before_state
+            || facts.introduced_since(&self.before_facts).is_none()
+            || self
+                .load_equalities
+                .iter()
+                .any(|equality| !equality.checks(self.before_facts.assumptions()))
+        {
             return None;
         }
         Some(

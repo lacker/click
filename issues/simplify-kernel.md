@@ -80,10 +80,14 @@ The second load-equality slice moved every consumer that was already decidable
 from the recorded memory DAG: surface proof matching, load-variable origin
 matching, loop effects, resource endpoints, and the ordinary contract
 certification helpers. The special bounded-snapshot-comparison mode is now
-dead and deleted. Two production consumers remain because their required
-equality was checked earlier but not retained: contract materialization
-(`arena_read` reaches this at `observe`) and framed resource transport
-(owned-string reaches it at `unfold`).
+dead and deleted. A third slice established consumer-owned equality evidence:
+resource rewrites and observations retain and recheck any checked equality
+they consume, and contract materialization retains its typed witnesses on the
+function-claim proof object. One direct framed-transport consumer remains
+because bounded-pool needs an assumption-dependent `StoreExplicitRange` DAG
+hop that does not yet have typed evidence. The depth-bounded congruence search
+for registered loads whose addresses themselves contain registered loads also
+remains.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -174,17 +178,20 @@ change an answer.
    in the listed cases. The certificate must name only the range evidence and
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
-2. **Global load equality**, `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`, and the
-   remaining direct framed-load consumers. The fallback from
-   `memory_loads_proven_equal` is removed. It hit 345,653 /
-   315,061 times in the original depth census. The later deciding-route census
-   found that the fallback itself answered only 31 / 1,628 example calls and
-   27 / 1,347 mdtest calls. This is owned by
-   `issues/load-equality-prover-in-kernel.md`. Its migration must cover every
-   kernel and surface consumer, not only fact matching: planning selects an
-   effect/DAG route, and a typed certificate records the route and per-edge
-   framing evidence for linear checking. The existing surface `transport`
-   checker still calls global load equality and is not yet that boundary.
+2. **Global and dependent load equality**,
+   `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
+   `memory_loads_proven_equal` has been removed, but framed atomic transport
+   still directly calls the global prover because its bounded-pool path
+   contains an untyped `StoreExplicitRange` hop. The remaining depth guard hit
+   345,653 / 315,061 times in the original depth census. The later
+   deciding-route census found that the fallback itself answered only 31 /
+   1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
+   `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
+   framed hop and dependent registered-load addresses. An exact-query guard
+   terminates but branches into 60,000–120,000 distinct subqueries in the
+   owned-string regression, so the replacement must retain typed
+   congruence/equality-path evidence rather than substitute another recursion
+   tier.
 3. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,

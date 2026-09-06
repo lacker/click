@@ -1125,6 +1125,144 @@ pub(super) enum AtomicMemoryLoadEqualityEvidence {
     RightResolvesToLeft { right: MemoryDagCell },
 }
 
+/// A load equality consumed by one checked operation, together with the
+/// exact, locally checkable reason for that equality. The query is retained
+/// alongside its evidence so a later checker cannot retarget the witness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedLoadEquality {
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    evidence: CheckedLoadEqualityEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CheckedLoadEqualityEvidence {
+    /// Both terms have the same assumption-free canonical form. This is a
+    /// structural check, not a lookup through ambient equality facts.
+    Canonical,
+    /// Both loads resolve to one cell by the execution-recorded memory DAG.
+    MemoryDag(AtomicMemoryLoadEqualityEvidence),
+}
+
+thread_local! {
+    /// Scoped sinks owned by checked consumers. Nested consumers retain only
+    /// the equalities they themselves ask for; an outer sink resumes after
+    /// the inner consumer finishes.
+    static CHECKED_LOAD_EQUALITY_CAPTURES: std::cell::RefCell<Vec<Vec<CheckedLoadEquality>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Captures the load equalities consumed while constructing one checked
+/// object. Dropping an unfinished capture discards its partial evidence.
+pub(crate) struct CheckedLoadEqualityCapture {
+    active: bool,
+}
+
+impl CheckedLoadEqualityCapture {
+    pub(crate) fn start() -> Self {
+        CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
+            captures.borrow_mut().push(Vec::new());
+        });
+        Self { active: true }
+    }
+
+    pub(crate) fn finish(mut self) -> Vec<CheckedLoadEquality> {
+        let captured = CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
+            captures
+                .borrow_mut()
+                .pop()
+                .expect("a checked load-equality capture is active")
+        });
+        self.active = false;
+        captured
+    }
+}
+
+impl Drop for CheckedLoadEqualityCapture {
+    fn drop(&mut self) {
+        if self.active {
+            CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
+                captures.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+fn retain_checked_load_equality(equality: CheckedLoadEquality) {
+    CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
+        if let Some(active) = captures.borrow_mut().last_mut() {
+            active.push(equality);
+        }
+    });
+}
+
+impl CheckedLoadEquality {
+    fn new(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        if !matches!(left, Bitvector32Term::MemoryLoad(_, _))
+            || !matches!(right, Bitvector32Term::MemoryLoad(_, _))
+        {
+            return None;
+        }
+        // Prefer the named-memory DAG: its work is proportional to the two
+        // selected derivation paths. Deep canonicalization is a complete
+        // structural fallback, but can walk unrelated snapshot cells.
+        let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
+        let dag_evidence = with_extended_dag_bridging(|| {
+            atomic_memory_load_equality_evidence(left, right, assumptions)
+                .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+        });
+        EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
+        let evidence = if let Some(evidence) = dag_evidence {
+            CheckedLoadEqualityEvidence::MemoryDag(evidence)
+        } else if crate::kernel::eval::canonical_term(left)
+            == crate::kernel::eval::canonical_term(right)
+        {
+            CheckedLoadEqualityEvidence::Canonical
+        } else {
+            return None;
+        };
+        Some(Self {
+            left: left.clone(),
+            right: right.clone(),
+            evidence,
+        })
+    }
+
+    pub(crate) fn checks(&self, assumptions: &PureFactContext) -> bool {
+        match &self.evidence {
+            CheckedLoadEqualityEvidence::Canonical => {
+                crate::kernel::eval::canonical_term(&self.left)
+                    == crate::kernel::eval::canonical_term(&self.right)
+            }
+            CheckedLoadEqualityEvidence::MemoryDag(evidence) => evidence.checks(
+                &Proposition::ConditionIs(
+                    ConditionTerm::equal(self.left.clone(), self.right.clone()),
+                    true,
+                ),
+                assumptions,
+            ),
+        }
+    }
+}
+
+/// Check one selected atomic load equality and retain its typed witness in
+/// the active checked consumer, when there is one.
+pub(crate) fn checked_atomic_load_equality(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let Some(equality) = CheckedLoadEquality::new(left, right, assumptions) else {
+        return false;
+    };
+    retain_checked_load_equality(equality);
+    true
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PointerOffsetEqualityEvidence {
     Exact,

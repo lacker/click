@@ -370,12 +370,12 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     assert_eq!(base.as_ref(), state.memory());
     assert_eq!(allocation_base, pending_pointer.pointer());
     assert_eq!(*bytes, Bitvector32Term::Constant(16));
-    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+    assert!(checked_memory_load_equality(
         state.memory(),
         &pending_memory,
         &existing,
         &PureFactContext::new(),
-    )));
+    ));
 
     let failed = resolve_pending_heap_allocations(
         pending,
@@ -391,12 +391,12 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
             .live_heap_block_size(pending_pointer.pointer())
             .is_none()
     );
-    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+    assert!(checked_memory_load_equality(
         state.memory(),
         failed.memory(),
         &existing,
         &PureFactContext::new(),
-    )));
+    ));
     assert_eq!(failed.memory(), state.memory());
 
     let succeeded = resolve_pending_heap_allocations(
@@ -415,12 +415,12 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     assert_eq!(base.as_ref(), &pending_memory);
     assert!(matches!(block, PointerBlock::Heap(_)));
     assert_eq!(*bytes, Bitvector32Term::Constant(16));
-    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+    assert!(checked_memory_load_equality(
         &pending_memory,
         succeeded.memory(),
         &existing,
         &PureFactContext::new(),
-    )));
+    ));
 }
 
 #[test]

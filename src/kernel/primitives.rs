@@ -1459,6 +1459,10 @@ impl CVerifiedFunctionTerminationRule {
 pub struct CVerifiedFunctionContractClaim {
     pub(super) function: CFunction,
     pub(super) key: CFunctionContractClaimKey,
+    /// Exact load equalities consumed while checking this claim. Keeping the
+    /// witnesses on the proof object makes contract finalization the owner of
+    /// its equality decisions rather than relying on an ambient prover later.
+    pub(super) load_equalities: Vec<super::CheckedLoadEquality>,
 }
 
 /// Kernel-checked evidence that a checked proof discharged one proposition at

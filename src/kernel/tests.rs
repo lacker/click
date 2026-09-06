@@ -1,5 +1,18 @@
 use super::prelude::*;
 
+fn checked_memory_load_equality(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    checked_atomic_load_equality(
+        &Bitvector32Term::MemoryLoad(intern_c_memory_ref(left), Box::new(pointer.clone())),
+        &Bitvector32Term::MemoryLoad(intern_c_memory_ref(right), Box::new(pointer.clone())),
+        assumptions,
+    )
+}
+
 mod canonicalization_tests;
 mod contract_execution_tests;
 mod execution_tests;
@@ -91,14 +104,14 @@ fn contract_certification_calls_no_general_prover() {
 }
 
 /// Boundaries whose load equality is present in the recorded memory DAG must
-/// not regain the ambient whole-context prover. Contract materialization and
-/// framed atomic transport are tracked separately until their earlier checked
-/// equality can be retained for later resource checks.
+/// not regain the ambient whole-context prover. Framed atomic transport still
+/// uses that prover until its assumption-dependent hop has typed evidence.
 #[test]
 fn migrated_load_equality_consumers_use_recorded_dag_evidence() {
     let needle = ["c_memory_load", "_is_unchanged("].concat();
     let sources = [
         "src/kernel/api/contract_certification.rs",
+        "src/kernel/api/contract_certification/contract_claims.rs",
         "src/kernel/loops.rs",
         "src/kernel/primitives/resource_algebra.rs",
         "src/kernel/proof/fact_reasoning.rs",
