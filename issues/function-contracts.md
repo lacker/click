@@ -22,20 +22,28 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   authorize abstract calls through parameters and pointer-backed struct
   fields without enumerating project functions.
 - A verified or explicitly external concrete function forms a named contract
-  fact when its exact interface matches or its state-independent pure contract
+  fact when its exact interface matches or its supported pure contract
   behavior refines the named contract. Parameter names are treated as binders;
   named preconditions imply implementation preconditions, and implementation
   postconditions imply named postconditions. Reversed variance is rejected.
+- Scalar preconditions and postconditions over current and function-entry
+  memory refine the same way when both interfaces have a nonempty exact
+  resource transition and exact unguarded mutable footprint. The check uses
+  one symbolic entry memory and one footprint-havoced post memory; a callback
+  that promises an exact increment satisfies a progress contract, while a
+  callback that also permits no change does not.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is refinement for resources, effects, and
-state-dependent propositions at concrete-pointer formation. Those interface
-parts still match exactly; a concrete function should eventually be allowed to
-consume no more, return no less, and stay within the named mutable footprint.
-The Linux augmented rbtree regressions below also remain to be added on top of
-that rule.
+The remaining semantic step is refinement for resources, effects, and broader
+state-dependent propositions at concrete-pointer formation. Resources and
+effects still match exactly; a concrete function should eventually be allowed
+to consume no more, return no less, and stay within the named mutable
+footprint. Stateful sequence, algebraic, resource-predicate,
+explicit-memory-snapshot, and guarded-footprint propositions are not yet part
+of refinement. The Linux augmented rbtree regressions below also remain to be
+added on top of those general rules.
 
 ## Violated invariant
 

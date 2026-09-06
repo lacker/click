@@ -1322,13 +1322,12 @@ fn function_contract_requirement_is_proven(
     }
 }
 
-/// Proves the state-independent pure portion of behavioral callback
-/// refinement. Exact matching remains the fast path and continues to cover
-/// every existing resource- and memory-bearing contract. The semantic path
-/// keeps resources and effects exact, instantiates both interfaces with the
-/// same symbolic arguments, then checks preconditions contravariantly and
-/// postconditions covariantly. This is local to one named contract and one
-/// concrete target; it never enumerates signature-compatible functions.
+/// Proves behavioral callback refinement. Exact matching remains the fast
+/// path. The semantic path keeps resources and effects exact, instantiates
+/// both interfaces with the same symbolic arguments, then checks
+/// preconditions contravariantly and postconditions covariantly. Stateful
+/// refinement is deliberately limited to memory propositions backed by a
+/// nonempty exact resource transition and exact mutable footprint.
 fn function_refines_named_contract(
     contract: &CFunctionContract,
     function: &CFunction,
@@ -1337,16 +1336,26 @@ fn function_refines_named_contract(
     if contract.exactly_matches(function) {
         return Ok(true);
     }
-    if !contract.has_compatible_signature_and_contract_vocabulary(function)
-        || !contract
-            .template()
-            .contract_requires()
-            .iter()
-            .chain(contract.template().contract_ensures())
-            .chain(function.contract_requires())
-            .chain(function.contract_ensures())
-            .all(spec_proposition_is_state_independent)
-    {
+    if !contract.has_compatible_signature_and_contract_vocabulary(function) {
+        return Ok(false);
+    }
+    let mut propositions = contract
+        .template()
+        .contract_requires()
+        .iter()
+        .chain(contract.template().contract_ensures())
+        .chain(function.contract_requires())
+        .chain(function.contract_ensures());
+    let state_independent = propositions
+        .clone()
+        .all(spec_proposition_is_state_independent);
+    let supported_syntax = propositions.all(spec_proposition_supports_stateful_memory_refinement);
+    let supported_stateful_memory = !state_independent
+        && !contract.template().resource_requires().is_empty()
+        && !contract.template().resource_ensures().is_empty()
+        && !contract.template().contract_mutable().is_empty()
+        && supported_syntax;
+    if !state_independent && !supported_stateful_memory {
         return Ok(false);
     }
 
@@ -1375,13 +1384,34 @@ fn function_refines_named_contract(
         function.contract_requires(),
         &mut preconditions,
         budget,
+        supported_stateful_memory,
     )? {
         return Ok(false);
     }
 
+    let post_memory = if state_independent {
+        contract_entry.memory().clone()
+    } else {
+        let memory_variable = Variable(budget.next_kernel_variable);
+        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let Some(mutable_ranges) = evaluate_contract_mutable_ranges(
+            contract.template(),
+            &contract_entry,
+            &preconditions,
+            budget,
+        )?
+        else {
+            return Ok(false);
+        };
+        contract_entry.memory().clone().with_call_memory_havoc(
+            memory_variable,
+            &mutable_ranges,
+            &preconditions,
+        )
+    };
     let result = symbolic_call_result(function.return_type(), result_variable);
-    let mut contract_post = contract_entry.clone();
-    let mut function_post = function_entry.clone();
+    let mut contract_post = contract_entry.clone().with_memory(post_memory.clone());
+    let mut function_post = function_entry.clone().with_memory(post_memory);
     if function.return_type() != CType::Void {
         set_function_result(&mut contract_post, contract.template(), result.clone());
         set_function_result(&mut function_post, function, result);
@@ -1414,7 +1444,36 @@ fn function_refines_named_contract(
         contract.template().contract_ensures(),
         &mut postconditions,
         budget,
+        supported_stateful_memory,
     )
+}
+
+fn evaluate_contract_mutable_ranges(
+    contract: &CFunction,
+    entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
+    let mut ranges = Vec::with_capacity(contract.contract_mutable().len());
+    for segment in contract.contract_mutable() {
+        if segment.guard().is_some() {
+            return Ok(None);
+        }
+        let segment =
+            match evaluate_loop_effect_segment_with_facts(entry, segment, assumptions, budget)? {
+                Ok((segment, _)) => segment,
+                Err(_) => return Ok(None),
+            };
+        ranges.push(canonical_memory_range(
+            CMemoryRange::new_with_element_width(
+                segment.base,
+                segment.start,
+                segment.end,
+                segment.element_width,
+            ),
+        ));
+    }
+    Ok(Some(ranges))
 }
 
 fn exact_resource_effect_interfaces_match(
@@ -1561,6 +1620,7 @@ fn prove_contract_propositions(
     propositions: &[SpecProposition],
     assumptions: &mut PureFactContext,
     budget: &mut ExecutionBudget,
+    allow_stateful_memory: bool,
 ) -> ExecutionResult<bool> {
     for proposition in propositions {
         let paths = lower_spec_proposition_at_state_with_loop_entry(
@@ -1582,7 +1642,7 @@ fn prove_contract_propositions(
             .obligations
             .iter()
             .any(|obligation| !assumptions.proves(obligation.proposition()))
-            || !assumptions.proves(&path.proposition)
+            || !contract_refinement_proves(assumptions, &path.proposition, allow_stateful_memory)
         {
             return Ok(false);
         }
@@ -1596,6 +1656,60 @@ fn prove_contract_propositions(
             .assume_proposition(path.proposition.clone());
     }
     Ok(true)
+}
+
+fn contract_refinement_proves(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+    allow_stateful_memory: bool,
+) -> bool {
+    if assumptions.proves(proposition) {
+        return true;
+    }
+    if !allow_stateful_memory {
+        return false;
+    }
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return false;
+    };
+    let (left, right, rebuild): (
+        &Bitvector32Term,
+        &Bitvector32Term,
+        fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm,
+    ) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            (left, right, ConditionTerm::signed_less_than)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            (left, right, ConditionTerm::signed_less_equal)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            (left, right, ConditionTerm::signed_greater_than)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            (left, right, ConditionTerm::signed_greater_equal)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => (left, right, ConditionTerm::equal),
+        _ => return false,
+    };
+    assumptions
+        .recorded_equality_class(left)
+        .into_iter()
+        .any(|equal| {
+            assumptions.proves(&Proposition::ConditionIs(
+                rebuild(equal, right.clone()),
+                *value,
+            ))
+        })
+        || assumptions
+            .recorded_equality_class(right)
+            .into_iter()
+            .any(|equal| {
+                assumptions.proves(&Proposition::ConditionIs(
+                    rebuild(left.clone(), equal),
+                    *value,
+                ))
+            })
 }
 
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {
@@ -1620,6 +1734,149 @@ fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool 
             spec_proposition_is_state_independent(body)
         }
         _ => false,
+    }
+}
+
+/// The first stateful refinement slice admits ordinary scalar propositions
+/// whose only stateful operation is a C memory access (possibly below
+/// `old`). Resource predicates, sequences, algebraic values, explicit memory
+/// snapshots, and user predicates remain outside this rule. The caller also
+/// requires the surrounding resource transition and mutable footprint to
+/// match exactly.
+fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecProposition) -> bool {
+    match proposition {
+        SpecProposition::Comparison { left, right, .. } => {
+            spec_expression_supports_stateful_memory_refinement(left)
+                && spec_expression_supports_stateful_memory_refinement(right)
+        }
+        SpecProposition::FloatClassification { expression, .. }
+        | SpecProposition::Defined(expression) => {
+            spec_expression_supports_stateful_memory_refinement(expression)
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            spec_proposition_supports_stateful_memory_refinement(left)
+                && spec_proposition_supports_stateful_memory_refinement(right)
+        }
+        SpecProposition::Not(body)
+        | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllPointer { body, .. }
+        | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsPointer { body, .. } => {
+            spec_proposition_supports_stateful_memory_refinement(body)
+        }
+        _ => false,
+    }
+}
+
+fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpression) -> bool {
+    match expression {
+        SpecExpression::Value(_) => true,
+        SpecExpression::CExpression(expression) => {
+            c_expression_supports_stateful_memory_refinement(expression)
+        }
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
+            spec_expression_supports_stateful_memory_refinement(left)
+                && spec_expression_supports_stateful_memory_refinement(right)
+        }
+        SpecExpression::BitwiseNot(body) => {
+            spec_expression_supports_stateful_memory_refinement(body)
+        }
+        SpecExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            spec_proposition_supports_stateful_memory_refinement(condition)
+                && spec_expression_supports_stateful_memory_refinement(then_branch)
+                && spec_expression_supports_stateful_memory_refinement(else_branch)
+        }
+        SpecExpression::Let { value, body, .. } => {
+            spec_expression_supports_stateful_memory_refinement(value)
+                && spec_expression_supports_stateful_memory_refinement(body)
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .all(spec_expression_supports_stateful_memory_refinement),
+        SpecExpression::PointerOffset {
+            pointer, elements, ..
+        } => {
+            spec_expression_supports_stateful_memory_refinement(pointer)
+                && spec_expression_supports_stateful_memory_refinement(elements)
+        }
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current | SpecMemory::FunctionEntry,
+            pointer,
+            ..
+        } => spec_expression_supports_stateful_memory_refinement(pointer),
+        SpecExpression::AlgebraicMatch { .. }
+        | SpecExpression::CountedResourceCount { .. }
+        | SpecExpression::RangeFold { .. }
+        | SpecExpression::LoopEntrySnapshot(_)
+        | SpecExpression::MemoryLoad { .. } => false,
+    }
+}
+
+fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) -> bool {
+    match expression {
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::AddressOf(expression)
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::BitwiseNot(expression)
+        | CExpression::Load(expression) => {
+            c_expression_supports_stateful_memory_refinement(expression)
+        }
+        CExpression::TypedLoad { pointer, .. } => {
+            c_expression_supports_stateful_memory_refinement(pointer)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_supports_stateful_memory_refinement(condition)
+                && c_expression_supports_stateful_memory_refinement(then_branch)
+                && c_expression_supports_stateful_memory_refinement(else_branch)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_supports_stateful_memory_refinement(left)
+                && c_expression_supports_stateful_memory_refinement(right)
+        }
     }
 }
 
