@@ -74,8 +74,8 @@ those locals support scalar and nested embedded-struct fields; static/file-scope
 designated initializers and array designators remain unsupported. Function-pointer fields, unions,
 conditional expressions over copyable structs require matching branch types
 and copy only the selected branch into fresh address-backed storage.
-Function-pointer fields, unions, packed layout, or address-taking of union
-members remain unsupported. Address-taking of modeled
+Function-pointer fields, packed layout, and union forms outside the named
+embedded read-only slice remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and
 allocation provenance; pointer forms for unsupported scalar widths remain

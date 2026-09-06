@@ -2466,6 +2466,111 @@ fn c0_tagged_union_values_and_by_value_containers_are_rejected() {
 }
 
 #[test]
+fn c0_tagged_union_member_addresses_preserve_member_type_and_offset() {
+    #[repr(C)]
+    union HostPayload {
+        number: i32,
+        pointer: *mut i32,
+    }
+    #[repr(C)]
+    struct HostPacket {
+        tag: i32,
+        payload: HostPayload,
+    }
+
+    let functions = syntax::parse_functions(
+        r#"
+        union payload { int32 number; int32* pointer; };
+        struct packet { int32 tag; union payload payload; };
+
+        int32* address_number(struct packet* packet) {
+            return &packet->payload.number;
+        }
+
+        int32** address_pointer(struct packet* packet) {
+            return &packet->payload.pointer;
+        }
+        "#,
+    )
+    .expect("union member addresses should parse");
+
+    let payload_offset = std::mem::offset_of!(HostPacket, payload) as u32;
+    let address_number = functions
+        .iter()
+        .find(|function| function.name() == "address_number")
+        .expect("scalar member address function");
+    let syntax::C0Statement::Return(syntax::C0Expression::AddressOf(target)) =
+        address_number.body()
+    else {
+        panic!("scalar union member address should remain an address-of lvalue")
+    };
+    let syntax::C0Expression::UnionField {
+        pointer,
+        field_type: syntax::C0Type::Int32,
+        union_name,
+    } = target.as_ref()
+    else {
+        panic!("scalar union member address should target the typed union member")
+    };
+    assert_eq!(union_name, "payload");
+    assert!(matches!(
+        pointer.as_ref(),
+        syntax::C0Expression::UnionAddress {
+            pointer,
+            union_name,
+        } if union_name == "payload"
+            && matches!(
+                pointer.as_ref(),
+                syntax::C0Expression::PointerOffsetBytes { bytes, .. }
+                    if *bytes == payload_offset
+            )
+    ));
+
+    let crate::kernel::CStatement::Return(crate::kernel::CExpression::AddressOf(target)) =
+        address_number.body_kernel_statement()
+    else {
+        panic!("scalar union member address should lower to kernel address-of")
+    };
+    let crate::kernel::CExpression::TypedLoad {
+        pointer,
+        value_type: crate::kernel::CType::Int32,
+    } = target.as_ref()
+    else {
+        panic!("scalar union member address should preserve the member lvalue type")
+    };
+    assert!(matches!(
+        pointer.as_ref(),
+        crate::kernel::CExpression::PointerOffsetBytes { bytes, .. } if *bytes == payload_offset
+    ));
+
+    let address_pointer = functions
+        .iter()
+        .find(|function| function.name() == "address_pointer")
+        .expect("pointer member address function")
+        .to_kernel_function();
+    let packet = crate::kernel::Pointer {
+        block: "packet".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new()
+            .with_memory(crate::kernel::CMemory::new().with_block("packet", 16)),
+        address_pointer,
+        vec![crate::kernel::c_pointer_value(packet)],
+        Default::default(),
+    )
+    .expect("pointer-valued union member address should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("pointer union member address should return a typed pointer")
+    };
+    assert_eq!(value.c_type(), crate::kernel::CType::Int32PointerPointer);
+}
+
+#[test]
 fn c0_rejects_embedded_struct_values_outside_member_access() {
     let error = syntax::parse_function(
         r#"

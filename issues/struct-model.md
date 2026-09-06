@@ -58,8 +58,9 @@ Broader struct-value shapes remain. Compiler- or ABI-dependent layout rules
 are tracked in [multiple-compilers.md](multiple-compilers.md).
 Modeled scalar leaf-field addresses now use the same typed lvalue path as field
 loads and stores, so `&p->field`, `&p->inner.field`, and indexed scalar-array
-cells preserve allocation provenance and the combined ABI offset. Address-
-taking of union members and pointer forms for unsupported scalar widths remain
+cells preserve allocation provenance and the combined ABI offset. Supported
+scalar and pointer-valued union-member addresses preserve the same provenance
+and member type for reads; pointer forms for unsupported scalar widths remain
 outside this slice.
 Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
@@ -68,8 +69,7 @@ Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values and address-taking beyond modeled scalar leaves as
-remaining. The first
+lists broader struct values and unsupported pointer forms as remaining. The first
 tagged-union slice is covered by
 `mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
 explicit source-level precondition rather than an inferred rule. The pilot
@@ -198,6 +198,12 @@ Staged mdtests, each with an unchanged C file:
     `mdtests/struct_function_pointer_field_direct_call.md` and the C0 direct-call
     execution and argument-validation regressions. Abstract callback contracts
     and by-value structs containing callback fields remain separate.
+23. ~~Taking the address of a supported scalar or pointer-valued union member
+    preserves the containing allocation, the union's ABI offset, and the
+    member's typed pointer result for reads.~~ Covered by
+    `mdtests/struct_union_member_address.md` and the C0 typed-lvalue and
+    pointer-result regressions. Direct union-member writes remain outside the
+    read-only slice.
 
 ## Acceptance criteria
 
@@ -220,8 +226,9 @@ Staged mdtests, each with an unchanged C file:
   allocation block, adds every ABI field offset in the chain, and returns the
   correct modeled pointer type; unsupported pointer forms are rejected rather
   than approximated.
-- Unions are either modeled with explicit rules or rejected with a diagnostic
-  that names the unsupported construct; no silent approximation. Other
+- Union member reads and address-taking use explicit overlapping layout rules,
+  preserve scalar and pointer member types, and retain allocation provenance;
+  direct member writes and whole-union values remain rejected. Other
   compiler-dependent layout constructs are owned by `multiple-compilers.md`.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.
 - Pointer-backed aggregate returns expose field-wise relational postconditions

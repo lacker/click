@@ -161,6 +161,9 @@ retain, nonfinal release, final release, and free across opaque calls.
   it after loading the field.
 - `mdtests/struct_function_pointer_field_direct_call.md`: a known concrete
   callback field can be called directly through `table->compare(...)`.
+- `mdtests/struct_union_member_address.md`: addresses of scalar and
+  pointer-valued union members preserve their member type and allocation
+  provenance for reads.
 - `mdtests/struct_array_parameter_fields.md`: a one-dimensional struct array
   parameter retains the ABI stride for indexed field loads and stores.
 - `mdtests/struct_by_value_embedded_copy.md`: by-value structs recursively copy
