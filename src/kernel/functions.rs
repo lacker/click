@@ -1323,11 +1323,13 @@ fn function_contract_requirement_is_proven(
 }
 
 /// Proves behavioral callback refinement. Exact matching remains the fast
-/// path. The semantic path keeps resources and effects exact, instantiates
-/// both interfaces with the same symbolic arguments, then checks
-/// preconditions contravariantly and postconditions covariantly. Stateful
-/// refinement is deliberately limited to memory propositions backed by a
-/// nonempty exact resource transition and exact mutable footprint.
+/// path. The semantic path keeps resource transfers exact, checks effect
+/// containment, instantiates both interfaces with the same symbolic
+/// arguments, then checks preconditions contravariantly and postconditions
+/// covariantly. Concrete mutable ranges may be narrower than the named
+/// contract's upper bound. Stateful refinement is deliberately limited to
+/// memory propositions backed by a nonempty resource transition and
+/// unguarded named mutable footprint.
 fn function_refines_named_contract(
     contract: &CFunctionContract,
     function: &CFunction,
@@ -1399,6 +1401,7 @@ fn function_refines_named_contract(
             &contract_entry,
             &preconditions,
             budget,
+            true,
         )?
         else {
             return Ok(false);
@@ -1416,7 +1419,7 @@ fn function_refines_named_contract(
         set_function_result(&mut contract_post, contract.template(), result.clone());
         set_function_result(&mut function_post, function, result);
     }
-    if !exact_resource_effect_interfaces_match(
+    if !exact_resource_interfaces_and_compatible_effects(
         contract.template(),
         function,
         &contract_entry,
@@ -1453,10 +1456,11 @@ fn evaluate_contract_mutable_ranges(
     entry: &CState,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
+    require_unguarded: bool,
 ) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
     let mut ranges = Vec::with_capacity(contract.contract_mutable().len());
     for segment in contract.contract_mutable() {
-        if segment.guard().is_some() {
+        if require_unguarded && segment.guard().is_some() {
             return Ok(None);
         }
         let segment =
@@ -1476,7 +1480,7 @@ fn evaluate_contract_mutable_ranges(
     Ok(Some(ranges))
 }
 
-fn exact_resource_effect_interfaces_match(
+fn exact_resource_interfaces_and_compatible_effects(
     contract: &CFunction,
     function: &CFunction,
     contract_entry: &CState,
@@ -1488,7 +1492,6 @@ fn exact_resource_effect_interfaces_match(
 ) -> ExecutionResult<bool> {
     if contract.resource_requires().len() != function.resource_requires().len()
         || contract.resource_ensures().len() != function.resource_ensures().len()
-        || contract.contract_mutable().len() != function.contract_mutable().len()
     {
         return Ok(false);
     }
@@ -1546,37 +1549,61 @@ fn exact_resource_effect_interfaces_match(
             return Ok(false);
         }
     }
-    for (contract_segment, function_segment) in contract
+    mutable_footprint_is_compatible(
+        contract,
+        function,
+        contract_entry,
+        function_entry,
+        assumptions,
+        budget,
+    )
+}
+
+fn mutable_footprint_is_compatible(
+    contract: &CFunction,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    let Some(contract_ranges) =
+        evaluate_contract_mutable_ranges(contract, contract_entry, assumptions, budget, false)?
+    else {
+        return Ok(false);
+    };
+    let Some(function_ranges) =
+        evaluate_contract_mutable_ranges(function, function_entry, assumptions, budget, false)?
+    else {
+        return Ok(false);
+    };
+
+    let guards_match = contract.contract_mutable().len() == function.contract_mutable().len()
+        && contract
+            .contract_mutable()
+            .iter()
+            .zip(function.contract_mutable())
+            .all(|(contract, function)| contract.guard() == function.guard());
+    if guards_match && contract_ranges == function_ranges {
+        return Ok(true);
+    }
+
+    // Guard implication is a separate refinement problem. Until it is
+    // modeled, only unguarded, unequal footprints participate in containment.
+    if contract
         .contract_mutable()
         .iter()
-        .zip(function.contract_mutable())
+        .chain(function.contract_mutable())
+        .any(|segment| segment.guard().is_some())
     {
-        if contract_segment.guard() != function_segment.guard() {
-            return Ok(false);
-        }
-        let contract_segment = match evaluate_loop_effect_segment_with_facts(
-            contract_entry,
-            contract_segment,
-            assumptions,
-            budget,
-        )? {
-            Ok((segment, _)) => segment,
-            Err(_) => return Ok(false),
-        };
-        let function_segment = match evaluate_loop_effect_segment_with_facts(
-            function_entry,
-            function_segment,
-            assumptions,
-            budget,
-        )? {
-            Ok((segment, _)) => segment,
-            Err(_) => return Ok(false),
-        };
-        if contract_segment != function_segment {
-            return Ok(false);
-        }
+        return Ok(false);
     }
-    Ok(true)
+
+    Ok(function_ranges.iter().all(|required| {
+        contract_ranges
+            .iter()
+            .any(|available| memory_range_covers(available, required, assumptions))
+    }))
 }
 
 fn assume_contract_propositions(
