@@ -28,7 +28,9 @@ Const-qualified aggregate globals and function-local aggregate statics now use
 read-only backing blocks, preserve their field access across translation units,
 and reject field writes. Compatible `extern const` aggregate declarations are
 checked against their linked definitions.
-Scalar-array designators, multidimensional or incomplete arrays, and wider
+Static scalar arrays now accept literal index designators with zero-filled
+omitted elements across external, file-scope `static`, and function-local
+`static` storage. Multidimensional or incomplete arrays, and wider
 string-literal forms remain unsupported; dynamic or non-literal initialization
 remains unsupported as well. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
@@ -78,6 +80,10 @@ static storage, and `mdtests/const_aggregate_write_rejected.md` for rejecting
 constants for objects and scalar subobjects plus pointee-const rejection, while
 `mdtests/static_initializer_dependency_chain_cross_file.md` covers linked
 initializer chains whose definitions follow their use and cross translation units.
+`mdtests/designated_scalar_static_arrays.md` covers sparse literal-index
+initializers across external, file-scope-static, and function-local-static
+arrays, while `mdtests/designated_scalar_static_arrays_rejected.md` covers
+duplicate designators.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -85,9 +91,9 @@ propagation, and indirect-write rejection.
 ## Acceptance criteria
 
 - The parser accepts supported scalar file-scope declarations with optional
-  literal, null-pointer, or stable object/subobject-address initializers, `extern`
-  declarations, and internal-linkage `static`
-  definitions, including const-qualified scalar objects and scalar arrays, and
+  literal, null-pointer, or stable object/subobject-address initializers, literal
+  scalar-array index designators, `extern` declarations, and internal-linkage
+  `static` definitions, including const-qualified scalar objects and scalar arrays, and
   rejects duplicate or missing external definitions across the source bundle.
 - The kernel models each externally linked scalar as one stable global block
   and each file-scope `static` scalar as one stable translation-unit-qualified
@@ -96,6 +102,8 @@ propagation, and indirect-write rejection.
   shared across that object's function frames.
 - The kernel models each fixed-size one-dimensional scalar global as one stable
   array block, initialized element-by-element with omitted values set to zero;
+  literal index designators select sparse elements without changing the block
+  identity or linkage;
   external definitions are shared across translation units and file-scope
   `static` arrays are translation-unit-private. Const-qualified scalar globals
   and arrays use read-only backing blocks, and pointer-to-const views reject
@@ -140,8 +148,7 @@ propagation, and indirect-write rejection.
   global write not named in `mutable` is rejected. Aggregate-array indexed
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
-  scalar-array designators, non-literal designators, const-qualified automatic
-  aggregate locals,
+  non-literal designators, const-qualified automatic aggregate locals,
   multidimensional/incomplete arrays, dynamic or
   non-literal initialization, and wider literal forms remain open. Static
   address initializers are revalidated after external globals are linked,

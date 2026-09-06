@@ -94,8 +94,9 @@ Likely additions:
   one-dimensional arrays accept `[literal] = {...}` element designators with
   static zero fill. Fixed-size
   one-dimensional scalar global arrays now use stable cross-translation-unit
-  or translation-unit-private storage with literal/zero element
-  initialization. Fixed-size one-dimensional arrays of supported scalar-field
+  or translation-unit-private storage with literal/zero element initialization
+  and literal index designators with static zero fill. Fixed-size
+  one-dimensional arrays of supported scalar-field
   aggregates now use the same stable linkage and ABI-sized element storage;
   const-qualified static-storage aggregates now use read-only backing and
   compatible cross-file qualifiers are checked; non-literal designators,

@@ -5362,18 +5362,60 @@ impl Parser {
         element_type: C0Type,
         length: u32,
     ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        self.parse_scalar_array_initializer(name, element_type, length, false)
+    }
+
+    fn parse_scalar_array_initializer(
+        &mut self,
+        name: &str,
+        element_type: C0Type,
+        length: u32,
+        static_local: bool,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        let context = if static_local {
+            "static local scalar array"
+        } else {
+            "file-scope scalar array"
+        };
         self.expect(Token::LBrace)?;
-        let mut values = Vec::new();
+        let zero = zero_initializer(element_type);
+        let mut values = vec![zero; length as usize];
+        let mut initialized = BTreeSet::new();
+        let mut next_element_index = 0u32;
         if self.peek() != Some(&Token::RBrace) {
             loop {
-                if values.len() == length as usize {
+                let element_index = if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    let index = self.parse_scalar_array_designator(name, length, context)?;
+                    self.expect(Token::Equal)?;
+                    next_element_index = index
+                        .checked_add(1)
+                        .expect("validated scalar array designator index");
+                    index
+                } else {
+                    if next_element_index >= length {
+                        return Err(self.error_here(format!(
+                            "too many initializers for {context} `{name}[{length}]`"
+                        )));
+                    }
+                    let index = next_element_index;
+                    next_element_index = next_element_index
+                        .checked_add(1)
+                        .expect("validated scalar array initializer index");
+                    index
+                };
+                if !initialized.insert(element_index) {
                     return Err(self.error_here(format!(
-                        "too many initializers for file-scope array `{name}[{length}]`"
+                        "duplicate designator for {context} `{name}[{element_index}]`"
                     )));
                 }
                 let value = self.parse_expression()?;
-                validate_global_initializer(self, element_type, false, &value)?;
-                values.push(value);
+                if static_local {
+                    validate_static_initializer(self, element_type, false, &value)?;
+                } else {
+                    validate_global_initializer(self, element_type, false, &value)?;
+                }
+                values[element_index as usize] = value;
                 match self.peek() {
                     Some(Token::Comma) => {
                         self.position += 1;
@@ -5384,21 +5426,61 @@ impl Parser {
                     Some(Token::RBrace) => break,
                     Some(token) => {
                         return Err(self.error_here(format!(
-                            "expected `,` or `}}` in file-scope array `{name}` initializer, got {}",
+                            "expected `,` or `}}` in {context} `{name}` initializer, got {}",
                             token.describe()
                         )));
                     }
                     None => {
                         return Err(self.error_here(format!(
-                            "expected `,` or `}}` in file-scope array `{name}` initializer, got end of input"
+                            "expected `,` or `}}` in {context} `{name}` initializer, got end of input"
                         )));
                     }
                 }
             }
         }
         self.expect(Token::RBrace)?;
-        values.resize(length as usize, zero_initializer(element_type));
         Ok(values)
+    }
+
+    fn parse_scalar_array_designator(
+        &mut self,
+        name: &str,
+        length: u32,
+        context: &str,
+    ) -> Result<u32, C0SyntaxError> {
+        let index = match self.next() {
+            Some(Token::Number(number)) => {
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_at_previous(format!(
+                        "invalid {context} designator index `{number}`: {reason}"
+                    ))
+                })?;
+                u32::try_from(magnitude).map_err(|_| {
+                    self.error_at_previous(format!(
+                        "{context} designator index `{number}` is out of range"
+                    ))
+                })?
+            }
+            Some(Token::CharLiteral(value)) => u32::from(value),
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "{context} designators currently require integer literals, got {}",
+                    token.describe()
+                )));
+            }
+            None => {
+                return Err(self.error_here(format!(
+                    "{context} designators currently require an integer literal"
+                )));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        if index >= length {
+            return Err(self.error_here(format!(
+                "{context} designator index `{index}` is out of bounds for `{name}[{length}]`"
+            )));
+        }
+        Ok(index)
     }
 
     fn register_global_declaration(
@@ -8863,43 +8945,7 @@ impl Parser {
         element_type: C0Type,
         length: u32,
     ) -> Result<Vec<C0Expression>, C0SyntaxError> {
-        self.expect(Token::LBrace)?;
-        let mut values = Vec::new();
-        if self.peek() != Some(&Token::RBrace) {
-            loop {
-                if values.len() == length as usize {
-                    return Err(self.error_here(format!(
-                        "too many initializers for static local array `{name}[{length}]`"
-                    )));
-                }
-                let value = self.parse_expression()?;
-                validate_static_initializer(self, element_type, false, &value)?;
-                values.push(value);
-                match self.peek() {
-                    Some(Token::Comma) => {
-                        self.position += 1;
-                        if self.peek() == Some(&Token::RBrace) {
-                            break;
-                        }
-                    }
-                    Some(Token::RBrace) => break,
-                    Some(token) => {
-                        return Err(self.error_here(format!(
-                            "expected `,` or `}}` in static local array `{name}` initializer, got {}",
-                            token.describe()
-                        )));
-                    }
-                    None => {
-                        return Err(self.error_here(format!(
-                            "expected `,` or `}}` in static local array `{name}` initializer, got end of input"
-                        )));
-                    }
-                }
-            }
-        }
-        self.expect(Token::RBrace)?;
-        values.resize(length as usize, zero_initializer(element_type));
-        Ok(values)
+        self.parse_scalar_array_initializer(name, element_type, length, true)
     }
 
     fn struct_value_copy_statement(

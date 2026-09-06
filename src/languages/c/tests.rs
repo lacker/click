@@ -1228,6 +1228,108 @@ fn c0_collects_static_scalar_arrays_with_stable_kernel_names() {
 }
 
 #[test]
+fn c0_collects_designated_static_scalar_array_initializers() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 shared[5] = {[4] = 9, [1] = 3, 6};
+
+        int32 lookup() {
+            static int32 local[4] = {[3] = 4, [1] = 2};
+            return shared[0] + shared[1] + shared[2] + shared[3] + shared[4]
+                + local[0] + local[1] + local[2] + local[3];
+        }
+        "#,
+    )
+    .expect("designated static scalar array initializers should parse");
+
+    let function = &functions[0];
+    assert_eq!(
+        function.global_arrays()["shared"].initializer(),
+        Some(
+            [
+                syntax::C0Expression::Int32Literal(0),
+                syntax::C0Expression::Int32Literal(3),
+                syntax::C0Expression::Int32Literal(6),
+                syntax::C0Expression::Int32Literal(0),
+                syntax::C0Expression::Int32Literal(9),
+            ]
+            .as_slice()
+        )
+    );
+    assert_eq!(
+        function
+            .static_arrays()
+            .values()
+            .next()
+            .expect("designated static local array metadata")
+            .initializer(),
+        &[
+            syntax::C0Expression::Int32Literal(0),
+            syntax::C0Expression::Int32Literal(2),
+            syntax::C0Expression::Int32Literal(0),
+            syntax::C0Expression::Int32Literal(4),
+        ]
+    );
+
+    let kernel_function = function.to_kernel_function();
+    assert_eq!(
+        kernel_function
+            .global_arrays()
+            .iter()
+            .find(|array| array.name() == "shared")
+            .expect("kernel designated global array metadata")
+            .initial_values(),
+        &[
+            crate::kernel::int32(0),
+            crate::kernel::int32(3),
+            crate::kernel::int32(6),
+            crate::kernel::int32(0),
+            crate::kernel::int32(9),
+        ]
+    );
+    assert_eq!(
+        kernel_function
+            .static_arrays()
+            .iter()
+            .next()
+            .expect("kernel designated static local array metadata")
+            .initial_values(),
+        &[
+            crate::kernel::int32(0),
+            crate::kernel::int32(2),
+            crate::kernel::int32(0),
+            crate::kernel::int32(4),
+        ]
+    );
+}
+
+#[test]
+fn c0_rejects_unsupported_static_scalar_array_designators() {
+    for (source, expected) in [
+        (
+            "int32 values[3] = {[1] = 2, [1] = 4}; int32 read() { return values[0]; }",
+            "duplicate designator",
+        ),
+        (
+            "int32 values[3] = {[3] = 2}; int32 read() { return values[0]; }",
+            "out of bounds",
+        ),
+        (
+            "int32 index = 1; int32 values[3] = {[index] = 2}; int32 read() { return values[0]; }",
+            "require integer literals",
+        ),
+        (
+            "int32 read() { static int32 values[3] = {[1] = 2, [1] = 4}; return values[0]; }",
+            "duplicate designator",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported scalar array designators must be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_collects_string_literals_with_terminators() {
     let functions = syntax::parse_functions(
         r#"
