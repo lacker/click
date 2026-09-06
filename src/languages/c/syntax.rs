@@ -3795,6 +3795,7 @@ impl Parser {
             } else {
                 false
             };
+            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions require `static inline` or `static __always_inline` in this slice",
@@ -3803,6 +3804,11 @@ impl Parser {
             if is_static && !is_inline {
                 return Err(self.error_here(
                     "file-scope static functions require `static inline` or `static __always_inline` in this slice",
+                ));
+            }
+            if has_always_inline_attribute && !is_static {
+                return Err(self.error_here(
+                    "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
                 ));
             }
             if !self.is_type_start() {
@@ -3814,6 +3820,12 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
+            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
+                return Err(self.error_here(
+                    "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
+                ));
+            }
             if self.peek() == Some(&Token::LBrace) {
                 if is_extern {
                     return Err(self.error_here(
@@ -3865,9 +3877,15 @@ impl Parser {
             } else {
                 false
             };
+            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions in headers require `static inline` or `static __always_inline`",
+                ));
+            }
+            if has_always_inline_attribute && !is_static {
+                return Err(self.error_here(
+                    "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
                 ));
             }
             if !self.is_type_start() {
@@ -3879,6 +3897,12 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
+            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
+                return Err(self.error_here(
+                    "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
+                ));
+            }
             if self.peek() == Some(&Token::LBrace) {
                 if is_extern || !is_static || !is_inline {
                     self.pop_scope();
@@ -4049,6 +4073,24 @@ impl Parser {
             name,
             parameters,
         })
+    }
+
+    fn consume_always_inline_attribute(&mut self) -> Result<bool, C0SyntaxError> {
+        if self.peek_ident() != Some("__attribute__") {
+            return Ok(false);
+        }
+        self.position += 1;
+        self.expect(Token::LParen)?;
+        self.expect(Token::LParen)?;
+        let attribute = self.expect_ident("GNU function attribute")?;
+        if attribute != "always_inline" && attribute != "__always_inline__" {
+            return Err(self.error_at_previous(format!(
+                "unsupported GNU function attribute `{attribute}`; only `always_inline` is supported in this slice"
+            )));
+        }
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        Ok(true)
     }
 
     fn register_function_declaration(

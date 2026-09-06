@@ -1161,6 +1161,8 @@ fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
         extern int32 other(int32 value);
         static inline int32 add_one(int32 value) { return value + 1; }
         static __always_inline int32 add_two(int32 value) { return value + 2; }
+        static inline __attribute__((always_inline)) int32 add_three(int32 value) { return value + 3; }
+        static __always_inline int32 add_four(int32 value) __attribute__((__always_inline__)) { return value + 4; }
         "#,
     )
     .expect("headers should accept supported inline and always-inline helpers");
@@ -1172,6 +1174,19 @@ fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
     let error = syntax::validate_header("__always_inline int32 helper() { return 1; }")
         .expect_err("headers must require internal linkage for always-inline definitions");
     assert!(error.message().contains("static __always_inline"));
+}
+
+#[test]
+fn c0_rejects_unknown_gnu_function_attributes() {
+    let error = syntax::validate_header(
+        "static inline int32 helper(int32 value) __attribute__((aligned(8))) { return value; }",
+    )
+    .expect_err("unknown GNU function attributes should not be silently discarded");
+    assert!(
+        error
+            .message()
+            .contains("unsupported GNU function attribute `aligned`")
+    );
 }
 
 #[test]

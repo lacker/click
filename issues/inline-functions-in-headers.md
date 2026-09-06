@@ -5,10 +5,11 @@ header slice: supported `static inline` and `static __always_inline` definitions
 are parsed from each
 expanded translation unit and their calls execute the checked bodies directly.
 Linux `rbtree.h` and `rbtree_augmented.h` contain essential `static inline` and
-`static __always_inline` implementations. `lib/rbtree.c` calls those helpers,
+`static __always_inline` implementations. Their compiler-expanded forms may
+also carry `__attribute__((always_inline))` metadata. `lib/rbtree.c` calls those helpers,
 including `rb_set_parent_color`, `__rb_change_child`, and
 `__rb_erase_augmented`; treating them as unverified declarations would move
-the core algorithm outside the proof. GNU `__always_inline`, richer inline
+the core algorithm outside the proof. GNU alignment attributes, richer inline
 signatures, and sidecar contracts for header helpers remain follow-up work.
 
 ## Violated invariant
@@ -29,6 +30,10 @@ A companion regression uses the exact Linux spelling `static __always_inline`
 for the same helper chain and rejects a bare `__always_inline` definition with
 a source-named diagnostic.
 
+A further regression accepts the two common declaration-only spellings of the
+GNU `always_inline` attribute around a static helper and rejects an unrelated
+attribute such as `aligned` rather than silently discarding it.
+
 A pinned rbtree import regression must eventually resolve calls from
 `lib/rbtree.c` to the actual inline bodies from the Linux headers rather than
 opaque contracts.
@@ -38,7 +43,9 @@ opaque contracts.
 - Included headers may contribute supported `static inline` or
   `static __always_inline` function
   definitions as well as declarations; those helpers execute their checked C
-  bodies at call sites and do not yet have sidecar contracts.
+  bodies at call sites and do not yet have sidecar contracts. The
+  declaration-only `always_inline` attribute is accepted in its two supported
+  spellings and placements.
 - `static inline` and the selected GNU always-inline spelling
   `static __always_inline` have documented linkage and body-selection rules for
   the supported compiler profile; `extern inline` remains a later slice.

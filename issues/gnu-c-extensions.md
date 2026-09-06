@@ -7,6 +7,10 @@ always-inline attributes, and branch-expectation builtins behind
 `likely`/`unlikely`. Export and compiler headers may also contribute
 declaration-only attributes and metadata.
 
+Click now accepts `__attribute__((always_inline))` and
+`__attribute__((__always_inline__))` as declaration-only metadata on supported
+static inline helpers. Alignment and other semantic attributes remain open.
+
 This issue is not permission to accept arbitrary GNU C by erasing unfamiliar
 syntax. Each supported form needs an explicit C0 meaning or a checked
 non-executable metadata classification.
@@ -30,6 +34,9 @@ Use unchanged focused C fixtures for:
 5. an unsupported executable attribute or builtin that is rejected rather
    than discarded.
 
+The header inline regression also rejects an unsupported function attribute,
+such as `aligned`, rather than treating it as harmless metadata.
+
 The pinned rbtree translation unit must then parse with original source
 locations and the modeled LP64 layout.
 
@@ -45,7 +52,9 @@ locations and the modeled LP64 layout.
   alignment used by proofs.
 - Branch-expectation builtins preserve the operand's C value and effects.
 - Ignorable attributes are restricted to an explicit declaration-only
-  allowlist; unknown or semantic attributes and builtins fail precisely.
+  allowlist; the two supported always-inline spellings are accepted only on
+  static inline helpers, while unknown or semantic attributes and builtins fail
+  precisely.
 - Focused positive and negative regressions, the rbtree parse regression, and
   `scripts/check.sh` pass.
 

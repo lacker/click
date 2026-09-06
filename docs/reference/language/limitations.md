@@ -117,7 +117,10 @@ supported structs, typedefs, enums, prototypes, and `static inline` or
 `static __always_inline` function bodies. Those inline bodies are checked from
 the expanded translation unit and
 their calls execute the checked body directly; they do not yet receive
-sidecar contracts. Other function definitions in headers remain unsupported.
+sidecar contracts. The declaration-only GNU spellings
+`__attribute__((always_inline))` and `__attribute__((__always_inline__))` are
+accepted on those helpers; other attributes and function definitions in headers
+remain unsupported.
 System header includes other than the modeled no-op `<stdint.h>`, function-like macros
 with more than three parameters, empty arguments, stringification, token pasting,
 or multi-token object-like macros, macro redefinitions without an intervening `#undef`,
