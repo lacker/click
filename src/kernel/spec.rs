@@ -2163,7 +2163,12 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 };
                 let mut facts = pointer_path.facts;
                 let mut value = None;
-                if let Some(stored) = memory.known_value(&pointer) {
+                if let Some(stored) = memory.known_union_value(&pointer, *value_type) {
+                    value = value_type.accepts(&stored).then_some(stored);
+                }
+                if value.is_none()
+                    && let Some(stored) = memory.known_value(&pointer)
+                {
                     value = canonicalized_pointer_value_from_int_cell(
                         &pointer,
                         &stored,

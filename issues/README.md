@@ -79,13 +79,12 @@ normal tooling-first policy and should then be added to this list.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 25
+## Functionality gaps: 24
 
 C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Widen the struct model](struct-model.md)
-- [Prove copied union-member views in contracts](struct-union-contract-views.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model forward and backward goto edges](goto.md)

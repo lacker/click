@@ -128,6 +128,25 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }
     }
     let assumptions = &load_assumptions;
+    // A typed union overlay is the authoritative view for an exact typed
+    // load, including in provenance-sensitive symbolic-load mode. Selecting
+    // the raw load first would reinterpret a copied pointer member as an
+    // integer and discard its provenance.
+    if let Some(value) = memory.known_union_value(&pointer, value_type) {
+        if value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
+    }
+
     // Provenance-sensitive lowering asks for the load identity even when this
     // snapshot has already materialized the cell's concrete value. Checking
     // `known_value` first would collapse `at(mark, field == 11)` to `true` and
@@ -178,8 +197,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 || matches!(value_type, CType::FunctionPointer(_)))
     };
     // An exact materialized cell is already the authoritative value for this
-    // pointer. Avoid proving every other symbolic cell distinct before the
-    // direct map lookup.
+    // non-union pointer. Avoid proving every other symbolic cell distinct
+    // before the direct map lookup.
     if let Some(value) = memory.known_value(&pointer) {
         if let Some(value) = canonicalized_pointer_value_from_int_cell(
             &pointer,
@@ -209,19 +228,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
             }];
         }
-    } else if let Some(value) = memory.known_union_value(&pointer, value_type) {
-        if value_type.accepts(&value) {
-            return vec![CExpressionPath {
-                outcome: CExpressionOutcome::Value(value),
-                facts,
-                obligations,
-            }];
-        }
-        return vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            facts,
-            obligations,
-        }];
     } else if let Some(value) = memory.cells.iter().find_map(|(stored_pointer, value)| {
         let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
         // A bounded equality query can retain an alias guard before its

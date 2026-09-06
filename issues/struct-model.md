@@ -211,8 +211,7 @@ Staged mdtests, each with an unchanged C file:
     Covered by the C0/kernel union-overlay regression in
     `src/languages/c/tests.rs` and the end-to-end
     `mdtests/struct_union_by_value_copy.md` container-copy proof. Whole-union
-    values, member writes, and contract-level equality of copied union-member
-    views remain separate follow-up slices.
+    values and member writes remain separate follow-up slices.
 
 ## Acceptance criteria
 
