@@ -2682,7 +2682,10 @@ impl PureFactContext {
             && self.checks_exact_order_step(&bounds.upper_bound)
     }
 
-    fn checks_exact_order_step(&self, step: &SignedOrderDerivationStep) -> bool {
+    pub(in crate::kernel) fn checks_exact_order_step(
+        &self,
+        step: &SignedOrderDerivationStep,
+    ) -> bool {
         matches!(
             &step.premise,
             Proposition::ConditionIs(condition, truth)
@@ -2690,6 +2693,35 @@ impl PureFactContext {
                     && condition_as_order_fact(condition, *truth)
                         == Some((step.lower.clone(), step.upper.clone(), step.strict))
         )
+    }
+
+    /// Checks one retained signed-order path using only its exact named
+    /// premises. This mirrors `exact_signed_order_path_evidence`'s terminal
+    /// constant comparison but never searches the ambient order graph.
+    pub(in crate::kernel) fn checks_exact_signed_order_path(
+        &self,
+        path: &[SignedOrderDerivationStep],
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        if path.is_empty() {
+            return false;
+        }
+        let mut current = left;
+        let mut strict = false;
+        for step in path {
+            if current != &step.lower || !self.checks_exact_order_step(step) {
+                return false;
+            }
+            current = &step.upper;
+            strict |= step.strict;
+        }
+        let constant_connection = signed_bitvector_constant(current)
+            .zip(signed_bitvector_constant(right))
+            .and_then(|(current, right)| (current <= right).then_some(current < right));
+        (current == right || constant_connection.is_some())
+            && (!require_strict || strict || constant_connection == Some(true))
     }
 
     fn derive_finite_forall(

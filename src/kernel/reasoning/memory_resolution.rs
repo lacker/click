@@ -121,6 +121,21 @@ thread_local! {
     static CANONICAL_MEMORY_CACHE: std::cell::RefCell<
         std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The producer-known source of one canonical load projection. The
+    /// projected snapshot is intentionally not given an ordinary memory-DAG
+    /// derivation: one interned projection can be shared by several sources.
+    /// This pointer-specific preferred edge preserves the oldest known sound
+    /// source for checked load equality without pretending the projection has
+    /// a unique memory parent.
+    static CANONICAL_LOAD_PROJECTION_SOURCES: std::cell::RefCell<
+        std::collections::HashMap<(super::SharedCMemory, Pointer), super::SharedCMemory>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Every exact producer-known projection triple. Evidence checks this
+    /// durable set rather than requiring its selected source to remain the
+    /// preferred source if an older equivalent producer is registered later.
+    static CANONICAL_LOAD_PROJECTIONS: std::cell::RefCell<
+        std::collections::HashSet<(super::SharedCMemory, super::SharedCMemory, Pointer)>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 pub(crate) fn clear_memory_resolution_memos() {
@@ -130,6 +145,65 @@ pub(crate) fn clear_memory_resolution_memos() {
 
 pub(crate) fn clear_canonical_memory_cache() {
     CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
+    CANONICAL_LOAD_PROJECTION_SOURCES.with(|sources| sources.borrow_mut().clear());
+    CANONICAL_LOAD_PROJECTIONS.with(|projections| projections.borrow_mut().clear());
+}
+
+/// Records the exact source used when load canonicalization constructs a
+/// pointer-observable projection. This is provenance, not a cache: checked
+/// evidence later names this exact edge and validates it by identity, without
+/// rescanning either snapshot. A canonical projection can be interned from
+/// multiple equivalent sources, so all exact triples remain valid while the
+/// oldest arena node is kept as the constant-time lookup preference.
+pub(in crate::kernel) fn record_canonical_load_projection(
+    source: &super::SharedCMemory,
+    projected: &super::SharedCMemory,
+    pointer: &Pointer,
+) {
+    if source == projected {
+        return;
+    }
+    CANONICAL_LOAD_PROJECTIONS.with(|projections| {
+        projections
+            .borrow_mut()
+            .insert((source.clone(), projected.clone(), pointer.clone()));
+    });
+    CANONICAL_LOAD_PROJECTION_SOURCES.with(|sources| {
+        let mut sources = sources.borrow_mut();
+        let preferred = sources
+            .entry((projected.clone(), pointer.clone()))
+            .or_insert_with(|| source.clone());
+        if source.arena_id() < preferred.arena_id() {
+            *preferred = source.clone();
+        }
+    });
+}
+
+/// Returns the retained source for an exact canonical projection endpoint.
+/// The lookup is constant-time in the number of projections and never
+/// reconstructs the canonical form.
+pub(in crate::kernel) fn canonical_load_projection_source(
+    projected: &super::SharedCMemory,
+    pointer: &Pointer,
+) -> Option<super::SharedCMemory> {
+    CANONICAL_LOAD_PROJECTION_SOURCES.with(|sources| {
+        sources
+            .borrow()
+            .get(&(projected.clone(), pointer.clone()))
+            .cloned()
+    })
+}
+
+pub(in crate::kernel) fn canonical_load_projection_recorded(
+    source: &super::SharedCMemory,
+    projected: &super::SharedCMemory,
+    pointer: &Pointer,
+) -> bool {
+    CANONICAL_LOAD_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .contains(&(source.clone(), projected.clone(), pointer.clone()))
+    })
 }
 
 /// The memo identity for one top-level resolution query, or `None` when the

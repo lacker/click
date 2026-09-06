@@ -27,6 +27,95 @@ fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
 }
 
 #[test]
+fn checked_load_equality_retains_canonical_projection_provenance() {
+    let source = CMemory::new()
+        .with_block_without_derivation("arg-memory", 16)
+        .with_block_without_derivation("local:i", 4);
+    let source = crate::kernel::intern_c_memory_ref(&source);
+    let pointer = arc_pointer(0);
+    let original = Bitvector32Term::MemoryLoad(source.clone(), Box::new(pointer.clone()));
+    let projected = canonicalize_atomic_loads_deep(&original);
+    let Bitvector32Term::MemoryLoad(projected_memory, _) = &projected else {
+        panic!("an unresolved load must remain a load");
+    };
+    assert_ne!(projected_memory, &source);
+
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_atomic_load_equality(
+        &projected,
+        &original,
+        &PureFactContext::new(),
+    ));
+    let equalities = capture.finish();
+    let [equality] = equalities.as_slice() else {
+        panic!("expected one retained load equality, got {equalities:?}");
+    };
+    let Some(AtomicMemoryLoadEqualityEvidence::SameCellViaCanonicalProjection {
+        left_projection: Some(projection),
+        right_projection: None,
+        ..
+    }) = equality.memory_dag_evidence_for_test()
+    else {
+        panic!("expected canonical-projection evidence, got {equality:?}");
+    };
+    assert!(equality.checks(&PureFactContext::new()));
+
+    let mut retargeted = projection.clone();
+    retargeted.pointer = arc_pointer(4);
+    assert!(
+        !retargeted.checks(projected_memory, &pointer),
+        "projection evidence must not be reusable for another cell"
+    );
+}
+
+#[test]
+fn canonical_projection_evidence_survives_a_better_source_registration() {
+    let older = crate::kernel::intern_c_memory_ref(
+        &CMemory::new()
+            .with_block_without_derivation("arg-memory", 16)
+            .with_block_without_derivation("local:older", 4),
+    );
+    let newer = crate::kernel::intern_c_memory_ref(
+        &CMemory::new()
+            .with_block_without_derivation("arg-memory", 16)
+            .with_block_without_derivation("local:newer", 4),
+    );
+    let pointer = arc_pointer(0);
+    let newer_load = Bitvector32Term::MemoryLoad(newer.clone(), Box::new(pointer.clone()));
+    let projected = canonicalize_atomic_loads_deep(&newer_load);
+    let Bitvector32Term::MemoryLoad(projected_memory, _) = &projected else {
+        panic!("an unresolved load must remain a load");
+    };
+
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_atomic_load_equality(
+        &projected,
+        &newer_load,
+        &PureFactContext::new(),
+    ));
+    let equalities = capture.finish();
+    let [equality] = equalities.as_slice() else {
+        panic!("expected one retained equality");
+    };
+    assert_eq!(
+        canonical_load_projection_source(projected_memory, &pointer).as_ref(),
+        Some(&newer)
+    );
+
+    let older_load = Bitvector32Term::MemoryLoad(older.clone(), Box::new(pointer.clone()));
+    assert_eq!(canonicalize_atomic_loads_deep(&older_load), projected);
+    assert_eq!(
+        canonical_load_projection_source(projected_memory, &pointer).as_ref(),
+        Some(&older),
+        "lookup should prefer the oldest execution source"
+    );
+    assert!(
+        equality.checks(&PureFactContext::new()),
+        "the exact newer projection remains valid after the preference changes"
+    );
+}
+
+#[test]
 fn nested_checked_load_equality_captures_keep_evidence_with_the_inner_owner() {
     let before = CMemory::new().with_block("arg-memory", 16);
     let after = before.clone().with_block("local:temporary", 4);
@@ -225,6 +314,73 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     assert!(
         !derivation.check(&PureFactContext::new()),
         "the proof object still checks its exact premise context"
+    );
+}
+
+#[test]
+fn retained_common_base_store_hop_carries_a_signed_order_path() {
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let root = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(109))),
+            byte_width: 4,
+        },
+    };
+    let write_index = Bitvector32Term::Variable(Variable(110));
+    let middle = Bitvector32Term::Variable(Variable(111));
+    let read_index = Bitvector32Term::Variable(Variable(112));
+    let first = ConditionTerm::signed_less_than(write_index.clone(), middle.clone());
+    let second = ConditionTerm::signed_less_equal(middle, read_index.clone());
+    let assumptions = PureFactContext::new()
+        .assume_condition(first.clone(), true)
+        .assume_condition(second.clone(), true);
+    let write = root.offset_by_int32_elements(write_index.clone());
+    let read = root.offset_by_int32_elements(read_index.clone());
+    let after = base
+        .clone()
+        .store(write, CValue::Int32(Bitvector32Term::Constant(7)));
+    let evidence = memory_load_equality_evidence_at(
+        &crate::kernel::intern_c_memory_ref(&after),
+        &crate::kernel::intern_c_memory_ref(&base),
+        &read,
+        &assumptions,
+    )
+    .expect("the derived index inequality crosses the store");
+    let hop = &retained_memory_dag_path(&evidence.left)[0];
+    let MemoryDagHopJustification::StoreCommonBaseSignedOrder {
+        condition,
+        path,
+        reversed: false,
+    } = &hop.justification
+    else {
+        panic!(
+            "expected a retained signed-order path, got {:?}",
+            hop.justification
+        );
+    };
+    assert_eq!(condition, &ConditionTerm::equal(write_index, read_index));
+    assert_eq!(
+        path.iter()
+            .map(SignedOrderDerivationStep::premise)
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            Proposition::ConditionIs(first, true),
+            Proposition::ConditionIs(second.clone(), true),
+        ]
+    );
+    assert!(
+        hop.justification
+            .checks(hop.derivation.as_ref(), &read, &assumptions,)
+    );
+    assert!(
+        !hop.justification.checks(
+            hop.derivation.as_ref(),
+            &read,
+            &PureFactContext::new().assume_condition(second, true),
+        ),
+        "the retained path must still have every named premise"
     );
 }
 

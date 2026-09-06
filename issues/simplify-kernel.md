@@ -86,16 +86,19 @@ they consume, and contract materialization retains its typed witnesses on the
 function-claim proof object. `StoreExplicitRange` hops now retain either their
 exact separation proposition or the owning resource composition, indexed
 range pair, and orientation. One direct framed-transport consumer remains. A
-2026-09-05 census of the complete example and mdtest fixture harnesses found
-nine dynamic legacy-only checks. A construction-origin follow-up showed that
-six are load-canonicalization projections followed by an indexed store, one
-is a pair of matching checked call-havoc transitions, and two repeats of one
-`copy3` query stop at a still-untyped DAG edge before reaching the exact
-target. The fixtures therefore do not require a general arbitrary
-snapshot-delta object: canonical-projection provenance, common-base store
-evidence, and call-transition congruence are the narrower missing forms. The
-depth-bounded congruence search for registered loads whose addresses themselves
-contain registered loads also remains.
+2026-09-05 census found nine dynamic legacy-only checks. Canonicalization now
+retains exact load-projection triples, and indexed stores retain named
+signed-order paths for common-base inequality; a fresh complete census reduced
+the residual to three checks. One is a pair of matching checked call-havoc
+transitions, but no proof-object event currently authorizes treating their
+reproducible numeric havoc identity as one call. The other two repeat one
+`copy3` store edge whose range membership uses the general membership prover
+rather than the typed structural/exact-fact subset. The fixtures therefore do
+not require a general arbitrary snapshot-delta object. The next decisions are
+the shape of reusable typed pointer-in-range evidence and the ownership
+identity of a checked call event. The depth-bounded congruence search for
+registered loads whose addresses themselves contain registered loads also
+remains.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -189,17 +192,18 @@ change an answer.
 2. **Global and dependent load equality**,
    `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
    `memory_loads_proven_equal` has been removed, but framed atomic transport
-   still directly calls the global prover. Its `StoreExplicitRange` hop is now
-   typed. The current fixture census found six dynamic canonical-projection /
-   indexed-store cases, one matching call-havoc sibling case, and two repeats
-   of one `copy3` query whose typed resolver stops one edge before the exact
-   target. The remaining depth guard hit
+   still falls back to the global prover for three residual framed transports.
+   Its `StoreExplicitRange` hop, canonical-load projections, and common-base
+   signed-order store hops are now typed. The current fixture census finds one
+   matching call-havoc sibling case and two repeats of one `copy3` query whose
+   typed resolver stops at a store requiring general range-membership evidence
+   one edge before the exact target. The remaining depth guard hit
    345,653 / 315,061 times in the original depth census. The later
    deciding-route census found that the fallback itself answered only 31 /
    1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
-   projection and call-transition evidence, incomplete DAG edge, and dependent
-   registered-load addresses. An exact-query guard terminates but branches into
+   pointer-in-range and call-transition evidence plus dependent registered-load
+   addresses. An exact-query guard terminates but branches into
    60,000–120,000 distinct subqueries in the
    owned-string regression, so the replacement must retain typed
    congruence/equality-path evidence rather than substitute another recursion

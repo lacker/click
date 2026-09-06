@@ -6,6 +6,17 @@ pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Po
     canonical_memory_for_pointer_load(memory, pointer)
 }
 
+/// Constructs the pointer-observable snapshot used by atomic-load
+/// canonicalization and retains the exact producer-known projection edge.
+/// The edge is separate from the ordinary memory DAG because the interned
+/// result may be shared by projections of several source snapshots.
+fn canonical_projected_load_memory(source: &SharedCMemory, pointer: &Pointer) -> SharedCMemory {
+    let projected =
+        crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(source, pointer));
+    record_canonical_load_projection(source, &projected, pointer);
+    projected
+}
+
 /// Checks whether two resource forms denote the same resource using only
 /// exact facts and the bounded memory-resolution relation. This is intended
 /// for certificate validation: it does not search for containment or separation.
@@ -811,6 +822,11 @@ pub(super) enum MemoryDagHopJustification {
     StoreCommonBaseExactInequality {
         condition: ConditionTerm,
     },
+    StoreCommonBaseSignedOrder {
+        condition: ConditionTerm,
+        path: Vec<SignedOrderDerivationStep>,
+        reversed: bool,
+    },
     StoreSeparatedRanges {
         authority: StoreSeparatedRangesAuthority,
         left: CMemoryRange,
@@ -916,6 +932,29 @@ impl MemoryDagHopJustification {
                 pointer_offsets_with_common_base_distinctness_condition(write, pointer)
                     == Some(condition.clone())
                     && assumptions.exact_condition_value(condition) == Some(false)
+            }
+            Self::StoreCommonBaseSignedOrder {
+                condition,
+                path,
+                reversed,
+            } => {
+                let CMemoryDerivation::Store { pointer: write, .. } = derivation else {
+                    return false;
+                };
+                let Some(ConditionTerm::Bitvector32Equal(left, right)) =
+                    pointer_offsets_with_common_base_distinctness_condition(write, pointer)
+                else {
+                    return false;
+                };
+                if condition != &ConditionTerm::Bitvector32Equal(left.clone(), right.clone()) {
+                    return false;
+                }
+                let (lower, upper) = if *reversed {
+                    (right.as_ref(), left.as_ref())
+                } else {
+                    (left.as_ref(), right.as_ref())
+                };
+                assumptions.checks_exact_signed_order_path(path, lower, upper, true)
             }
             Self::StoreSeparatedRanges {
                 authority,
@@ -1201,8 +1240,43 @@ pub(super) enum MemoryDagLoadEqualityReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicMemoryLoadEqualityEvidence {
     SameCell(MemoryDagLoadEqualityEvidence),
-    LeftResolvesToRight { left: MemoryDagCell },
-    RightResolvesToLeft { right: MemoryDagCell },
+    /// One or both load endpoints are pointer-observable canonical
+    /// projections. The projection edge is producer-known provenance; the
+    /// ordinary DAG walk begins at its retained source.
+    SameCellViaCanonicalProjection {
+        equality: MemoryDagLoadEqualityEvidence,
+        left_projection: Option<CanonicalLoadProjectionEvidence>,
+        right_projection: Option<CanonicalLoadProjectionEvidence>,
+    },
+    LeftResolvesToRight {
+        left: MemoryDagCell,
+    },
+    RightResolvesToLeft {
+        right: MemoryDagCell,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CanonicalLoadProjectionEvidence {
+    pub(super) source: SharedCMemory,
+    pub(super) projected: SharedCMemory,
+    pub(super) pointer: Pointer,
+}
+
+impl CanonicalLoadProjectionEvidence {
+    fn for_endpoint(projected: &SharedCMemory, pointer: &Pointer) -> Option<Self> {
+        canonical_load_projection_source(projected, pointer).map(|source| Self {
+            source,
+            projected: projected.clone(),
+            pointer: pointer.clone(),
+        })
+    }
+
+    pub(super) fn checks(&self, projected: &SharedCMemory, pointer: &Pointer) -> bool {
+        &self.projected == projected
+            && &self.pointer == pointer
+            && canonical_load_projection_recorded(&self.source, projected, pointer)
+    }
 }
 
 /// A load equality consumed by one checked operation, together with the
@@ -1294,6 +1368,9 @@ impl CheckedLoadEquality {
         let dag_evidence = with_extended_dag_bridging(|| {
             atomic_memory_load_equality_evidence(left, right, assumptions)
                 .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+                .or_else(|| {
+                    typed_canonical_projection_load_equality_evidence(left, right, assumptions)
+                })
         });
         EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
         let evidence = if let Some(evidence) = dag_evidence {
@@ -1480,13 +1557,19 @@ impl AtomicMemoryLoadEqualityEvidence {
     /// checker is implemented. This inspects the already-built object; it
     /// does not walk the memory DAG or consult assumptions again.
     pub(super) fn is_fully_typed(&self) -> bool {
+        let equality = match self {
+            Self::SameCell(equality) | Self::SameCellViaCanonicalProjection { equality, .. } => {
+                equality
+            }
+            Self::LeftResolvesToRight { .. } | Self::RightResolvesToLeft { .. } => return false,
+        };
         matches!(
-            self,
-            Self::SameCell(MemoryDagLoadEqualityEvidence {
+            equality,
+            MemoryDagLoadEqualityEvidence {
                 left,
                 right,
                 reason: MemoryDagLoadEqualityReason::CommonSource,
-            }) if left.has_only_typed_hops() && right.has_only_typed_hops()
+            } if left.has_only_typed_hops() && right.has_only_typed_hops()
         )
     }
 
@@ -1499,11 +1582,24 @@ impl AtomicMemoryLoadEqualityEvidence {
         else {
             return false;
         };
-        let Self::SameCell(MemoryDagLoadEqualityEvidence {
+        let (equality, left_projection, right_projection) = match self {
+            Self::SameCell(equality) => (equality, None, None),
+            Self::SameCellViaCanonicalProjection {
+                equality,
+                left_projection,
+                right_projection,
+            } => (
+                equality,
+                left_projection.as_ref(),
+                right_projection.as_ref(),
+            ),
+            Self::LeftResolvesToRight { .. } | Self::RightResolvesToLeft { .. } => return false,
+        };
+        let MemoryDagLoadEqualityEvidence {
             left: left_evidence,
             right: right_evidence,
             reason: MemoryDagLoadEqualityReason::CommonSource,
-        }) = self
+        } = equality
         else {
             return false;
         };
@@ -1514,11 +1610,78 @@ impl AtomicMemoryLoadEqualityEvidence {
         else {
             return false;
         };
+        let left_start = match left_projection {
+            Some(projection) if projection.checks(left_memory, left_pointer) => &projection.source,
+            Some(_) => return false,
+            None => left_memory,
+        };
+        let right_start = match right_projection {
+            Some(projection) if projection.checks(right_memory, right_pointer) => {
+                &projection.source
+            }
+            Some(_) => return false,
+            None => right_memory,
+        };
         left_pointer == right_pointer
             && left_evidence.node() == right_evidence.node()
-            && left_evidence.checks_walk_from(left_memory, left_pointer, assumptions)
-            && right_evidence.checks_walk_from(right_memory, right_pointer, assumptions)
+            && left_evidence.checks_walk_from(left_start, left_pointer, assumptions)
+            && right_evidence.checks_walk_from(right_start, right_pointer, assumptions)
     }
+}
+
+/// Connect pointer-observable canonical projections back to one exact source
+/// before asking the ordinary memory DAG for a common cell. There are only
+/// three additional combinations, so evidence construction stays bounded;
+/// checking the selected result performs exact registry lookups and the two
+/// retained DAG walks only.
+fn typed_canonical_projection_load_equality_evidence(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<AtomicMemoryLoadEqualityEvidence> {
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (left, right)
+    else {
+        return None;
+    };
+    if left_pointer != right_pointer {
+        return None;
+    }
+    let left_projection = CanonicalLoadProjectionEvidence::for_endpoint(left_memory, left_pointer);
+    let right_projection =
+        CanonicalLoadProjectionEvidence::for_endpoint(right_memory, right_pointer);
+    let candidates = [
+        (left_projection.as_ref(), None),
+        (None, right_projection.as_ref()),
+        (left_projection.as_ref(), right_projection.as_ref()),
+    ];
+    for (left_selected, right_selected) in candidates {
+        if left_selected.is_none() && right_selected.is_none() {
+            continue;
+        }
+        let left_start = left_selected
+            .map(|projection| &projection.source)
+            .unwrap_or(left_memory);
+        let right_start = right_selected
+            .map(|projection| &projection.source)
+            .unwrap_or(right_memory);
+        let Some(equality) =
+            memory_load_equality_evidence_at(left_start, right_start, left_pointer, assumptions)
+        else {
+            continue;
+        };
+        let evidence = AtomicMemoryLoadEqualityEvidence::SameCellViaCanonicalProjection {
+            equality,
+            left_projection: left_selected.cloned(),
+            right_projection: right_selected.cloned(),
+        };
+        if evidence.is_fully_typed() {
+            return Some(evidence);
+        }
+    }
+    None
 }
 
 // The hop predicates reach `decide` and the range-disjointness provers,
@@ -1904,6 +2067,24 @@ fn memory_dag_cell_source_walk(
                         MemoryDagHopJustification::StoreCommonBaseUnequalConstants { condition }
                     } else if assumptions.exact_condition_value(&condition) == Some(false) {
                         MemoryDagHopJustification::StoreCommonBaseExactInequality { condition }
+                    } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
+                        && let Some(path) =
+                            assumptions.exact_signed_order_path_evidence(left, right, true)
+                    {
+                        MemoryDagHopJustification::StoreCommonBaseSignedOrder {
+                            condition,
+                            path,
+                            reversed: false,
+                        }
+                    } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
+                        && let Some(path) =
+                            assumptions.exact_signed_order_path_evidence(right, left, true)
+                    {
+                        MemoryDagHopJustification::StoreCommonBaseSignedOrder {
+                            condition,
+                            path,
+                            reversed: true,
+                        }
                     } else {
                         MemoryDagHopJustification::AssumptionDependent(
                             MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
@@ -3249,9 +3430,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             let epoch = cell_epoch_for_load_variable(memory, &canonical_pointer);
                             let epoch = epoch.as_ref().unwrap_or(memory);
                             results.push(Bitvector32Term::MemoryLoad(
-                                crate::kernel::intern_c_memory(
-                                    canonical_c_memory_for_pointer_load(epoch, &canonical_pointer),
-                                ),
+                                canonical_projected_load_memory(epoch, &canonical_pointer),
                                 Box::new(canonical_pointer),
                             ));
                             continue;
@@ -3296,9 +3475,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                                 cell_epoch_for_load_variable(next_memory, &canonical_pointer);
                             let epoch = epoch.as_ref().unwrap_or(next_memory);
                             results.push(Bitvector32Term::MemoryLoad(
-                                crate::kernel::intern_c_memory(
-                                    canonical_c_memory_for_pointer_load(epoch, &canonical_pointer),
-                                ),
+                                canonical_projected_load_memory(epoch, &canonical_pointer),
                                 Box::new(canonical_pointer),
                             ));
                             break;
@@ -4585,7 +4762,16 @@ fn transport_framed_atomic_bitvector(
                     if direct {
                         c_memory_load_is_directly_unchanged(memory, after, pointer, assumptions)
                     } else {
-                        c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+                        let left = Bitvector32Term::MemoryLoad(
+                            memory.clone(),
+                            Box::new(pointer.as_ref().clone()),
+                        );
+                        let right = Bitvector32Term::MemoryLoad(
+                            crate::kernel::intern_c_memory(after.clone()),
+                            Box::new(transported_pointer.clone()),
+                        );
+                        checked_atomic_load_equality(&left, &right, assumptions)
+                            || c_memory_load_is_unchanged(memory, after, pointer, assumptions)
                     }
                 })
             {

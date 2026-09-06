@@ -274,6 +274,56 @@ stops at an intermediate node after one checked hop. It needs a separate
 edge-justification census; folding it into canonical-projection or call-havoc
 evidence would obscure a missing typed path edge.
 
+### Canonical-projection implementation and residual census (2026-09-06)
+
+The canonical-projection/common-base slice is implemented. Atomic-load
+canonicalization now registers every exact `(source, projected, pointer)`
+triple when it constructs the pointer-observable snapshot. Because several
+sources can intern to one projection, the registry retains all triples for
+later checking and separately indexes the oldest registered source for
+constant-time evidence collection. Retained evidence remains valid if a
+better source is registered later. Its check confirms the exact registered
+triple and then checks the named memory-DAG walks; it never reruns the
+whole-snapshot projection.
+
+The following indexed store now retains either the existing exact inequality
+or a named signed-order path proving the written and loaded indices unequal.
+The order-path check is linear in those listed premises and performs no
+ambient order search. Framed atomic transport asks for this checked evidence
+first and retains it on the enclosing checked event, while temporarily
+falling back to the legacy prover for the residual cases below.
+
+A fresh complete run of the example and mdtest fixture harnesses reduced the
+nine dynamic legacy-only checks to three:
+
+| fixture | dynamic residual checks | exact missing evidence |
+|---|---:|---|
+| `bounded-pool` | 1 | congruence between sibling results of the same checked call transition |
+| `copy3_array_demo` | 2 | one store hop whose pointer separation uses general range-membership reasoning |
+
+The six canonical-projection/indexed-store checks are therefore migrated.
+For the remaining `copy3` shape, the right walk crosses the local-index store
+and stops at the next store; the next node is exactly the left endpoint. The
+ambient context proves the write and load pointers belong to separated
+ranges, but only through `pointer_in_range_with_width`, whose successful arms
+include pointer equality transport, address congruence, canonical-atom order
+matching, derived order facts, and recursive condition decisions. Neither the
+structural nor exact-fact membership witness currently suffices. The next
+design decision is whether to introduce a reusable typed pointer-in-range
+derivation (and which of those arms it admits), or to have the surface proof
+establish the two exact membership facts before transport. Do not expose the
+general boolean membership prover as a typed store-hop justification.
+
+The call-havoc case also reaches a real authority boundary. A call result
+retains its `CallHavoc` derivation, fresh variable, write-set identity, and
+frozen context, but the proof object has no object naming one checked call
+event across the sibling executions being compared. Numeric fresh-variable
+equality is deliberately reproducible across independent checking runs, so it
+cannot by itself authorize congruence. This case should wait for an explicit
+checked-call transition identity (or an equivalent proof-object-owned event
+witness), rather than treating two structurally matching havoc markers as the
+same event.
+
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
 60,000–120,000 distinct recursive equality subqueries at a maximum active
@@ -331,11 +381,13 @@ comparisons do not invoke a framed-load planner.
   consume, and contract materialization retains its typed equality witnesses
   on the function-claim proof object. `StoreExplicitRange` now retains and
   checks exact proposition or owned-composition authority. The remaining
-  framed-transport census found six dynamic checks needing retained canonical
-  load-projection evidence plus common-base store evidence, one matching
-  call-havoc sibling case, and two repeated checks of a separate incomplete
-  typed DAG edge. A general arbitrary snapshot-delta object is not required by
-  the observed fixtures.
+  framed-transport census originally found six dynamic checks needing retained
+  canonical load-projection evidence plus common-base store evidence, one
+  matching call-havoc sibling case, and two repeated checks of a separate
+  incomplete typed DAG edge. The first six are now migrated; the residual
+  complete census is one call-havoc check and two `copy3` range-membership
+  checks. A general arbitrary snapshot-delta object is not required by the
+  observed fixtures.
 - A surface tactic (transport, frame, or a completion of the call step)
   advances the proof object with the snapshot-equality fact and its checked
   evidence. When the tactic is smart, expansion serializes corresponding
