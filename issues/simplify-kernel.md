@@ -83,11 +83,13 @@ certification helpers. The special bounded-snapshot-comparison mode is now
 dead and deleted. A third slice established consumer-owned equality evidence:
 resource rewrites and observations retain and recheck any checked equality
 they consume, and contract materialization retains its typed witnesses on the
-function-claim proof object. One direct framed-transport consumer remains
-because bounded-pool needs an assumption-dependent `StoreExplicitRange` DAG
-hop that does not yet have typed evidence. The depth-bounded congruence search
-for registered loads whose addresses themselves contain registered loads also
-remains.
+function-claim proof object. `StoreExplicitRange` hops now retain either their
+exact separation proposition or the owning resource composition, indexed
+range pair, and orientation. One direct framed-transport consumer remains
+because bounded-pool additionally needs a typed endpoint bridge between
+sibling snapshot forms along the selected derivation path. The depth-bounded
+congruence search for registered loads whose addresses themselves contain
+registered loads also remains.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -181,13 +183,14 @@ change an answer.
 2. **Global and dependent load equality**,
    `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
    `memory_loads_proven_equal` has been removed, but framed atomic transport
-   still directly calls the global prover because its bounded-pool path
-   contains an untyped `StoreExplicitRange` hop. The remaining depth guard hit
+   still directly calls the global prover because its bounded-pool derivation
+   path needs a typed sibling-snapshot endpoint bridge. Its
+   `StoreExplicitRange` hop is now typed. The remaining depth guard hit
    345,653 / 315,061 times in the original depth census. The later
    deciding-route census found that the fallback itself answered only 31 /
    1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
-   framed hop and dependent registered-load addresses. An exact-query guard
+   endpoint bridge and dependent registered-load addresses. An exact-query guard
    terminates but branches into 60,000–120,000 distinct subqueries in the
    owned-string regression, so the replacement must retain typed
    congruence/equality-path evidence rather than substitute another recursion

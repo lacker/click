@@ -1829,7 +1829,7 @@ impl PureFactContext {
             let key = Self::memory_separation_key(&entry.1.base().block, &entry.2.base().block);
             let bucket = index.entry(key).or_default();
             if !bucket.iter().any(|existing| existing.0 == entry.0) {
-                bucket.push(entry);
+                bucket.push((entry.0, entry.1, entry.2, resources.clone()));
             }
         }
     }
@@ -1838,19 +1838,35 @@ impl PureFactContext {
         &self,
         left: &PointerBlock,
         right: &PointerBlock,
-    ) -> impl Iterator<Item = &(Proposition, CMemoryRange, CMemoryRange)> + Clone {
+    ) -> impl Iterator<
+        Item = (
+            &Proposition,
+            &CMemoryRange,
+            &CMemoryRange,
+            Option<&ResourceContext>,
+        ),
+    > + Clone {
+        // The fourth item is present only for a projection. Keeping that
+        // source on the existing block-pair index lets an evidence producer
+        // retain the exact owning composition at no additional search cost.
         let key = Self::memory_separation_key(left, right);
         let direct = self
             .memory_separation_facts
             .get(&key)
             .map(Vec::as_slice)
-            .unwrap_or(&[]);
+            .unwrap_or(&[])
+            .iter()
+            .map(|(proposition, left, right)| (proposition, left, right, None));
         let projected = self
             .composition_separation_facts
             .get(&key)
             .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        direct.iter().chain(projected.iter())
+            .unwrap_or(&[])
+            .iter()
+            .map(|(proposition, left, right, composition)| {
+                (proposition, left, right, Some(composition))
+            });
+        direct.chain(projected)
     }
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {

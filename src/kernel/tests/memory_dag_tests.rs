@@ -229,6 +229,89 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
 }
 
 #[test]
+fn store_hop_retains_direct_or_composed_separated_range_authority() {
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let range_base = |variable| Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let write_base = range_base(110);
+    let load_base = range_base(111);
+    let write_range = memory_range(write_base.clone(), 0, 2);
+    let load_range = memory_range(load_base.clone(), 0, 2);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(write_range.clone()),
+        right: CResource::Memory(load_range.clone()),
+    };
+    let resources = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(write_range.clone()))
+        .unchecked_with_fact(CResourceFact::own_memory(load_range.clone()));
+    let direct_assumptions = PureFactContext::new().assume_proposition(separation.clone());
+    let composed_assumptions = PureFactContext::new()
+        .assume_proposition(Proposition::CResourceComposition(resources.clone()));
+    let write = write_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let load = load_base.offset_by_int32_elements(Bitvector32Term::Constant(0));
+    let after = base
+        .clone()
+        .store(write, CValue::Int32(Bitvector32Term::Constant(7)));
+    let left = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after),
+        Box::new(load.clone()),
+    );
+    let right = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&base),
+        Box::new(load.clone()),
+    );
+    let retained_hop = |assumptions: &PureFactContext| {
+        let capture = CheckedLoadEqualityCapture::start();
+        assert!(checked_atomic_load_equality(&left, &right, assumptions));
+        let equalities = capture.finish();
+        let [equality] = equalities.as_slice() else {
+            panic!("expected one retained load equality, got {equalities:?}");
+        };
+        assert!(equality.checks(assumptions));
+        let Some(AtomicMemoryLoadEqualityEvidence::SameCell(evidence)) =
+            equality.memory_dag_evidence_for_test()
+        else {
+            panic!("expected typed same-cell evidence, got {equality:?}");
+        };
+        retained_memory_dag_path(&evidence.left)[0]
+            .justification
+            .clone()
+    };
+
+    assert_eq!(
+        retained_hop(&direct_assumptions),
+        MemoryDagHopJustification::StoreSeparatedRanges {
+            authority: StoreSeparatedRangesAuthority::ExactProposition(separation),
+            left: write_range.clone(),
+            right: load_range.clone(),
+            orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+        }
+    );
+    let composed = retained_hop(&composed_assumptions);
+    assert_eq!(
+        composed,
+        MemoryDagHopJustification::StoreSeparatedRanges {
+            authority: StoreSeparatedRangesAuthority::ResourceComposition(resources),
+            left: write_range,
+            right: load_range,
+            orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+        }
+    );
+    let derivation = crate::kernel::intern_c_memory_ref(&after)
+        .derivation()
+        .expect("the written snapshot retains its store");
+    assert!(
+        !composed.checks(derivation.as_ref(), &load, &PureFactContext::new(),),
+        "the retained composition must still be present during checking"
+    );
+}
+
+#[test]
 fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
     // Storing a value and then storing it back re-interns the original
     // snapshot, which is the shortest cycle the DAG could otherwise grow.

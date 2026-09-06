@@ -3083,9 +3083,14 @@ pub struct PureFactContext {
     /// `memory_separation_facts`. Two owned facts of one valid composition
     /// are separate by the composition law, so these entries carry the same
     /// authority the formerly materialized pair propositions did, without
-    /// living in any ambient proposition set.
+    /// living in any ambient proposition set. Each projection retains its
+    /// owning shared context so checked consumers can name the logical
+    /// authority without scanning all ambient compositions.
     pub(super) composition_separation_facts: std::sync::Arc<
-        BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
+        BTreeMap<
+            (PointerBlock, PointerBlock),
+            Vec<(Proposition, CMemoryRange, CMemoryRange, ResourceContext)>,
+        >,
     >,
     pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,

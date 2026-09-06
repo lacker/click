@@ -811,6 +811,12 @@ pub(super) enum MemoryDagHopJustification {
     StoreCommonBaseExactInequality {
         condition: ConditionTerm,
     },
+    StoreSeparatedRanges {
+        authority: StoreSeparatedRangesAuthority,
+        left: CMemoryRange,
+        right: CMemoryRange,
+        orientation: StoreSeparatedRangeOrientation,
+    },
     IntrinsicNoWrite,
     AllocationOfOtherBlock,
     HeapFreeOfDistinctBlock,
@@ -840,6 +846,18 @@ pub(super) enum MemoryDagAssumptionKind {
     HeapFreeResourceSeparation,
     CallHavocRangeSeparation,
     LoopHavocRangeSeparation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum StoreSeparatedRangesAuthority {
+    ExactProposition(Proposition),
+    ResourceComposition(ResourceContext),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StoreSeparatedRangeOrientation {
+    WriteLeftLoadRight,
+    WriteRightLoadLeft,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -898,6 +916,47 @@ impl MemoryDagHopJustification {
                 pointer_offsets_with_common_base_distinctness_condition(write, pointer)
                     == Some(condition.clone())
                     && assumptions.exact_condition_value(condition) == Some(false)
+            }
+            Self::StoreSeparatedRanges {
+                authority,
+                left,
+                right,
+                orientation,
+            } => {
+                let CMemoryDerivation::Store { pointer: write, .. } = derivation else {
+                    return false;
+                };
+                let authority_checks = match authority {
+                    StoreSeparatedRangesAuthority::ExactProposition(proposition) => {
+                        assumptions.prop_facts.contains(proposition)
+                            && matches!(
+                                proposition,
+                                Proposition::CResourceSeparate {
+                                    left: CResource::Memory(fact_left),
+                                    right: CResource::Memory(fact_right),
+                                } if fact_left == left && fact_right == right
+                            )
+                    }
+                    StoreSeparatedRangesAuthority::ResourceComposition(resources) => {
+                        assumptions.resource_compositions.contains(resources)
+                            && resources.proves_owned_memory_ranges_separate_shallow(left, right)
+                    }
+                };
+                authority_checks
+                    && match orientation {
+                        StoreSeparatedRangeOrientation::WriteLeftLoadRight => {
+                            super::assumptions::pointer_in_memory_range_shallow(write, left)
+                                && super::assumptions::pointer_in_memory_range_shallow(
+                                    pointer, right,
+                                )
+                        }
+                        StoreSeparatedRangeOrientation::WriteRightLoadLeft => {
+                            super::assumptions::pointer_in_memory_range_shallow(write, right)
+                                && super::assumptions::pointer_in_memory_range_shallow(
+                                    pointer, left,
+                                )
+                        }
+                    }
             }
             Self::IntrinsicNoWrite => matches!(
                 derivation,
@@ -1268,6 +1327,14 @@ impl CheckedLoadEquality {
             ),
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn memory_dag_evidence_for_test(&self) -> Option<&AtomicMemoryLoadEqualityEvidence> {
+        match &self.evidence {
+            CheckedLoadEqualityEvidence::MemoryDag(evidence) => Some(evidence),
+            CheckedLoadEqualityEvidence::Canonical => None,
+        }
+    }
 }
 
 /// Check one selected atomic load equality and retain its typed witness in
@@ -1615,6 +1682,47 @@ fn typed_range_disjoint_from_pointer_evidence(
     Some(RangeDisjointFromPointerEvidence::ForwardOffset { offset, positive })
 }
 
+fn typed_store_separated_ranges_evidence(
+    write: &Pointer,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<MemoryDagHopJustification> {
+    assumptions
+        .memory_separation_candidates(&write.block, &pointer.block)
+        .find_map(|(proposition, left, right, composition)| {
+            if !matches!(
+                proposition,
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(_),
+                    right: CResource::Memory(_),
+                }
+            ) {
+                return None;
+            }
+            let orientation = if super::assumptions::pointer_in_memory_range_shallow(write, left)
+                && super::assumptions::pointer_in_memory_range_shallow(pointer, right)
+            {
+                StoreSeparatedRangeOrientation::WriteLeftLoadRight
+            } else if super::assumptions::pointer_in_memory_range_shallow(write, right)
+                && super::assumptions::pointer_in_memory_range_shallow(pointer, left)
+            {
+                StoreSeparatedRangeOrientation::WriteRightLoadLeft
+            } else {
+                return None;
+            };
+            let authority = composition.map_or_else(
+                || StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
+                |resources| StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
+            );
+            Some(MemoryDagHopJustification::StoreSeparatedRanges {
+                authority,
+                left: left.clone(),
+                right: right.clone(),
+                orientation,
+            })
+        })
+}
+
 fn typed_ranges_disjoint_from_pointer_evidence(
     ranges: &[CMemoryRange],
     pointer: &Pointer,
@@ -1801,6 +1909,11 @@ fn memory_dag_cell_source_walk(
                             MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
                         )
                     }
+                } else if EXPLICIT_DAG_CHECK.with(std::cell::Cell::get)
+                    && let Some(justification) =
+                        typed_store_separated_ranges_evidence(write, pointer, assumptions)
+                {
+                    justification
                 } else if EXPLICIT_DAG_CHECK.with(std::cell::Cell::get)
                     && assumptions
                         .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)

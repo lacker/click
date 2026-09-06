@@ -140,7 +140,8 @@ a memory-DAG path containing an assumption-dependent `StoreExplicitRange` hop;
 `AtomicMemoryLoadEqualityEvidence::is_fully_typed` correctly rejects that hop,
 so replacing the remaining direct `c_memory_load_is_unchanged` call makes
 `pool_pipeline.contract` fail at `transport`. The global prover and its search
-machinery must remain until that edge has a typed, locally checkable witness.
+machinery must remain until that edge and the endpoint bridge described below
+have typed, locally checkable witnesses.
 
 ### `StoreExplicitRange` evidence census (2026-09-05)
 
@@ -176,15 +177,26 @@ by the failing `bounded-pool` migration was a composition projection. Thus a
 direct-fact-only witness handles incidental cases but not the blocker this
 slice exists to remove.
 
-The next coherent certificate slice need not introduce a general pointer-in-
-range proof language: the two memberships are always structural. It does need
-an explicit authority choice for composition projections. Either the store-hop
-witness retains the owning `ResourceContext` and the derived range pair, or the
-derived separation index becomes an exact certificate authority in its own
-right. The former names the logical premise more directly; the latter makes a
-derived cache part of the trusted checking interface. In either design the
-checker must use an indexed exact lookup, not scan ambient compositions or
-silently re-run general resource reasoning.
+The implemented certificate slice does not introduce a general pointer-in-
+range proof language: the two memberships are structural. A typed store-hop
+witness retains either the exact proposition or the owning `ResourceContext`,
+plus the indexed range pair and its orientation. The composition projection
+index retains that shared owner alongside each pair, so evidence collection
+does not scan ambient compositions. Checking confirms the named authority,
+the composition's ownership separation when applicable, and the two
+structural memberships; it does not re-run general resource reasoning.
+
+Typing this hop exposed a distinct endpoint obligation. In a replacement
+probe, bounded-pool made 12 framed-transport queries for which the checked
+atomic cell resolver returned no DAG equality but the legacy prover returned
+true. All 12 legacy decisions came from `memory_derivations_reach`: that walk
+can stop when its current snapshot and the target are sibling forms whose
+loaded cells match by bounded alias comparison, whereas `MemoryDagCell` can
+currently finish only at one exact common node or a concrete equal value.
+Thus the store-range witness is a completed prerequisite, but deleting the
+last global-prover call additionally requires typed evidence for this
+derivation-path endpoint bridge. It must retain the selected endpoint match;
+the checker must not re-run the bounded alias search.
 
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
@@ -240,9 +252,10 @@ comparisons do not invoke a framed-load planner.
   The independently re-parsed input-cursor expansion is the regression.
 - **Partial:** checked resource events own and recheck any checked equality they
   consume, and contract materialization retains its typed equality witnesses
-  on the function-claim proof object. Framed atomic transport still needs typed
-  `StoreExplicitRange` evidence before its final direct global-prover call can
-  migrate.
+  on the function-claim proof object. `StoreExplicitRange` now retains and
+  checks exact proposition or owned-composition authority, but framed atomic
+  transport still needs typed derivation-endpoint evidence before its final
+  direct global-prover call can migrate.
 - A surface tactic (transport, frame, or a completion of the call step)
   records the snapshot-equality fact the kernel needs, as a checkable
   certificate.

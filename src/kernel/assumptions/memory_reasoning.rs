@@ -582,7 +582,7 @@ impl PureFactContext {
     ) -> bool {
         let direct = self
             .memory_separation_candidates(&left.block, &right.block)
-            .find_map(|(proposition, left_range, right_range)| {
+            .find_map(|(proposition, left_range, right_range, _)| {
                 (self.pointer_in_range_with_width(
                     left,
                     left_range.base(),
@@ -628,7 +628,7 @@ impl PureFactContext {
             "range disjointness: indexed facts",
             || {
                 self.memory_separation_candidates(&left.block, &right.block)
-                    .find_map(|(proposition, left_range, right_range)| {
+                    .find_map(|(proposition, left_range, right_range, _)| {
                         crate::instrumentation::measure_operation(
                             "kernel",
                             "resource context equality",
@@ -696,7 +696,7 @@ impl PureFactContext {
         right: &Pointer,
     ) -> bool {
         self.memory_separation_candidates(&left.block, &right.block)
-            .any(|(_, left_range, right_range)| {
+            .any(|(_, left_range, right_range, _)| {
                 self.pointer_in_range_by_shallow_fact_graph_with_width(
                     left,
                     left_range.base(),
@@ -845,7 +845,7 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: shallow candidates",
             || {
-                candidates.clone().any(|(_, left_range, right_range)| {
+                candidates.clone().any(|(_, left_range, right_range, _)| {
                     #[cfg(test)]
                     MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
                     pointer_in_memory_range_shallow(left, left_range)
@@ -862,7 +862,7 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: exact-fact candidates",
             || {
-                candidates.clone().any(|(_, left_range, right_range)| {
+                candidates.clone().any(|(_, left_range, right_range, _)| {
                     #[cfg(test)]
                     MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
                     self.pointer_in_range_by_exact_facts(left, left_range)
@@ -913,7 +913,7 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: recursive candidates",
             || {
-                candidates.any(|(_, left_range, right_range)| {
+                candidates.any(|(_, left_range, right_range, _)| {
                     #[cfg(test)]
                     {
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
@@ -1394,7 +1394,7 @@ impl PureFactContext {
         if let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right)
             && self
                 .memory_separation_candidates(&left_range.base().block, &right_range.base().block)
-                .any(|(_, fact_left, fact_right)| {
+                .any(|(_, fact_left, fact_right, _)| {
                     separation_fact_entails(
                         &CResource::Memory(fact_left.clone()),
                         &CResource::Memory(fact_right.clone()),
