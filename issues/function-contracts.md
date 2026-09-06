@@ -24,6 +24,9 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
 - A verified or explicitly external concrete function forms a named contract
   fact when its normalized contract matches exactly. Signature and behavioral
   mismatches are rejected.
+- Distinct field contracts can be packaged in a composite callback-table
+  resource, borrowed through verified helpers, and composed in a pipeline
+  whose final callback mutates a separately owned resource.
 
 The remaining semantic step is behavioral refinement at concrete-pointer
 formation. Exact matching is sound but unnecessarily restrictive: a concrete

@@ -1212,6 +1212,66 @@ fn rewrite_atomic_proposition_by_exact_equality(
                         Box::new(rewrite_term(goal_right, left, right)),
                     )
                 }
+                ConditionTerm::Bitvector32SignedAddOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedSubtractOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedMultiplyOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedMultiplyOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedDivideOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedDivideOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedShiftLeftOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedShiftLeftOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64SignedAddOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64SignedAddOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64SignedSubtractOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64SignedSubtractOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64SignedMultiplyOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64SignedMultiplyOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64SignedDivideOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64SignedDivideOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64SignedShiftLeftOverflows(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64SignedShiftLeftOverflows(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
                 // Pointer goals contain the same int32 terms inside their
                 // offsets; substituting the proven equality there is the same
                 // exact term congruence, with work bounded by the goal.
