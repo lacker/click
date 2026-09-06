@@ -164,6 +164,10 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/struct_union_member_address.md`: addresses of scalar and
   pointer-valued union members preserve their member type and allocation
   provenance for reads.
+- `mdtests/struct_union_by_value_copy.md`: a struct containing a supported union
+  can cross a by-value parameter and return boundary with fresh aggregate
+  storage; the C0/kernel regression also checks preservation of overlapping
+  union-member views.
 - `mdtests/struct_array_parameter_fields.md`: a one-dimensional struct array
   parameter retains the ABI stride for indexed field loads and stores.
 - `mdtests/struct_by_value_embedded_copy.md`: by-value structs recursively copy

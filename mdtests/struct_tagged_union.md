@@ -2,9 +2,10 @@
 
 Named union members use a maximum-size, maximum-alignment LP64 layout. Each
 member remains a typed read at the same byte offset, while the first slice
-keeps the union address-backed: whole-union values, member writes, and
-by-value copies are rejected. The tag check stays visible in the C control
-flow and in the Click precondition.
+keeps the union address-backed: whole-union values and member writes are
+rejected. A struct containing a supported union may still be copied by value;
+that copy preserves the overlapping typed member views. The tag check stays
+visible in the C control flow and in the Click precondition.
 
 ```c filename=struct_tagged_union.c
 enum packet_kind {
