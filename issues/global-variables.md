@@ -21,7 +21,8 @@ Basic ASCII C string literals are now lowered to function-owned,
 NUL-terminated, read-only `uint8` storage and remain stable through calls.
 Zero-initialized struct globals and function-local struct statics with
 supported scalar leaf fields now use stable typed aggregate storage, including
-cross-file `extern` sharing and field-level contract effects. Positional
+cross-file `extern` sharing, coalesced tentative definitions, and field-level
+contract effects. Positional
 compile-time scalar and null-pointer initializers now populate those same
 objects, with omitted leaves retaining zero initialization. Designated and
 const-qualified scalar globals and scalar tables now use read-only backing
@@ -104,6 +105,12 @@ definition.
 fixed-size scalar arrays.
 `mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
 bounds remaining rejected during cross-translation-unit linking.
+`mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
+aggregate objects and aggregate arrays, plus initialized-definition precedence.
+`mdtests/file_scope_tentative_aggregate_link_errors.md` covers incompatible
+aggregate-array bounds remaining rejected during linking.
+`mdtests/file_scope_duplicate_aggregate_link_errors.md` covers multiple
+initialized aggregate definitions remaining rejected during linking.
 The three
 `string_literals` tests for stable read-only literal storage, call-summary
 propagation, and indirect-write rejection.
@@ -139,24 +146,30 @@ propagation, and indirect-write rejection.
   stores while preserving reads and provenance.
 - The parser accepts zero-initialized, positionally initialized, or designated
   struct globals and function-local struct statics whose layouts contain
-  supported scalar leaf fields, links compatible external declarations to one
-  definition, and zero-fills omitted leaves. Designated fields use literal
-  scalar values and may appear in any order. Const-qualified globals and
-  function-local statics are read-only, and `extern` declarations must match
-  the definition's const qualifier.
+  supported scalar leaf fields, coalesces compatible tentative declarations,
+  links one initialized definition, and zero-fills omitted leaves. Designated
+  fields use literal scalar values and may appear in any order. Const-qualified
+  globals and function-local statics are read-only, and `extern` declarations
+  must match the definition's const qualifier.
 - The kernel materializes each supported aggregate as one stable typed-field
   block, using global linkage or function-qualified static storage, applies
   explicit initializer cells once after zero-filling, and keeps that state
-  across calls.
+  across calls. Compatible tentative definitions coalesce across translation
+  units, while multiple initialized definitions and incompatible layouts are
+  rejected.
 - The parser accepts fixed-size one-dimensional arrays of supported struct
   aggregates at file scope and as function-local statics, requires nested
-  element groups, links compatible external declarations to one definition,
-  accepts literal `[index] = {...}` element designators, and zero-fills omitted
-  fields and elements. Non-literal designators, multidimensional, incomplete,
-  and dynamic-initialization forms remain rejected.
+  element groups, coalesces compatible tentative declarations, links one
+  initialized definition, accepts literal `[index] = {...}` element
+  designators, and zero-fills omitted fields and elements. Non-literal
+  designators, multidimensional, incomplete, and dynamic-initialization forms
+  remain rejected.
 - The kernel materializes each aggregate array as one stable byte-addressed
   block with complete ABI element stride, zero-fills every leaf, applies
   explicit initializer cells once, and preserves the block across calls.
+  Compatible tentative definitions coalesce across translation units, while
+  multiple initialized definitions and incompatible bounds or layouts are
+  rejected.
 - Surface Click can name scalar globals and owning-translation-unit statics in
   `requires`, `ensures`, `mutable`, and resource clauses using their address,
   and `old()` applies to them.

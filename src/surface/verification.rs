@@ -2349,7 +2349,10 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting linkage declarations for aggregate global `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && aggregate.is_initialized_definition() =>
+                {
                     if previous != aggregate {
                         return Err(ClickError::new(format!(
                             "conflicting definitions for aggregate global `{name}` in `{source_path}`"
@@ -2358,10 +2361,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 }
                 _ => {
                     let merged = match source_aggregates.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if aggregate.is_defined() => aggregate.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if aggregate.is_initialized_definition() => aggregate.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => aggregate.clone(),
+                        Some(_) => aggregate.clone(),
                     };
                     source_aggregates.insert(name.clone(), merged);
                 }
@@ -2393,17 +2397,21 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting const qualifiers for aggregate global `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && aggregate.is_initialized_definition() =>
+                {
                     return Err(ClickError::new(format!(
                         "multiple definitions of aggregate global `{name}`"
                     )));
                 }
                 _ => {
                     let merged = match global_aggregates.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if aggregate.is_defined() => aggregate.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if aggregate.is_initialized_definition() => aggregate.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => aggregate.clone(),
+                        Some(_) => aggregate.clone(),
                     };
                     global_aggregates.insert(name.clone(), merged);
                 }
@@ -2459,7 +2467,10 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting linkage declarations for aggregate global array `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && aggregate.is_initialized_definition() =>
+                {
                     if previous != aggregate {
                         return Err(ClickError::new(format!(
                             "conflicting definitions for aggregate global array `{name}` in `{source_path}`"
@@ -2468,10 +2479,11 @@ pub(in crate::surface) fn parse_verified_sources(
                 }
                 _ => {
                     let merged = match source_aggregate_arrays.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if aggregate.is_defined() => aggregate.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if aggregate.is_initialized_definition() => aggregate.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => aggregate.clone(),
+                        Some(_) => aggregate.clone(),
                     };
                     source_aggregate_arrays.insert(name.clone(), merged);
                 }
@@ -2507,17 +2519,21 @@ pub(in crate::surface) fn parse_verified_sources(
                         "conflicting const qualifiers for aggregate global array `{name}`"
                     )));
                 }
-                Some(previous) if previous.is_defined() && aggregate.is_defined() => {
+                Some(previous)
+                    if previous.is_initialized_definition()
+                        && aggregate.is_initialized_definition() =>
+                {
                     return Err(ClickError::new(format!(
                         "multiple definitions of aggregate global array `{name}`"
                     )));
                 }
                 _ => {
                     let merged = match global_aggregate_arrays.get(name) {
-                        Some(previous) if previous.is_defined() => previous.clone(),
-                        Some(_) if aggregate.is_defined() => aggregate.clone(),
-                        Some(previous) => previous.clone(),
+                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+                        Some(_) if aggregate.is_initialized_definition() => aggregate.clone(),
+                        Some(previous) if previous.is_tentative() => previous.clone(),
                         None => aggregate.clone(),
+                        Some(_) => aggregate.clone(),
                     };
                     global_aggregate_arrays.insert(name.clone(), merged);
                 }

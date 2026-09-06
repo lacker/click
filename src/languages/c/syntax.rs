@@ -491,7 +491,9 @@ impl C0GlobalArray {
 /// A file-scope object with a supported struct layout. Aggregate values are
 /// represented by their stable address-backed layout rather than a scalar
 /// initializer value. `initializer` contains only explicitly initialized
-/// scalar leaves; omitted leaves are zero-initialized by the kernel.
+/// scalar leaves; omitted leaves are zero-initialized by the kernel. A
+/// definition without an initializer is marked tentative so repeated
+/// declarations can be coalesced before a real initializer is selected.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0GlobalAggregate {
     name: String,
@@ -500,6 +502,7 @@ pub struct C0GlobalAggregate {
     layout: C0StructLayout,
     initializer: Option<Vec<C0AggregateInitializer>>,
     defined: bool,
+    tentative: bool,
     file_static: bool,
     constant: bool,
 }
@@ -516,6 +519,7 @@ pub struct C0GlobalAggregateArray {
     layout: C0StructLayout,
     length: u32,
     initializer: Option<Vec<C0AggregateInitializer>>,
+    tentative: bool,
     file_static: bool,
     constant: bool,
 }
@@ -536,6 +540,7 @@ impl C0GlobalAggregateArray {
             layout,
             length,
             initializer: None,
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -557,6 +562,7 @@ impl C0GlobalAggregateArray {
             layout,
             length,
             initializer: Some(initializer),
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -594,6 +600,19 @@ impl C0GlobalAggregateArray {
         self.initializer.is_some()
     }
 
+    /// Returns whether this is a C tentative definition such as
+    /// `struct state x[2];`.
+    /// Tentative definitions have storage and are lowered with implicit zero
+    /// initialization, but may coalesce with other tentative declarations or
+    /// with one initialized definition.
+    pub fn is_tentative(&self) -> bool {
+        self.tentative
+    }
+
+    pub(crate) fn is_initialized_definition(&self) -> bool {
+        self.is_defined() && !self.is_tentative()
+    }
+
     pub fn is_file_static(&self) -> bool {
         self.file_static
     }
@@ -604,6 +623,11 @@ impl C0GlobalAggregateArray {
 
     fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    fn with_tentative(mut self, tentative: bool) -> Self {
+        self.tentative = tentative;
         self
     }
 
@@ -647,6 +671,7 @@ impl C0GlobalAggregate {
             layout,
             initializer: None,
             defined: false,
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -667,6 +692,7 @@ impl C0GlobalAggregate {
             layout,
             initializer: Some(initializer),
             defined: true,
+            tentative: false,
             file_static,
             constant: false,
         }
@@ -692,6 +718,19 @@ impl C0GlobalAggregate {
         self.defined
     }
 
+    /// Returns whether this is a C tentative definition such as
+    /// `struct state x;`.
+    /// Tentative definitions have storage and are lowered with implicit zero
+    /// initialization, but may coalesce with other tentative declarations or
+    /// with one initialized definition.
+    pub fn is_tentative(&self) -> bool {
+        self.tentative
+    }
+
+    pub(crate) fn is_initialized_definition(&self) -> bool {
+        self.is_defined() && !self.is_tentative()
+    }
+
     pub fn is_file_static(&self) -> bool {
         self.file_static
     }
@@ -702,6 +741,11 @@ impl C0GlobalAggregate {
 
     fn with_constant(mut self, constant: bool) -> Self {
         self.constant = constant;
+        self
+    }
+
+    fn with_tentative(mut self, tentative: bool) -> Self {
+        self.tentative = tentative;
         self
     }
 
@@ -5666,7 +5710,8 @@ impl Parser {
                     let length = self
                         .parse_global_array_length(&name)?
                         .expect("aggregate array has an array suffix");
-                    let initializer = if self.peek() == Some(&Token::Equal) {
+                    let has_initializer = self.peek() == Some(&Token::Equal);
+                    let initializer = if has_initializer {
                         if is_extern {
                             return Err(self.error_here(
                                 "`extern` aggregate global array declarations may not have an initializer",
@@ -5684,6 +5729,7 @@ impl Parser {
                     } else {
                         Some(Vec::new())
                     };
+                    let tentative = !has_initializer && !is_extern;
                     let declaration = initializer
                         .map(|initializer| {
                             C0GlobalAggregateArray::definition(
@@ -5707,6 +5753,7 @@ impl Parser {
                             )
                         })
                         .with_constant(parsed_type.is_constant);
+                    let declaration = declaration.with_tentative(tentative);
                     self.register_global_aggregate_array_declaration(name.clone(), declaration)?;
                     let bytes = length
                         .checked_mul(layout.size_bytes())
@@ -5726,7 +5773,8 @@ impl Parser {
                     }
                     break;
                 }
-                let initializer = if self.peek() == Some(&Token::Equal) {
+                let has_initializer = self.peek() == Some(&Token::Equal);
+                let initializer = if has_initializer {
                     if is_extern {
                         return Err(self.error_here(
                             "`extern` aggregate global declarations may not have an initializer",
@@ -5739,6 +5787,7 @@ impl Parser {
                 } else {
                     Some(Vec::new())
                 };
+                let tentative = !has_initializer && !is_extern;
                 let declaration = if let Some(initializer) = initializer {
                     C0GlobalAggregate::definition(
                         name.clone(),
@@ -5758,6 +5807,7 @@ impl Parser {
                     )
                 }
                 .with_constant(parsed_type.is_constant);
+                let declaration = declaration.with_tentative(tentative);
                 self.register_global_aggregate_declaration(name.clone(), declaration)?;
                 self.variable_types
                     .insert(name.clone(), struct_value_type(layout));
@@ -6242,15 +6292,16 @@ impl Parser {
                     "conflicting linkage declarations for aggregate global `{name}`"
                 )));
             }
-            if previous.is_defined() && declaration.is_defined() {
+            if previous.is_initialized_definition() && declaration.is_initialized_definition() {
                 return Err(
                     self.error_here(format!("duplicate definition of aggregate global `{name}`"))
                 );
             }
         }
-        let merged = match (self.global_aggregates.get(&name), declaration.is_defined()) {
-            (Some(previous), true) if !previous.is_defined() => declaration,
-            (Some(previous), false) => previous.clone(),
+        let merged = match self.global_aggregates.get(&name) {
+            Some(previous) if previous.is_initialized_definition() => previous.clone(),
+            Some(_) if declaration.is_initialized_definition() => declaration,
+            Some(previous) if previous.is_tentative() => previous.clone(),
             _ => declaration,
         };
         self.global_aggregates.insert(name, merged);
@@ -6290,18 +6341,16 @@ impl Parser {
                     "conflicting linkage declarations for aggregate global array `{name}`"
                 )));
             }
-            if previous.is_defined() && declaration.is_defined() {
+            if previous.is_initialized_definition() && declaration.is_initialized_definition() {
                 return Err(self.error_here(format!(
                     "duplicate definition of aggregate global array `{name}`"
                 )));
             }
         }
-        let merged = match (
-            self.global_aggregate_arrays.get(&name),
-            declaration.is_defined(),
-        ) {
-            (Some(previous), true) if !previous.is_defined() => declaration,
-            (Some(previous), false) => previous.clone(),
+        let merged = match self.global_aggregate_arrays.get(&name) {
+            Some(previous) if previous.is_initialized_definition() => previous.clone(),
+            Some(_) if declaration.is_initialized_definition() => declaration,
+            Some(previous) if previous.is_tentative() => previous.clone(),
             _ => declaration,
         };
         self.global_aggregate_arrays.insert(name, merged);

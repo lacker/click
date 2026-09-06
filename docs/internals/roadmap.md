@@ -123,7 +123,9 @@ Likely additions:
   aggregate, multidimensional, incomplete, and dynamic-initialization cases
   remain open; zero-initialized and positional compile-time initialized
   scalar-field aggregate globals, aggregate arrays, and function-local statics
-  now use the same stable typed-field storage model.
+  now use the same stable typed-field storage model, with compatible tentative
+  aggregate definitions coalesced across translation units and one initialized
+  definition taking precedence.
 - Broader structs and field access: the current LP64 slice has multi-field
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded

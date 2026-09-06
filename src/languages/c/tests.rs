@@ -858,6 +858,7 @@ fn c0_collects_file_scope_struct_aggregates() {
         .expect("reader function");
     let aggregate = &function.global_aggregates()["shared"];
     assert!(aggregate.is_defined());
+    assert!(aggregate.is_tentative());
     assert!(!aggregate.is_file_static());
     assert_eq!(aggregate.name(), "shared");
     assert_eq!(aggregate.struct_name(), "state");
@@ -1010,6 +1011,7 @@ fn c0_collects_aggregate_arrays() {
 
     let global = &function.global_aggregate_arrays()["shared_table"];
     assert!(global.is_defined());
+    assert!(!global.is_tentative());
     assert!(global.is_file_static() == false);
     assert_eq!(global.length(), 2);
     assert_eq!(global.c_type(), syntax::C0Type::UInt8Array(16));
@@ -1051,6 +1053,119 @@ fn c0_collects_aggregate_arrays() {
     assert_eq!(kernel_local.source_name(), "local_table");
     assert_eq!(kernel_local.kernel_name(), local.kernel_name());
     assert_eq!(kernel_local.initializers().len(), 3);
+}
+
+#[test]
+fn c0_coalesces_tentative_aggregate_declarations_before_initialization() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        extern struct state shared;
+        struct state shared;
+        struct state shared;
+        extern struct state table[2];
+        struct state table[2];
+        struct state table[2];
+
+        int32 read() {
+            return shared.value + table[1].value;
+        }
+        "#,
+        "tentative-aggregate.c",
+    )
+    .expect("repeated tentative aggregate declarations should parse");
+
+    let function = &functions[0];
+    let aggregate = &function.global_aggregates()["shared"];
+    assert!(aggregate.is_defined());
+    assert!(aggregate.is_tentative());
+    assert_eq!(aggregate.initializer().unwrap().len(), 0);
+
+    let array = &function.global_aggregate_arrays()["table"];
+    assert!(array.is_defined());
+    assert!(array.is_tentative());
+    assert_eq!(array.initializer().unwrap().len(), 0);
+
+    let initialized = syntax::parse_functions_for_source(
+        r#"
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+
+        struct state shared;
+        struct state shared = {7, 1};
+        extern struct state shared;
+        struct state table[2];
+        struct state table[2] = {{4, 1}, {3}};
+        extern struct state table[2];
+
+        int32 read() {
+            return shared.value + table[1].value;
+        }
+        "#,
+        "initialized-aggregate.c",
+    )
+    .expect("initialized aggregate definitions should supersede tentative declarations");
+
+    let function = &initialized[0];
+    assert!(!function.global_aggregates()["shared"].is_tentative());
+    assert!(!function.global_aggregate_arrays()["table"].is_tentative());
+    assert_eq!(
+        function.global_aggregates()["shared"]
+            .initializer()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        function.global_aggregate_arrays()["table"]
+            .initializer()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn c0_rejects_conflicting_tentative_aggregate_declarations() {
+    for (source, expected) in [
+        (
+            r#"
+            struct state { int32 value; };
+            struct state shared = {1};
+            struct state shared = {2};
+            int32 read() { return shared.value; }
+            "#,
+            "duplicate definition of aggregate global `shared`",
+        ),
+        (
+            r#"
+            struct state { int32 value; };
+            struct state table[2] = {{1}, {2}};
+            struct state table[2] = {{3}, {4}};
+            int32 read() { return table[0].value; }
+            "#,
+            "duplicate definition of aggregate global array `table`",
+        ),
+        (
+            r#"
+            struct state { int32 value; };
+            struct state table[2];
+            struct state table[3];
+            int32 read() { return table[0].value; }
+            "#,
+            "conflicting declarations for aggregate global array `table`",
+        ),
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("conflicting aggregate declarations should be rejected");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
 }
 
 #[test]
