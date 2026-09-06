@@ -142,6 +142,50 @@ so replacing the remaining direct `c_memory_load_is_unchanged` call makes
 `pool_pipeline.contract` fail at `transport`. The global prover and its search
 machinery must remain until that edge has a typed, locally checkable witness.
 
+### `StoreExplicitRange` evidence census (2026-09-05)
+
+A temporary probe made each non-direct framed atomic transport request the
+explicit memory-DAG equality that will replace its global-prover call, then
+inspected only complete DAG derivations returned by that request. It did not
+count unsuccessful candidate paths. Every retained `StoreExplicitRange` hop
+had the same proof shape:
+
+- the terminal equality reason was `SameCell(CommonSource)`;
+- an indexed `CResourceSeparate` candidate supplied the two disjoint ranges;
+  that candidate may be an exact proposition or a projection of an owned
+  resource composition; and
+- the written and loaded pointers belonged to those ranges by the structural
+  `pointer_in_range_shallow` check. None needed fact-graph-derived range
+  membership or resource-composition reasoning.
+
+The example harness observed 206 dynamic hops: 24 in `arena`, 36 in
+`binary-tree`, 2 in `bounded-pool`, and 144 in `ring-buffer`. Repeated checking
+and certification account for many of these dynamic uses; the count measures
+consumer demand, not distinct propositions. The mdtest harness observed none.
+The unit-test corpus observed 384 more dynamic hops, all with the same shape.
+The instrumented unit run disturbed one expansion-output assertion solely
+because the temporary diagnostic was captured; that test passed normally with
+the probe disabled.
+
+An authority follow-up distinguished direct propositions from composition
+projections. All 24 `arena` candidates and all 36 `binary-tree` candidates
+were projections; both projects still verified when only direct candidates
+were typed. The 96 direct candidates reached while checking `ring-buffer`
+were exact proposition facts, and it also verified. Every candidate reached
+by the failing `bounded-pool` migration was a composition projection. Thus a
+direct-fact-only witness handles incidental cases but not the blocker this
+slice exists to remove.
+
+The next coherent certificate slice need not introduce a general pointer-in-
+range proof language: the two memberships are always structural. It does need
+an explicit authority choice for composition projections. Either the store-hop
+witness retains the owning `ResourceContext` and the derived range pair, or the
+derived separation index becomes an exact certificate authority in its own
+right. The former names the logical premise more directly; the latter makes a
+derived cache part of the trusted checking interface. In either design the
+checker must use an indexed exact lookup, not scan ambient compositions or
+silently re-run general resource reasoning.
+
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
 60,000–120,000 distinct recursive equality subqueries at a maximum active
