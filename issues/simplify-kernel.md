@@ -87,13 +87,15 @@ function-claim proof object. `StoreExplicitRange` hops now retain either their
 exact separation proposition or the owning resource composition, indexed
 range pair, and orientation. One direct framed-transport consumer remains. A
 2026-09-05 census of the complete example and mdtest fixture harnesses found
-nine dynamic legacy-only checks: seven are bounded snapshot-delta comparisons
-using common-base or explicit-range cell disjointness, and two repeats of one
+nine dynamic legacy-only checks. A construction-origin follow-up showed that
+six are load-canonicalization projections followed by an indexed store, one
+is a pair of matching checked call-havoc transitions, and two repeats of one
 `copy3` query stop at a still-untyped DAG edge before reaching the exact
-target. The bounded-delta evidence must be reusable both at root snapshots and
-at a selected derivation endpoint; it is not a bounded-pool-only endpoint
-special case. The depth-bounded congruence search for registered loads whose
-addresses themselves contain registered loads also remains.
+target. The fixtures therefore do not require a general arbitrary
+snapshot-delta object: canonical-projection provenance, common-base store
+evidence, and call-transition congruence are the narrower missing forms. The
+depth-bounded congruence search for registered loads whose addresses themselves
+contain registered loads also remains.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -188,16 +190,16 @@ change an answer.
    `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
    `memory_loads_proven_equal` has been removed, but framed atomic transport
    still directly calls the global prover. Its `StoreExplicitRange` hop is now
-   typed. The current fixture census found seven dynamic uses of one bounded
-   snapshot-delta evidence shape, at both root snapshots and a selected DAG
-   endpoint, plus two repeats of one `copy3` query whose typed resolver stops
-   one edge before the exact target. The remaining depth guard hit
+   typed. The current fixture census found six dynamic canonical-projection /
+   indexed-store cases, one matching call-havoc sibling case, and two repeats
+   of one `copy3` query whose typed resolver stops one edge before the exact
+   target. The remaining depth guard hit
    345,653 / 315,061 times in the original depth census. The later
    deciding-route census found that the fallback itself answered only 31 /
    1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
-   bounded-delta evidence, incomplete DAG edge, and dependent registered-load
-   addresses. An exact-query guard terminates but branches into
+   projection and call-transition evidence, incomplete DAG edge, and dependent
+   registered-load addresses. An exact-query guard terminates but branches into
    60,000–120,000 distinct subqueries in the
    owned-string regression, so the replacement must retain typed
    congruence/equality-path evidence rather than substitute another recursion

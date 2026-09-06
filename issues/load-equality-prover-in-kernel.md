@@ -222,30 +222,57 @@ shapes:
 | `copy_n_segment_invariant` | 2 | root snapshots | 1 | common-base distinctness |
 | `copy3_array_demo` second query | 2 | incomplete derivation | none | typed resolver stops one edge before the target |
 
-The first four rows account for seven dynamic checks and one typed-evidence
-shape. The two compared snapshots have identical non-local block and havoc
-metadata and differ in only one, two, or four selected cells. Each differing
-cell is disjoint from the queried load by already-checkable common-base or
-explicit-range evidence. None of these successes depended on matching a
-materialized load source, constant-offset-only reasoning, block distinctness,
-offset disequality, or exact pointer disequality.
+The raw deciding route initially made the first four rows look like one
+general snapshot-delta evidence shape. Their construction origins show a more
+specific boundary.
 
-This evidence cannot live only as a special DAG endpoint reason: six of the
-seven dynamic uses compare the original root snapshots, while bounded-pool
-uses it between a selected DAG endpoint and the other root. The reusable typed
-evidence should therefore name the two shared snapshot endpoints and the query
-pointer, retain the exact finite non-local delta, and attach typed
-disjointness evidence to every differing cell. When a proof-object transition
-or contract certification consumes it, local validation should confirm that
-the retained entries are the complete delta and validate each named witness;
-it must not search ambient facts or recompute a bounded alias plan. Both direct
-root comparison and terminal DAG comparison can consume this same evidence.
+### Delta-origin follow-up (2026-09-06)
+
+A second temporary probe traced both endpoint derivation chains and recorded
+where a root with no DAG parent was first constructed. None of the six dynamic
+root-snapshot checks came from an arbitrary independent reconstruction:
+
+| fixture | origin of the apparent root delta | missing retained evidence |
+|---|---|---|
+| `owned-vector` | load canonicalization projected one execution snapshot by removing only a local `i` cell | the canonical projection plus the following indexed store's common-base distinctness |
+| `copy_n_segment_invariant` | the same canonical projection, again removing only local `i` | the canonical projection plus the following indexed store's common-base distinctness |
+| `copy3_array_demo` first query | load canonicalization projected the exact loop snapshot, removing local `i` and three cells at the other separated resource base | the canonical projection, its exact discarded-cell authority, and the following indexed store's common-base distinctness |
+
+`canonicalize_atomic_loads_deep` deliberately interns these restricted
+load-observable memories without a derivation. Because equal restricted forms
+deduplicate, first-parent DAG provenance would also be insufficient: one
+canonical snapshot can be reused for projections of several sources and load
+pointers. The canonicalization operation itself knows the source, pointer,
+and exact discarded cells when it constructs the form. It should return or
+register typed `CanonicalLoadProjection` evidence keyed by that complete
+triple, and the proof object's retained load equality should select that exact
+projection. This is producer-known provenance, not a claimed arbitrary delta.
+Validation must use the retained projection authority rather than rerun the
+whole-snapshot canonicalization scan.
+
+The one `bounded-pool` endpoint case is different, but is still structured.
+The matching endpoints are two results of the same `CallHavoc` identity and
+the same two-range footprint. They were produced from different base
+snapshots, and the two-cell delta between the bases is exactly preserved
+between the outputs. No individual memory constructor sees both siblings, so
+a direct registered pairwise delta is the wrong abstraction. This case needs
+typed congruence for the two matching checked call transitions, tied to their
+exact call-event authority and base-history/frame evidence. Matching the
+numeric havoc variable alone is insufficient because independent
+certification can regenerate the same encoding.
+
+Thus the census does **not** justify a general `SnapshotDeltaEvidence` that
+lists arbitrary endpoint differences. The next implementation slice should
+retain canonical-load projection evidence and finish the common-base store
+edge used by the three loop fixtures; those account for six of the seven
+dynamic bounded-delta decisions. Re-census after that slice, then handle the
+single call-havoc congruence case at its checked execution-event boundary.
 
 The final `copy3_array_demo` row is not an endpoint-comparison obligation. Its
 legacy derivation walk reaches the exact target, while the typed resolver
 stops at an intermediate node after one checked hop. It needs a separate
-edge-justification census after the bounded-delta evidence lands; folding
-it into snapshot-delta evidence would obscure a missing typed path edge.
+edge-justification census; folding it into canonical-projection or call-havoc
+evidence would obscure a missing typed path edge.
 
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
@@ -253,18 +280,18 @@ relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
 depth of only six. The roots are registered load variables whose load
 addresses themselves contain other registered loads. An exact-query cycle
 guard therefore terminates but does not control the branching search. The next
-typed-evidence shape must cover both the framed `StoreExplicitRange` hop and
-congruence/equality-path evidence for dependent load addresses; treating two
-registered load variables as direct atomic DAG queries is insufficient because
-their pointers are not structurally equal.
+dependent-address evidence must retain the selected congruence/equality paths;
+treating two registered load variables as direct atomic DAG queries is
+insufficient because their pointers are not structurally equal.
 
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
 speculative calls without requiring replacement evidence. Owned-vector also
 had only one fresh positive decision in the earlier deciding-route census; the
 two identical framed-transport checks in the endpoint census are repeated
-uses of the same bounded-delta shape. Its many other probes are likewise
-evidence for deleting, rather than reproducing, the ambient search.
+uses of the same canonical-projection/store path shape. Its many other probes
+are likewise evidence for deleting, rather than reproducing, the ambient
+search.
 
 ## Violated invariant
 
@@ -304,9 +331,11 @@ comparisons do not invoke a framed-load planner.
   consume, and contract materialization retains its typed equality witnesses
   on the function-claim proof object. `StoreExplicitRange` now retains and
   checks exact proposition or owned-composition authority. The remaining
-  framed-transport census found seven dynamic bounded snapshot-delta checks
-  that need one reusable typed evidence form, plus two repeated checks of a
-  separate incomplete typed DAG edge.
+  framed-transport census found six dynamic checks needing retained canonical
+  load-projection evidence plus common-base store evidence, one matching
+  call-havoc sibling case, and two repeated checks of a separate incomplete
+  typed DAG edge. A general arbitrary snapshot-delta object is not required by
+  the observed fixtures.
 - A surface tactic (transport, frame, or a completion of the call step)
   advances the proof object with the snapshot-equality fact and its checked
   evidence. When the tactic is smart, expansion serializes corresponding
