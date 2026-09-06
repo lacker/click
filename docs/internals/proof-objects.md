@@ -239,11 +239,12 @@ recorded snapshots, `old(...)` as the function entry, `result`, and the
 proof's current locals as fixed values) and lowered by the kernel
 (`c_lower_spec_proposition_at_state`); an expression a proof evaluates goes
 the same way (`elaborate_fixed_state_expression`,
-`c_evaluate_spec_expression_at_state`). A call the proof unfolds itself
-stays an application, and the kernel evaluates an application of a pure
-function to constants by the function's definition, elaborated once per
-environment (`SpecPureFunctionDefinitions`), carried by the fact context,
-and bounded by the call budget. A function's requirements at the proof's
+`c_evaluate_spec_expression_at_state`). Every pure-function call stays a
+typed logical application during lowering, including calls whose arguments
+are constants. Only the checked `unfold(function(args))` proof step exposes
+one instantiated defining equation; lowering itself never executes Click.
+Likewise, a match on an unknown algebraic value remains one symbolic term
+rather than creating execution paths. A function's requirements at the proof's
 entry, an applied theorem's requires and conclusion, and a pure theorem's
 goal are elaborated and lowered the same way, so a declared standard
 theorem matches its kernel axiom by spelling. So are the C fragments stated

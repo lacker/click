@@ -82,13 +82,11 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let all_predicates = predicate_environment
@@ -140,13 +138,11 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let all_predicates = predicate_environment
@@ -256,13 +252,11 @@ pub(in crate::surface) fn annotated_function(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
         branch_join_target: None,
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
@@ -373,13 +367,11 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_300_000,
         branch_join_target: Some(branch_join_target),
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     lowerer
@@ -404,7 +396,7 @@ fn fixed_state_elaboration<'a>(
     assumptions: &'a PureFactContext,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
-    opaque_click_functions: BTreeSet<String>,
+    _opaque_click_functions: BTreeSet<String>,
 ) -> (AnnotationLowerer<'a>, SpecElaborationContext) {
     let lowerer = AnnotationLowerer {
         structural_clauses: &[],
@@ -418,14 +410,12 @@ fn fixed_state_elaboration<'a>(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 2_000_000,
         branch_join_target: None,
         implicit_contract_mutable_segments: &[],
         snapshots: Some(snapshots),
-        opaque_click_functions,
         count_assumptions: Some(assumptions),
     };
     // The proof's current locals are fixed values in every context: a name a
@@ -508,89 +498,6 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
     lowerer.lower_contract_expression_to_spec(expression, &context)
 }
 
-/// The pure function definitions in spec form, for the kernel to evaluate
-/// constant applications by. Every call in a body stays an application; the
-/// kernel unfolds those it can. A definition the elaboration cannot express
-/// is left out, and its applications stay opaque.
-pub(in crate::surface) fn elaborate_pure_function_definitions(
-    click_function_environment: &ClickFunctionEnvironment,
-) -> BTreeMap<String, crate::kernel::SpecPureFunctionDefinition> {
-    let predicate_environment = PredicateEnvironment::new(&[]);
-    let entry_state = CState::new();
-    let opaque_click_functions = click_function_environment
-        .definitions
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let mut definitions = BTreeMap::new();
-    for (name, definition) in &click_function_environment.definitions {
-        if !matches!(definition.return_type(), ClickType::C(_))
-            || definition
-                .parameters()
-                .iter()
-                .any(|parameter| !matches!(parameter.click_type(), ClickType::C(_)))
-        {
-            continue;
-        }
-        let mut array_element_types = BTreeMap::new();
-        let mut context = SpecElaborationContext::default();
-        for parameter in definition.parameters() {
-            let variable =
-                SpecExpression::CExpression(CExpression::Variable(parameter.name().to_string()));
-            context
-                .values
-                .insert(parameter.name().to_string(), variable.clone());
-            if let Some(element_type) = click_array_element_type(parameter.c_type()) {
-                array_element_types.insert(parameter.name().to_string(), element_type);
-                context.array_refs.insert(
-                    parameter.name().to_string(),
-                    SpecArrayRef {
-                        memory: SpecMemory::Current,
-                        pointer: variable,
-                        element_type,
-                    },
-                );
-            }
-        }
-        let mut lowerer = AnnotationLowerer {
-            structural_clauses: &[],
-            function_effects: &[],
-            predicate_environment: &predicate_environment,
-            click_function_environment,
-            entry_state: &entry_state,
-            result_type: CType::Int32,
-            entry_values: BTreeMap::new(),
-            parameter_array_element_types: array_element_types,
-            quantified_values: BTreeMap::new(),
-            algebraic_variables: BTreeMap::new(),
-            algebraic_types: BTreeMap::new(),
-            active_click_functions: BTreeSet::new(),
-            loop_index: 0,
-            statement_index: 0,
-            next_quantifier_variable: 2_000_000,
-            branch_join_target: None,
-            implicit_contract_mutable_segments: &[],
-            snapshots: None,
-            opaque_click_functions: opaque_click_functions.clone(),
-            count_assumptions: None,
-        };
-        if let Ok(body) = lowerer.lower_contract_expression_to_spec(definition.body(), &context) {
-            definitions.insert(
-                name.clone(),
-                crate::kernel::SpecPureFunctionDefinition {
-                    parameters: definition
-                        .parameters()
-                        .iter()
-                        .map(|parameter| parameter.name().to_string())
-                        .collect(),
-                    body,
-                },
-            );
-        }
-    }
-    definitions
-}
-
 /// Elaborates one `requires` proposition into the kernel's spec form, exactly
 /// as `function_contract_summary` elaborates the contract's clauses; the
 /// kernel then lowers it at the function's entry state. A predicate call
@@ -623,13 +530,11 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     lowerer.click_proposition_to_spec_proposition(
@@ -671,13 +576,11 @@ pub(in crate::surface) fn function_contract_summary(
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
-        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
         snapshots: None,
-        opaque_click_functions: BTreeSet::new(),
         count_assumptions: None,
     };
     let context = SpecElaborationContext::for_function_contract();
@@ -1020,7 +923,6 @@ struct AnnotationLowerer<'a> {
     quantified_values: BTreeMap<String, CValue>,
     algebraic_variables: BTreeMap<String, SpecAlgebraicExpression>,
     algebraic_types: BTreeMap<(String, Vec<CType>), AlgebraicType>,
-    active_click_functions: BTreeSet<String>,
     loop_index: usize,
     statement_index: usize,
     next_quantifier_variable: u64,
@@ -1031,8 +933,6 @@ struct AnnotationLowerer<'a> {
     /// The proof's fact context, under which a count at a recorded state
     /// selects its populations.
     count_assumptions: Option<&'a PureFactContext>,
-    /// Calls a proof unfolds itself; they stay applications.
-    opaque_click_functions: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2023,40 +1923,59 @@ impl AnnotationLowerer<'_> {
             .click_function_environment
             .get(name)
             .ok_or_else(|| format!("unknown function `{name}`"))?;
-        if !matches!(definition.return_type(), ClickType::Algebraic(_)) {
+        let ClickType::Algebraic(result_type) = definition.return_type() else {
             return Err(format!(
                 "function `{name}` does not return an algebraic value"
             ));
-        }
-        if self.opaque_click_functions.contains(name) || self.active_click_functions.contains(name)
-        {
+        };
+        if arguments.len() != definition.parameters().len() {
             return Err(format!(
-                "opaque or recursive algebraic-valued function `{name}` is not supported yet"
+                "function `{}` expects {} argument(s), got {}",
+                definition.name(),
+                definition.parameters().len(),
+                arguments.len()
             ));
         }
-        let mut function_environment =
-            SpecElaborationContext::with_current_memory(environment.current_memory.clone());
-        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
-            match parameter.click_type() {
-                ClickType::Algebraic(_) => {
-                    function_environment.algebraic_values.insert(
-                        parameter.name().to_string(),
-                        self.lower_contract_algebraic_to_spec(argument, environment)?,
-                    );
+        Ok(SpecAlgebraicExpression {
+            algebraic_type: self.cached_algebraic_kernel_type(result_type)?,
+            node: SpecAlgebraicExpressionNode::PureFunctionApplication {
+                name: name.to_string(),
+                arguments: self.lower_click_function_arguments_to_spec(
+                    definition,
+                    arguments,
+                    environment,
+                )?,
+            },
+        })
+    }
+
+    fn lower_click_function_arguments_to_spec(
+        &mut self,
+        definition: &ClickFunctionDefinition,
+        arguments: &[ContractExpression],
+        environment: &SpecElaborationContext,
+    ) -> Result<Vec<crate::kernel::SpecPureFunctionArgument>, String> {
+        definition
+            .parameters()
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, argument)| match parameter.click_type() {
+                ClickType::Algebraic(_) => self
+                    .lower_contract_algebraic_to_spec(argument, environment)
+                    .map(crate::kernel::SpecPureFunctionArgument::Algebraic),
+                ClickType::C(_) if parameter_is_click_array_ref(parameter) => {
+                    let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
+                    Ok(crate::kernel::SpecPureFunctionArgument::ArrayRef {
+                        memory: array_ref.memory,
+                        pointer: array_ref.pointer,
+                        element_type: array_ref.element_type,
+                    })
                 }
-                ClickType::C(_) => {
-                    function_environment.values.insert(
-                        parameter.name().to_string(),
-                        self.lower_contract_expression_to_spec(argument, environment)?,
-                    );
-                }
-            }
-        }
-        self.active_click_functions.insert(name.to_string());
-        let result =
-            self.lower_contract_algebraic_to_spec(definition.body(), &function_environment);
-        self.active_click_functions.remove(name);
-        result
+                ClickType::C(_) => self
+                    .lower_contract_expression_to_spec(argument, environment)
+                    .map(crate::kernel::SpecPureFunctionArgument::Value),
+            })
+            .collect()
     }
 
     fn lower_contract_sequence_to_spec(
@@ -2192,10 +2111,22 @@ impl AnnotationLowerer<'_> {
                 .object_values()
                 .map(|(name, value)| (name.to_string(), SpecExpression::Value(value.clone()))),
         );
-        let array_refs = state
-            .locals()
-            .array_object_values()
-            .map(|(name, value, element_type)| {
+        let mut array_refs = environment
+            .array_refs
+            .iter()
+            .map(|(name, array_ref)| {
+                (
+                    name.clone(),
+                    SpecArrayRef {
+                        memory: SpecMemory::Fixed(state.memory().clone()),
+                        pointer: array_ref.pointer.clone(),
+                        element_type: array_ref.element_type,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        array_refs.extend(state.locals().array_object_values().map(
+            |(name, value, element_type)| {
                 (
                     name.to_string(),
                     SpecArrayRef {
@@ -2204,8 +2135,8 @@ impl AnnotationLowerer<'_> {
                         element_type,
                     },
                 )
-            })
-            .collect();
+            },
+        ));
         Some(SpecElaborationContext {
             values,
             algebraic_values: environment.algebraic_values.clone(),
@@ -2492,73 +2423,18 @@ impl AnnotationLowerer<'_> {
             ));
         }
 
-        if self.opaque_click_functions.contains(name) {
-            return Ok(SpecExpression::PureFunctionApplication {
-                name: name.to_string(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
-                    .collect::<Result<Vec<_>, _>>()?,
-            });
-        }
-        if self.active_click_functions.contains(name) {
-            if definition.decreases().is_none() {
-                return Err(format!(
-                    "recursive function call `{name}` has no decreases measure"
-                ));
-            }
-            return Ok(SpecExpression::PureFunctionApplication {
-                name: name.to_string(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
-                    .collect::<Result<Vec<_>, _>>()?,
-            });
-        }
-
-        let mut function_environment =
-            SpecElaborationContext::with_current_memory(environment.current_memory.clone());
-        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
-            if matches!(parameter.click_type(), ClickType::Algebraic(_)) {
-                function_environment.algebraic_values.insert(
-                    parameter.name().to_string(),
-                    self.lower_contract_algebraic_to_spec(argument, environment)?,
-                );
-            } else if parameter_is_click_array_ref(parameter) {
-                let expected_element_type = click_array_element_type(parameter.c_type())
-                    .ok_or_else(|| {
-                        format!(
-                            "function `{}` parameter `{}` is not an array-ref parameter",
-                            definition.name(),
-                            parameter.name()
-                        )
-                    })?;
-                let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
-                if array_ref.element_type != expected_element_type {
-                    return Err(format!(
-                        "function `{}` parameter `{}` expects {:?} array elements, got {:?}",
-                        definition.name(),
-                        parameter.name(),
-                        expected_element_type,
-                        array_ref.element_type
-                    ));
-                }
-                function_environment
-                    .array_refs
-                    .insert(parameter.name().to_string(), array_ref);
-            } else {
-                function_environment.values.insert(
-                    parameter.name().to_string(),
-                    self.lower_contract_expression_to_spec(argument, environment)?,
-                );
-            }
-        }
-
-        self.active_click_functions.insert(name.to_string());
-        let result =
-            self.lower_contract_expression_to_spec(definition.body(), &function_environment);
-        self.active_click_functions.remove(name);
-        result
+        let ClickType::C(result_type) = definition.return_type() else {
+            return Err(format!("function `{name}` does not return a C value"));
+        };
+        Ok(SpecExpression::PureFunctionApplication {
+            name: name.to_string(),
+            arguments: self.lower_click_function_arguments_to_spec(
+                definition,
+                arguments,
+                environment,
+            )?,
+            result_type: result_type.to_kernel_type(),
+        })
     }
 
     fn lower_array_ref_to_spec(

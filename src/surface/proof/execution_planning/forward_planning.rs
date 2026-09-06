@@ -562,11 +562,12 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
     if Proof::supports_linear_source(proof) {
-        let root = Proof::for_fixed_state_goal(
+        let root = Proof::for_fixed_state_surface_goal(
             claim_label,
             proof_index,
             available,
             fact.clone(),
+            proposition.clone(),
             parameters,
             arguments,
             pre_state,

@@ -1564,6 +1564,30 @@ fn pure_theorem_surface_certificate(
         });
     }
 
+    if matches!(source_tactics, Some([ProofTactic::Simp])) {
+        let premise_pool = theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition)
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Ok(tactics) = lower_pure_simp_after_function_unfold(
+            claim_label,
+            context,
+            surface_goal,
+            predicate_environment,
+            click_function_environment,
+            &premise_pool,
+            &[],
+        ) {
+            return ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "smart proof for `{claim_label}` produced an invalid function-unfold certificate: {error:?}"
+                ))
+            });
+        }
+    }
+
     if let Some(tactics) = source_tactics
         && tactics
             .iter()
@@ -1995,7 +2019,7 @@ fn add_canonical_order_premise_pairs(
     Ok(())
 }
 
-fn click_function_applications(
+pub(super) fn click_function_applications(
     proposition: &ClickProposition,
     known_facts: &[ClickProposition],
 ) -> Vec<ClickFunctionApplication> {
@@ -3157,11 +3181,6 @@ fn prove_pure_theorem_tactics(
                             application.name
                         ))
                     })?;
-                if definition.return_type() != &ClickType::C(C0Type::Int32) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: pure function `unfold` currently requires an int32 result"
-                    )));
-                }
                 if application.arguments.len() != definition.parameters().len() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: function `{}` expects {} argument(s), got {}",
@@ -3185,73 +3204,25 @@ fn prove_pure_theorem_tactics(
                             ))
                         },
                     )?;
-                let state = CState::new().with_memory(context.memory.clone());
-                let assumptions = assumptions_from_propositions(&available);
-                let mut argument_active_functions = BTreeSet::new();
-                for argument in &application.arguments {
-                    collect_click_function_calls(argument, &mut argument_active_functions);
-                }
-                let arguments = application
-                    .arguments
-                    .iter()
-                    .map(|argument| {
-                        evaluate_contract_expression_with_environment(
-                            &context.values,
-                            &context.array_refs,
-                            &state,
-                            &state,
-                            None,
-                            &assumptions,
-                            argument,
-                            predicate_environment,
-                            click_function_environment,
-                            &RecordedSnapshots::new(),
-                            &mut argument_active_functions,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower function `unfold` arguments: {message}"
-                        ))
-                    })?
-                    .into_iter()
-                    .map(|value| match value {
-                        CValue::Int32(value) => Ok(value),
-                        other => Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: pure function `unfold` currently requires int32 arguments, got {other:?}"
-                        ))),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut unfolding_active_functions = BTreeSet::new();
-                collect_click_function_calls(&surface_body, &mut unfolding_active_functions);
-                let unfolded = evaluate_contract_expression_with_environment(
+                let surface_equality = ClickProposition::Comparison {
+                    left: ContractExpression::Call {
+                        name: application.name.clone(),
+                        arguments: application.arguments.clone(),
+                    },
+                    operator: ComparisonOperator::Equal,
+                    right: surface_body.clone(),
+                };
+                let equality = lower_pure_theorem_proposition_with_opaque_calls(
+                    claim_label,
+                    &surface_equality,
                     &context.values,
                     &context.array_refs,
-                    &state,
-                    &state,
-                    None,
-                    &assumptions,
-                    &surface_body,
+                    &context.memory,
                     predicate_environment,
                     click_function_environment,
-                    &RecordedSnapshots::new(),
-                    &mut unfolding_active_functions,
+                    &BTreeSet::from([application.name.clone()]),
                 )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not unfold function `{}`: {message}",
-                        application.name
-                    ))
-                })?;
-                let equality = comparison_proposition(
-                    CValue::Int32(Bitvector32Term::PureFunctionApplication {
-                        name: application.name.clone(),
-                        arguments,
-                    }),
-                    ComparisonOperator::Equal,
-                    unfolded,
-                )?;
+                .map_err(ClickError::new)?;
                 if !available.contains(&equality) {
                     available.push(equality);
                 }

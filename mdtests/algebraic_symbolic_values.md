@@ -54,13 +54,19 @@ theorem maybe_match_rebuilds(m: Maybe<int32>) {
 }
 
 theorem algebraic_function_result(value: int32) {
-    ensures wrap(value) == Maybe<int32>::Some(value) by simp;
+    ensures wrap(value) == Maybe<int32>::Some(value) by {
+        unfold(wrap(value));
+        simp();
+    }
     ensures wrap(value) == wrap(value) by simp;
 }
 
 theorem algebraic_function_parameter(m: Maybe<int32>, fallback: int32) {
     ensures value_or(m, fallback) == value_or(m, fallback) by simp;
-    ensures rebuild(m) == m by simp;
+    ensures rebuild(m) == m by {
+        unfold(rebuild(m));
+        simp();
+    }
 }
 
 theorem algebraic_predicate_parameter(m: Maybe<int32>) {

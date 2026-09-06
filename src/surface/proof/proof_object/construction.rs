@@ -200,6 +200,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(in crate::surface::proof) fn for_fixed_state_goal(
         claim_label: &'a str,
         tactic_index: usize,
@@ -241,7 +242,6 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[cfg(test)]
     pub(in crate::surface::proof) fn for_fixed_state_surface_goal(
         claim_label: &'a str,
         tactic_index: usize,

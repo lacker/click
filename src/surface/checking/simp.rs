@@ -319,6 +319,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     .map(|field| rewrite_c_value(field, rewrite_term, rewrite_pointer))
                     .collect(),
             },
+            AlgebraicTermNode::Match { .. } | AlgebraicTermNode::PureFunctionApplication { .. } => {
+                term.node.clone()
+            }
         };
         AlgebraicTerm {
             algebraic_type: term.algebraic_type.clone(),
@@ -575,6 +578,8 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 }
                 Bitvector32Term::If { .. }
                 | Bitvector32Term::RangeFold { .. }
+                | Bitvector32Term::ClickFunctionApplication { .. }
+                | Bitvector32Term::AlgebraicMatch { .. }
                 | Bitvector32Term::Constant(_)
                 | Bitvector32Term::Int64Constant(_)
                 | Bitvector32Term::UInt64Constant(_) => term.clone(),
@@ -1136,6 +1141,8 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
             Bitvector32Term::If { .. }
             | Bitvector32Term::RangeFold { .. }
+            | Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. }
             | Bitvector32Term::Constant(_)
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_) => term.clone(),
@@ -2046,6 +2053,8 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
         | Bitvector32Term::Float64Binary { .. }
         | Bitvector32Term::RangeFold { .. }
         | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. }
         | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::MemoryLoad(_, _) => None,
         Bitvector32Term::Add(left, right) => {
@@ -2329,6 +2338,8 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
                 arguments: arguments.iter().map(simp_bitvector).collect(),
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
         }

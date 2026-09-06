@@ -61,12 +61,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
-    if memory
-        .heap
-        .pending_reallocations
-        .values()
-        .any(|pending| pending.old_pointer.block == pointer.block)
-    {
+    if has_pending_reallocation_for_pointer(memory, &pointer) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome),
             facts,
@@ -82,9 +77,51 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         obligations,
         assumptions,
         has_external_read_resource,
+        false,
         &mut alias_cache,
         next_kernel_variable,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
+    memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    next_kernel_variable: &mut u64,
+) -> Vec<CExpressionPath> {
+    let _assumptions_id_scope = assumptions.enter_id_scope();
+    if has_pending_reallocation_for_pointer(memory, &pointer) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome),
+            facts,
+            obligations,
+        }];
+    }
+    let mut alias_cache = MemoryLoadAliasCache::default();
+    evaluate_c_memory_load_paths_with_alias_cache(
+        memory,
+        pointer,
+        value_type,
+        facts,
+        obligations,
+        assumptions,
+        false,
+        true,
+        &mut alias_cache,
+        next_kernel_variable,
+    )
+}
+
+fn has_pending_reallocation_for_pointer(memory: &CMemory, pointer: &Pointer) -> bool {
+    memory
+        .heap
+        .pending_reallocations
+        .values()
+        .any(|pending| pending.old_pointer.block == pointer.block)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -96,6 +133,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     mut obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
+    preserve_provisional_loadability: bool,
     alias_cache: &mut MemoryLoadAliasCache,
     next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
@@ -412,6 +450,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
                 assumptions,
                 has_external_read_resource,
+                preserve_provisional_loadability,
                 alias_cache,
                 next_kernel_variable,
             ));
@@ -489,7 +528,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             base: pointer.clone(),
             bytes: Bitvector32Term::Constant(value_type.byte_width()),
         };
-        if assumptions.should_defer_non_exact_loadability_obligations() {
+        if preserve_provisional_loadability {
+            if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
+                return Vec::new();
+            }
+        } else if assumptions.should_defer_non_exact_loadability_obligations() {
             if !assumptions.proves_memory_loadable_for_memory_resolution(
                 &memory,
                 &pointer,
@@ -1281,6 +1324,8 @@ fn substitute_load_variables(
                         None => term_results.push(term.clone()),
                     },
                     Bitvector32Term::PointerAddress(_) => term_results.push(term.clone()),
+                    Bitvector32Term::ClickFunctionApplication { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. } => term_results.push(term.clone()),
                     Bitvector32Term::Add(left, right) => {
                         visit_binary!(Bitvector32Term::Add, left, right, tasks)
                     }
@@ -1958,6 +2003,10 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         Bitvector32Term::PureFunctionApplication { name: _, arguments } => {
             arguments.iter().any(term_mentions_a_memory_load)
         }
+        Bitvector32Term::ClickFunctionApplication { .. } => true,
+        Bitvector32Term::AlgebraicMatch { arms, .. } => arms
+            .iter()
+            .any(|arm| term_mentions_a_memory_load(&arm.body)),
     }
 }
 

@@ -1807,7 +1807,7 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
         }
         SpecExpression::PureFunctionApplication { arguments, .. } => arguments
             .iter()
-            .all(spec_expression_supports_stateful_memory_refinement),
+            .all(spec_pure_function_argument_supports_stateful_memory_refinement),
         SpecExpression::PointerOffset {
             pointer, elements, ..
         } => {
@@ -1824,6 +1824,19 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
         | SpecExpression::RangeFold { .. }
         | SpecExpression::LoopEntrySnapshot(_)
         | SpecExpression::MemoryLoad { .. } => false,
+    }
+}
+
+fn spec_pure_function_argument_supports_stateful_memory_refinement(
+    argument: &SpecPureFunctionArgument,
+) -> bool {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            spec_expression_supports_stateful_memory_refinement(expression)
+        }
+        // The refinement rule deliberately excludes algebraic values and
+        // array snapshots until their stateful refinement laws are explicit.
+        SpecPureFunctionArgument::Algebraic(_) | SpecPureFunctionArgument::ArrayRef { .. } => false,
     }
 }
 
@@ -1913,9 +1926,9 @@ fn spec_expression_is_state_independent(expression: &SpecExpression) -> bool {
             spec_expression_is_state_independent(value)
                 && spec_expression_is_state_independent(body)
         }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().all(spec_expression_is_state_independent)
-        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .all(spec_pure_function_argument_is_state_independent),
         SpecExpression::PointerOffset {
             pointer, elements, ..
         } => {
@@ -1923,6 +1936,36 @@ fn spec_expression_is_state_independent(expression: &SpecExpression) -> bool {
                 && spec_expression_is_state_independent(elements)
         }
         _ => false,
+    }
+}
+
+fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionArgument) -> bool {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            spec_expression_is_state_independent(expression)
+        }
+        SpecPureFunctionArgument::Algebraic(expression) => {
+            spec_algebraic_expression_is_state_independent(expression)
+        }
+        SpecPureFunctionArgument::ArrayRef { .. } => false,
+    }
+}
+
+fn spec_algebraic_expression_is_state_independent(expression: &SpecAlgebraicExpression) -> bool {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_) => true,
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
+            fields.iter().all(spec_expression_is_state_independent)
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            spec_algebraic_expression_is_state_independent(scrutinee)
+                && arms
+                    .iter()
+                    .all(|arm| spec_algebraic_expression_is_state_independent(&arm.body))
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .all(spec_pure_function_argument_is_state_independent),
     }
 }
 

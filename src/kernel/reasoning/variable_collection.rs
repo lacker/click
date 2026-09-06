@@ -512,7 +512,7 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
         }
         SpecExpression::PureFunctionApplication { arguments, .. } => {
             for argument in arguments {
-                collect_spec_expression_bitvector_variables(argument, variables);
+                collect_spec_function_argument_bitvector_variables(argument, variables);
             }
         }
         SpecExpression::LoopEntrySnapshot(expression) => {
@@ -629,6 +629,31 @@ fn collect_spec_algebraic_expression_bitvector_variables(
             for arm in arms {
                 collect_spec_algebraic_expression_bitvector_variables(&arm.body, variables);
             }
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_function_argument_bitvector_variables(argument, variables);
+            }
+        }
+    }
+}
+
+fn collect_spec_function_argument_bitvector_variables(
+    argument: &SpecPureFunctionArgument,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables)
+        }
+        SpecPureFunctionArgument::Algebraic(expression) => {
+            collect_spec_algebraic_expression_bitvector_variables(expression, variables)
+        }
+        SpecPureFunctionArgument::ArrayRef {
+            memory, pointer, ..
+        } => {
+            collect_spec_memory_bitvector_variables(memory, variables);
+            collect_spec_expression_bitvector_variables(pointer, variables);
         }
     }
 }
@@ -1102,6 +1127,12 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         Bitvector32Term::PureFunctionApplication { arguments, .. } => {
             for argument in arguments {
                 collect_bitvector_variables(argument, variables);
+            }
+        }
+        Bitvector32Term::ClickFunctionApplication { .. } => {}
+        Bitvector32Term::AlgebraicMatch { arms, .. } => {
+            for arm in arms {
+                collect_bitvector_variables(&arm.body, variables);
             }
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => {

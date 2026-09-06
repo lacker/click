@@ -4572,6 +4572,8 @@ fn rewrite_int32_term_by_exact_equality(
                     .collect(),
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
@@ -5404,6 +5406,8 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
             Bitvector32Term::PureFunctionApplication { arguments, .. } => arguments
                 .iter()
                 .any(|argument| term_depth_exceeds(argument, remaining - 1)),
+            Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. } => false,
         }
     }
     fn condition_depth_exceeds(condition: &ConditionTerm, remaining: usize) -> bool {

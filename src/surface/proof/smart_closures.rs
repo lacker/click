@@ -248,6 +248,19 @@ impl<'a> Proof<'a> {
         exclude_exact_goal: bool,
         introduced_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
+        self.try_simp_closure_after_direct_with_surfaces_and_function_unfold(
+            exclude_exact_goal,
+            introduced_surfaces,
+            true,
+        )
+    }
+
+    fn try_simp_closure_after_direct_with_surfaces_and_function_unfold(
+        &self,
+        exclude_exact_goal: bool,
+        introduced_surfaces: &[ClickProposition],
+        allow_function_unfold: bool,
+    ) -> Result<Option<Self>, ClickError> {
         if let Some(surface_goal) = self.surface_goal()
             && let Some(proof) = self.try_selected_unchanged_load_forall_goal(surface_goal, &[])
         {
@@ -289,13 +302,20 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(anchored));
         }
-        if let Some(rewritten) =
-            self.try_indexed_goal_equality_rewrite_closure_excluding(exclude_exact_goal)
+        if let Some(rewritten) = self.try_indexed_goal_equality_rewrite_closure_excluding(
+            exclude_exact_goal,
+            allow_function_unfold,
+        ) {
+            return Ok(Some(rewritten));
+        }
+        if allow_function_unfold
+            && let Some(rewritten) =
+                self.try_introduced_equality_then_function_unfold_closure(introduced_surfaces)?
         {
             return Ok(Some(rewritten));
         }
         if let Some(surface_goal) = self.surface_goal()
-            && let Some(proof) = self.try_outcome_snapshot_transport_closure(surface_goal)?
+            && let Some(proof) = self.try_snapshot_transport_closure(surface_goal)?
         {
             return Ok(Some(proof));
         }
@@ -317,7 +337,90 @@ impl<'a> Proof<'a> {
         if let Some(split) = self.try_upper_bound_split_closure(introduced_surfaces)? {
             return Ok(Some(split));
         }
-        self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces)
+        // Enter logical binders before looking for function applications.
+        // An application below `forall (x)` cannot be checked until `intro`
+        // has associated the surface name `x` with its fresh kernel variable.
+        // The recursive structural call retains that checked `Intro` step and
+        // then discovers applications in the now-focused body goal.
+        if let Some(structural) =
+            self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces)?
+        {
+            return Ok(Some(structural));
+        }
+        if allow_function_unfold
+            && let Some(unfolded) = self.try_function_unfold_simp_closure(introduced_surfaces)?
+        {
+            return Ok(Some(unfolded));
+        }
+        Ok(None)
+    }
+
+    /// Uses one explicitly supplied equality before unfolding applications in
+    /// the rewritten goal. Loop preservation supplies its entry invariants in
+    /// this list: rewriting through that checked premise first changes a
+    /// function-entry comparison into the smaller loop-entry frame that the
+    /// defining equation can expose.
+    fn try_introduced_equality_then_function_unfold_closure(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        for surface in introduced_surfaces {
+            for oriented in
+                std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
+            {
+                let Some(rewritten) =
+                    attempt::candidate_outcome(self.apply_step(ProofStep::Rewrite(oriented)))?
+                else {
+                    continue;
+                };
+                if let Some(closed) = rewritten.try_direct_logical_closure()? {
+                    return Ok(Some(closed));
+                }
+                if let Some(closed) =
+                    rewritten.try_function_unfold_simp_closure(introduced_surfaces)?
+                {
+                    return Ok(Some(closed));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Tries the finite set of function applications already present in the
+    /// current surface goal. Each accepted candidate is a normal checked
+    /// `unfold` step. The recursive simplification attempt disables further
+    /// function unfolding, so recursive definitions cannot turn this smart
+    /// tactic into unbounded evaluation.
+    fn try_function_unfold_simp_closure(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(surface_goal) = self.surface_goal() else {
+            return Ok(None);
+        };
+        let applications =
+            pure_theorems::click_function_applications(surface_goal, introduced_surfaces);
+        let mut proof = self.clone();
+        for application in applications {
+            let attempted = proof.apply_step(ProofStep::UnfoldFunction(application));
+            let Some(unfolded) = attempt::candidate_outcome(attempted)? else {
+                continue;
+            };
+            proof = unfolded;
+            if let Some(closed) = proof.try_direct_logical_closure()? {
+                return Ok(Some(closed));
+            }
+            if let Some(closed) = proof
+                .try_simp_closure_after_direct_with_surfaces_and_function_unfold(
+                    false,
+                    introduced_surfaces,
+                    false,
+                )?
+            {
+                return Ok(Some(closed));
+            }
+        }
+        Ok(None)
     }
 
     /// Splits one atomic goal at the final index licensed by an available
@@ -764,18 +867,42 @@ impl<'a> Proof<'a> {
         None
     }
 
-    /// Tries the focused branch outcome goal itself as one explicit fact transport
-    /// from a recorded program point. The candidate space is the execution's
+    /// Tries the focused branch goal itself as one explicit fact transport from a
+    /// recorded program point. This also applies to proposition scopes opened
+    /// mid-execution, such as loop-invariant initialization and preservation.
+    /// The candidate space is the execution's
     /// recorded-snapshot index, not the ambient fact set; every accepted source
     /// and target is checked by `TransportUsing` on this immutable Proof.
-    pub(super) fn try_outcome_snapshot_transport_closure(
+    pub(super) fn try_snapshot_transport_closure(
         &self,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Self>, ClickError> {
-        let Some(view) = self.outcome_fixed_state_view() else {
+        // Outcome transport is a general closure. Extending it to fixed-state
+        // and mid-execution proposition scopes is needed specifically for
+        // opaque Click applications whose snapshot arguments cannot be
+        // refreshed by ordinary field rewrites. Keep non-function goals on
+        // their established, more local rewrite plans.
+        if self.outcome_fixed_state_view().is_none() {
+            let mut calls = BTreeSet::new();
+            crate::surface::validation::collect_click_function_calls_in_proposition(
+                surface_goal,
+                &mut calls,
+            );
+            if calls.is_empty() {
+                return Ok(None);
+            }
+        }
+        let Some(view) = self.premise_fixed_state_view() else {
             return Ok(None);
         };
         if let Some(source) = old_reflexive_transport_source(surface_goal) {
+            if self.execution_proposition_fixed_state_view().is_some()
+                && let Some(proof) =
+                    self.try_planned_execution_proposition_fact_transport(&source, surface_goal)?
+                && proof.is_complete()
+            {
+                return Ok(Some(proof));
+            }
             match self.search_fixed_state_fact_transport(&source, surface_goal, std::iter::empty())
             {
                 Ok(proof) if proof.is_complete() => return Ok(Some(proof)),
@@ -1584,7 +1711,7 @@ impl<'a> Proof<'a> {
     /// rewrite so their recursive connective proof remains visible.
     #[cfg(test)]
     pub(super) fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
-        self.try_indexed_goal_equality_rewrite_closure_excluding(false)
+        self.try_indexed_goal_equality_rewrite_closure_excluding(false, true)
     }
 
     /// The closure above; with `exclude_goal_fact`, the goal's own ambient
@@ -1594,6 +1721,7 @@ impl<'a> Proof<'a> {
     pub(super) fn try_indexed_goal_equality_rewrite_closure_excluding(
         &self,
         exclude_goal_fact: bool,
+        allow_function_unfold: bool,
     ) -> Option<Self> {
         // A judgment stated at an execution frontier (a `have` inside an
         // `open` scope, before the outcome) reads its spellings from the
@@ -1666,6 +1794,16 @@ impl<'a> Proof<'a> {
                         .ok()
                         .flatten()
                         .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                        .or_else(|| {
+                            allow_function_unfold
+                                .then(|| {
+                                    rewritten
+                                        .try_function_unfold_simp_closure(&[])
+                                        .ok()
+                                        .flatten()
+                                })
+                                .flatten()
+                        })
                     {
                         return Some(closed);
                     }

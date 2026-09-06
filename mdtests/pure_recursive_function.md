@@ -1,4 +1,4 @@
-# well-founded pure recursion evaluates concrete arguments
+# well-founded pure recursion can be unfolded at concrete arguments
 
 The recursive edge is taken only when `n >= 1`, so `n - 1` is a
 nonnegative measure strictly smaller than `n`.
@@ -11,7 +11,13 @@ function countdown(n: int32) -> int32
 }
 
 theorem countdown_three_is_zero() {
-    ensures countdown(3) == 0 by simp;
+    ensures countdown(3) == 0 by {
+        unfold(countdown(3));
+        unfold(countdown(3 - 1));
+        unfold(countdown((3 - 1) - 1));
+        unfold(countdown(((3 - 1) - 1) - 1));
+        normalize();
+    }
 }
 ```
 

@@ -64,7 +64,6 @@ Specification and proof:
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 - [Add algebraic data types to specifications](algebraic-data-types.md)
 - [Give function-pointer values checked named contracts](function-contracts.md)
-- [Correlate repeated matches of one symbolic algebraic value](algebraic-match-path-correlation.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
@@ -80,7 +79,7 @@ normal tooling-first policy and should then be added to this list.
 - [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 25
+## Functionality gaps: 24
 
 C language coverage:
 
@@ -106,7 +105,6 @@ Semantics and reasoning:
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
 - [Add algebraic data types to specifications](algebraic-data-types.md)
 - [Give function-pointer values checked named contracts](function-contracts.md)
-- [Correlate repeated matches of one symbolic algebraic value](algebraic-match-path-correlation.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)
 

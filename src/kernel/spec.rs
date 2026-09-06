@@ -39,6 +39,13 @@ struct SpecAlgebraicCasePath {
     obligations: Vec<ProofObligation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpecPureFunctionArgumentPath {
+    value: PureFunctionArgument,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+}
+
 pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     state: &CState,
     proposition: &SpecProposition,
@@ -606,6 +613,9 @@ fn evaluate_spec_algebraic_at_state(
             obligations: Vec::new(),
         }]),
         SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            if !spec_algebraic_result_match_arms_are_well_formed(&scrutinee.algebraic_type, arms) {
+                return Err(ExecutionLimit::Paths);
+            }
             let mut result = Vec::new();
             for scrutinee_path in evaluate_spec_algebraic_at_state(
                 state,
@@ -614,6 +624,81 @@ fn evaluate_spec_algebraic_at_state(
                 assumptions,
                 budget,
             )? {
+                if !matches!(
+                    scrutinee_path.value.node,
+                    AlgebraicTermNode::Constructor { .. }
+                ) {
+                    let mut lowered_arms = Vec::with_capacity(arms.len());
+                    let mut facts = scrutinee_path.facts.clone();
+                    let mut obligations = scrutinee_path.obligations.clone();
+                    for arm in arms {
+                        let Some(schema) = scrutinee_path
+                            .value
+                            .algebraic_type
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == arm.variant)
+                        else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        let bindings = symbolic_algebraic_bindings(schema, budget);
+                        let mut body_state = state.clone();
+                        for (binding, value) in arm.bindings.iter().zip(&bindings) {
+                            body_state.locals.set(binding.clone(), value.clone());
+                        }
+                        let body_assumptions =
+                            assumptions_with_path_context(assumptions, &facts, &obligations);
+                        let mut body_paths = evaluate_spec_algebraic_at_state(
+                            &body_state,
+                            &arm.body,
+                            loop_entry_state,
+                            &body_assumptions,
+                            budget,
+                        )?;
+                        let Some(body_path) = body_paths.pop() else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        if !body_paths.is_empty() {
+                            return Err(ExecutionLimit::Paths);
+                        }
+                        // Arm-local facts and obligations are valid only when this
+                        // constructor is selected. A symbolic match must not leak
+                        // them into its unconditional enclosing path.
+                        if !body_path.facts.is_empty() || !body_path.obligations.is_empty() {
+                            return Err(ExecutionLimit::Paths);
+                        }
+                        let Some((merged_facts, merged_obligations)) =
+                            merge_execution_pure_facts_and_obligations(
+                                &facts,
+                                &obligations,
+                                &body_path.facts,
+                                &body_path.obligations,
+                                assumptions,
+                            )
+                        else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        facts = merged_facts;
+                        obligations = merged_obligations;
+                        lowered_arms.push(AlgebraicResultMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings,
+                            body: body_path.value,
+                        });
+                    }
+                    result.push(SpecAlgebraicPath {
+                        value: AlgebraicTerm {
+                            algebraic_type: expression.algebraic_type.clone(),
+                            node: AlgebraicTermNode::Match {
+                                scrutinee: Box::new(scrutinee_path.value),
+                                arms: lowered_arms,
+                            },
+                        },
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
                 for case in algebraic_case_paths(&scrutinee_path.value, budget)? {
                     let Some(arm) = arms.iter().find(|arm| arm.variant == case.variant) else {
                         return Err(ExecutionLimit::Paths);
@@ -735,7 +820,109 @@ fn evaluate_spec_algebraic_at_state(
             budget.check_path_width(paths.len())?;
             Ok(paths)
         }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
+            let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+            for argument in arguments {
+                let mut next = Vec::new();
+                for (values, facts, obligations) in paths {
+                    let path_assumptions =
+                        assumptions_with_path_context(assumptions, &facts, &obligations);
+                    for argument_path in evaluate_spec_pure_function_argument_paths(
+                        state,
+                        argument,
+                        loop_entry_state,
+                        &path_assumptions,
+                        budget,
+                    )? {
+                        let Some((merged_facts, merged_obligations)) =
+                            merge_execution_pure_facts_and_obligations(
+                                &facts,
+                                &obligations,
+                                &argument_path.facts,
+                                &argument_path.obligations,
+                                assumptions,
+                            )
+                        else {
+                            continue;
+                        };
+                        let mut values = values.clone();
+                        values.push(argument_path.value);
+                        next.push((values, merged_facts, merged_obligations));
+                    }
+                }
+                paths = next;
+            }
+            Ok(paths
+                .into_iter()
+                .map(|(arguments, facts, obligations)| SpecAlgebraicPath {
+                    value: AlgebraicTerm {
+                        algebraic_type: expression.algebraic_type.clone(),
+                        node: AlgebraicTermNode::PureFunctionApplication {
+                            name: name.clone(),
+                            arguments,
+                        },
+                    },
+                    facts,
+                    obligations,
+                })
+                .collect())
+        }
     }
+}
+
+fn symbolic_algebraic_bindings(
+    variant: &AlgebraicVariantType,
+    budget: &mut ExecutionBudget,
+) -> Vec<CValue> {
+    variant
+        .fields
+        .iter()
+        .map(|c_type| {
+            let variable = Variable(budget.next_kernel_variable);
+            budget.next_kernel_variable += 1;
+            symbolic_call_result(*c_type, variable)
+        })
+        .collect()
+}
+
+fn spec_algebraic_result_match_arms_are_well_formed(
+    algebraic_type: &AlgebraicType,
+    arms: &[SpecAlgebraicResultMatchArm],
+) -> bool {
+    arms.len() == algebraic_type.variants.len()
+        && algebraic_type.variants.iter().all(|variant| {
+            arms.iter()
+                .filter(|arm| arm.variant == variant.name)
+                .count()
+                == 1
+                && arms
+                    .iter()
+                    .find(|arm| arm.variant == variant.name)
+                    .is_some_and(|arm| {
+                        arm.bindings.len() == variant.fields.len()
+                            && arm.binding_types == variant.fields
+                    })
+        })
+}
+
+fn spec_scalar_match_arms_are_well_formed(
+    algebraic_type: &AlgebraicType,
+    arms: &[SpecAlgebraicMatchArm],
+) -> bool {
+    arms.len() == algebraic_type.variants.len()
+        && algebraic_type.variants.iter().all(|variant| {
+            arms.iter()
+                .filter(|arm| arm.variant == variant.name)
+                .count()
+                == 1
+                && arms
+                    .iter()
+                    .find(|arm| arm.variant == variant.name)
+                    .is_some_and(|arm| {
+                        arm.bindings.len() == variant.fields.len()
+                            && arm.binding_types == variant.fields
+                    })
+        })
 }
 
 fn algebraic_case_paths(
@@ -749,18 +936,12 @@ fn algebraic_case_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }]),
-        AlgebraicTermNode::Variable(_) => {
+        AlgebraicTermNode::Variable(_)
+        | AlgebraicTermNode::Match { .. }
+        | AlgebraicTermNode::PureFunctionApplication { .. } => {
             let mut paths = Vec::with_capacity(term.algebraic_type.variants.len());
             for variant in term.algebraic_type.variants.iter() {
-                let fields = variant
-                    .fields
-                    .iter()
-                    .map(|c_type| {
-                        let variable = Variable(budget.next_kernel_variable);
-                        budget.next_kernel_variable += 1;
-                        symbolic_call_result(*c_type, variable)
-                    })
-                    .collect::<Vec<_>>();
+                let fields = symbolic_algebraic_bindings(variant, budget);
                 let constructor = AlgebraicTerm {
                     algebraic_type: term.algebraic_type.clone(),
                     node: AlgebraicTermNode::Constructor {
@@ -1140,6 +1321,44 @@ mod sequence_term_tests {
 mod algebraic_term_tests {
     use super::*;
 
+    fn maybe_type() -> AlgebraicType {
+        AlgebraicType {
+            name: "Maybe".to_string(),
+            arguments: vec![CType::Int32],
+            variants: vec![
+                AlgebraicVariantType {
+                    name: "None".to_string(),
+                    fields: Vec::new(),
+                },
+                AlgebraicVariantType {
+                    name: "Some".to_string(),
+                    fields: vec![CType::Int32],
+                },
+            ]
+            .into(),
+        }
+    }
+
+    fn value_or_match(scrutinee: SpecAlgebraicExpression) -> SpecExpression {
+        SpecExpression::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                SpecAlgebraicMatchArm {
+                    variant: "None".to_string(),
+                    bindings: Vec::new(),
+                    binding_types: Vec::new(),
+                    body: SpecExpression::Value(int32(9)),
+                },
+                SpecAlgebraicMatchArm {
+                    variant: "Some".to_string(),
+                    bindings: vec!["value".to_string()],
+                    binding_types: vec![CType::Int32],
+                    body: SpecExpression::CExpression(CExpression::Variable("value".to_string())),
+                },
+            ],
+        }
+    }
+
     fn wide_type(variant_count: usize) -> AlgebraicType {
         AlgebraicType {
             name: "Wide".to_string(),
@@ -1204,6 +1423,210 @@ mod algebraic_term_tests {
             &variable.algebraic_type.variants,
             &constructor.algebraic_type.variants,
         ));
+    }
+
+    #[test]
+    fn match_on_symbolic_algebraic_value_remains_one_expression_path() {
+        let algebraic_type = maybe_type();
+        let expression = value_or_match(SpecAlgebraicExpression {
+            algebraic_type: algebraic_type.clone(),
+            node: SpecAlgebraicExpressionNode::Variable(Variable(41)),
+        });
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &CState::new(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("a pure match is a symbolic expression, not a path split");
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].facts.is_empty());
+        assert!(paths[0].obligations.is_empty());
+        let CValue::Int32(Bitvector32Term::AlgebraicMatch { scrutinee, arms }) = &paths[0].value
+        else {
+            panic!("unknown match should lower to an algebraic-match term");
+        };
+        assert_eq!(
+            scrutinee.as_ref(),
+            &AlgebraicTerm {
+                algebraic_type,
+                node: AlgebraicTermNode::Variable(Variable(41)),
+            }
+        );
+        assert_eq!(arms.len(), 2);
+        assert_eq!(arms[0].variant, "None");
+        assert_eq!(arms[1].variant, "Some");
+    }
+
+    #[test]
+    fn algebraic_result_match_on_symbolic_value_remains_one_term() {
+        let algebraic_type = maybe_type();
+        let expression = SpecAlgebraicExpression {
+            algebraic_type: algebraic_type.clone(),
+            node: SpecAlgebraicExpressionNode::Match {
+                scrutinee: Box::new(SpecAlgebraicExpression {
+                    algebraic_type: algebraic_type.clone(),
+                    node: SpecAlgebraicExpressionNode::Variable(Variable(52)),
+                }),
+                arms: vec![
+                    SpecAlgebraicResultMatchArm {
+                        variant: "None".to_string(),
+                        bindings: Vec::new(),
+                        binding_types: Vec::new(),
+                        body: Box::new(SpecAlgebraicExpression {
+                            algebraic_type: algebraic_type.clone(),
+                            node: SpecAlgebraicExpressionNode::Constructor {
+                                variant: "None".to_string(),
+                                fields: Vec::new(),
+                            },
+                        }),
+                    },
+                    SpecAlgebraicResultMatchArm {
+                        variant: "Some".to_string(),
+                        bindings: vec!["value".to_string()],
+                        binding_types: vec![CType::Int32],
+                        body: Box::new(SpecAlgebraicExpression {
+                            algebraic_type: algebraic_type.clone(),
+                            node: SpecAlgebraicExpressionNode::Constructor {
+                                variant: "Some".to_string(),
+                                fields: vec![SpecExpression::CExpression(CExpression::Variable(
+                                    "value".to_string(),
+                                ))],
+                            },
+                        }),
+                    },
+                ],
+            },
+        };
+        let paths = evaluate_spec_algebraic_at_state(
+            &CState::new(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("an algebraic-valued match should stay symbolic");
+
+        assert_eq!(paths.len(), 1);
+        assert!(matches!(
+            paths[0].value.node,
+            AlgebraicTermNode::Match { .. }
+        ));
+        assert!(paths[0].value.is_well_formed());
+    }
+
+    #[test]
+    fn match_on_known_constructor_reduces_to_selected_arm() {
+        let algebraic_type = maybe_type();
+        let expression = value_or_match(SpecAlgebraicExpression {
+            algebraic_type: algebraic_type.clone(),
+            node: SpecAlgebraicExpressionNode::Constructor {
+                variant: "Some".to_string(),
+                fields: vec![SpecExpression::Value(int32(7))],
+            },
+        });
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &CState::new(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("a match on a checked constructor should reduce");
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].value, int32(7));
+    }
+
+    #[test]
+    fn pure_function_application_is_not_eagerly_evaluated() {
+        let expression = SpecExpression::PureFunctionApplication {
+            name: "increment".to_string(),
+            arguments: vec![SpecPureFunctionArgument::Value(SpecExpression::Value(
+                int32(41),
+            ))],
+            result_type: CType::Int32,
+        };
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &CState::new(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("pure calls should lower to logical applications");
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0].value,
+            CValue::Int32(Bitvector32Term::ClickFunctionApplication {
+                name: "increment".to_string(),
+                arguments: vec![PureFunctionArgument::Value(int32(41))],
+            })
+        );
+    }
+
+    #[test]
+    fn pure_function_application_retains_symbolic_algebraic_argument() {
+        let algebraic_type = maybe_type();
+        let expression = SpecExpression::PureFunctionApplication {
+            name: "tag".to_string(),
+            arguments: vec![SpecPureFunctionArgument::Algebraic(
+                SpecAlgebraicExpression {
+                    algebraic_type: algebraic_type.clone(),
+                    node: SpecAlgebraicExpressionNode::Variable(Variable(61)),
+                },
+            )],
+            result_type: CType::Int32,
+        };
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &CState::new(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("an ADT argument should remain one typed term");
+
+        assert_eq!(paths.len(), 1);
+        let CValue::Int32(Bitvector32Term::ClickFunctionApplication { arguments, .. }) =
+            &paths[0].value
+        else {
+            panic!("pure call should remain an application");
+        };
+        assert_eq!(
+            arguments,
+            &[PureFunctionArgument::Algebraic(AlgebraicTerm {
+                algebraic_type,
+                node: AlgebraicTermNode::Variable(Variable(61)),
+            })]
+        );
+    }
+
+    #[test]
+    fn malformed_symbolic_match_is_rejected_before_term_construction() {
+        let algebraic_type = maybe_type();
+        let mut expression = value_or_match(SpecAlgebraicExpression {
+            algebraic_type,
+            node: SpecAlgebraicExpressionNode::Variable(Variable(70)),
+        });
+        let SpecExpression::AlgebraicMatch { arms, .. } = &mut expression else {
+            unreachable!()
+        };
+        arms.pop();
+
+        assert!(
+            evaluate_spec_expression_paths_with_loop_entry(
+                &CState::new(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::new(),
+            )
+            .is_err()
+        );
     }
 }
 
@@ -1739,6 +2162,9 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             obligations: Vec::new(),
         }],
         SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            if !spec_scalar_match_arms_are_well_formed(&scrutinee.algebraic_type, arms) {
+                return Err(ExecutionLimit::Paths);
+            }
             let mut paths = Vec::new();
             for scrutinee_path in evaluate_spec_algebraic_at_state(
                 state,
@@ -1747,6 +2173,96 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 assumptions,
                 budget,
             )? {
+                if !matches!(
+                    scrutinee_path.value.node,
+                    AlgebraicTermNode::Constructor { .. }
+                ) {
+                    let mut lowered_arms = Vec::with_capacity(arms.len());
+                    let mut result_type = None;
+                    let mut facts = scrutinee_path.facts.clone();
+                    let mut obligations = scrutinee_path.obligations.clone();
+                    for arm in arms {
+                        let Some(schema) = scrutinee_path
+                            .value
+                            .algebraic_type
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == arm.variant)
+                        else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        let bindings = symbolic_algebraic_bindings(schema, budget);
+                        let mut body_state = state.clone();
+                        for (binding, value) in arm.bindings.iter().zip(&bindings) {
+                            body_state.locals.set(binding.clone(), value.clone());
+                        }
+                        let body_assumptions =
+                            assumptions_with_path_context(assumptions, &facts, &obligations);
+                        let mut body_paths = evaluate_spec_expression_paths_with_loop_entry(
+                            &body_state,
+                            &arm.body,
+                            loop_entry_state,
+                            &body_assumptions,
+                            budget,
+                        )?;
+                        let Some(body_path) = body_paths.pop() else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        if !body_paths.is_empty() {
+                            return Err(ExecutionLimit::Paths);
+                        }
+                        // These side conditions would need to be guarded by the
+                        // arm's constructor test. Reject instead of asserting them
+                        // unconditionally beside the symbolic match term.
+                        if !body_path.facts.is_empty() || !body_path.obligations.is_empty() {
+                            return Err(ExecutionLimit::Paths);
+                        }
+                        let body_type = body_path.value.c_type();
+                        if result_type.is_some_and(|expected| expected != body_type) {
+                            return Err(ExecutionLimit::Paths);
+                        }
+                        result_type = Some(body_type);
+                        let Some(body) = c_value_bitvector_term(&body_path.value) else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        let Some((merged_facts, merged_obligations)) =
+                            merge_execution_pure_facts_and_obligations(
+                                &facts,
+                                &obligations,
+                                &body_path.facts,
+                                &body_path.obligations,
+                                assumptions,
+                            )
+                        else {
+                            return Err(ExecutionLimit::Paths);
+                        };
+                        facts = merged_facts;
+                        obligations = merged_obligations;
+                        lowered_arms.push(AlgebraicBitvectorMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings,
+                            body,
+                        });
+                    }
+                    let Some(result_type) = result_type else {
+                        return Err(ExecutionLimit::Paths);
+                    };
+                    let Some(value) = c_value_from_bitvector_term(
+                        result_type,
+                        Bitvector32Term::AlgebraicMatch {
+                            scrutinee: Box::new(scrutinee_path.value),
+                            arms: lowered_arms,
+                        },
+                    ) else {
+                        return Err(ExecutionLimit::Paths);
+                    };
+                    paths.push(SpecExpressionPath {
+                        value,
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
                 for case in algebraic_case_paths(&scrutinee_path.value, budget)? {
                     let Some(arm) = arms.iter().find(|arm| arm.variant == case.variant) else {
                         return Err(ExecutionLimit::Paths);
@@ -2096,16 +2612,19 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             }
             paths
         }
-        SpecExpression::PureFunctionApplication { name, arguments } => {
-            evaluate_spec_pure_function_application_paths(
-                state,
-                name,
-                arguments,
-                loop_entry_state,
-                assumptions,
-                budget,
-            )?
-        }
+        SpecExpression::PureFunctionApplication {
+            name,
+            arguments,
+            result_type,
+        } => evaluate_spec_pure_function_application_paths(
+            state,
+            name,
+            arguments,
+            *result_type,
+            loop_entry_state,
+            assumptions,
+            budget,
+        )?,
         SpecExpression::LoopEntrySnapshot(expression) => {
             if let Some(loop_entry_state) = loop_entry_state {
                 evaluate_spec_expression_paths_with_loop_entry(
@@ -2161,6 +2680,28 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     },
                     SpecMemory::Fixed(memory) => memory,
                 };
+                if assumptions.should_keep_spec_loads_symbolic() {
+                    paths.extend(
+                        evaluate_spec_memory_load_paths(
+                            memory,
+                            pointer,
+                            *value_type,
+                            pointer_path.facts,
+                            pointer_path.obligations,
+                            assumptions,
+                            &mut budget.next_kernel_variable,
+                        )
+                        .into_iter()
+                        .filter_map(c_expression_path_value),
+                    );
+                    continue;
+                }
+
+                // Executable contract and invariant checking preserves the
+                // historical one-term spec semantics. It must not branch over
+                // the current C heap's unresolved aliases: those branches are
+                // C execution choices, while this expression denotes a pure
+                // load from one specified snapshot.
                 let mut facts = pointer_path.facts;
                 let mut value = None;
                 if let Some(stored) = memory.known_union_value(&pointer, *value_type) {
@@ -2219,7 +2760,8 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
 fn evaluate_spec_pure_function_application_paths(
     state: &CState,
     name: &str,
-    arguments: &[SpecExpression],
+    arguments: &[SpecPureFunctionArgument],
+    result_type: CType,
     loop_entry_state: Option<&CState>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
@@ -2229,16 +2771,13 @@ fn evaluate_spec_pure_function_application_paths(
         let mut next = Vec::new();
         for (values, facts, obligations) in paths {
             let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-            for argument_path in evaluate_spec_expression_paths_with_loop_entry(
+            for argument_path in evaluate_spec_pure_function_argument_paths(
                 state,
                 argument,
                 loop_entry_state,
                 &path_assumptions,
                 budget,
             )? {
-                let CValue::Int32(value) = argument_path.value else {
-                    continue;
-                };
                 if let Some((merged_facts, merged_obligations)) =
                     merge_execution_pure_facts_and_obligations(
                         &facts,
@@ -2249,7 +2788,7 @@ fn evaluate_spec_pure_function_application_paths(
                     )
                 {
                     let mut merged_values = values.clone();
-                    merged_values.push(value);
+                    merged_values.push(argument_path.value);
                     next.push((merged_values, merged_facts, merged_obligations));
                 }
             }
@@ -2258,58 +2797,127 @@ fn evaluate_spec_pure_function_application_paths(
     }
     let mut results = Vec::new();
     for (arguments, facts, obligations) in paths {
-        // An application of a defined function to constants is its body at
-        // those constants: the definition is evaluated, never searched, and
-        // the call budget bounds the unfolding.
-        if let Some(definition) = assumptions.pure_function_definition(name)
-            && definition.parameters.len() == arguments.len()
-            && arguments
-                .iter()
-                .all(|argument| matches!(argument, Bitvector32Term::Constant(_)))
-        {
-            budget.consume_function_call()?;
-            let mut body_state = state.clone();
-            for (parameter, argument) in definition.parameters.iter().zip(&arguments) {
-                body_state
-                    .locals
-                    .set(parameter.clone(), CValue::Int32(argument.clone()));
-            }
-            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-            for body_path in evaluate_spec_expression_paths_with_loop_entry(
-                &body_state,
-                &definition.body,
-                loop_entry_state,
-                &path_assumptions,
-                budget,
-            )? {
-                if let Some((merged_facts, merged_obligations)) =
-                    merge_execution_pure_facts_and_obligations(
-                        &facts,
-                        &obligations,
-                        &body_path.facts,
-                        &body_path.obligations,
-                        assumptions,
-                    )
-                {
-                    results.push(SpecExpressionPath {
-                        value: body_path.value,
-                        facts: merged_facts,
-                        obligations: merged_obligations,
-                    });
-                }
-            }
-            continue;
-        }
-        results.push(SpecExpressionPath {
-            value: CValue::Int32(Bitvector32Term::PureFunctionApplication {
+        let Some(value) = c_value_from_bitvector_term(
+            result_type,
+            Bitvector32Term::ClickFunctionApplication {
                 name: name.to_string(),
                 arguments,
-            }),
+            },
+        ) else {
+            continue;
+        };
+        results.push(SpecExpressionPath {
+            value,
             facts,
             obligations,
         });
     }
     Ok(results)
+}
+
+fn evaluate_spec_pure_function_argument_paths(
+    state: &CState,
+    argument: &SpecPureFunctionArgument,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            Ok(evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                expression,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPureFunctionArgumentPath {
+                value: PureFunctionArgument::Value(path.value),
+                facts: path.facts,
+                obligations: path.obligations,
+            })
+            .collect())
+        }
+        SpecPureFunctionArgument::Algebraic(expression) => Ok(evaluate_spec_algebraic_at_state(
+            state,
+            expression,
+            loop_entry_state,
+            assumptions,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| SpecPureFunctionArgumentPath {
+            value: PureFunctionArgument::Algebraic(path.value),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()),
+        SpecPureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => {
+            let memory = match memory {
+                SpecMemory::Current => state.memory(),
+                SpecMemory::FunctionEntry | SpecMemory::LoopEntry => {
+                    let Some(entry) = loop_entry_state else {
+                        return Ok(Vec::new());
+                    };
+                    entry.memory()
+                }
+                SpecMemory::Fixed(memory) => memory,
+            };
+            Ok(evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                pointer,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPureFunctionArgumentPath {
+                value: PureFunctionArgument::ArrayRef {
+                    memory: memory.clone(),
+                    pointer: path.value,
+                    element_type: *element_type,
+                },
+                facts: path.facts,
+                obligations: path.obligations,
+            })
+            .collect())
+        }
+    }
+}
+
+fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => Some(term.clone()),
+        CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+fn c_value_from_bitvector_term(c_type: CType, term: Bitvector32Term) -> Option<CValue> {
+    Some(match c_type {
+        CType::Int16 => CValue::Int16(term),
+        CType::Int32 => CValue::Int32(term),
+        CType::UInt8 => CValue::UInt8(term),
+        CType::UInt16 => CValue::UInt16(term),
+        CType::UInt32 => CValue::UInt32(term),
+        CType::Int64 => CValue::Int64(term),
+        CType::UInt64 => CValue::UInt64(term),
+        CType::Float32 => CValue::Float32(term),
+        CType::Float64 => CValue::Float64(term),
+        _ => return None,
+    })
 }
 
 pub(super) fn evaluate_spec_pointer_offset_paths(

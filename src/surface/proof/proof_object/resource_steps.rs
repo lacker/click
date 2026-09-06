@@ -1,7 +1,6 @@
 //! Predicate and resource unfold/fold/observation steps.
 
 use super::*;
-use crate::surface::validation::describe_click_type;
 
 impl<'a> Proof<'a> {
     pub(super) fn apply_function_unfold(
@@ -113,13 +112,6 @@ impl<'a> Proof<'a> {
                     application.name
                 ))
             })?;
-        if definition.return_type() != &ClickType::C(C0Type::Int32) {
-            return Err(self.step_error(format!(
-                "pure function `unfold` currently requires an int32 result; `{}` returns {}",
-                definition.name(),
-                describe_click_type(definition.return_type())
-            )));
-        }
         if application.arguments.len() != definition.parameters().len() {
             return Err(self.step_error(format!(
                 "function `{}` expects {} argument(s), got {}",
@@ -129,88 +121,53 @@ impl<'a> Proof<'a> {
             )));
         }
 
-        let substitutions = definition
-            .parameters()
-            .iter()
-            .zip(&application.arguments)
-            .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let surface_body = substitute_contract_expression(definition.body(), &substitutions)
-            .map_err(|message| {
-                self.step_error(format!(
-                    "could not instantiate function `{}` for `unfold`: {message}",
-                    application.name
-                ))
-            })?;
-
-        let mut argument_active_functions = BTreeSet::new();
-        for argument in &application.arguments {
-            collect_click_function_calls(argument, &mut argument_active_functions);
-        }
-        let argument_values = application
+        let checked_arguments = application
             .arguments
             .iter()
-            .map(|argument| {
-                evaluate_contract_expression_with_environment(
-                    &values,
-                    &array_refs,
-                    pre_state,
-                    state,
-                    result,
-                    self.facts().assumptions(),
-                    argument,
-                    predicate_environment,
-                    click_function_environment,
-                    recorded_snapshots,
-                    &mut argument_active_functions,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|message| {
-                self.step_error(format!(
-                    "could not lower function `unfold` arguments: {message}"
-                ))
-            })?;
-        let arguments = argument_values
-            .into_iter()
-            .map(|value| match value {
-                CValue::Int32(value) => Ok(value),
-                other => Err(self.step_error(format!(
-                    "pure function `unfold` currently requires int32 arguments, got {other:?}"
-                ))),
-            })
+            .map(|argument| self.substitute_goal_surface_bindings_in_expression(argument))
             .collect::<Result<Vec<_>, _>>()?;
-
-        let mut unfolding_active_functions = BTreeSet::new();
-        collect_click_function_calls(&surface_body, &mut unfolding_active_functions);
-        let unfolded = evaluate_contract_expression_with_environment(
+        let checked_substitutions = definition
+            .parameters()
+            .iter()
+            .zip(&checked_arguments)
+            .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let checked_body =
+            substitute_contract_expression(definition.body(), &checked_substitutions).map_err(
+                |message| {
+                    self.step_error(format!(
+                        "could not instantiate function `{}` for `unfold`: {message}",
+                        application.name
+                    ))
+                },
+            )?;
+        let checked_equality = ClickProposition::Comparison {
+            left: ContractExpression::Call {
+                name: application.name.clone(),
+                arguments: checked_arguments,
+            },
+            operator: ComparisonOperator::Equal,
+            right: checked_body,
+        };
+        let equality = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+            &checked_equality,
+            self.facts().assumptions(),
             &values,
             &array_refs,
             pre_state,
             state,
             result,
-            self.facts().assumptions(),
-            &surface_body,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
-            recorded_snapshots,
-            &mut unfolding_active_functions,
+            &BTreeSet::from([application.name.clone()]),
         )
         .map_err(|message| {
             self.step_error(format!(
-                "could not unfold function `{}`: {message}",
+                "could not lower defining equation for `{}`: {message}",
                 application.name
             ))
         })?;
-        let equality = comparison_proposition(
-            CValue::Int32(Bitvector32Term::PureFunctionApplication {
-                name: application.name.clone(),
-                arguments,
-            }),
-            ComparisonOperator::Equal,
-            unfolded,
-        )
-        .map_err(|error| self.step_error(error.message))?;
 
         let mut facts = self.facts().clone();
         let added_facts = (!facts.contains_top_level(&equality))
@@ -222,6 +179,21 @@ impl<'a> Proof<'a> {
         let branch = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => {
                 let original_surface = goal.surface.as_deref().cloned();
+                let substitutions = definition
+                    .parameters()
+                    .iter()
+                    .zip(&application.arguments)
+                    .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                let surface_body =
+                    substitute_contract_expression(definition.body(), &substitutions).map_err(
+                        |message| {
+                            self.step_error(format!(
+                            "could not instantiate surface function `{}` for `unfold`: {message}",
+                            application.name
+                        ))
+                        },
+                    )?;
                 let surface_application = ContractExpression::Call {
                     name: application.name.clone(),
                     arguments: application.arguments.clone(),
@@ -235,13 +207,15 @@ impl<'a> Proof<'a> {
                     rewrite_click_proposition_by_surface_equality(surface, &surface_equality)
                 });
                 let kernel = if let Some(surface) = &surface {
+                    let checked_surface =
+                        self.substitute_goal_surface_bindings_in_proposition(surface)?;
                     let mut opaque_calls = BTreeSet::new();
                     crate::surface::validation::collect_click_function_calls_in_proposition(
-                        surface,
+                        &checked_surface,
                         &mut opaque_calls,
                     );
                     lower_fixed_state_proposition_through_kernel_with_opaque_calls(
-                        surface,
+                        &checked_surface,
                         facts.assumptions(),
                         &values,
                         &array_refs,

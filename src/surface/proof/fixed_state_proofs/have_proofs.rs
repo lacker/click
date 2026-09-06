@@ -139,9 +139,14 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<Proposition, String> {
-    let assumptions = &assumptions
-        .clone()
-        .with_pure_function_definitions(click_function_environment.spec_definitions().clone());
+    let mut click_function_calls = BTreeSet::new();
+    crate::surface::validation::collect_click_function_calls_in_proposition(
+        proposition,
+        &mut click_function_calls,
+    );
+    let symbolic_load_assumptions =
+        (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
+    let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
     let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
     let spec = crate::surface::lowering::elaborate_fixed_state_proposition(
         proposition,
@@ -184,9 +189,11 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<CValue, String> {
-    let assumptions = &assumptions
-        .clone()
-        .with_pure_function_definitions(click_function_environment.spec_definitions().clone());
+    let mut click_function_calls = BTreeSet::new();
+    crate::surface::validation::collect_click_function_calls(expression, &mut click_function_calls);
+    let symbolic_load_assumptions =
+        (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
+    let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
     let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
     let spec = crate::surface::lowering::elaborate_fixed_state_expression(
         expression,
@@ -1040,6 +1047,126 @@ pub(in crate::surface::proof) fn prove_pure_proposition_case_in_state(
                     std::slice::from_ref(name),
                 ) {
                     surface_logical_goal = unfolded;
+                }
+            }
+            ProofTactic::UnfoldFunction(application) => {
+                let definition = click_function_environment
+                    .get(&application.name)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: unknown pure function `{}` in `unfold`",
+                            application.name
+                        ))
+                    })?;
+                if application.arguments.len() != definition.parameters().len() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: function `{}` expects {} argument(s), got {}",
+                        definition.name(),
+                        definition.parameters().len(),
+                        application.arguments.len()
+                    )));
+                }
+
+                if goal.is_none() {
+                    let lowered = prelowered_goal.cloned().map(Ok).unwrap_or_else(|| {
+                        lower_fixed_state_proposition_with_values(
+                            proposition,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            recorded_snapshots,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                        ))
+                    })?;
+                    fact = Some(lowered.clone());
+                    goal = Some(lowered);
+                }
+
+                let substitutions = definition
+                    .parameters()
+                    .iter()
+                    .zip(&application.arguments)
+                    .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                let body = substitute_contract_expression(definition.body(), &substitutions)
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not instantiate function `{}` for `unfold`: {message}",
+                            application.name
+                        ))
+                    })?;
+                let equality = ClickProposition::Comparison {
+                    left: ContractExpression::Call {
+                        name: application.name.clone(),
+                        arguments: application.arguments.clone(),
+                    },
+                    operator: ComparisonOperator::Equal,
+                    right: body,
+                };
+                let assumptions = assumptions_from_propositions(&available);
+                let lowered_equality =
+                    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                        &equality,
+                        &assumptions,
+                        &values,
+                        &array_refs,
+                        pre_state,
+                        state,
+                        result,
+                        recorded_snapshots,
+                        predicate_environment,
+                        click_function_environment,
+                        &BTreeSet::from([application.name.clone()]),
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower defining equation for `{}`: {message}",
+                            application.name
+                        ))
+                    })?;
+                if !available.contains(&lowered_equality) {
+                    available.push(lowered_equality);
+                }
+
+                if let Some(rewritten) =
+                    rewrite_click_proposition_by_surface_equality(&surface_logical_goal, &equality)
+                {
+                    surface_logical_goal = rewritten;
+                    let assumptions = assumptions_from_propositions(&available);
+                    let mut opaque_calls = BTreeSet::new();
+                    crate::surface::validation::collect_click_function_calls_in_proposition(
+                        &surface_logical_goal,
+                        &mut opaque_calls,
+                    );
+                    goal = Some(
+                        lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                            &surface_logical_goal,
+                            &assumptions,
+                            &values,
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            recorded_snapshots,
+                            predicate_environment,
+                            click_function_environment,
+                            &opaque_calls,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not refresh the goal after function `unfold`: {message}"
+                            ))
+                        })?,
+                    );
                 }
             }
             ProofTactic::ApplyTheorem(application) => {

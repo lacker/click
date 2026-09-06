@@ -1133,6 +1133,8 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
                 hash_memory_blind_bitvector(argument, hasher);
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => std::hash::Hash::hash(term, hasher),
     }
 }
 
@@ -1305,6 +1307,8 @@ fn collect_bitvector_memory_load_keys(
                 collect_bitvector_memory_load_keys(argument, keys);
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => {}
     }
 }
 
@@ -1395,6 +1399,7 @@ impl PureFactContext {
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
             && self.transport_memory_load_condition_facts
                 == other.transport_memory_load_condition_facts
+            && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
     }
 
     fn fingerprint<T: std::hash::Hash>(tag: u64, value: &T) -> u64 {
@@ -1430,11 +1435,11 @@ impl PureFactContext {
         if self.allow_symbolic_contract_loads {
             fingerprint ^= 1 << 60;
         }
+        if self.keep_spec_loads_symbolic {
+            fingerprint ^= 1 << 62;
+        }
         if self.transport_memory_load_condition_facts {
             fingerprint ^= 1 << 61;
-        }
-        if !self.pure_function_definitions.is_empty() {
-            fingerprint ^= Self::fingerprint(4, &self.pure_function_definitions.fingerprint());
         }
         self.content_fingerprint = fingerprint;
     }
@@ -2272,31 +2277,6 @@ impl PureFactContext {
 
     /// The pure function definitions the kernel evaluates constant
     /// applications by. A context carries one table.
-    pub(crate) fn with_pure_function_definitions(
-        mut self,
-        definitions: std::sync::Arc<crate::kernel::primitives::SpecPureFunctionDefinitions>,
-    ) -> Self {
-        if self.pure_function_definitions.fingerprint() == definitions.fingerprint() {
-            return self;
-        }
-        if !self.pure_function_definitions.is_empty() {
-            self.content_fingerprint ^=
-                Self::fingerprint(4, &self.pure_function_definitions.fingerprint());
-        }
-        if !definitions.is_empty() {
-            self.content_fingerprint ^= Self::fingerprint(4, &definitions.fingerprint());
-        }
-        self.pure_function_definitions = definitions;
-        self
-    }
-
-    pub(super) fn pure_function_definition(
-        &self,
-        name: &str,
-    ) -> Option<&crate::kernel::primitives::SpecPureFunctionDefinition> {
-        self.pure_function_definitions.get(name)
-    }
-
     pub(crate) fn prefer_symbolic_external_loads(mut self) -> Self {
         if !self.prefer_symbolic_external_loads {
             self.prefer_symbolic_external_loads = true;
@@ -2319,6 +2299,18 @@ impl PureFactContext {
 
     pub(crate) fn should_force_symbolic_external_loads(&self) -> bool {
         self.force_symbolic_external_loads
+    }
+
+    pub(crate) fn keep_spec_loads_symbolic(mut self) -> Self {
+        if !self.keep_spec_loads_symbolic {
+            self.keep_spec_loads_symbolic = true;
+            self.content_fingerprint ^= 1 << 62;
+        }
+        self
+    }
+
+    pub(super) fn should_keep_spec_loads_symbolic(&self) -> bool {
+        self.keep_spec_loads_symbolic
     }
 
     pub(crate) fn proves_exact(&self, proposition: &Proposition) -> bool {
@@ -3719,6 +3711,10 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
         Bitvector32Term::PureFunctionApplication { arguments, .. } => {
             arguments.iter().any(bitvector_term_contains_load)
         }
+        Bitvector32Term::ClickFunctionApplication { .. } => true,
+        Bitvector32Term::AlgebraicMatch { arms, .. } => arms
+            .iter()
+            .any(|arm| bitvector_term_contains_load(&arm.body)),
     }
 }
 

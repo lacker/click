@@ -57,9 +57,10 @@ unchanged.
   exhaustive elimination, and pure positive/negative mdtests that require no
   C translation unit; and
 - typed kernel algebraic terms with one variable node per arbitrary value,
-  constructor nodes with checked instantiated schemas, retained match nodes,
-  and shared datatype definitions. The earlier eager encoding as an integer
-  tag plus fields for every possible variant has been removed; and
+  constructor nodes with checked instantiated schemas, symbolic match nodes,
+  opaque typed pure-function applications, and shared datatype definitions.
+  The earlier eager encoding as an integer tag plus fields for every possible
+  variant has been removed; and
 - checked constructor formation, disjointness, congruence, and injectivity,
   with explicit surface certificates and indexed exact-hypothesis lookup.
 
@@ -73,11 +74,10 @@ Still open are algebraic `let` bindings and quantifiers, resource arguments,
 theorem application with algebraic arguments, nested and strictly positive
 recursive fields, structural decreases and induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
-Opaque and recursive algebraic-valued pure function calls also wait on that
-recursive representation; nonrecursive calls are elaborated compositionally.
-Generated structural induction principles remain to be added as checked
-datatype rules. Correlation between repeated matches of one symbolic value is
-tracked in [algebraic-match-path-correlation.md](algebraic-match-path-correlation.md).
+Recursive algebraic-valued pure functions also wait on that recursive
+representation. All pure calls remain logical applications during lowering;
+an explicit checked `unfold` step exposes one defining equation. Generated
+structural induction principles remain to be added as checked datatype rules.
 
 ## Violated invariant
 

@@ -3286,9 +3286,6 @@ impl PredicateEnvironment {
 struct ClickFunctionEnvironment {
     definitions: BTreeMap<String, ClickFunctionDefinition>,
     algebraic_type_definitions: BTreeMap<String, AlgebraicTypeDefinition>,
-    /// The definitions in spec form, for the kernel to evaluate constant
-    /// applications by; elaborated once with the environment.
-    spec_definitions: std::sync::Arc<crate::kernel::SpecPureFunctionDefinitions>,
 }
 
 impl ClickFunctionEnvironment {
@@ -3300,7 +3297,7 @@ impl ClickFunctionEnvironment {
         definitions: &[ClickFunctionDefinition],
         algebraic_type_definitions: &[AlgebraicTypeDefinition],
     ) -> Self {
-        let mut environment = Self {
+        Self {
             definitions: definitions
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
@@ -3309,17 +3306,7 @@ impl ClickFunctionEnvironment {
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
-            spec_definitions: std::sync::Arc::default(),
-        };
-        environment.spec_definitions =
-            std::sync::Arc::new(crate::kernel::SpecPureFunctionDefinitions::new(
-                lowering::elaborate_pure_function_definitions(&environment),
-            ));
-        environment
-    }
-
-    fn spec_definitions(&self) -> &std::sync::Arc<crate::kernel::SpecPureFunctionDefinitions> {
-        &self.spec_definitions
+        }
     }
 
     fn get(&self, name: &str) -> Option<&ClickFunctionDefinition> {

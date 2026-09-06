@@ -8,6 +8,7 @@ use super::{
 use crate::kernel::*;
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// Persistent semantic fact state shared by every checked proof kind.
@@ -30,9 +31,10 @@ pub(crate) struct ProofFacts {
     /// condition check. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
-    /// Exact true int32 equalities keyed by constant, variable, or interned
-    /// memory-load operands. Keys have bounded comparison cost; a goal-local
-    /// rewrite search walks only atoms named by the goal and their buckets.
+    /// Exact true int32 equalities keyed by constant, variable, opaque Click
+    /// application, or interned memory-load operands. Keys have bounded
+    /// comparison cost; a goal-local rewrite search walks only atoms named by
+    /// the goal and their buckets.
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     by_quantified_equivalence:
@@ -75,6 +77,10 @@ struct ImplicationCandidate {
 enum BitvectorEqualityAtomKey {
     Constant(u32),
     Variable(Variable),
+    ClickFunctionApplication {
+        name: String,
+        arguments_hash: u64,
+    },
     MemoryLoad {
         memory: (u32, u32),
         pointer_hash: u64,
@@ -744,6 +750,35 @@ fn bitvector_equality_atom_key(term: &Bitvector32Term) -> Option<BitvectorEquali
     match term {
         Bitvector32Term::Constant(value) => Some(BitvectorEqualityAtomKey::Constant(*value)),
         Bitvector32Term::Variable(variable) => Some(BitvectorEqualityAtomKey::Variable(*variable)),
+        Bitvector32Term::ClickFunctionApplication { name, arguments } => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for argument in arguments {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        0u8.hash(&mut hasher);
+                        value.hash(&mut hasher);
+                    }
+                    PureFunctionArgument::Algebraic(value) => {
+                        1u8.hash(&mut hasher);
+                        value.hash(&mut hasher);
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory,
+                        pointer,
+                        element_type,
+                    } => {
+                        2u8.hash(&mut hasher);
+                        intern_c_memory_ref(memory).arena_id().hash(&mut hasher);
+                        pointer.hash(&mut hasher);
+                        element_type.hash(&mut hasher);
+                    }
+                }
+            }
+            Some(BitvectorEqualityAtomKey::ClickFunctionApplication {
+                name: name.clone(),
+                arguments_hash: hasher.finish(),
+            })
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(pointer.as_ref(), &mut hasher);
@@ -904,6 +939,12 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         Bitvector32Term::PureFunctionApplication { arguments, .. } => {
             for argument in arguments {
                 collect_bitvector_atoms(argument, atoms);
+            }
+        }
+        Bitvector32Term::ClickFunctionApplication { .. } => {}
+        Bitvector32Term::AlgebraicMatch { arms, .. } => {
+            for arm in arms {
+                collect_bitvector_atoms(&arm.body, atoms);
             }
         }
         Bitvector32Term::MemoryLoad(_, pointer) => {

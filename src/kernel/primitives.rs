@@ -130,6 +130,21 @@ pub enum Bitvector32Term {
         name: String,
         arguments: Vec<Bitvector32Term>,
     },
+    /// A Click function application remains a logical term until a checked
+    /// function-unfold step exposes its definition. Unlike the legacy
+    /// bitvector-only application above, Click arguments retain their source
+    /// sorts and state-indexed array references.
+    ClickFunctionApplication {
+        name: String,
+        arguments: Vec<PureFunctionArgument>,
+    },
+    /// Exhaustive elimination of an algebraic value. Unknown scrutinees stay
+    /// symbolic; a checked reduction selects an arm only after the scrutinee
+    /// is known to be a constructor.
+    AlgebraicMatch {
+        scrutinee: Box<AlgebraicTerm>,
+        arms: Vec<AlgebraicBitvectorMatchArm>,
+    },
     MemoryLoad(SharedCMemory, Box<Pointer>),
     /// The 64-bit integer representation of a non-null object pointer under
     /// the LP64 profile.  The term keeps the exact source pointer, so the
@@ -657,47 +672,6 @@ pub enum SpecMemory {
     Fixed(CMemory),
 }
 
-/// A pure Click function's definition in spec form. The kernel evaluates an
-/// application whose arguments are all constants by the body, with the
-/// parameters bound as locals; every call inside the body is an application.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SpecPureFunctionDefinition {
-    pub parameters: Vec<String>,
-    pub body: SpecExpression,
-}
-
-/// The pure function definitions a lowering evaluates under, fingerprinted
-/// once so a fact context carries them at no cost per lowering.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SpecPureFunctionDefinitions {
-    definitions: BTreeMap<String, SpecPureFunctionDefinition>,
-    fingerprint: u64,
-}
-
-impl SpecPureFunctionDefinitions {
-    pub fn new(definitions: BTreeMap<String, SpecPureFunctionDefinition>) -> Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&definitions, &mut hasher);
-        let fingerprint = std::hash::Hasher::finish(&hasher);
-        Self {
-            definitions,
-            fingerprint,
-        }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&SpecPureFunctionDefinition> {
-        self.definitions.get(name)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.definitions.is_empty()
-    }
-
-    pub fn fingerprint(&self) -> u64 {
-        self.fingerprint
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecExpression {
     Value(CValue),
@@ -741,7 +715,8 @@ pub enum SpecExpression {
     },
     PureFunctionApplication {
         name: String,
-        arguments: Vec<SpecExpression>,
+        arguments: Vec<SpecPureFunctionArgument>,
+        result_type: CType,
     },
     LoopEntrySnapshot(Box<SpecExpression>),
     PointerOffset {
@@ -772,6 +747,21 @@ pub enum SpecAlgebraicExpressionNode {
     Match {
         scrutinee: Box<SpecAlgebraicExpression>,
         arms: Vec<SpecAlgebraicResultMatchArm>,
+    },
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<SpecPureFunctionArgument>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecPureFunctionArgument {
+    Value(SpecExpression),
+    Algebraic(SpecAlgebraicExpression),
+    ArrayRef {
+        memory: SpecMemory,
+        pointer: SpecExpression,
+        element_type: CType,
     },
 }
 
@@ -824,6 +814,39 @@ pub enum AlgebraicTermNode {
         variant: String,
         fields: Vec<CValue>,
     },
+    Match {
+        scrutinee: Box<AlgebraicTerm>,
+        arms: Vec<AlgebraicResultMatchArm>,
+    },
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<PureFunctionArgument>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum PureFunctionArgument {
+    Value(CValue),
+    Algebraic(AlgebraicTerm),
+    ArrayRef {
+        memory: CMemory,
+        pointer: CValue,
+        element_type: CType,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicBitvectorMatchArm {
+    pub variant: String,
+    pub bindings: Vec<CValue>,
+    pub body: Bitvector32Term,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicResultMatchArm {
+    pub variant: String,
+    pub bindings: Vec<CValue>,
+    pub body: AlgebraicTerm,
 }
 
 impl AlgebraicTerm {
@@ -849,8 +872,50 @@ impl AlgebraicTerm {
     }
 
     pub(in crate::kernel) fn is_well_formed(&self) -> bool {
-        matches!(&self.node, AlgebraicTermNode::Variable(_))
-            || self.checked_constructor_fields().is_some()
+        match &self.node {
+            AlgebraicTermNode::Variable(_) => true,
+            AlgebraicTermNode::Constructor { .. } => self.checked_constructor_fields().is_some(),
+            AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+                arguments.iter().all(PureFunctionArgument::is_well_formed)
+            }
+            AlgebraicTermNode::Match { scrutinee, arms } => {
+                scrutinee.is_well_formed()
+                    && arms.len() == scrutinee.algebraic_type.variants.len()
+                    && scrutinee.algebraic_type.variants.iter().all(|variant| {
+                        arms.iter()
+                            .filter(|arm| arm.variant == variant.name)
+                            .count()
+                            == 1
+                            && arms
+                                .iter()
+                                .find(|arm| arm.variant == variant.name)
+                                .is_some_and(|arm| {
+                                    arm.bindings.len() == variant.fields.len()
+                                        && arm
+                                            .bindings
+                                            .iter()
+                                            .map(CValue::c_type)
+                                            .eq(variant.fields.iter().copied())
+                                        && arm.body.algebraic_type == self.algebraic_type
+                                        && arm.body.is_well_formed()
+                                })
+                    })
+            }
+        }
+    }
+}
+
+impl PureFunctionArgument {
+    fn is_well_formed(&self) -> bool {
+        match self {
+            Self::Value(_) => true,
+            Self::Algebraic(term) => term.is_well_formed(),
+            Self::ArrayRef {
+                pointer,
+                element_type,
+                ..
+            } => pointer.c_type().is_pointer() && *element_type != CType::Void,
+        }
     }
 }
 
@@ -3137,8 +3202,6 @@ pub struct PureFactContext {
     pub(super) bitvector64_equality_facts: std::sync::Arc<
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>>>,
     >,
-    /// The pure function definitions constant applications evaluate by.
-    pub(super) pure_function_definitions: std::sync::Arc<SpecPureFunctionDefinitions>,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
     /// Exact signed-order bounds keyed by either endpoint — under the term
     /// the fact wrote and, when different, its canonical form as an alias.
@@ -3217,6 +3280,10 @@ pub struct PureFactContext {
     pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
     pub(super) transport_memory_load_condition_facts: bool,
+    /// Proof-side specification lowering keeps an unresolved load as one
+    /// symbolic term. Executable invariant checking leaves this false so it
+    /// can still enumerate alias cases.
+    pub(super) keep_spec_loads_symbolic: bool,
 }
 
 impl PartialEq for PureFactContext {
@@ -3233,6 +3300,7 @@ impl PartialEq for PureFactContext {
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
             && self.transport_memory_load_condition_facts
                 == other.transport_memory_load_condition_facts
+            && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
     }
 }
 

@@ -690,6 +690,8 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                     collect_shallow_term_variables(argument, variables);
                 }
             }
+            Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. } => {}
             // The memory snapshot may contain a large symbolic state. Only
             // variables outside nested loads can be the surrounding
             // quantified index. Variables in the loaded address belong to
@@ -926,6 +928,8 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                     collect_loads(argument, loads);
                 }
             }
+            Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. } => {}
             Bitvector32Term::Constant(_)
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_)

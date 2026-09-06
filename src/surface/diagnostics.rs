@@ -1568,6 +1568,10 @@ pub(super) fn describe_bitvector_with_context(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Bitvector32Term::ClickFunctionApplication { name, .. } => {
+            format!("{name}(<typed Click arguments>)")
+        }
+        Bitvector32Term::AlgebraicMatch { .. } => "match <algebraic value> { ... }".to_string(),
         Bitvector32Term::MemoryLoad(_, pointer) => {
             format!("load({})", describe_pointer(pointer, parameters, arguments))
         }

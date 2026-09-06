@@ -305,7 +305,12 @@ Pure-function calls can be opened explicitly with
 `unfold(function(args))`. This simple operation exposes one defining equation
 at the current proof state. It never recursively expands the resulting call
 tree; a recursive call in the selected body remains opaque until a later
-explicit unfold.
+explicit unfold. Lowering never executes a pure Click function, even when all
+of its arguments are concrete: the application remains a typed logical term
+until such an unfold step is requested. Likewise, `match` over an unknown
+algebraic value remains one symbolic match term; it does not split C execution
+paths. A match reduces directly only when its scrutinee is already a checked
+constructor.
 
 Theorems can be reused by explicit application:
 

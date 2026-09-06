@@ -1119,6 +1119,33 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
                 collect_bitvector_bound_variables(argument, variables);
             }
         }
+        Bitvector32Term::ClickFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        collect_c_value_bound_variables(value, variables)
+                    }
+                    PureFunctionArgument::Algebraic(term) => {
+                        collect_algebraic_bound_variables(term, variables)
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory, pointer, ..
+                    } => {
+                        collect_memory_bound_variables(memory, variables);
+                        collect_c_value_bound_variables(pointer, variables);
+                    }
+                }
+            }
+        }
+        Bitvector32Term::AlgebraicMatch { scrutinee, arms } => {
+            collect_algebraic_bound_variables(scrutinee, variables);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_c_value_bound_variables(binding, variables);
+                }
+                collect_bitvector_bound_variables(&arm.body, variables);
+            }
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             // Memory snapshots are immutable kernel values; their free
             // variable collector remains the source of truth for snapshot
@@ -1163,6 +1190,44 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         | Bitvector32Term::Float64Binary { left, right, .. } => {
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
+        }
+    }
+}
+
+fn collect_algebraic_bound_variables(term: &AlgebraicTerm, variables: &mut BTreeSet<Variable>) {
+    match &term.node {
+        AlgebraicTermNode::Variable(_) => {}
+        AlgebraicTermNode::Constructor { fields, .. } => {
+            for field in fields {
+                collect_c_value_bound_variables(field, variables);
+            }
+        }
+        AlgebraicTermNode::Match { scrutinee, arms } => {
+            collect_algebraic_bound_variables(scrutinee, variables);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_c_value_bound_variables(binding, variables);
+                }
+                collect_algebraic_bound_variables(&arm.body, variables);
+            }
+        }
+        AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        collect_c_value_bound_variables(value, variables)
+                    }
+                    PureFunctionArgument::Algebraic(term) => {
+                        collect_algebraic_bound_variables(term, variables)
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory, pointer, ..
+                    } => {
+                        collect_memory_bound_variables(memory, variables);
+                        collect_c_value_bound_variables(pointer, variables);
+                    }
+                }
+            }
         }
     }
 }
@@ -1264,6 +1329,40 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
                             .collect(),
                     }
                 }
+                AlgebraicTermNode::Match { scrutinee, arms } => AlgebraicTermNode::Match {
+                    scrutinee: Box::new(substitute_bitvector_variable_in_algebraic_term(
+                        scrutinee, from, to,
+                    )),
+                    arms: arms
+                        .iter()
+                        .map(|arm| AlgebraicResultMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings: arm
+                                .bindings
+                                .iter()
+                                .map(|binding| {
+                                    substitute_bitvector_variable_in_c_value(binding, from, to)
+                                })
+                                .collect(),
+                            body: substitute_bitvector_variable_in_algebraic_term(
+                                &arm.body, from, to,
+                            ),
+                        })
+                        .collect(),
+                },
+                AlgebraicTermNode::PureFunctionApplication { name, arguments } => {
+                    AlgebraicTermNode::PureFunctionApplication {
+                        name: name.clone(),
+                        arguments: arguments
+                            .iter()
+                            .map(|argument| {
+                                substitute_bitvector_variable_in_pure_function_argument(
+                                    argument, from, to,
+                                )
+                            })
+                            .collect(),
+                    }
+                }
             },
         }),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
@@ -1281,6 +1380,43 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::CState(state) => {
             Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
         }
+    }
+}
+
+fn substitute_bitvector_variable_in_algebraic_term(
+    term: &AlgebraicTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> AlgebraicTerm {
+    let Term::Algebraic(term) =
+        substitute_bitvector_variable_in_term(&Term::Algebraic(term.clone()), from, to)
+    else {
+        unreachable!()
+    };
+    term
+}
+
+fn substitute_bitvector_variable_in_pure_function_argument(
+    argument: &PureFunctionArgument,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> PureFunctionArgument {
+    match argument {
+        PureFunctionArgument::Value(value) => {
+            PureFunctionArgument::Value(substitute_bitvector_variable_in_c_value(value, from, to))
+        }
+        PureFunctionArgument::Algebraic(term) => PureFunctionArgument::Algebraic(
+            substitute_bitvector_variable_in_algebraic_term(term, from, to),
+        ),
+        PureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => PureFunctionArgument::ArrayRef {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_c_value(pointer, from, to),
+            element_type: *element_type,
+        },
     }
 }
 
@@ -1773,6 +1909,17 @@ fn substitute_bitvector_variable_in_spec_algebraic_expression(
                     .collect(),
             }
         }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
+            SpecAlgebraicExpressionNode::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
     };
     SpecAlgebraicExpression {
         algebraic_type: expression.algebraic_type.clone(),
@@ -1953,17 +2100,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
-        SpecExpression::PureFunctionApplication { name, arguments } => {
-            SpecExpression::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        substitute_bitvector_variable_in_spec_expression(argument, from, to)
-                    })
-                    .collect(),
-            }
-        }
+        SpecExpression::PureFunctionApplication {
+            name,
+            arguments,
+            result_type,
+        } => SpecExpression::PureFunctionApplication {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
+                })
+                .collect(),
+            result_type: *result_type,
+        },
         SpecExpression::LoopEntrySnapshot(expression) => {
             SpecExpression::LoopEntrySnapshot(Box::new(
                 substitute_bitvector_variable_in_spec_expression(expression, from, to),
@@ -1992,6 +2142,30 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
+        },
+    }
+}
+
+fn substitute_bitvector_variable_in_spec_function_argument(
+    argument: &SpecPureFunctionArgument,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecPureFunctionArgument {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
+            substitute_bitvector_variable_in_spec_expression(expression, from, to),
+        ),
+        SpecPureFunctionArgument::Algebraic(expression) => SpecPureFunctionArgument::Algebraic(
+            substitute_bitvector_variable_in_spec_algebraic_expression(expression, from, to),
+        ),
+        SpecPureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => SpecPureFunctionArgument::ArrayRef {
+            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_spec_expression(pointer, from, to),
+            element_type: *element_type,
         },
     }
 }
@@ -3167,6 +3341,34 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
                     .collect(),
             }
         }
+        Bitvector32Term::ClickFunctionApplication { name, arguments } => {
+            Bitvector32Term::ClickFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_bitvector_variable_in_pure_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
+        Bitvector32Term::AlgebraicMatch { scrutinee, arms } => Bitvector32Term::AlgebraicMatch {
+            scrutinee: Box::new(substitute_bitvector_variable_in_algebraic_term(
+                scrutinee, from, to,
+            )),
+            arms: arms
+                .iter()
+                .map(|arm| AlgebraicBitvectorMatchArm {
+                    variant: arm.variant.clone(),
+                    bindings: arm
+                        .bindings
+                        .iter()
+                        .map(|binding| substitute_bitvector_variable_in_c_value(binding, from, to))
+                        .collect(),
+                    body: substitute_bitvector_variable(&arm.body, from, to),
+                })
+                .collect(),
+        },
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(
                 memory, from, to,
@@ -3741,6 +3943,8 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
                             .collect(),
                     }
                 }
+                AlgebraicTermNode::Match { .. }
+                | AlgebraicTermNode::PureFunctionApplication { .. } => term.node.clone(),
             },
         }),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
@@ -4605,6 +4809,17 @@ fn substitute_pointer_variable_in_spec_algebraic_expression(
                     .collect(),
             }
         }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
+            SpecAlgebraicExpressionNode::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_pointer_variable_in_spec_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
     };
     SpecAlgebraicExpression {
         algebraic_type: expression.algebraic_type.clone(),
@@ -4735,17 +4950,20 @@ fn substitute_pointer_variable_in_spec_expression(
                 body, from, to,
             )),
         },
-        SpecExpression::PureFunctionApplication { name, arguments } => {
-            SpecExpression::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        substitute_pointer_variable_in_spec_expression(argument, from, to)
-                    })
-                    .collect(),
-            }
-        }
+        SpecExpression::PureFunctionApplication {
+            name,
+            arguments,
+            result_type,
+        } => SpecExpression::PureFunctionApplication {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    substitute_pointer_variable_in_spec_function_argument(argument, from, to)
+                })
+                .collect(),
+            result_type: *result_type,
+        },
         SpecExpression::LoopEntrySnapshot(expression) => {
             SpecExpression::LoopEntrySnapshot(Box::new(
                 substitute_pointer_variable_in_spec_expression(expression, from, to),
@@ -4774,6 +4992,30 @@ fn substitute_pointer_variable_in_spec_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
+        },
+    }
+}
+
+fn substitute_pointer_variable_in_spec_function_argument(
+    argument: &SpecPureFunctionArgument,
+    from: Variable,
+    to: &Pointer,
+) -> SpecPureFunctionArgument {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
+            substitute_pointer_variable_in_spec_expression(expression, from, to),
+        ),
+        SpecPureFunctionArgument::Algebraic(expression) => SpecPureFunctionArgument::Algebraic(
+            substitute_pointer_variable_in_spec_algebraic_expression(expression, from, to),
+        ),
+        SpecPureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => SpecPureFunctionArgument::ArrayRef {
+            memory: substitute_pointer_variable_in_spec_memory(memory, from, to),
+            pointer: substitute_pointer_variable_in_spec_expression(pointer, from, to),
+            element_type: *element_type,
         },
     }
 }

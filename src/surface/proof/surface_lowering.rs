@@ -161,6 +161,27 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
+                let view = self
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                lower_fixed_state_proposition_with_assumptions(
+                    &surface,
+                    self.facts().assumptions(),
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.recorded_snapshots,
+                    view.predicate_environment,
+                    view.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
             ProofContext::Execution(context) => {
                 let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")

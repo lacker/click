@@ -874,6 +874,8 @@ fn alpha_bitvector_key(
                     .collect::<Option<Vec<_>>>()?,
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => return None,
         Bitvector32Term::MemoryLoad(_, pointer) => {
             AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
         }

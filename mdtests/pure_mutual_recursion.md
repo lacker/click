@@ -14,11 +14,24 @@ function odd(n: int32) -> int32
 }
 
 theorem four_is_even() {
-    ensures even(4) == 1 by simp;
+    ensures even(4) == 1 by {
+        unfold(even(4));
+        unfold(odd(4 - 1));
+        unfold(even((4 - 1) - 1));
+        unfold(odd(((4 - 1) - 1) - 1));
+        unfold(even((((4 - 1) - 1) - 1) - 1));
+        normalize();
+    }
 }
 
 theorem three_is_odd() {
-    ensures odd(3) == 1 by simp;
+    ensures odd(3) == 1 by {
+        unfold(odd(3));
+        unfold(even(3 - 1));
+        unfold(odd((3 - 1) - 1));
+        unfold(even(((3 - 1) - 1) - 1));
+        normalize();
+    }
 }
 ```
 

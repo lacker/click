@@ -413,6 +413,13 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                             }
                         }
                     }
+                    Bitvector32Term::ClickFunctionApplication { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. } => {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        term.hash(&mut hasher);
+                        let _ = write!(identity, "click:{:x};", hasher.finish());
+                    }
                     Bitvector32Term::MemoryLoad(_, pointer) => {
                         identity.push_str("load(");
                         tasks.push(HavocIdentityTask::Text(")"));

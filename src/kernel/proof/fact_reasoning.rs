@@ -56,6 +56,8 @@ fn signed_term_interval(
         | Bitvector32Term::MemoryLoad(_, _)
         | Bitvector32Term::PointerAddress(_)
         | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. }
         | Bitvector32Term::Float32Negate(_)
         | Bitvector32Term::Float32Binary { .. }
         | Bitvector32Term::Float64Negate(_)
@@ -311,7 +313,9 @@ fn collect_signed_affine_terms(
         Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
         | Bitvector32Term::PointerAddress(_)
-        | Bitvector32Term::PureFunctionApplication { .. } => {
+        | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => {
             let atom = crate::kernel::eval::canonical_term(term);
             let updated = terms
                 .get(&atom)
@@ -500,7 +504,9 @@ fn signed_affine_term_is_defined(
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::MemoryLoad(_, _)
         | Bitvector32Term::PointerAddress(_)
-        | Bitvector32Term::PureFunctionApplication { .. } => true,
+        | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => true,
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right) => {

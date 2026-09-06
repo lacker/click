@@ -1004,6 +1004,8 @@ impl PureFactContext {
                         .collect(),
                 }
             }
+            Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
             Bitvector32Term::MemoryLoad(memory, pointer) => {
                 Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
             }

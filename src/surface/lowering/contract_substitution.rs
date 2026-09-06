@@ -716,16 +716,51 @@ pub(in crate::surface) fn rewrite_click_proposition_by_surface_equality(
     proposition: &ClickProposition,
     equality: &ClickProposition,
 ) -> Option<ClickProposition> {
-    let ClickProposition::Comparison {
-        left,
-        operator: ComparisonOperator::Equal,
-        right,
-    } = equality
-    else {
-        return None;
-    };
-    let (rewritten, changed) = rewrite_click_proposition_expression(proposition, left, right);
+    let (left, right) = surface_equality_expression_sides(equality)?;
+    let (rewritten, changed) = rewrite_click_proposition_expression(proposition, &left, &right);
     changed.then_some(rewritten)
+}
+
+/// Views an equality recorded at a program point as an equality between two
+/// expressions at that point. This is the expression-level form needed by a
+/// checked rewrite: `at(s, x == y)` permits replacing `at(s, x)` with
+/// `at(s, y)`, but does not permit replacing an unqualified `x`.
+fn surface_equality_expression_sides(
+    equality: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    match equality {
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::Equal,
+            right,
+        } => Some((left.clone(), right.clone())),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => {
+            let (left, right) = surface_equality_expression_sides(proposition)?;
+            Some((
+                expression_at_snapshot(selector, left),
+                expression_at_snapshot(selector, right),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn expression_at_snapshot(
+    selector: &SnapshotSelector,
+    expression: ContractExpression,
+) -> ContractExpression {
+    match expression {
+        // `old` and an explicitly selected `at` are already absolute
+        // snapshots; an enclosing proposition snapshot does not rebase them.
+        ContractExpression::Old(_) | ContractExpression::At { .. } => expression,
+        expression => ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(expression),
+        },
+    }
 }
 
 fn rewrite_click_proposition_expression(

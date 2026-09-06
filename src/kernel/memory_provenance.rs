@@ -3245,6 +3245,8 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                             .map(|argument| Node::Term(argument, depth + 1)),
                     );
                 }
+                Bitvector32Term::ClickFunctionApplication { .. }
+                | Bitvector32Term::AlgebraicMatch { .. } => {}
             },
             Node::Condition(condition, depth) => match condition {
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
@@ -3675,6 +3677,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             tasks.push(AtomicCanonicalizationTask::Visit(argument));
                         }
                     }
+                    Bitvector32Term::ClickFunctionApplication { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. } => results.push(term.clone()),
                 }
             }
             AtomicCanonicalizationTask::VisitCondition(condition) => match condition {
@@ -4315,6 +4319,10 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             Bitvector32Term::PureFunctionApplication { arguments, .. } => {
                 arguments.iter().any(bitvector_has_memory)
             }
+            Bitvector32Term::ClickFunctionApplication { .. } => true,
+            Bitvector32Term::AlgebraicMatch { arms, .. } => {
+                arms.iter().any(|arm| bitvector_has_memory(&arm.body))
+            }
             Bitvector32Term::Constant(_)
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_)
@@ -4525,6 +4533,12 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         Bitvector32Term::PureFunctionApplication { arguments, .. } => {
             for argument in arguments {
                 collect_bitvector_memories(argument, memories);
+            }
+        }
+        Bitvector32Term::ClickFunctionApplication { .. } => {}
+        Bitvector32Term::AlgebraicMatch { arms, .. } => {
+            for arm in arms {
+                collect_bitvector_memories(&arm.body, memories);
             }
         }
     }
@@ -5068,6 +5082,8 @@ fn transport_framed_atomic_bitvector(
                     .collect::<Option<Vec<_>>>()?,
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
     })
 }
 
@@ -5505,6 +5521,8 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                             tasks.push(ExactLoadNormalizationTask::Visit(argument));
                         }
                     }
+                    Bitvector32Term::ClickFunctionApplication { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. } => results.push(term),
                     Bitvector32Term::PointerAddress(_) => results.push(term),
                     load @ Bitvector32Term::MemoryLoad(_, _) => {
                         if !active_loads.insert(load.clone()) {
@@ -5821,6 +5839,8 @@ fn normalize_exact_memory_loads_in_bitvector_recursive(
                     .collect(),
             }
         }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
         Bitvector32Term::PointerAddress(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             if let Some(CValue::Int32(value)) = memory.known_value(pointer)
