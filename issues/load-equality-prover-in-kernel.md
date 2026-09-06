@@ -96,9 +96,9 @@ phase of `sort3`. This means the migration has four concrete obligations:
    assumption-dependent edge. The existing
    `AtomicMemoryLoadEqualityEvidence`/`MemoryDagLoadEqualityEvidence` types are
    the starting point, but their comments correctly note that this typed
-   subset is not yet a complete certificate. Certification and later core
-   consumers must reuse that retained fact; they account for 23 repeated
-   answers in this census.
+   subset is not yet sufficient as standalone retained proof authority.
+   Certification and later core consumers must reuse that retained fact; they
+   account for 23 repeated answers in this census.
 
 The first consumer migration landed after this census. Fixed-state restricted
 `simp` can now follow its explicit equality rewrites with a snapshot-anchored
@@ -135,13 +135,22 @@ is nested, so a resource event owns its own witnesses rather than duplicating
 them on an enclosing contract claim. Contract materialization now uses this
 checked route, and `arena` verifies through the new boundary.
 
-Framed atomic transport is not yet migrated. The bounded-pool regression needs
-a memory-DAG path containing an assumption-dependent `StoreExplicitRange` hop;
-`AtomicMemoryLoadEqualityEvidence::is_fully_typed` correctly rejects that hop,
-so replacing the remaining direct `c_memory_load_is_unchanged` call makes
-`pool_pipeline.contract` fail at `transport`. The global prover and its search
-machinery must remain until that edge and the endpoint bridge described below
-have typed, locally checkable witnesses.
+In this issue, these internal objects are **typed kernel evidence retained in
+the proof object's checked execution and, after finalization, its resulting
+claim**. They are not certificates in the glossary's narrower sense. A
+certificate is the surface-expressible explicit proof serialized by expansion;
+it has no semantic authority until its operations advance the kernel proof
+object. Contract certification is likewise a phase that rechecks retained
+execution evidence, not a separate load-equality checker or proof
+representation.
+
+Framed atomic transport is not yet migrated. Its remaining direct
+`c_memory_load_is_unchanged` call now has typed witnesses for
+`StoreExplicitRange` hops, but the selected DAG path can still finish at a
+snapshot whose loaded cell agrees with the target only after comparing their
+small, bounded snapshot delta. The global prover and its search machinery must
+remain until that terminal comparison and the separate incomplete edge route
+identified below have typed, locally checkable witnesses.
 
 ### `StoreExplicitRange` evidence census (2026-09-05)
 
@@ -177,7 +186,7 @@ by the failing `bounded-pool` migration was a composition projection. Thus a
 direct-fact-only witness handles incidental cases but not the blocker this
 slice exists to remove.
 
-The implemented certificate slice does not introduce a general pointer-in-
+The implemented typed-evidence slice does not introduce a general pointer-in-
 range proof language: the two memberships are structural. A typed store-hop
 witness retains either the exact proposition or the owning `ResourceContext`,
 plus the indexed range pair and its orientation. The composition projection
@@ -186,17 +195,57 @@ does not scan ambient compositions. Checking confirms the named authority,
 the composition's ownership separation when applicable, and the two
 structural memberships; it does not re-run general resource reasoning.
 
-Typing this hop exposed a distinct endpoint obligation. In a replacement
-probe, bounded-pool made 12 framed-transport queries for which the checked
+Typing this hop exposed a distinct endpoint obligation. An initial replacement
+probe reported 12 bounded-pool framed-transport queries for which the checked
 atomic cell resolver returned no DAG equality but the legacy prover returned
-true. All 12 legacy decisions came from `memory_derivations_reach`: that walk
-can stop when its current snapshot and the target are sibling forms whose
-loaded cells match by bounded alias comparison, whereas `MemoryDagCell` can
-currently finish only at one exact common node or a concrete equal value.
-Thus the store-range witness is a completed prerequisite, but deleting the
-last global-prover call additionally requires typed evidence for this
-derivation-path endpoint bridge. It must retain the selected endpoint match;
-the checker must not re-run the bounded alias search.
+true. That count is stale after the typed store-range slice and intervening
+memory-resolution changes: the focused census below observes only one such
+bounded-pool query on `ebaca78b`.
+
+### Framed-transport endpoint census (2026-09-05)
+
+A temporary probe compared the checked atomic resolver with the legacy prover
+at the last direct framed-transport consumer. For every legacy-only success it
+recorded the deciding route, selected derivation endpoint, exact non-local
+snapshot delta, and the first successful disjointness rule for each differing
+cell. The complete example and mdtest fixture harnesses passed with the probe;
+the instrumentation was then removed.
+
+There were nine dynamic legacy-only checks, representing five distinct query
+shapes:
+
+| fixture | dynamic checks | legacy route | bounded delta | cell evidence |
+|---|---:|---|---:|---|
+| `bounded-pool` | 1 | derivation endpoint | 2 | explicit separated ranges |
+| `owned-vector` | 2 | root snapshots | 1 | common-base distinctness |
+| `copy3_array_demo` first query | 2 | root snapshots | 4 | one common-base and three explicit-range distinctions |
+| `copy_n_segment_invariant` | 2 | root snapshots | 1 | common-base distinctness |
+| `copy3_array_demo` second query | 2 | incomplete derivation | none | typed resolver stops one edge before the target |
+
+The first four rows account for seven dynamic checks and one typed-evidence
+shape. The two compared snapshots have identical non-local block and havoc
+metadata and differ in only one, two, or four selected cells. Each differing
+cell is disjoint from the queried load by already-checkable common-base or
+explicit-range evidence. None of these successes depended on matching a
+materialized load source, constant-offset-only reasoning, block distinctness,
+offset disequality, or exact pointer disequality.
+
+This evidence cannot live only as a special DAG endpoint reason: six of the
+seven dynamic uses compare the original root snapshots, while bounded-pool
+uses it between a selected DAG endpoint and the other root. The reusable typed
+evidence should therefore name the two shared snapshot endpoints and the query
+pointer, retain the exact finite non-local delta, and attach typed
+disjointness evidence to every differing cell. When a proof-object transition
+or contract certification consumes it, local validation should confirm that
+the retained entries are the complete delta and validate each named witness;
+it must not search ambient facts or recompute a bounded alias plan. Both direct
+root comparison and terminal DAG comparison can consume this same evidence.
+
+The final `copy3_array_demo` row is not an endpoint-comparison obligation. Its
+legacy derivation walk reaches the exact target, while the typed resolver
+stops at an intermediate node after one checked hop. It needs a separate
+edge-justification census after the bounded-delta evidence lands; folding
+it into snapshot-delta evidence would obscure a missing typed path edge.
 
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
@@ -204,17 +253,18 @@ relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
 depth of only six. The roots are registered load variables whose load
 addresses themselves contain other registered loads. An exact-query cycle
 guard therefore terminates but does not control the branching search. The next
-certificate shape must cover both the framed `StoreExplicitRange` hop and
-typed congruence/equality-path evidence for dependent load addresses; treating
-two registered load variables as direct atomic DAG queries is insufficient
-because their pointers are not structurally equal.
+typed-evidence shape must cover both the framed `StoreExplicitRange` hop and
+congruence/equality-path evidence for dependent load addresses; treating two
+registered load variables as direct atomic DAG queries is insufficient because
+their pointers are not structurally equal.
 
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
 speculative calls without requiring replacement evidence. Owned-vector also
-has only the single positive decision listed above, so its many other probes
-are likewise evidence for deleting, rather than reproducing, the ambient
-search.
+had only one fresh positive decision in the earlier deciding-route census; the
+two identical framed-transport checks in the endpoint census are repeated
+uses of the same bounded-delta shape. Its many other probes are likewise
+evidence for deleting, rather than reproducing, the ambient search.
 
 ## Violated invariant
 
@@ -253,12 +303,14 @@ comparisons do not invoke a framed-load planner.
 - **Partial:** checked resource events own and recheck any checked equality they
   consume, and contract materialization retains its typed equality witnesses
   on the function-claim proof object. `StoreExplicitRange` now retains and
-  checks exact proposition or owned-composition authority, but framed atomic
-  transport still needs typed derivation-endpoint evidence before its final
-  direct global-prover call can migrate.
+  checks exact proposition or owned-composition authority. The remaining
+  framed-transport census found seven dynamic bounded snapshot-delta checks
+  that need one reusable typed evidence form, plus two repeated checks of a
+  separate incomplete typed DAG edge.
 - A surface tactic (transport, frame, or a completion of the call step)
-  records the snapshot-equality fact the kernel needs, as a checkable
-  certificate.
+  advances the proof object with the snapshot-equality fact and its checked
+  evidence. When the tactic is smart, expansion serializes corresponding
+  surface-expressible operations as its certificate.
 - **Partial:** `memory_loads_proven_equal` no longer has the framed-load
   reconstruction fallback, but framed atomic transport remains a direct
   consumer of that prover. Its dependent-load-address congruence search still

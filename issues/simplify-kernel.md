@@ -85,11 +85,15 @@ resource rewrites and observations retain and recheck any checked equality
 they consume, and contract materialization retains its typed witnesses on the
 function-claim proof object. `StoreExplicitRange` hops now retain either their
 exact separation proposition or the owning resource composition, indexed
-range pair, and orientation. One direct framed-transport consumer remains
-because bounded-pool additionally needs a typed endpoint bridge between
-sibling snapshot forms along the selected derivation path. The depth-bounded
-congruence search for registered loads whose addresses themselves contain
-registered loads also remains.
+range pair, and orientation. One direct framed-transport consumer remains. A
+2026-09-05 census of the complete example and mdtest fixture harnesses found
+nine dynamic legacy-only checks: seven are bounded snapshot-delta comparisons
+using common-base or explicit-range cell disjointness, and two repeats of one
+`copy3` query stop at a still-untyped DAG edge before reaching the exact
+target. The bounded-delta evidence must be reusable both at root snapshots and
+at a selected derivation endpoint; it is not a bounded-pool-only endpoint
+special case. The depth-bounded congruence search for registered loads whose
+addresses themselves contain registered loads also remains.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -183,15 +187,18 @@ change an answer.
 2. **Global and dependent load equality**,
    `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
    `memory_loads_proven_equal` has been removed, but framed atomic transport
-   still directly calls the global prover because its bounded-pool derivation
-   path needs a typed sibling-snapshot endpoint bridge. Its
-   `StoreExplicitRange` hop is now typed. The remaining depth guard hit
+   still directly calls the global prover. Its `StoreExplicitRange` hop is now
+   typed. The current fixture census found seven dynamic uses of one bounded
+   snapshot-delta evidence shape, at both root snapshots and a selected DAG
+   endpoint, plus two repeats of one `copy3` query whose typed resolver stops
+   one edge before the exact target. The remaining depth guard hit
    345,653 / 315,061 times in the original depth census. The later
    deciding-route census found that the fallback itself answered only 31 /
    1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
    `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
-   endpoint bridge and dependent registered-load addresses. An exact-query guard
-   terminates but branches into 60,000–120,000 distinct subqueries in the
+   bounded-delta evidence, incomplete DAG edge, and dependent registered-load
+   addresses. An exact-query guard terminates but branches into
+   60,000–120,000 distinct subqueries in the
    owned-string regression, so the replacement must retain typed
    congruence/equality-path evidence rather than substitute another recursion
    tier.
@@ -260,7 +267,7 @@ comparison now use only that narrower predicate for distinctness.
    emits checked proof branches; delete the kernel rule and depth limit.
 5. Move finite context splitting to explicit surface branches/certificates and
    remove the whole-context derivation payload.
-6. Complete the separately measured load-equality certificate migration.
+6. Complete the separately measured load-equality typed-evidence migration.
 7. Remove coarse reentrancy tiers and audit deadline propagation, cycle cuts,
    and negative-memo gating; then delete or accurately rename the incompleteness
    epoch.
@@ -335,9 +342,10 @@ the bound can change what the checker accepts.
 - The finite context split and upper-bound split are surface planning whose
   selected cases are checked explicitly, or are deleted. No checked operation
   clones or scans the complete context merely to validate the split.
-- Global load equality is decided from recorded evidence. Its typed certificate
-  and migration cover fact matching, transport, certification, loops,
-  resources, and other kernel consumers.
+- Global load equality is decided from typed evidence retained by the proof
+  object. Its migration covers fact matching, transport, contract
+  certification, loops, resources, and other kernel consumers. Any
+  surface-expressible expansion remains a certificate in the narrower sense.
 - General pointer distinctness and its exported theorem constructor are
   deleted; no retained constructor discovers a proof by ambient global
   fallback.
