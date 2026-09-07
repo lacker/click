@@ -68,7 +68,12 @@ unchanged.
 - expression-local algebraic `let` bindings with either an explicit
   `ClickType` annotation or inference from constructors and algebraic-returning
   pure functions. Bound values remain symbolic through equality, calls, and
-  `match`.
+  `match`; and
+- acyclic nested algebraic fields and algebraic type arguments, including
+  generic substitution through declarations such as `Present(Maybe<T>)` and
+  applications such as `Holder<Maybe<int32>>`. Symbolic matches bind nested
+  fields as typed algebraic terms, and direct or indirect datatype cycles are
+  rejected pending the recursive slice.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -76,8 +81,8 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic quantifiers, resource arguments, nested and strictly
-positive recursive fields, structural decreases and induction, the library-defined
+Still open are algebraic quantifiers, resource arguments, strictly positive
+recursive fields, structural decreases and induction, the library-defined
 `List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
 Recursive algebraic-valued pure functions also wait on that recursive
 representation. All pure calls remain logical applications during lowering;

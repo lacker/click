@@ -1354,8 +1354,17 @@ fn algebraic_constructor_field_equalities(proposition: &Proposition) -> Option<V
     left_fields
         .iter()
         .zip(right_fields)
-        .map(|(left, right)| {
-            c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
+        .map(|(left, right)| match (left, right) {
+            (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+                c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
+            }
+            (AlgebraicValue::Algebraic(left), AlgebraicValue::Algebraic(right)) => {
+                Some(Proposition::Equal(
+                    Term::Algebraic(left.clone()),
+                    Term::Algebraic(right.clone()),
+                ))
+            }
+            _ => None,
         })
         .collect()
 }

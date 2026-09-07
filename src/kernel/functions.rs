@@ -2167,9 +2167,16 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
 
 fn spec_algebraic_expression_is_state_independent(expression: &SpecAlgebraicExpression) -> bool {
     match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_) => true,
+        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => true,
         SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            fields.iter().all(spec_expression_is_state_independent)
+            fields.iter().all(|field| match field {
+                SpecAlgebraicValue::C(expression) => {
+                    spec_expression_is_state_independent(expression)
+                }
+                SpecAlgebraicValue::Algebraic(expression) => {
+                    spec_algebraic_expression_is_state_independent(expression)
+                }
+            })
         }
         SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
             spec_algebraic_expression_is_state_independent(scrutinee)

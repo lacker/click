@@ -465,28 +465,7 @@ impl Parser {
                 self.position += 1;
                 if self.peek() != Some(&Token::RParen) {
                     loop {
-                        let field_name = self
-                            .peek_ident()
-                            .ok_or_else(|| self.error("expected algebraic variant field type"))?
-                            .to_string();
-                        if type_parameters
-                            .iter()
-                            .any(|parameter| parameter == &field_name)
-                        {
-                            self.position += 1;
-                            fields.push(AlgebraicFieldType::Parameter(field_name));
-                        } else if !is_c_type_keyword(&field_name) {
-                            self.position += 1;
-                            fields.push(AlgebraicFieldType::Algebraic(field_name));
-                        } else {
-                            let parsed = self.parse_type()?;
-                            if !algebraic_field_c_type_supported(parsed.c_type) {
-                                return Err(self.error(
-                                    "algebraic datatype fields must be C scalar or data-pointer values in this slice",
-                                ));
-                            }
-                            fields.push(AlgebraicFieldType::C(parsed.c_type));
-                        }
+                        fields.push(self.parse_algebraic_field_type(&type_parameters)?);
                         match self.peek() {
                             Some(Token::Comma) => self.position += 1,
                             Some(Token::RParen) => break,
@@ -518,6 +497,57 @@ impl Parser {
             type_parameters,
             variants,
         })
+    }
+
+    fn parse_algebraic_field_type(
+        &mut self,
+        type_parameters: &[String],
+    ) -> Result<AlgebraicFieldType, ClickError> {
+        let name = self
+            .peek_ident()
+            .ok_or_else(|| self.error("expected algebraic variant field type"))?
+            .to_string();
+        if type_parameters.iter().any(|parameter| parameter == &name) {
+            self.position += 1;
+            return Ok(AlgebraicFieldType::Parameter(name));
+        }
+        if is_c_type_keyword(&name) {
+            let parsed = self.parse_type()?;
+            if !algebraic_field_c_type_supported(parsed.c_type) {
+                return Err(self.error(
+                    "algebraic datatype fields must be C scalar, data-pointer, or algebraic values",
+                ));
+            }
+            return Ok(AlgebraicFieldType::C(parsed.c_type));
+        }
+
+        self.position += 1;
+        let mut arguments = Vec::new();
+        if self.peek() == Some(&Token::LessThan) {
+            self.position += 1;
+            loop {
+                arguments.push(self.parse_algebraic_field_type(type_parameters)?);
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::GreaterThan) => {
+                        self.position += 1;
+                        break;
+                    }
+                    Some(Token::ShiftRight) => {
+                        self.tokens[self.position] = Token::GreaterThan;
+                        break;
+                    }
+                    Some(token) => {
+                        return Err(self.error(format!(
+                            "expected `,` or `>` after datatype argument, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => return Err(self.error("expected `>` after datatype arguments")),
+                }
+            }
+        }
+        Ok(AlgebraicFieldType::Algebraic { name, arguments })
     }
 
     fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
@@ -4360,7 +4390,16 @@ impl Parser {
                     self.expect(Token::RParen)?;
                 }
                 self.expect(Token::FatArrow)?;
-                let body = self.parse_contract_expression()?;
+                let newly_bound = bindings
+                    .iter()
+                    .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let body = self.parse_contract_expression();
+                for binding in newly_bound {
+                    self.current_contract_bindings.remove(&binding);
+                }
+                let body = body?;
                 arms.push(AlgebraicMatchArm {
                     type_name,
                     variant,
@@ -4662,6 +4701,12 @@ impl Parser {
                         return self.tokens.get(index + 1) == Some(&Token::ColonColon);
                     }
                 }
+                Token::ShiftRight if nested >= 2 => {
+                    nested -= 2;
+                    if nested == 0 {
+                        return self.tokens.get(index + 1) == Some(&Token::ColonColon);
+                    }
+                }
                 _ => {}
             }
             index += 1;
@@ -4676,12 +4721,9 @@ impl Parser {
             self.position += 1;
             loop {
                 let (argument, parsed_c_type) = self.parse_click_type()?;
-                let Some(parsed) = parsed_c_type else {
-                    return Err(
-                        self.error("nested algebraic datatype arguments are not supported yet")
-                    );
-                };
-                if !algebraic_field_c_type_supported(parsed.c_type) {
+                if let Some(parsed) = parsed_c_type
+                    && !algebraic_field_c_type_supported(parsed.c_type)
+                {
                     return Err(self.error("algebraic datatype arguments must be value types"));
                 }
                 arguments.push(argument);
@@ -4689,6 +4731,10 @@ impl Parser {
                     Some(Token::Comma) => self.position += 1,
                     Some(Token::GreaterThan) => {
                         self.position += 1;
+                        break;
+                    }
+                    Some(Token::ShiftRight) => {
+                        self.tokens[self.position] = Token::GreaterThan;
                         break;
                     }
                     Some(token) => {

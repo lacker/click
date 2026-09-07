@@ -1,5 +1,7 @@
 use super::*;
-use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
+use crate::kernel::{
+    AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, PureFunctionArgument,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface) enum SimpProposition {
@@ -316,16 +318,74 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 variant: variant.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| rewrite_c_value(field, rewrite_term, rewrite_pointer))
+                    .map(|field| rewrite_algebraic_value(field, rewrite_term, rewrite_pointer))
                     .collect(),
             },
-            AlgebraicTermNode::Match { .. } | AlgebraicTermNode::PureFunctionApplication { .. } => {
-                term.node.clone()
+            AlgebraicTermNode::Match { scrutinee, arms } => AlgebraicTermNode::Match {
+                scrutinee: Box::new(rewrite_algebraic(scrutinee, rewrite_term, rewrite_pointer)),
+                arms: arms
+                    .iter()
+                    .map(|arm| AlgebraicResultMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm
+                            .bindings
+                            .iter()
+                            .map(|binding| {
+                                rewrite_algebraic_value(binding, rewrite_term, rewrite_pointer)
+                            })
+                            .collect(),
+                        body: rewrite_algebraic(&arm.body, rewrite_term, rewrite_pointer),
+                    })
+                    .collect(),
+            },
+            AlgebraicTermNode::PureFunctionApplication { name, arguments } => {
+                AlgebraicTermNode::PureFunctionApplication {
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            PureFunctionArgument::Value(value) => PureFunctionArgument::Value(
+                                rewrite_c_value(value, rewrite_term, rewrite_pointer),
+                            ),
+                            PureFunctionArgument::Algebraic(value) => {
+                                PureFunctionArgument::Algebraic(rewrite_algebraic(
+                                    value,
+                                    rewrite_term,
+                                    rewrite_pointer,
+                                ))
+                            }
+                            PureFunctionArgument::ArrayRef {
+                                memory,
+                                pointer,
+                                element_type,
+                            } => PureFunctionArgument::ArrayRef {
+                                memory: memory.clone(),
+                                pointer: rewrite_c_value(pointer, rewrite_term, rewrite_pointer),
+                                element_type: *element_type,
+                            },
+                        })
+                        .collect(),
+                }
             }
         };
         AlgebraicTerm {
             algebraic_type: term.algebraic_type.clone(),
             node,
+        }
+    }
+
+    fn rewrite_algebraic_value(
+        value: &AlgebraicValue,
+        rewrite_term: &impl Fn(&Bitvector32Term) -> Bitvector32Term,
+        rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
+    ) -> AlgebraicValue {
+        match value {
+            AlgebraicValue::C(value) => {
+                AlgebraicValue::C(rewrite_c_value(value, rewrite_term, rewrite_pointer))
+            }
+            AlgebraicValue::Algebraic(value) => {
+                AlgebraicValue::Algebraic(rewrite_algebraic(value, rewrite_term, rewrite_pointer))
+            }
         }
     }
 

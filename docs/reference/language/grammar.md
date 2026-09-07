@@ -134,7 +134,7 @@ Comparisons form propositions rather than contract expressions. See
 ## Algebraic datatypes
 
 The algebraic-datatype slice supports generic, specification-only,
-nonrecursive sum-of-products declarations as first-class Click types. A
+acyclic sum-of-products declarations as first-class Click types. A
 constructor is fully type-applied at its use site. Pure functions, predicates,
 and theorems may receive arbitrary algebraic values, pure functions may return
 them, and an exhaustive `match` may inspect an unknown variant and return a
@@ -163,8 +163,21 @@ such applications exposes equality only at the same field position
 
 Pattern arms must name every variant exactly once, use the declared field
 arity, and keep field bindings local to the arm. Generic arguments and fields
-currently use modeled C scalar and data-pointer types. See the pure, C-free
-first-class regression in `mdtests/algebraic_symbolic_values.md`.
+may be modeled C types or other fully applied algebraic types; nested generic
+applications such as `Holder<Maybe<int32>>` are supported. Nested fields stay
+as typed algebraic terms when bound by a symbolic match.
+
+<!-- verified-example: mdtests/algebraic_nested_fields.md -->
+```click
+spec enum Envelope<T> {
+    Missing,
+    Present(Maybe<T>),
+}
+```
+
+See the pure, C-free first-class regressions in
+`mdtests/algebraic_symbolic_values.md` and
+`mdtests/algebraic_nested_fields.md`.
 
 Expression-local `let` bindings use the same Click type family as parameters
 and results. The annotation may name an algebraic type, or it may be omitted
@@ -188,9 +201,10 @@ terms; a match introduces constructor cases only when its definition is used
 by a proof. This is specification elaboration, not execution of Click code or
 of a logical value.
 
-Algebraic quantifiers, resource arguments, nested/recursive fields, and
-structural recursion/induction remain tracked in the algebraic data types
-issue. Reusing
+Algebraic quantifiers, resource arguments, recursive fields, and structural
+recursion/induction remain tracked in the algebraic data types issue. Direct
+and indirect datatype cycles are rejected until strictly positive recursive
+occurrences have a finite inductive representation. Reusing
 one constructor refinement across repeated matches is tracked separately in
 the algebraic match path-correlation issue.
 

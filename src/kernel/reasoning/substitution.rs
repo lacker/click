@@ -681,7 +681,7 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         Term::Algebraic(term) => {
             if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
                 for field in fields {
-                    collect_c_value_bound_variables(field, variables);
+                    collect_algebraic_value_bound_variables(field, variables);
                 }
             }
         }
@@ -726,6 +726,16 @@ fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Vari
         | CValue::Float64(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bound_variables(pointer, variables),
         CValue::Void => {}
+    }
+}
+
+fn collect_algebraic_value_bound_variables(
+    value: &AlgebraicValue,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match value {
+        AlgebraicValue::C(value) => collect_c_value_bound_variables(value, variables),
+        AlgebraicValue::Algebraic(value) => collect_algebraic_bound_variables(value, variables),
     }
 }
 
@@ -1141,7 +1151,7 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
             collect_algebraic_bound_variables(scrutinee, variables);
             for arm in arms {
                 for binding in &arm.bindings {
-                    collect_c_value_bound_variables(binding, variables);
+                    collect_algebraic_value_bound_variables(binding, variables);
                 }
                 collect_bitvector_bound_variables(&arm.body, variables);
             }
@@ -1199,14 +1209,14 @@ fn collect_algebraic_bound_variables(term: &AlgebraicTerm, variables: &mut BTree
         AlgebraicTermNode::Variable(_) => {}
         AlgebraicTermNode::Constructor { fields, .. } => {
             for field in fields {
-                collect_c_value_bound_variables(field, variables);
+                collect_algebraic_value_bound_variables(field, variables);
             }
         }
         AlgebraicTermNode::Match { scrutinee, arms } => {
             collect_algebraic_bound_variables(scrutinee, variables);
             for arm in arms {
                 for binding in &arm.bindings {
-                    collect_c_value_bound_variables(binding, variables);
+                    collect_algebraic_value_bound_variables(binding, variables);
                 }
                 collect_algebraic_bound_variables(&arm.body, variables);
             }
@@ -1325,7 +1335,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
                         variant: variant.clone(),
                         fields: fields
                             .iter()
-                            .map(|field| substitute_bitvector_variable_in_c_value(field, from, to))
+                            .map(|field| {
+                                substitute_bitvector_variable_in_algebraic_value(field, from, to)
+                            })
                             .collect(),
                     }
                 }
@@ -1341,7 +1353,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
                                 .bindings
                                 .iter()
                                 .map(|binding| {
-                                    substitute_bitvector_variable_in_c_value(binding, from, to)
+                                    substitute_bitvector_variable_in_algebraic_value(
+                                        binding, from, to,
+                                    )
                                 })
                                 .collect(),
                             body: substitute_bitvector_variable_in_algebraic_term(
@@ -1394,6 +1408,21 @@ fn substitute_bitvector_variable_in_algebraic_term(
         unreachable!()
     };
     term
+}
+
+fn substitute_bitvector_variable_in_algebraic_value(
+    value: &AlgebraicValue,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> AlgebraicValue {
+    match value {
+        AlgebraicValue::C(value) => {
+            AlgebraicValue::C(substitute_bitvector_variable_in_c_value(value, from, to))
+        }
+        AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
+            substitute_bitvector_variable_in_algebraic_term(value, from, to),
+        ),
+    }
 }
 
 fn substitute_bitvector_variable_in_pure_function_argument(
@@ -1882,12 +1911,24 @@ fn substitute_bitvector_variable_in_spec_algebraic_expression(
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
+        SpecAlgebraicExpressionNode::Binding(name) => {
+            SpecAlgebraicExpressionNode::Binding(name.clone())
+        }
         SpecAlgebraicExpressionNode::Constructor { variant, fields } => {
             SpecAlgebraicExpressionNode::Constructor {
                 variant: variant.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| substitute_bitvector_variable_in_spec_expression(field, from, to))
+                    .map(|field| match field {
+                        SpecAlgebraicValue::C(field) => SpecAlgebraicValue::C(
+                            substitute_bitvector_variable_in_spec_expression(field, from, to),
+                        ),
+                        SpecAlgebraicValue::Algebraic(field) => SpecAlgebraicValue::Algebraic(
+                            substitute_bitvector_variable_in_spec_algebraic_expression(
+                                field, from, to,
+                            ),
+                        ),
+                    })
                     .collect(),
             }
         }
@@ -3363,7 +3404,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
                     bindings: arm
                         .bindings
                         .iter()
-                        .map(|binding| substitute_bitvector_variable_in_c_value(binding, from, to))
+                        .map(|binding| {
+                            substitute_bitvector_variable_in_algebraic_value(binding, from, to)
+                        })
                         .collect(),
                     body: substitute_bitvector_variable(&arm.body, from, to),
                 })
@@ -3932,20 +3975,7 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         }
         Term::Algebraic(term) => Term::Algebraic(AlgebraicTerm {
             algebraic_type: term.algebraic_type.clone(),
-            node: match &term.node {
-                AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
-                AlgebraicTermNode::Constructor { variant, fields } => {
-                    AlgebraicTermNode::Constructor {
-                        variant: variant.clone(),
-                        fields: fields
-                            .iter()
-                            .map(|field| substitute_pointer_variable_in_c_value(field, from, to))
-                            .collect(),
-                    }
-                }
-                AlgebraicTermNode::Match { .. }
-                | AlgebraicTermNode::PureFunctionApplication { .. } => term.node.clone(),
-            },
+            node: substitute_pointer_variable_in_algebraic_term_node(term, from, to),
         }),
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_pointer_variable_in_c_expression_outcome(outcome, from, to),
@@ -3962,6 +3992,103 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::CState(state) => {
             Term::CState(substitute_pointer_variable_in_c_state(state, from, to))
         }
+    }
+}
+
+fn substitute_pointer_variable_in_algebraic_term_node(
+    term: &AlgebraicTerm,
+    from: Variable,
+    to: &Pointer,
+) -> AlgebraicTermNode {
+    match &term.node {
+        AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
+        AlgebraicTermNode::Constructor { variant, fields } => AlgebraicTermNode::Constructor {
+            variant: variant.clone(),
+            fields: fields
+                .iter()
+                .map(|field| substitute_pointer_variable_in_algebraic_value(field, from, to))
+                .collect(),
+        },
+        AlgebraicTermNode::Match { scrutinee, arms } => AlgebraicTermNode::Match {
+            scrutinee: Box::new(substitute_pointer_variable_in_algebraic_term(
+                scrutinee, from, to,
+            )),
+            arms: arms
+                .iter()
+                .map(|arm| AlgebraicResultMatchArm {
+                    variant: arm.variant.clone(),
+                    bindings: arm
+                        .bindings
+                        .iter()
+                        .map(|binding| {
+                            substitute_pointer_variable_in_algebraic_value(binding, from, to)
+                        })
+                        .collect(),
+                    body: substitute_pointer_variable_in_algebraic_term(&arm.body, from, to),
+                })
+                .collect(),
+        },
+        AlgebraicTermNode::PureFunctionApplication { name, arguments } => {
+            AlgebraicTermNode::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_pointer_variable_in_pure_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
+fn substitute_pointer_variable_in_algebraic_term(
+    term: &AlgebraicTerm,
+    from: Variable,
+    to: &Pointer,
+) -> AlgebraicTerm {
+    AlgebraicTerm {
+        algebraic_type: term.algebraic_type.clone(),
+        node: substitute_pointer_variable_in_algebraic_term_node(term, from, to),
+    }
+}
+
+fn substitute_pointer_variable_in_algebraic_value(
+    value: &AlgebraicValue,
+    from: Variable,
+    to: &Pointer,
+) -> AlgebraicValue {
+    match value {
+        AlgebraicValue::C(value) => {
+            AlgebraicValue::C(substitute_pointer_variable_in_c_value(value, from, to))
+        }
+        AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
+            substitute_pointer_variable_in_algebraic_term(value, from, to),
+        ),
+    }
+}
+
+fn substitute_pointer_variable_in_pure_function_argument(
+    argument: &PureFunctionArgument,
+    from: Variable,
+    to: &Pointer,
+) -> PureFunctionArgument {
+    match argument {
+        PureFunctionArgument::Value(value) => {
+            PureFunctionArgument::Value(substitute_pointer_variable_in_c_value(value, from, to))
+        }
+        PureFunctionArgument::Algebraic(value) => PureFunctionArgument::Algebraic(
+            substitute_pointer_variable_in_algebraic_term(value, from, to),
+        ),
+        PureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => PureFunctionArgument::ArrayRef {
+            memory: substitute_pointer_variable_in_memory(memory, from, to),
+            pointer: substitute_pointer_variable_in_c_value(pointer, from, to),
+            element_type: *element_type,
+        },
     }
 }
 
@@ -4782,12 +4909,24 @@ fn substitute_pointer_variable_in_spec_algebraic_expression(
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
+        SpecAlgebraicExpressionNode::Binding(name) => {
+            SpecAlgebraicExpressionNode::Binding(name.clone())
+        }
         SpecAlgebraicExpressionNode::Constructor { variant, fields } => {
             SpecAlgebraicExpressionNode::Constructor {
                 variant: variant.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| substitute_pointer_variable_in_spec_expression(field, from, to))
+                    .map(|field| match field {
+                        SpecAlgebraicValue::C(field) => SpecAlgebraicValue::C(
+                            substitute_pointer_variable_in_spec_expression(field, from, to),
+                        ),
+                        SpecAlgebraicValue::Algebraic(field) => SpecAlgebraicValue::Algebraic(
+                            substitute_pointer_variable_in_spec_algebraic_expression(
+                                field, from, to,
+                            ),
+                        ),
+                    })
                     .collect(),
             }
         }

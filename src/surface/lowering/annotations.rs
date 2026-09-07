@@ -52,8 +52,8 @@ use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
 use crate::kernel::SpecSequenceExpression;
 use crate::kernel::{
-    AlgebraicType, AlgebraicVariantType, SpecAlgebraicExpression, SpecAlgebraicExpressionNode,
-    SpecAlgebraicResultMatchArm,
+    AlgebraicType, AlgebraicValueType, AlgebraicVariantType, SpecAlgebraicExpression,
+    SpecAlgebraicExpressionNode, SpecAlgebraicResultMatchArm, SpecAlgebraicValue,
 };
 
 type FunctionContractSummary = (
@@ -976,7 +976,7 @@ struct AnnotationLowerer<'a> {
     parameter_array_element_types: BTreeMap<String, CType>,
     quantified_values: BTreeMap<String, CValue>,
     algebraic_variables: BTreeMap<String, SpecAlgebraicExpression>,
-    algebraic_types: BTreeMap<(String, Vec<CType>), AlgebraicType>,
+    algebraic_types: BTreeMap<(String, Vec<AlgebraicValueType>), AlgebraicType>,
     loop_index: usize,
     statement_index: usize,
     next_quantifier_variable: u64,
@@ -1559,9 +1559,18 @@ impl AnnotationLowerer<'_> {
                         .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
                     let mut body_environment = environment.clone();
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
-                        body_environment
-                            .values
-                            .insert(binding.clone(), field.clone());
+                        match field {
+                            SpecAlgebraicValue::C(field) => {
+                                body_environment
+                                    .values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                            SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment
+                                    .algebraic_values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                        }
                     }
                     return self.lower_contract_expression_to_spec(&arm.body, &body_environment);
                 }
@@ -1575,8 +1584,28 @@ impl AnnotationLowerer<'_> {
                             .find(|variant| variant.name == arm.variant)
                             .ok_or_else(|| format!("unknown match variant `{}`", arm.variant))?;
                         let mut body_environment = environment.clone();
-                        for binding in &arm.bindings {
-                            body_environment.values.remove(binding);
+                        for (binding, binding_type) in arm.bindings.iter().zip(&variant.fields) {
+                            match binding_type {
+                                AlgebraicValueType::C(_) => {
+                                    body_environment.values.remove(binding);
+                                    body_environment.algebraic_values.remove(binding);
+                                }
+                                AlgebraicValueType::Algebraic { .. } => {
+                                    body_environment.values.remove(binding);
+                                    body_environment.algebraic_values.insert(
+                                        binding.clone(),
+                                        SpecAlgebraicExpression {
+                                            algebraic_type: self
+                                                .cached_algebraic_kernel_type_from_value_type(
+                                                    binding_type,
+                                                )?,
+                                            node: SpecAlgebraicExpressionNode::Binding(
+                                                binding.clone(),
+                                            ),
+                                        },
+                                    );
+                                }
+                            }
                         }
                         Ok(crate::kernel::SpecAlgebraicMatchArm {
                             variant: arm.variant.clone(),
@@ -1891,18 +1920,33 @@ impl AnnotationLowerer<'_> {
                 algebraic_type,
                 variant,
                 arguments,
-            } => Ok(SpecAlgebraicExpression {
-                algebraic_type: self.cached_algebraic_kernel_type(algebraic_type)?,
-                node: SpecAlgebraicExpressionNode::Constructor {
-                    variant: variant.clone(),
-                    fields: arguments
-                        .iter()
-                        .map(|argument| {
-                            self.lower_contract_expression_to_spec(argument, environment)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                },
-            }),
+            } => {
+                let algebraic_type = self.cached_algebraic_kernel_type(algebraic_type)?;
+                let schema = algebraic_type
+                    .variants
+                    .iter()
+                    .find(|schema| schema.name == *variant)
+                    .ok_or_else(|| format!("unknown match variant `{variant}`"))?;
+                let fields = arguments
+                    .iter()
+                    .zip(&schema.fields)
+                    .map(|(argument, field_type)| match field_type {
+                        AlgebraicValueType::C(_) => self
+                            .lower_contract_expression_to_spec(argument, environment)
+                            .map(SpecAlgebraicValue::C),
+                        AlgebraicValueType::Algebraic { .. } => self
+                            .lower_contract_algebraic_to_spec(argument, environment)
+                            .map(SpecAlgebraicValue::Algebraic),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(SpecAlgebraicExpression {
+                    algebraic_type,
+                    node: SpecAlgebraicExpressionNode::Constructor {
+                        variant: variant.clone(),
+                        fields,
+                    },
+                })
+            }
             ContractExpression::AlgebraicMatch { scrutinee, arms } => {
                 let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
                 if let SpecAlgebraicExpressionNode::Constructor { variant, fields } =
@@ -1914,9 +1958,18 @@ impl AnnotationLowerer<'_> {
                         .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
                     let mut body_environment = environment.clone();
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
-                        body_environment
-                            .values
-                            .insert(binding.clone(), field.clone());
+                        match field {
+                            SpecAlgebraicValue::C(field) => {
+                                body_environment
+                                    .values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                            SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment
+                                    .algebraic_values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                        }
                     }
                     return self.lower_contract_algebraic_to_spec(&arm.body, &body_environment);
                 }
@@ -1930,8 +1983,26 @@ impl AnnotationLowerer<'_> {
                         .find(|variant| variant.name == arm.variant)
                         .ok_or_else(|| format!("unknown match variant `{}`", arm.variant))?;
                     let mut body_environment = environment.clone();
-                    for binding in &arm.bindings {
-                        body_environment.values.remove(binding);
+                    for (binding, binding_type) in arm.bindings.iter().zip(&variant.fields) {
+                        match binding_type {
+                            AlgebraicValueType::C(_) => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
+                            }
+                            AlgebraicValueType::Algebraic { .. } => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.insert(
+                                    binding.clone(),
+                                    SpecAlgebraicExpression {
+                                        algebraic_type: self
+                                            .cached_algebraic_kernel_type_from_value_type(
+                                                binding_type,
+                                            )?,
+                                        node: SpecAlgebraicExpressionNode::Binding(binding.clone()),
+                                    },
+                                );
+                            }
+                        }
                     }
                     let body =
                         self.lower_contract_algebraic_to_spec(&arm.body, &body_environment)?;
@@ -2017,6 +2088,23 @@ impl AnnotationLowerer<'_> {
             return Ok(algebraic_type.clone());
         }
         let algebraic_type = algebraic_kernel_type(self.click_function_environment, application)?;
+        self.algebraic_types.insert(key, algebraic_type.clone());
+        Ok(algebraic_type)
+    }
+
+    fn cached_algebraic_kernel_type_from_value_type(
+        &mut self,
+        value_type: &AlgebraicValueType,
+    ) -> Result<AlgebraicType, String> {
+        let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
+            return Err("expected an algebraic value type".to_string());
+        };
+        let key = (name.clone(), arguments.clone());
+        if let Some(algebraic_type) = self.algebraic_types.get(&key) {
+            return Ok(algebraic_type.clone());
+        }
+        let algebraic_type =
+            algebraic_kernel_type_from_parts(self.click_function_environment, name, arguments)?;
         self.algebraic_types.insert(key, algebraic_type.clone());
         Ok(algebraic_type)
     }
@@ -3054,67 +3142,125 @@ impl AnnotationLowerer<'_> {
 
 fn algebraic_kernel_type_arguments(
     application: &AlgebraicTypeApplication,
-) -> Result<Vec<CType>, String> {
+) -> Result<Vec<AlgebraicValueType>, String> {
     application
         .arguments
         .iter()
-        .map(|argument| match argument {
-            ClickType::C(c_type) => Ok(c_type.to_kernel_type()),
-            ClickType::Algebraic(_) => {
-                Err("nested algebraic datatype arguments are not supported yet".to_string())
-            }
-        })
+        .map(click_type_to_algebraic_value_type)
         .collect()
+}
+
+fn click_type_to_algebraic_value_type(
+    click_type: &ClickType,
+) -> Result<AlgebraicValueType, String> {
+    match click_type {
+        ClickType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
+        ClickType::Algebraic(application) => Ok(AlgebraicValueType::Algebraic {
+            name: application.name.clone(),
+            arguments: algebraic_kernel_type_arguments(application)?,
+        }),
+    }
 }
 
 fn algebraic_kernel_type(
     environment: &ClickFunctionEnvironment,
     application: &AlgebraicTypeApplication,
 ) -> Result<AlgebraicType, String> {
-    let definition = environment
-        .algebraic_type_definitions
-        .get(&application.name)
-        .ok_or_else(|| format!("unknown algebraic datatype `{}`", application.name))?;
+    let arguments = algebraic_kernel_type_arguments(application)?;
+    algebraic_kernel_type_from_parts(environment, &application.name, &arguments)
+}
+
+fn algebraic_kernel_type_from_parts(
+    environment: &ClickFunctionEnvironment,
+    name: &str,
+    arguments: &[AlgebraicValueType],
+) -> Result<AlgebraicType, String> {
+    let root_type = AlgebraicValueType::Algebraic {
+        name: name.to_string(),
+        arguments: arguments.to_vec(),
+    };
+    let mut schemas = BTreeMap::new();
+    collect_algebraic_kernel_schemas(environment, &root_type, &mut schemas)?;
+    let schemas = std::sync::Arc::new(schemas);
+    let variants = schemas
+        .get(&root_type)
+        .cloned()
+        .ok_or_else(|| format!("missing algebraic datatype schema for `{name}`"))?;
     Ok(AlgebraicType {
-        name: application.name.clone(),
-        arguments: algebraic_kernel_type_arguments(application)?,
-        variants: definition
-            .variants()
-            .iter()
-            .map(|variant| {
-                Ok(AlgebraicVariantType {
-                    name: variant.name().to_string(),
-                    fields: variant
-                        .fields()
-                        .iter()
-                        .map(|field| {
-                            instantiate_algebraic_c_field_type(definition, application, field)
-                                .map(C0Type::to_kernel_type)
-                        })
-                        .collect::<Result<Vec<_>, String>>()?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?
-            .into(),
+        name: name.to_string(),
+        arguments: arguments.to_vec(),
+        variants,
+        schemas,
     })
 }
 
-fn instantiate_algebraic_c_field_type(
+fn collect_algebraic_kernel_schemas(
+    environment: &ClickFunctionEnvironment,
+    value_type: &AlgebraicValueType,
+    schemas: &mut BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
+) -> Result<(), String> {
+    if schemas.contains_key(value_type) {
+        return Ok(());
+    }
+    let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
+        return Ok(());
+    };
+    let definition = environment
+        .algebraic_type_definitions
+        .get(name)
+        .ok_or_else(|| format!("unknown algebraic datatype `{name}`"))?;
+    let variants = definition
+        .variants()
+        .iter()
+        .map(|variant| {
+            Ok(AlgebraicVariantType {
+                name: variant.name().to_string(),
+                fields: variant
+                    .fields()
+                    .iter()
+                    .map(|field| {
+                        instantiate_algebraic_kernel_field_type(definition, arguments, field)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    schemas.insert(value_type.clone(), variants.clone().into());
+    for nested in variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter())
+        .filter(|field| matches!(field, AlgebraicValueType::Algebraic { .. }))
+    {
+        collect_algebraic_kernel_schemas(environment, nested, schemas)?;
+    }
+    Ok(())
+}
+
+fn instantiate_algebraic_kernel_field_type(
     definition: &AlgebraicTypeDefinition,
-    application: &AlgebraicTypeApplication,
+    arguments: &[AlgebraicValueType],
     field: &AlgebraicFieldType,
-) -> Result<C0Type, String> {
+) -> Result<AlgebraicValueType, String> {
     match field {
-        AlgebraicFieldType::C(c_type) => Ok(*c_type),
+        AlgebraicFieldType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()
             .iter()
             .position(|parameter| parameter == name)
-            .and_then(|index| application.arguments.get(index))
-            .and_then(ClickType::c_type)
+            .and_then(|index| arguments.get(index))
+            .cloned()
             .ok_or_else(|| format!("unresolved type parameter `{name}`")),
-        AlgebraicFieldType::Algebraic(_) => {
-            Err("nested algebraic datatype fields are not supported yet".to_string())
-        }
+        AlgebraicFieldType::Algebraic {
+            name,
+            arguments: nested_arguments,
+        } => Ok(AlgebraicValueType::Algebraic {
+            name: name.clone(),
+            arguments: nested_arguments
+                .iter()
+                .map(|argument| {
+                    instantiate_algebraic_kernel_field_type(definition, arguments, argument)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     }
 }

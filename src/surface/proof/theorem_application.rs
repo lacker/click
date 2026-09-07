@@ -320,6 +320,31 @@ pub(super) fn theorem_application_bindings(
                 predicate_environment,
                 click_function_environment,
             )?;
+            fn click_type_matches_algebraic_value_type(
+                expected: &ClickType,
+                actual: &crate::kernel::AlgebraicValueType,
+            ) -> bool {
+                match (expected, actual) {
+                    (ClickType::C(expected), crate::kernel::AlgebraicValueType::C(actual)) => {
+                        expected.to_kernel_type() == *actual
+                    }
+                    (
+                        ClickType::Algebraic(expected),
+                        crate::kernel::AlgebraicValueType::Algebraic { name, arguments },
+                    ) => {
+                        expected.name == *name
+                            && expected.arguments.len() == arguments.len()
+                            && expected
+                                .arguments
+                                .iter()
+                                .zip(arguments)
+                                .all(|(expected, actual)| {
+                                    click_type_matches_algebraic_value_type(expected, actual)
+                                })
+                    }
+                    _ => false,
+                }
+            }
             let type_matches = value.algebraic_type.name == expected_type.name
                 && value.algebraic_type.arguments.len() == expected_type.arguments.len()
                 && expected_type
@@ -327,7 +352,7 @@ pub(super) fn theorem_application_bindings(
                     .iter()
                     .zip(&value.algebraic_type.arguments)
                     .all(|(expected, actual)| {
-                        matches!(expected, ClickType::C(expected) if expected.to_kernel_type() == *actual)
+                        click_type_matches_algebraic_value_type(expected, actual)
                     });
             if !type_matches {
                 return Err(format!(

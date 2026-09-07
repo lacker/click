@@ -237,7 +237,15 @@ fn algebraic_terms_definitely_distinct(left: &AlgebraicTerm, right: &AlgebraicTe
                 || left_fields
                     .iter()
                     .zip(right_fields)
-                    .any(|(left, right)| c_values_definitely_distinct(left, right))
+                    .any(|(left, right)| match (left, right) {
+                        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+                            c_values_definitely_distinct(left, right)
+                        }
+                        (AlgebraicValue::Algebraic(left), AlgebraicValue::Algebraic(right)) => {
+                            algebraic_terms_definitely_distinct(left, right)
+                        }
+                        _ => true,
+                    })
         }
         _ => false,
     }

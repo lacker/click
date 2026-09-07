@@ -16,6 +16,13 @@ pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(
                 definition.name()
             )));
         }
+    }
+    let definitions = file
+        .algebraic_type_definitions()
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
+    for definition in file.algebraic_type_definitions() {
         let mut parameters = BTreeSet::new();
         for parameter in definition.type_parameters() {
             if !parameters.insert(parameter.as_str()) {
@@ -35,31 +42,126 @@ pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(
                 )));
             }
             for field in variant.fields() {
-                match field {
-                    AlgebraicFieldType::Parameter(name) if parameters.contains(name.as_str()) => {}
-                    AlgebraicFieldType::Parameter(name) => {
-                        return Err(ClickError::new(format!(
-                            "variant `{}::{}` uses unknown type parameter `{name}`",
-                            definition.name(),
-                            variant.name()
-                        )));
-                    }
-                    AlgebraicFieldType::C(_) => {}
-                    AlgebraicFieldType::Algebraic(name) => {
-                        let kind = if name == definition.name() {
-                            "recursive"
-                        } else {
-                            "nested"
-                        };
-                        return Err(ClickError::new(format!(
-                            "{kind} algebraic datatype field `{}::{}` is not supported in the nonrecursive first slice",
-                            definition.name(),
-                            variant.name()
-                        )));
-                    }
-                }
+                validate_algebraic_field_declaration(
+                    definition,
+                    variant,
+                    field,
+                    &parameters,
+                    &definitions,
+                )?;
             }
         }
+    }
+    reject_recursive_algebraic_declarations(&definitions)?;
+    Ok(())
+}
+
+fn validate_algebraic_field_declaration(
+    owner: &AlgebraicTypeDefinition,
+    variant: &AlgebraicVariantDefinition,
+    field: &AlgebraicFieldType,
+    parameters: &BTreeSet<&str>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+) -> Result<(), ClickError> {
+    match field {
+        AlgebraicFieldType::Parameter(name) if parameters.contains(name.as_str()) => Ok(()),
+        AlgebraicFieldType::Parameter(name) => Err(ClickError::new(format!(
+            "variant `{}::{}` uses unknown type parameter `{name}`",
+            owner.name(),
+            variant.name()
+        ))),
+        AlgebraicFieldType::C(_) => Ok(()),
+        AlgebraicFieldType::Algebraic { name, arguments } => {
+            if name == owner.name() {
+                return Err(ClickError::new(format!(
+                    "recursive algebraic datatype field `{}::{}` is not supported in the nonrecursive first slice",
+                    owner.name(),
+                    variant.name()
+                )));
+            }
+            let nested = definitions.get(name.as_str()).ok_or_else(|| {
+                ClickError::new(format!(
+                    "variant `{}::{}` uses unknown algebraic datatype `{name}`",
+                    owner.name(),
+                    variant.name()
+                ))
+            })?;
+            if arguments.len() != nested.type_parameters().len() {
+                return Err(ClickError::new(format!(
+                    "algebraic datatype `{name}` expects {} type argument(s), got {} in variant `{}::{}`",
+                    nested.type_parameters().len(),
+                    arguments.len(),
+                    owner.name(),
+                    variant.name()
+                )));
+            }
+            for argument in arguments {
+                validate_algebraic_field_declaration(
+                    owner,
+                    variant,
+                    argument,
+                    parameters,
+                    definitions,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn collect_algebraic_field_dependencies<'a>(
+    field: &'a AlgebraicFieldType,
+    dependencies: &mut BTreeSet<&'a str>,
+) {
+    if let AlgebraicFieldType::Algebraic { name, arguments } = field {
+        dependencies.insert(name);
+        for argument in arguments {
+            collect_algebraic_field_dependencies(argument, dependencies);
+        }
+    }
+}
+
+fn reject_recursive_algebraic_declarations(
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+) -> Result<(), ClickError> {
+    fn visit<'a>(
+        name: &'a str,
+        definitions: &BTreeMap<&'a str, &'a AlgebraicTypeDefinition>,
+        visiting: &mut Vec<&'a str>,
+        complete: &mut BTreeSet<&'a str>,
+    ) -> Result<(), ClickError> {
+        if complete.contains(name) {
+            return Ok(());
+        }
+        if let Some(index) = visiting.iter().position(|candidate| *candidate == name) {
+            let mut cycle = visiting[index..].to_vec();
+            cycle.push(name);
+            return Err(ClickError::new(format!(
+                "recursive algebraic datatype cycle `{}` is not supported in the nonrecursive slice",
+                cycle.join(" -> ")
+            )));
+        }
+        visiting.push(name);
+        let definition = definitions[name];
+        let mut dependencies = BTreeSet::new();
+        for field in definition
+            .variants()
+            .iter()
+            .flat_map(AlgebraicVariantDefinition::fields)
+        {
+            collect_algebraic_field_dependencies(field, &mut dependencies);
+        }
+        for dependency in dependencies {
+            visit(dependency, definitions, visiting, complete)?;
+        }
+        visiting.pop();
+        complete.insert(name);
+        Ok(())
+    }
+
+    let mut complete = BTreeSet::new();
+    for name in definitions.keys().copied() {
+        visit(name, definitions, &mut Vec::new(), &mut complete)?;
     }
     Ok(())
 }
@@ -531,32 +633,56 @@ fn validate_algebraic_expression(
                 .zip(variant_definition.fields())
                 .enumerate()
             {
-                if validate_algebraic_expression(
+                let actual_algebraic = validate_algebraic_expression(
                     argument,
                     variables,
                     click_functions,
                     predicates,
                     definitions,
                     context,
-                )?
-                .is_some()
-                {
-                    return Err(ClickError::new(format!(
-                        "constructor `{}::{variant}` argument {index} must be a C scalar or data-pointer value in this slice",
-                        definition.name()
-                    )));
-                }
+                )?;
                 let expected = instantiate_field_type(definition, algebraic_type, field)?;
-                if let Some(actual) =
-                    infer_contract_expression_type(argument, variables, click_functions, context)?
-                    && !click_types_compatible(actual, expected)
-                {
-                    return Err(ClickError::new(format!(
-                        "constructor `{}::{variant}` argument {index} expects {}, got {} in {context}",
-                        definition.name(),
-                        describe_c0_type(expected),
-                        describe_c0_type(actual)
-                    )));
+                match (&expected, actual_algebraic) {
+                    (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
+                    (ClickType::Algebraic(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "constructor `{}::{variant}` argument {index} expects {}, got {} in {context}",
+                            definition.name(),
+                            describe_click_type(&ClickType::Algebraic(expected.clone())),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::Algebraic(expected), None) => {
+                        return Err(ClickError::new(format!(
+                            "constructor `{}::{variant}` argument {index} expects {}, got a C value in {context}",
+                            definition.name(),
+                            describe_click_type(&ClickType::Algebraic(expected.clone()))
+                        )));
+                    }
+                    (ClickType::C(expected), Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "constructor `{}::{variant}` argument {index} expects {}, got {} in {context}",
+                            definition.name(),
+                            describe_c0_type(*expected),
+                            describe_click_type(&ClickType::Algebraic(actual))
+                        )));
+                    }
+                    (ClickType::C(expected), None) => {
+                        if let Some(actual) = infer_contract_expression_type(
+                            argument,
+                            variables,
+                            click_functions,
+                            context,
+                        )? && !click_types_compatible(actual, *expected)
+                        {
+                            return Err(ClickError::new(format!(
+                                "constructor `{}::{variant}` argument {index} expects {}, got {} in {context}",
+                                definition.name(),
+                                describe_c0_type(*expected),
+                                describe_c0_type(actual)
+                            )));
+                        }
+                    }
                 }
             }
             Ok(Some(algebraic_type.clone()))
@@ -614,8 +740,11 @@ fn validate_algebraic_expression(
                     )));
                 }
                 let mut arm_variables = variables.clone();
+                let mut algebraic_bindings = BTreeMap::new();
                 let mut bindings = BTreeSet::new();
-                for (binding, field) in arm.bindings.iter().zip(variant.fields()) {
+                for (binding_index, (binding, field)) in
+                    arm.bindings.iter().zip(variant.fields()).enumerate()
+                {
                     if !bindings.insert(binding) {
                         return Err(ClickError::new(format!(
                             "pattern `{}::{}` repeats binding `{binding}` in {context}",
@@ -623,13 +752,26 @@ fn validate_algebraic_expression(
                             arm.variant
                         )));
                     }
-                    arm_variables.insert(
-                        binding.clone(),
-                        instantiate_field_type(definition, &algebraic_type, field)?,
-                    );
+                    match instantiate_field_type(definition, &algebraic_type, field)? {
+                        ClickType::C(c_type) => {
+                            arm_variables.insert(binding.clone(), c_type);
+                        }
+                        ClickType::Algebraic(algebraic_type) => {
+                            algebraic_bindings.insert(
+                                binding.clone(),
+                                ContractExpression::AlgebraicVariable {
+                                    name: binding.clone(),
+                                    algebraic_type,
+                                    binder_index: binding_index,
+                                },
+                            );
+                        }
+                    }
                 }
+                let arm_body = substitute_contract_expression(&arm.body, &algebraic_bindings)
+                    .map_err(ClickError::new)?;
                 let algebraic_arm_type = validate_algebraic_expression(
-                    &arm.body,
+                    &arm_body,
                     &arm_variables,
                     click_functions,
                     predicates,
@@ -639,7 +781,7 @@ fn validate_algebraic_expression(
                 let arm_type = match algebraic_arm_type {
                     Some(application) => Some(ClickType::Algebraic(application)),
                     None => infer_contract_expression_type(
-                        &arm.body,
+                        &arm_body,
                         &arm_variables,
                         click_functions,
                         context,
@@ -930,17 +1072,26 @@ fn instantiate_field_type(
     definition: &AlgebraicTypeDefinition,
     application: &AlgebraicTypeApplication,
     field: &AlgebraicFieldType,
-) -> Result<C0Type, ClickError> {
+) -> Result<ClickType, ClickError> {
     match field {
-        AlgebraicFieldType::C(c_type) => Ok(*c_type),
+        AlgebraicFieldType::C(c_type) => Ok(ClickType::C(*c_type)),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()
             .iter()
             .position(|parameter| parameter == name)
             .and_then(|index| application.arguments.get(index))
-            .and_then(ClickType::c_type)
+            .cloned()
             .ok_or_else(|| ClickError::new(format!("unresolved type parameter `{name}`"))),
-        AlgebraicFieldType::Algebraic(_) => unreachable!("nested fields rejected before uses"),
+        AlgebraicFieldType::Algebraic { name, arguments } => {
+            let arguments = arguments
+                .iter()
+                .map(|argument| instantiate_field_type(definition, application, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ClickType::Algebraic(AlgebraicTypeApplication {
+                name: name.clone(),
+                arguments,
+            }))
+        }
     }
 }
 
