@@ -56,45 +56,18 @@ pattern. Enumerations over explicit quantifier instances, disjuncts, and fold
 steps are charged as deterministic work per instance. Deterministic work over
 the profiled examples fell or held during that cleanup.
 
-The earlier claim that every structural depth cut was gone was incorrect. The
-inventory below is the current boundary after the subsequent structural,
-canonicalization, and load-equality migrations.
+The structural, canonicalization, finite-splitting, and load-equality
+migrations described below are complete. The remaining work is the
+reentrancy/incomplete-answer audit and the authoritative-caller audit.
 
-The 2026-09-05 deciding-route census refined that older depth-hit count. After
-all cheaper load-equality rules had failed, the global fallback proved only 31
-of 1,628 example queries and 27 of 1,347 mdtest queries. Those 58 decisions are
-now classified by fixture, consumer, load, and required replacement evidence
-in the dedicated issue; 23 were merely positive-memo reuses.
+The load-equality migration replaced every successful global-fallback use
+with consumer-owned evidence. Fixed-state restricted `simp` retains a
+snapshot-anchored `transport`; resource rewrites and observations retain the
+checked equality they consume; contract materialization retains typed
+witnesses on the function-claim proof object; and indexed stores and pointer
+ranges retain exact separation and signed-order paths. The checked-call event
+slice and the direct framed-transport migration are complete.
 
-The first load-equality migration slice is complete. Fixed-state restricted
-`simp` now retains a snapshot-anchored `transport` when equality rewrites leave
-two names for one load, and ordinary fact matching no longer invokes the
-global framed-load reconstruction fallback. The input-cursor expansion checks
-independently and both fixture harnesses pass. Direct framed-load consumers and
-the reentrant snapshot-resolution path remain, so the depth limit cannot yet
-be removed.
-
-The second load-equality slice moved every consumer that was already decidable
-from the recorded memory DAG: surface proof matching, load-variable origin
-matching, loop effects, resource endpoints, and the ordinary contract
-certification helpers. The special bounded-snapshot-comparison mode is now
-dead and deleted. A third slice established consumer-owned equality evidence:
-resource rewrites and observations retain and recheck any checked equality
-they consume, and contract materialization retains its typed witnesses on the
-function-claim proof object. `StoreExplicitRange` hops now retain either their
-exact separation proposition or the owning resource composition, indexed
-range pair, and orientation. At that point one direct framed-transport
-consumer remained. A 2026-09-05 census found nine dynamic legacy-only checks.
-Canonicalization now retains exact load-projection triples, and indexed stores
-retain named signed-order paths for common-base inequality; a fresh complete
-census reduced the residual to three checks. The two `copy3` checks were then
-migrated through reusable pointer-in-range evidence. It preserves cheap
-assumption-free structural membership, while its symbolic form retains the
-structural element index and exact signed bounds, including the `k < i + 1`,
-`i < 3` successor case.
-
-The checked-call event slice is complete, and the direct framed-transport
-fallback has been deleted. The final load-equality slice is also complete.
 Tagged-pointer `recorded_uint64_equals` now uses only its observed
 assumption-free direct snapshot match, and the unused global framed-load
 prover and its memos are deleted. The 30 successful dependent roots found by
@@ -121,10 +94,11 @@ for the low-level kernel API, so its contextual theorem constructor was deleted
 with it rather than deprecated or replaced with a compatibility shim. Memory
 resolution retains only its narrower exact, query-bounded distinctness check.
 
-Structural cleanup is now partially complete. Exact-load materialization and
-normalization follow complete acyclic chains with exact cycle detection, using
-iterative term reconstruction where nesting can be deep. Call-havoc write-set
-markers now use a complete iterative, length-delimited structural encoding;
+Structural cleanup owned by this issue is complete. Exact-load materialization
+and normalization follow complete acyclic chains with exact cycle detection,
+using iterative term reconstruction where nesting can be deep. Call-havoc
+write-set markers now use a complete iterative, length-delimited structural
+encoding;
 two write sets that first differ below the former depth limit produce distinct
 memory endpoints. Nested quantified candidate comparison now lives with its
 surface theorem-application caller: its indexed logical fragment uses the
@@ -169,8 +143,9 @@ unbounded search.
 
 ## Current inventory
 
-Counts below are examples / mdtests, times the bound or route fired, measured
-2026-09-03 where a count is given.
+Older counts retain their stated measurement dates. The reentrancy census was
+rerun on 2026-09-07 at `2e14f553` over the then-complete corpus: 25 example
+projects, 817 mdtests, and 1,631 unit tests.
 
 ### Structural and fixed-point cuts
 
@@ -210,24 +185,40 @@ proof-object node is not a split: it names exactly the two indexed order facts
 that force `x == constant` and the proof of the substituted proposition. It
 does not retain, clone, or scan the ambient context.
 
-1. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
-   snapshot aliasing, `inside_condition_decision` around condition decisions,
-   `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
-   `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
-   every nested query rather than only an identical in-progress query. Remove
-   them with their owning search, or replace a genuinely structural recursion
-   with a guard keyed by the exact query.
+The former `bounded_snapshot_comparison_active`, `ENDPOINT_BRIDGE_ACTIVE`, and
+`DERIVATION_WALK_ACTIVE` tiers are already deleted. The three names still in
+the code have different dispositions:
+
+- `LOAD_EQUALITY_RESOLUTION_ACTIVE` guarded 1 example, 293 mdtest, and 29 unit
+  attempts. The guarded route proved zero queries and suppressed zero nested
+  calls in every corpus. This is a dead fallback, not a replacement-evidence
+  problem: delete the route and the flag together.
+- `ALIAS_GUARD_REFUTATION_ACTIVE` guarded 718 example, 4,063 mdtest, and 6,676
+  unit attempts. The rule proved zero fixture queries and exactly one unit
+  regression; the broad flag suppressed zero nested calls. Retain the narrow
+  alias-refutation rule, delete the unused boolean tier, and rely on or extend
+  exact-query cycle guards if a cycle can be constructed.
+- `inside_condition_decision` was observed 14,417 times in examples and 21,339
+  times in mdtests, but it does not reject a nested decision. It only prevents
+  a nested fact set from installing a new ambient memo-id scope; the exact
+  `ConditionDecisionGuard` still admits distinct nested conditions and rejects
+  only a repeated condition. This is memo-scope policy, not a coarse
+  incompleteness tier, and is removed from that inventory.
+
 ### Incomplete-answer and authority audit
 
 1. **`search_truncations` and negative-memo gating**. The counter currently
-   records more than search: exact-query cycle cuts, wall-clock deadlines,
-   and coarse tier suppression. While incomplete
-   answers remain, rename it to describe that role (for example,
-   `incomplete_reasoning_epoch`) rather than documenting it as cycle-only.
-   Audit every conservative early return, including `SimpFactReasoningGuard`,
-   so a path-dependent negative is never cached. Delete the mechanism only when
-   incomplete nested answers cannot reach a memo boundary.
-2. **Deadline checks**, currently 35 `deadline_exceeded` sites under
+   records exact condition-, memory-resolution-, and resource-composition
+   cycle cuts plus two deadline wrappers. The 2026-09-07 fixture census saw
+   916 / 1,788 exact repeated-condition cuts and zero resolution-cycle,
+   resource-cycle, or deadline events. `SimpFactReasoningGuard` has another
+   exact repeated-query return that is not recorded by the epoch; it fired
+   zero times in both fixture corpora, but remains a latent negative-memo
+   correctness gap. Account for it or prove that no enclosing negative memo
+   can observe it, then rename the counter to `incomplete_reasoning_epoch`.
+   Delete the mechanism only when incomplete nested answers cannot reach a
+   memo boundary.
+2. **Deadline checks**, currently 31 `deadline_exceeded` sites under
    `src/kernel/`. Deadlines are separate from deterministic tactic budgets, but
    they are not harmless if a helper's `false`/`None` is observed as an ordinary
    proof miss. Audit propagation so expiry becomes a distinct verification
@@ -280,9 +271,12 @@ comparison now use only that narrower predicate for distinctness.
 6. **Complete:** retain finite typed load-equality evidence, delete the global
    framed-load prover, prevent arbitrary term-pair recursion, and remove the
    load-equality depth limit.
-7. Remove coarse reentrancy tiers and audit deadline propagation, cycle cuts,
-   and negative-memo gating; then delete or accurately rename the incompleteness
-   epoch.
+7. Delete the dead atomic load-equality fallback and its boolean flag. Retain
+   the alias-refutation rule but remove its unobserved broad boolean tier.
+   Account for the `SimpFactReasoningGuard` cycle at negative-memo boundaries,
+   rename `search_truncations` to describe incomplete reasoning, and audit the
+   31 deadline sites for distinct error propagation. `inside_condition_decision`
+   is memo-scope policy, not an answer-suppressing tier.
 8. Finish the authoritative general-prover caller audit, or narrow the stated
    invariant with an explicit rationale for any retained kernel planner. The
    resource-invariant theorem constructors are complete; loop and effect
@@ -296,10 +290,9 @@ used to excuse an opaque bound introduced by an earlier one.
 To retake a census, add a temporary `record_reasoning_route("...")` counter (a
 static mutex map in `src/instrumentation.rs`) at each site, have
 `tests/mdtests.rs` and `tests/examples.rs` print the map after the run, and run
-both harnesses with `-- --nocapture`. It takes about an hour to reapply and must
-not land. Record both how often a route is attempted and how often it is the
-first route to decide the query; attempts alone do not justify retaining a
-fallback.
+both harnesses with `-- --nocapture`. The probes must not land. Record both how
+often a route is attempted and how often it is the first route to decide the
+query; attempts alone do not justify retaining a fallback.
 
 To compare cost without the machine's load, run `click profile <example> --top
 40 --time-limit 300s` on a throwaway checkout of the parent commit and on the
@@ -362,9 +355,11 @@ the bound can change what the checker accepts.
 - General pointer distinctness and its exported theorem constructor are
   deleted; no retained constructor discovers a proof by ambient global
   fallback.
-- Coarse reentrancy tiers are gone. Exact-query cycle cuts cannot poison a
-  negative memo, and the incompleteness epoch is deleted or named and
-  documented for every cause it actually records.
+- The dead atomic load-equality route and its broad flag are gone. Alias
+  refutation retains no broad reentrancy flag. Exact-query cycle cuts cannot
+  poison a negative memo, and the incompleteness epoch is deleted or named and
+  documented for every cause it actually records. Nested memo-scope policy is
+  not classified as answer suppression.
 - Deadline expiry propagates as a verification-limit error rather than an
   ordinary proof miss and cannot populate a negative memo.
 - Certification decides by matching recorded completions and exact rules;
