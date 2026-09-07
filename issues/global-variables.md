@@ -37,8 +37,9 @@ and reject field writes. Compatible `extern const` aggregate declarations are
 checked against their linked definitions.
 Static scalar arrays now accept literal index designators with zero-filled
 omitted elements across external, file-scope `static`, and function-local
-`static` storage. Multidimensional or incomplete array definitions, and wider
-string-literal forms remain unsupported; dynamic initialization remains
+`static` storage. File-scope `static` incomplete arrays, unresolved external
+incomplete tentative definitions, multidimensional array definitions, and
+wider string-literal forms remain unsupported; dynamic initialization remains
 unsupported, while bounded integer constant expressions are folded for scalar
 objects and arrays. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
@@ -108,6 +109,10 @@ whose array bound is completed by a fixed-size definition in another
 translation unit.
 `mdtests/file_scope_incomplete_extern_array_link_errors.md` covers the
 unresolved-declaration diagnostic when no definition supplies the bound.
+`mdtests/file_scope_incomplete_tentative_arrays.md` covers external-linkage
+incomplete tentative definitions resolved by a complete fixed-size definition,
+and `mdtests/file_scope_incomplete_tentative_array_link_errors.md` covers the
+unresolved tentative-definition diagnostic.
 `mdtests/file_scope_inferred_scalar_array_bounds.md` covers bound inference
 from non-empty positional initializers for external and file-scope `static`
 scalar arrays, while
@@ -174,11 +179,12 @@ propagation, and indirect-write rejection.
   designators, and zero-fills omitted fields and elements. Non-literal
   designators, multidimensional, incomplete definitions, and dynamic-initialization forms
   remain rejected.
-- The parser accepts `extern T name[];` for supported scalar and struct-array
-  declarations, and bundle linking resolves the omitted bound against one
-  complete fixed-size external definition. Incomplete definitions, inferred
-  initializer bounds for aggregate arrays, empty or designated scalar-array
-  initializers, file-scope `static` incomplete arrays, and multidimensional
+- The parser accepts `extern T name[];` and external-linkage tentative
+  `T name[];` for supported scalar arrays, and bundle linking resolves the
+  omitted bound against one complete fixed-size external definition. Incomplete
+  aggregate definitions, inferred initializer bounds for aggregate arrays,
+  empty or designated scalar-array initializers, file-scope `static` incomplete
+  arrays, unresolved incomplete tentative definitions, and multidimensional
   forms remain rejected. Non-empty positional scalar-array initializers may
   infer the fixed bound before the normal array model is built.
 - The kernel materializes each aggregate array as one stable byte-addressed
@@ -208,7 +214,8 @@ propagation, and indirect-write rejection.
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
   non-literal designators, const-qualified automatic aggregate locals,
-  multidimensional/incomplete arrays, dynamic or
+  multidimensional arrays, file-scope `static` incomplete arrays, unresolved
+  incomplete tentative definitions, dynamic or
   non-literal initialization, and wider literal forms remain open. Scalar
   array bounds may be inferred from non-empty positional initializers; static
   address initializers are revalidated after external globals are linked,

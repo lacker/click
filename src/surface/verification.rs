@@ -2264,13 +2264,10 @@ pub(in crate::surface) fn parse_verified_sources(
                     }
                 }
                 _ => {
-                    let merged = match source_arrays.get(name) {
-                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
-                        Some(_) if array.is_initialized_definition() => array.clone(),
-                        Some(previous) if previous.is_tentative() => previous.clone(),
-                        None => array.clone(),
-                        Some(_) => array.clone(),
-                    };
+                    let merged = syntax::merge_global_array_declarations(
+                        source_arrays.get(name),
+                        array.clone(),
+                    );
                     source_arrays.insert(name.clone(), merged);
                 }
             }
@@ -2308,22 +2305,24 @@ pub(in crate::surface) fn parse_verified_sources(
                     )));
                 }
                 _ => {
-                    let merged = match global_arrays.get(name) {
-                        Some(previous) if previous.is_initialized_definition() => previous.clone(),
-                        Some(_) if array.is_initialized_definition() => array.clone(),
-                        Some(previous) if previous.is_tentative() => previous.clone(),
-                        None => array.clone(),
-                        Some(_) => array.clone(),
-                    };
+                    let merged = syntax::merge_global_array_declarations(
+                        global_arrays.get(name),
+                        array.clone(),
+                    );
                     global_arrays.insert(name.clone(), merged);
                 }
             }
         }
     }
-    if let Some((name, _)) = global_arrays.iter().find(|(_, array)| !array.is_defined()) {
-        return Err(ClickError::new(format!(
-            "global array `{name}` is declared `extern` but has no definition"
-        )));
+    if let Some((name, array)) = global_arrays.iter().find(|(_, array)| !array.is_defined()) {
+        let message = if array.is_tentative() {
+            format!(
+                "global array `{name}` has an incomplete tentative definition but no complete definition"
+            )
+        } else {
+            format!("global array `{name}` is declared `extern` but has no definition")
+        };
+        return Err(ClickError::new(message));
     }
     let mut global_aggregates_by_source =
         BTreeMap::<String, BTreeMap<String, syntax::C0GlobalAggregate>>::new();

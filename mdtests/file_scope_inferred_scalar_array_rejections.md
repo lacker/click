@@ -1,8 +1,9 @@
 # unsupported inferred file-scope array forms remain rejected
 
 Only non-empty positional initializers infer a scalar array bound. Empty
-initializers, designators, aggregate arrays, and incomplete declarations
-without an initializer remain outside this slice.
+initializers, designators, aggregate arrays, file-scope `static` incomplete
+arrays, and unresolved incomplete tentative definitions remain outside this
+slice.
 
 ```c filename=invalid.c
 int32 designated[] = {[1] = 2};
@@ -13,7 +14,7 @@ struct state {
 };
 
 struct state aggregate[] = {{1}};
-int32 incomplete[];
+static int32 incomplete[];
 
 int32 read() {
     return 0;

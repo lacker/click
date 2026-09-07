@@ -1402,12 +1402,62 @@ fn c0_accepts_incomplete_extern_scalar_and_aggregate_arrays() {
 }
 
 #[test]
+fn c0_accepts_incomplete_tentative_scalar_array_declarations() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 values[];
+
+        int32 read() {
+            return values[1];
+        }
+        "#,
+        "incomplete-tentative.c",
+    )
+    .expect("external incomplete tentative arrays should parse");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert!(values.is_incomplete());
+    assert!(values.is_tentative());
+    assert!(!values.is_defined());
+    assert_eq!(values.array_length(), None);
+}
+
+#[test]
+fn c0_resolves_incomplete_tentative_scalar_arrays_to_complete_definitions() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 values[];
+        int32 values[3];
+
+        int32 read() {
+            return values[1];
+        }
+        "#,
+        "same-translation-unit.c",
+    )
+    .expect("a complete fixed-size tentative definition should resolve the bound");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert_eq!(values.length(), 3);
+    assert!(values.is_defined());
+    assert!(values.is_tentative());
+    assert_eq!(
+        functions[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(0),
+            crate::kernel::int32(0),
+            crate::kernel::int32(0)
+        ]
+    );
+}
+
+#[test]
 fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
     for source in [
-        "int32 values[]; int32 read() { return 0; }",
         "int32 values[] = {}; int32 read() { return values[0]; }",
         "int32 values[] = {[1] = 2}; int32 read() { return values[0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
+        "static int32 values[]; int32 read() { return values[0]; }",
         "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
     ] {
         let error = syntax::parse_functions(source)
@@ -1451,7 +1501,7 @@ fn c0_links_incomplete_extern_arrays_to_complete_definitions() {
             ),
             (
                 "reader.c",
-                "#include \"tables.h\"\nint32 run() { return values[1] + entries[0].value; }",
+                "#include \"tables.h\"\nint32 values[];\nint32 run() { return values[1] + entries[0].value; }",
             ),
             (
                 "definitions.c",
@@ -1460,6 +1510,35 @@ fn c0_links_incomplete_extern_arrays_to_complete_definitions() {
         ],
     )
     .expect("incomplete extern arrays should link to complete definitions");
+}
+
+#[test]
+fn c0_links_incomplete_tentative_array_to_complete_tentative_definition() {
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "reader.c";
+        verifying "definitions.c";
+
+        int32 read() {
+            ensures result == 0 by auto;
+        }
+
+        int32 definition_anchor() {
+            ensures result == 0 by auto;
+        }
+        "#,
+        &[
+            (
+                "reader.c",
+                "int32 values[]; int32 read() { return values[1]; }",
+            ),
+            (
+                "definitions.c",
+                "int32 values[3]; int32 definition_anchor() { return values[0]; }",
+            ),
+        ],
+    )
+    .expect("an incomplete tentative array should link to a complete tentative definition");
 }
 
 #[test]

@@ -352,12 +352,13 @@ impl C0Global {
     }
 }
 
-/// A fixed-size file-scope scalar array collected from one C translation unit.
-/// `initializer` is absent for an `extern` declaration and present for the
-/// definition that supplies storage. Missing elements in a definition are
-/// represented explicitly as zero values. A definition without an initializer
-/// is marked tentative so repeated declarations can be coalesced before a real
-/// initializer is selected.
+/// A file-scope scalar array collected from one C translation unit.
+/// `initializer` is absent for an `extern` declaration or an incomplete
+/// tentative definition, and present for the definition that supplies storage.
+/// Missing elements in a complete definition are represented explicitly as
+/// zero values. A definition without an initializer is marked tentative so
+/// repeated declarations can be coalesced before a real initializer is
+/// selected.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0GlobalArray {
     name: String,
@@ -4507,6 +4508,26 @@ pub(crate) fn array_lengths_compatible(left: Option<u32>, right: Option<u32>) ->
     }
 }
 
+pub(crate) fn merge_global_array_declarations(
+    previous: Option<&C0GlobalArray>,
+    declaration: C0GlobalArray,
+) -> C0GlobalArray {
+    match previous {
+        Some(previous) if previous.is_initialized_definition() => previous.clone(),
+        Some(_) if declaration.is_initialized_definition() => declaration,
+        Some(previous)
+            if previous.is_tentative()
+                && previous.is_incomplete()
+                && declaration.is_tentative()
+                && !declaration.is_incomplete() =>
+        {
+            declaration
+        }
+        Some(previous) if previous.is_tentative() => previous.clone(),
+        _ => declaration,
+    }
+}
+
 impl ErrorContext {
     fn error(&self, message: impl Into<String>) -> C0SyntaxError {
         match self.position {
@@ -5912,28 +5933,34 @@ impl Parser {
             }
             let parsed_array_length = self.parse_global_array_length(&name)?;
             let mut inferred_initializer = None;
+            let mut incomplete_tentative = false;
             let array_length = match parsed_array_length {
                 Some(GlobalArrayLength::Incomplete) if !is_extern => {
                     if self.peek() != Some(&Token::Equal) {
-                        return Err(self.error_here(format!(
-                            "incomplete file-scope array definition `{name}` requires an initializer"
-                        )));
+                        if is_file_static {
+                            return Err(self.error_here(
+                                "incomplete file-scope static array definitions are not supported yet",
+                            ));
+                        }
+                        incomplete_tentative = true;
+                        Some(GlobalArrayLength::Incomplete)
+                    } else {
+                        self.position += 1;
+                        let initializer = self
+                            .parse_inferred_global_array_initializer(&name, parsed_type.c_type)?;
+                        let length = u32::try_from(initializer.len()).map_err(|_| {
+                            self.error_here(format!(
+                                "inferred file-scope array `{name}` has too many initializers"
+                            ))
+                        })?;
+                        if length == 0 {
+                            return Err(self.error_here(format!(
+                                "inferred file-scope array `{name}` requires a non-empty initializer"
+                            )));
+                        }
+                        inferred_initializer = Some(initializer);
+                        Some(GlobalArrayLength::Complete(length))
                     }
-                    self.position += 1;
-                    let initializer =
-                        self.parse_inferred_global_array_initializer(&name, parsed_type.c_type)?;
-                    let length = u32::try_from(initializer.len()).map_err(|_| {
-                        self.error_here(format!(
-                            "inferred file-scope array `{name}` has too many initializers"
-                        ))
-                    })?;
-                    if length == 0 {
-                        return Err(self.error_here(format!(
-                            "inferred file-scope array `{name}` requires a non-empty initializer"
-                        )));
-                    }
-                    inferred_initializer = Some(initializer);
-                    Some(GlobalArrayLength::Complete(length))
                 }
                 other => other,
             };
@@ -6028,7 +6055,8 @@ impl Parser {
                             None,
                             is_file_static,
                         )
-                        .with_constant(parsed_type.is_constant),
+                        .with_constant(parsed_type.is_constant)
+                        .with_tentative(incomplete_tentative),
                     )?;
                     if let Some(length) = self
                         .global_arrays
@@ -6478,12 +6506,7 @@ impl Parser {
                 );
             }
         }
-        let merged = match self.global_arrays.get(&name) {
-            Some(previous) if previous.is_initialized_definition() => previous.clone(),
-            Some(_) if declaration.is_initialized_definition() => declaration,
-            Some(previous) if previous.is_tentative() => previous.clone(),
-            _ => declaration,
-        };
+        let merged = merge_global_array_declarations(self.global_arrays.get(&name), declaration);
         self.global_arrays.insert(name, merged);
         Ok(())
     }

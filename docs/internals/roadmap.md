@@ -123,10 +123,11 @@ Likely additions:
   one-dimensional scalar arrays now include coalesced tentative declarations
   and one initialized definition across translation units, and are also
   supported for function-local statics;
-  multidimensional, incomplete definitions without an initializer, and
-  dynamic-initialization cases remain open; external incomplete declarations
-  resolve against complete fixed-size definitions; scalar array bounds may be
-  inferred from non-empty positional initializers; zero-initialized and positional compile-time initialized
+  multidimensional, file-scope `static` incomplete definitions, unresolved
+  incomplete tentative definitions, and dynamic-initialization cases remain
+  open; external incomplete declarations and tentative definitions resolve
+  against complete fixed-size definitions; scalar array bounds may be inferred
+  from non-empty positional initializers; zero-initialized and positional compile-time initialized
   scalar-field aggregate globals, aggregate arrays, and function-local statics
   now use the same stable typed-field storage model, with compatible tentative
   aggregate definitions coalesced across translation units and one initialized
