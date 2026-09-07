@@ -1561,6 +1561,15 @@ int32 f() {
 
 ## 20. Aggregate copies skip fields and copy uninitialized sources
 
+**Partly fixed** in `Drop the destination cells an aggregate copy cannot
+carry`; regression `mdtests/aggregate_copy_skipped_field_rejected.md`. A field
+the copy cannot carry no longer leaves the destination's previous value
+readable, so no false value is provable. Two parts remain open: the copy still
+does not carry those field types at all, which is an incompleteness (the
+missing widths are `int16*`, `uint16*`, `uint32*`, `int64*`, `uint64*`,
+`float*`, `double*`, and the float array and pointer-to-pointer forms), and
+copying from an uninitialized source is still not reported as such.
+
 **Severity: high.** A whole-struct assignment leaves the destination's previous
 value in fields the copy does not handle.
 

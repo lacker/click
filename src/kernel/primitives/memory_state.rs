@@ -2195,6 +2195,40 @@ impl CMemory {
         self
     }
 
+    /// Drops every cell a field of `c_type` at `offset_bytes` from `base`
+    /// could occupy.
+    ///
+    /// Used where a copy cannot carry a field's value: leaving the
+    /// destination's own cells would read back as its previous contents,
+    /// which no execution of the copy produces.
+    pub(in crate::kernel) fn without_field_cells(
+        &self,
+        base: &Pointer,
+        offset_bytes: u32,
+        c_type: CType,
+    ) -> Self {
+        let Some(field_start) = base
+            .offset
+            .as_const()
+            .map(|start| start + i64::from(offset_bytes))
+        else {
+            return self.clone();
+        };
+        let field_end = field_start + i64::from(c_type.byte_width());
+        let mut memory = self.clone();
+        let overlaps = |pointer: &Pointer| {
+            pointer.block == base.block
+                && pointer
+                    .offset
+                    .as_const()
+                    .is_some_and(|offset| offset >= field_start && offset < field_end)
+        };
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| !overlaps(pointer));
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(pointer, _), _| !overlaps(pointer));
+        memory
+    }
+
     pub(in crate::kernel) fn without_cell(&self, pointer: &Pointer) -> Self {
         let mut memory = self.clone();
         std::sync::Arc::make_mut(&mut memory.cells).remove(pointer);

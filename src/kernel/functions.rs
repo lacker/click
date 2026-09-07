@@ -4144,7 +4144,14 @@ pub(super) fn copy_aggregate_fields(
             | CType::UInt8Pointer
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer => (field.c_type(), 1),
-            _ => continue,
+            // A field this copy cannot carry must not leave the destination's
+            // previous value in place: C copies every member, so a stale cell
+            // would be readable as the destination's old contents. Drop those
+            // cells instead, which reads back as unknown rather than wrong.
+            unsupported => {
+                memory = memory.without_field_cells(destination, field.offset_bytes(), unsupported);
+                continue;
+            }
         };
         for index in 0..element_count {
             let element_offset = field
