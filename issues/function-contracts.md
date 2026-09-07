@@ -27,7 +27,7 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   named preconditions imply implementation preconditions, and implementation
   postconditions imply named postconditions. Reversed variance is rejected.
 - Scalar preconditions and postconditions over current and function-entry
-  memory refine the same way when both interfaces have a nonempty exact
+  memory refine the same way when both interfaces have a compatible nonempty
   resource transition and compatible unguarded mutable footprints. The check
   uses one symbolic entry memory and one footprint-havoced post memory; a
   callback that promises an exact increment satisfies a progress contract,
@@ -36,17 +36,22 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   provably contained in a range permitted by the named contract. Constant and
   symbolic subranges are accepted, while a larger concrete footprint is
   rejected from the published contract rather than inferred from the C body.
+- Owned-memory resource transitions refine with an inferred frame. Named input
+  ownership must provide the concrete requirements; the residual ownership is
+  preserved and recombined with the concrete guarantees, which must then
+  provide the named guarantees. Constant and symbolic subranges are accepted;
+  extra concrete requirements and missing concrete returns are rejected.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is refinement for resources, guarded effects, and
-broader state-dependent propositions at concrete-pointer formation. Resources
-still match exactly; a concrete function should eventually be allowed to
-consume no more and return no less. Stateful sequence, algebraic,
-resource-predicate, explicit-memory-snapshot, and guarded-footprint
-propositions are not yet part of refinement. The Linux augmented rbtree
-regressions below also remain to be added on top of those general rules.
+The remaining semantic step is refinement for non-memory resources, guarded
+effects, and broader state-dependent propositions at concrete-pointer
+formation. Views, abstract tokens, and composite resources still match
+exactly. Stateful sequence, algebraic, resource-predicate,
+explicit-memory-snapshot, and guarded-footprint propositions are not yet part
+of refinement. The Linux augmented rbtree regressions below also remain to be
+added on top of those general rules.
 
 ## Violated invariant
 
