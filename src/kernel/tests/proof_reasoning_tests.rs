@@ -1,20 +1,27 @@
 use super::*;
 
 fn maybe_int32_type() -> AlgebraicType {
+    let arguments = vec![AlgebraicValueType::C(CType::Int32)];
+    let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+        AlgebraicVariantType {
+            name: "None".to_string(),
+            fields: vec![],
+        },
+        AlgebraicVariantType {
+            name: "Some".to_string(),
+            fields: vec![AlgebraicValueType::C(CType::Int32)],
+        },
+    ]
+    .into();
+    let value_type = AlgebraicValueType::Algebraic {
+        name: "Maybe".to_string(),
+        arguments: arguments.clone(),
+    };
     AlgebraicType {
         name: "Maybe".to_string(),
-        arguments: vec![CType::Int32],
-        variants: vec![
-            AlgebraicVariantType {
-                name: "None".to_string(),
-                fields: vec![],
-            },
-            AlgebraicVariantType {
-                name: "Some".to_string(),
-                fields: vec![CType::Int32],
-            },
-        ]
-        .into(),
+        arguments,
+        variants: variants.clone(),
+        schemas: std::sync::Arc::new(BTreeMap::from([(value_type, variants)])),
     }
 }
 
@@ -27,7 +34,7 @@ fn maybe_constructor(
         algebraic_type: algebraic_type.clone(),
         node: AlgebraicTermNode::Constructor {
             variant: variant.to_string(),
-            fields,
+            fields: fields.into_iter().map(AlgebraicValue::C).collect(),
         },
     }
 }

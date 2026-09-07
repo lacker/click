@@ -1612,7 +1612,7 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
 }
 
 #[test]
-fn atomic_condition_fact_transport_uses_certified_effect_summary() {
+fn atomic_condition_fact_transport_does_not_plan_from_an_effect_summary() {
     let before = CMemory::new()
         .with_block("stable", 4)
         .with_block("mutated", 4);
@@ -1646,23 +1646,9 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
             )],
         });
 
-    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
-        .expect("the framed load should transport");
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::equal(
-                    Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(after),
-                        Box::new(stable)
-                    ),
-                    Bitvector32Term::Constant(7),
-                ),
-                true,
-            )),
-        )
+    assert!(
+        prove_c_condition_fact_transport(&fact, &after, &assumptions).is_none(),
+        "ordinary fact transport must not plan load equality from ambient effect summaries",
     );
 }
 
@@ -1739,7 +1725,7 @@ fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
 }
 
 #[test]
-fn atomic_condition_fact_transport_preserves_pointer_offset_equality() {
+fn pointer_offset_fact_transport_does_not_plan_from_an_effect_summary() {
     let before = CMemory::new()
         .with_block("stable", 4)
         .with_block("mutated", 4);
@@ -1777,26 +1763,9 @@ fn atomic_condition_fact_transport_preserves_pointer_offset_equality() {
             )],
         });
 
-    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
-        .expect("the framed pointer-valued field should transport");
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::pointer_offset_equal(
-                    PointerOffsetTerm::scale_int32(
-                        Bitvector32Term::MemoryLoad(
-                            crate::kernel::intern_c_memory(after),
-                            Box::new(stable)
-                        ),
-                        4,
-                    ),
-                    expected,
-                ),
-                true,
-            )),
-        )
+    assert!(
+        prove_c_condition_fact_transport(&fact, &after, &assumptions).is_none(),
+        "pointer-offset transport must require checked load-equality evidence",
     );
 }
 
@@ -1934,7 +1903,7 @@ fn pointer_offset_equality_combines_equal_base_and_zero_index() {
 }
 
 #[test]
-fn atomic_condition_fact_transport_uses_exact_separate_range() {
+fn atomic_condition_fact_transport_does_not_plan_from_a_separate_range() {
     let before = CMemory::new();
     let after = before.clone().with_block("call-havoc:0", 0);
     let left = Pointer {
@@ -1978,23 +1947,9 @@ fn atomic_condition_fact_transport_uses_exact_separate_range() {
             )],
         });
 
-    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
-        .expect("the exact separate range should frame the left load");
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::equal(
-                    Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(after),
-                        Box::new(left)
-                    ),
-                    Bitvector32Term::Constant(0),
-                ),
-                true,
-            )),
-        )
+    assert!(
+        prove_c_condition_fact_transport(&fact, &after, &assumptions).is_none(),
+        "ordinary fact transport must not synthesize a frame from ambient separation",
     );
 }
 

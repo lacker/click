@@ -282,6 +282,18 @@ fn memories_equal_by_matching_derivations(
     right: &CMemory,
     assumptions: &PureFactContext,
 ) -> bool {
+    matching_recomputed_call_havoc_views(left, right, assumptions).is_some()
+}
+
+/// Matches two recomputed memory histories and returns the exact pairs of call
+/// result snapshots encountered on the successful path. Execution-proof
+/// construction uses these pairs to register another concrete view of an
+/// already checked call event; the pairs themselves are never authority.
+pub(crate) fn matching_recomputed_call_havoc_views(
+    left: &CMemory,
+    right: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<Vec<(SharedCMemory, SharedCMemory)>> {
     fn transparent_base(derivation: &CMemoryDerivation) -> Option<&SharedCMemory> {
         match derivation {
             CMemoryDerivation::Store {
@@ -327,77 +339,101 @@ fn memories_equal_by_matching_derivations(
         load_pointer.as_ref() == pointer
             && intern_c_memory_ref(load_memory).arena_id() == base.arena_id()
     }
-    if c_memories_definitionally_equal(left, right, assumptions) {
-        return true;
-    }
-    let left = intern_c_memory_ref(left);
-    let right = intern_c_memory_ref(right);
-    let left_derivation = left.derivation();
-    let right_derivation = right.derivation();
-    if let Some(base) = left_derivation.as_deref().and_then(transparent_base) {
-        return memories_equal_by_matching_derivations(base, &right, assumptions);
-    }
-    if let Some(base) = right_derivation.as_deref().and_then(transparent_base) {
-        return memories_equal_by_matching_derivations(&left, base, assumptions);
-    }
-    match (left_derivation.as_deref(), right_derivation.as_deref()) {
-        (
-            Some(CMemoryDerivation::CallHavoc {
-                base: left_base,
-                mutable_ranges: left_ranges,
-                ..
-            }),
-            Some(CMemoryDerivation::CallHavoc {
-                base: right_base,
-                mutable_ranges: right_ranges,
-                ..
-            }),
-        ) => {
-            memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
-                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
+    fn match_inner(
+        left: &CMemory,
+        right: &CMemory,
+        assumptions: &PureFactContext,
+        views: &mut Vec<(SharedCMemory, SharedCMemory)>,
+    ) -> bool {
+        if c_memories_definitionally_equal(left, right, assumptions) {
+            return true;
         }
-        (
-            Some(CMemoryDerivation::LoopHavoc {
-                base: left_base,
-                mutable_ranges: left_ranges,
-                ..
-            }),
-            Some(CMemoryDerivation::LoopHavoc {
-                base: right_base,
-                mutable_ranges: right_ranges,
-                ..
-            }),
-        ) => {
-            let ranges_match = match (left_ranges, right_ranges) {
-                (Some(left_ranges), Some(right_ranges)) => {
-                    memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
+        let left = intern_c_memory_ref(left);
+        let right = intern_c_memory_ref(right);
+        let left_derivation = left.derivation();
+        let right_derivation = right.derivation();
+        if let Some(base) = left_derivation.as_deref().and_then(transparent_base) {
+            return match_inner(base, &right, assumptions, views);
+        }
+        if let Some(base) = right_derivation.as_deref().and_then(transparent_base) {
+            return match_inner(&left, base, assumptions, views);
+        }
+        match (left_derivation.as_deref(), right_derivation.as_deref()) {
+            (
+                Some(CMemoryDerivation::CallHavoc {
+                    base: left_base,
+                    mutable_ranges: left_ranges,
+                    ..
+                }),
+                Some(CMemoryDerivation::CallHavoc {
+                    base: right_base,
+                    mutable_ranges: right_ranges,
+                    ..
+                }),
+            ) => {
+                if !memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
+                    || !match_inner(left_base, right_base, assumptions, views)
+                {
+                    return false;
                 }
-                (None, None) => true,
-                _ => false,
-            };
-            ranges_match
-                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
+                views.push((left, right));
+                true
+            }
+            (
+                Some(CMemoryDerivation::LoopHavoc {
+                    base: left_base,
+                    mutable_ranges: left_ranges,
+                    ..
+                }),
+                Some(CMemoryDerivation::LoopHavoc {
+                    base: right_base,
+                    mutable_ranges: right_ranges,
+                    ..
+                }),
+            ) => {
+                let ranges_match = match (left_ranges, right_ranges) {
+                    (Some(left_ranges), Some(right_ranges)) => {
+                        memory_range_lists_definitionally_equal(
+                            left_ranges,
+                            right_ranges,
+                            assumptions,
+                        )
+                    }
+                    (None, None) => true,
+                    _ => false,
+                };
+                ranges_match && match_inner(left_base, right_base, assumptions, views)
+            }
+            (
+                Some(CMemoryDerivation::Store {
+                    base: left_base,
+                    pointer: left_pointer,
+                    value: left_value,
+                    ..
+                }),
+                Some(CMemoryDerivation::Store {
+                    base: right_base,
+                    pointer: right_pointer,
+                    value: right_value,
+                    ..
+                }),
+            ) => {
+                pointers_proven_equal_for_memory_resolution(
+                    left_pointer,
+                    right_pointer,
+                    assumptions,
+                ) && c_values_proven_equal_for_memory_resolution(
+                    left_value,
+                    right_value,
+                    assumptions,
+                ) && match_inner(left_base, right_base, assumptions, views)
+            }
+            _ => false,
         }
-        (
-            Some(CMemoryDerivation::Store {
-                base: left_base,
-                pointer: left_pointer,
-                value: left_value,
-                ..
-            }),
-            Some(CMemoryDerivation::Store {
-                base: right_base,
-                pointer: right_pointer,
-                value: right_value,
-                ..
-            }),
-        ) => {
-            pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
-                && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
-                && memories_equal_by_matching_derivations(left_base, right_base, assumptions)
-        }
-        _ => false,
     }
+
+    let mut views = Vec::new();
+    match_inner(left, right, assumptions, &mut views).then_some(views)
 }
 
 fn memory_range_lists_definitionally_equal(
@@ -1814,7 +1850,10 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
         .iter()
         .map(|claim| {
             let claim_started = std::time::Instant::now();
-            let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
+            let load_equality_capture =
+                crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(
+                    &contract_execution.checked_call_events,
+                );
             let operation_name = match claim.target() {
                 CFunctionContractClaimTarget::BodySafety => "contract claim: body safety",
                 CFunctionContractClaimTarget::EnsureProposition(_) => "contract claim: proposition",

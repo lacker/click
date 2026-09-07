@@ -27,6 +27,67 @@ fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
 }
 
 #[test]
+fn checked_call_event_equality_requires_one_proof_owned_event_and_exact_query() {
+    let assumptions = PureFactContext::new();
+    let loaded = arc_pointer(0);
+    let mutable_ranges = [memory_range(loaded.clone(), 0, 1)];
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let left = base
+        .clone()
+        .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions);
+    let right = base
+        .with_block_without_derivation("local:recomputed-view", 4)
+        .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions);
+    assert_ne!(left, right);
+
+    let left_memory = crate::kernel::intern_c_memory_ref(&left);
+    let right_memory = crate::kernel::intern_c_memory_ref(&right);
+    let event = crate::kernel::proof::CheckedCallEvent::new(left_memory.clone());
+    let events = crate::kernel::proof::CheckedCallEvents::containing_for_test(&event);
+    let left_load = Bitvector32Term::MemoryLoad(left_memory.clone(), Box::new(loaded.clone()));
+    let right_load = Bitvector32Term::MemoryLoad(right_memory.clone(), Box::new(loaded.clone()));
+    {
+        let _scope = CheckedCallEventScope::start(&events);
+        assert!(
+            !checked_call_event_load_equality_for_test(&left_load, &right_load, &assumptions),
+            "a read-only scope cannot adopt a structurally matching recomputed view",
+        );
+    }
+    let _scope = CheckedCallEventScope::start_registering_views(&events);
+    let capture = CheckedLoadEqualityCapture::start_with_call_events(&events);
+    assert!(checked_atomic_load_equality(
+        &left_load,
+        &right_load,
+        &assumptions,
+    ));
+    let equalities = capture.finish();
+    let [equality] = equalities.as_slice() else {
+        panic!("expected one retained equality, got {equalities:?}");
+    };
+    assert!(equality.is_same_checked_call_event_for_test());
+    assert!(equality.checks_with_call_events(&assumptions, &events));
+
+    let distinct_event = crate::kernel::proof::CheckedCallEvent::new(right_memory.clone());
+    let distinct_events =
+        crate::kernel::proof::CheckedCallEvents::containing_for_test(&distinct_event);
+    assert!(
+        !equality.checks_with_call_events(&assumptions, &distinct_events),
+        "matching numeric havoc variables in distinct events are not authority",
+    );
+
+    let retargeted = arc_pointer(4);
+    assert!(
+        !equality.checks_retargeted_for_test(
+            Bitvector32Term::MemoryLoad(left_memory, Box::new(retargeted.clone())),
+            Bitvector32Term::MemoryLoad(right_memory, Box::new(retargeted)),
+            &assumptions,
+            &events,
+        ),
+        "checked call evidence is query-specific",
+    );
+}
+
+#[test]
 fn checked_load_equality_retains_canonical_projection_provenance() {
     let source = CMemory::new()
         .with_block_without_derivation("arg-memory", 16)

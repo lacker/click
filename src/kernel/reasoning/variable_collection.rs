@@ -238,13 +238,7 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
         }
         Term::CValue(value) => collect_c_value_bitvector_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bitvector_variables(sequence, variables),
-        Term::Algebraic(term) => {
-            if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
-                for field in fields {
-                    collect_c_value_bitvector_variables(field, variables);
-                }
-            }
-        }
+        Term::Algebraic(term) => collect_algebraic_term_bitvector_variables(term, variables),
         Term::CExpressionOutcome(outcome) => {
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
@@ -256,6 +250,59 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
         }
         Term::CMemory(memory) => collect_memory_bitvector_variables(memory, variables),
         Term::CState(state) => collect_c_state_bitvector_variables(state, variables),
+    }
+}
+
+fn collect_algebraic_term_bitvector_variables(
+    term: &AlgebraicTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match &term.node {
+        AlgebraicTermNode::Variable(_) => {}
+        AlgebraicTermNode::Constructor { fields, .. } => {
+            for field in fields {
+                collect_algebraic_value_bitvector_variables(field, variables);
+            }
+        }
+        AlgebraicTermNode::Match { scrutinee, arms } => {
+            collect_algebraic_term_bitvector_variables(scrutinee, variables);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_algebraic_value_bitvector_variables(binding, variables);
+                }
+                collect_algebraic_term_bitvector_variables(&arm.body, variables);
+            }
+        }
+        AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        collect_c_value_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::Algebraic(value) => {
+                        collect_algebraic_term_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory, pointer, ..
+                    } => {
+                        collect_memory_bitvector_variables(memory, variables);
+                        collect_c_value_bitvector_variables(pointer, variables);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_algebraic_value_bitvector_variables(
+    value: &AlgebraicValue,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match value {
+        AlgebraicValue::C(value) => collect_c_value_bitvector_variables(value, variables),
+        AlgebraicValue::Algebraic(value) => {
+            collect_algebraic_term_bitvector_variables(value, variables)
+        }
     }
 }
 
@@ -618,10 +665,17 @@ fn collect_spec_algebraic_expression_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_) => {}
+        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {}
         SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
             for field in fields {
-                collect_spec_expression_bitvector_variables(field, variables);
+                match field {
+                    SpecAlgebraicValue::C(field) => {
+                        collect_spec_expression_bitvector_variables(field, variables)
+                    }
+                    SpecAlgebraicValue::Algebraic(field) => {
+                        collect_spec_algebraic_expression_bitvector_variables(field, variables)
+                    }
+                }
             }
         }
         SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {

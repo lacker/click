@@ -144,13 +144,13 @@ object. Contract certification is likewise a phase that rechecks retained
 execution evidence, not a separate load-equality checker or proof
 representation.
 
-Framed atomic transport is not yet migrated. Its remaining direct
-`c_memory_load_is_unchanged` call now has typed witnesses for
-`StoreExplicitRange` hops, but the selected DAG path can still finish at a
-snapshot whose loaded cell agrees with the target only after comparing their
-small, bounded snapshot delta. The global prover and its search machinery must
-remain until that terminal comparison and the separate incomplete edge route
-identified below have typed, locally checkable witnesses.
+At that stage, framed atomic transport was not yet migrated. Its remaining
+direct `c_memory_load_is_unchanged` call had typed witnesses for
+`StoreExplicitRange` hops, but the selected DAG path could still finish at a
+snapshot whose loaded cell agreed with the target only after comparing their
+small, bounded snapshot delta. The censuses and implementation slices below
+resolve that direct consumer; the prover now remains only on the separately
+described dependent-load-address route.
 
 ### `StoreExplicitRange` evidence census (2026-09-05)
 
@@ -333,6 +333,43 @@ checked-call transition identity (or an equivalent proof-object-owned event
 witness), rather than treating two structurally matching havoc markers as the
 same event.
 
+### Checked-call event implementation (2026-09-06)
+
+The bounded-pool residual is now migrated at that proof-object boundary. When
+the kernel accepts a statement theorem, it records an opaque `Call` event for
+each `CallHavoc` result introduced by the theorem. Event-shape validation
+requires each event's canonical result to be one of the exact call results of
+the immediately preceding statement; an unrelated or duplicated event is not
+accepted. The evaluator's numeric havoc variable remains only a local recomputation
+shape and is not the event identity.
+
+Forked execution proofs share an exact-view registry but carry a persistent,
+path-local set of active event identities. The registry indexes memory views
+to their events, so checking one load equality does not copy or scan the
+proof's call history. An event created in one branch is present in the shared
+index but inactive in its sibling and therefore cannot authorize evidence
+there. A deterministic scaling regression checks 1, 64, and 1,024 active call
+events and observes one indexed candidate for the selected exact view at every
+size.
+
+Checked fixed-state transport is the one view-registration boundary. It first
+checks the source, target, explicit premises, and their relationship to the
+current proof state. While doing that checked operation, a second exact
+`CallHavoc` endpoint may be registered with an already-active event only when
+the other endpoint is already registered and the recomputation marker and exact
+mutable ranges match. Read-only checking scopes cannot add a view. Later
+consumers never repeat this association rule: retained `SameCheckedCallEvent`
+evidence names the event, exact load pointer, and both typed memory-DAG walks,
+and its checker requires both terminal snapshots to be registered exact views
+of that active event.
+
+This adds no Click syntax. A `transport` already advances the proof object at
+the point where the evidence is collected; the additional authority is an
+internal checked-execution fact, not a surface certificate operation. The
+direct framed-transport fallback to `c_memory_load_is_unchanged` has been
+deleted. The complete example and mdtest harnesses pass with bounded-pool
+verifying through the retained event evidence.
+
 Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
 relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
 60,000–120,000 distinct recursive equality subqueries at a maximum active
@@ -401,12 +438,13 @@ comparisons do not invoke a framed-load planner.
   advances the proof object with the snapshot-equality fact and its checked
   evidence. When the tactic is smart, expansion serializes corresponding
   surface-expressible operations as its certificate.
-- **Partial:** `memory_loads_proven_equal` no longer has the framed-load
-  reconstruction fallback, but framed atomic transport remains a direct
-  consumer of that prover. Its dependent-load-address congruence search still
-  uses `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`; replace both remaining routes with
-  typed evidence and delete the limit with no counter, depth, or tier in its
-  place.
+- **Partial:** `memory_loads_proven_equal` and framed atomic transport no
+  longer call the framed-load reconstruction prover. Canonical projections,
+  typed store edges, symbolic range membership, and checked-call event
+  equality cover every positive framed-transport case in the latest census.
+  The separate dependent-load-address congruence search still uses
+  `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`; replace that remaining route with typed
+  evidence and delete the limit with no counter, depth, or tier in its place.
 - The scaling regression above lands, both harnesses pass, and the
   `click profile` work units of perpetual-service and owned-vector do not
   rise.

@@ -383,9 +383,10 @@ pub struct AlgebraicVariantDefinition {
 pub enum AlgebraicFieldType {
     Parameter(String),
     C(C0Type),
-    /// Parsed so the validator can issue a focused first-slice diagnostic for
-    /// recursive or nested algebraic fields.
-    Algebraic(String),
+    Algebraic {
+        name: String,
+        arguments: Vec<AlgebraicFieldType>,
+    },
 }
 
 /// A value type in the Click specification language. C types are one family

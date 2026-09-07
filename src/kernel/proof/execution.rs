@@ -12,9 +12,16 @@ use crate::kernel::{
     ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
     ResourceContext, SpecProposition, Theorem,
 };
-use std::collections::BTreeMap;
+use crate::persistent::PersistentSet;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+
+#[cfg(test)]
+thread_local! {
+    static CHECKED_CALL_EVENT_LOOKUP_CANDIDATES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 /// The typed identity of the execution region a frontier executes.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +56,10 @@ pub(crate) struct LoopEffectGoal {
 #[derive(Clone)]
 pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
+    /// One opaque call occurrence introduced by the preceding checked
+    /// statement. Its registered snapshots are exact recomputed views of that
+    /// occurrence, not a structural claim that matching calls are equal.
+    Call(CheckedCallEvent),
     Condition(Theorem),
     /// The kernel fact context the preceding `Statement` or `Condition`
     /// theorem was proved under. A transition's theorem lists that context
@@ -63,6 +74,301 @@ pub(crate) enum CheckedExecutionEvent {
     ResourceObservation(CheckedResourceObservation),
     ResourceRewrite(CheckedResourceRewrite),
 }
+
+/// Proof-object-owned authority for one checked call occurrence.
+///
+/// Construction may register additional exact result snapshots when a later
+/// statement theorem is accepted from a recomputed view of the running state.
+/// Consumers can only cite this opaque object and snapshots in its registry;
+/// evaluator-local havoc variables never act as authority.
+#[derive(Default)]
+struct CheckedCallEventRegistryData {
+    canonical_views: HashMap<u64, crate::kernel::SharedCMemory>,
+    events_by_view: HashMap<crate::kernel::SharedCMemory, Vec<u64>>,
+}
+
+/// Shared exact-view index for one family of forked execution proofs.
+#[derive(Clone)]
+struct CheckedCallEventRegistry {
+    identity: Arc<()>,
+    next_id: Arc<std::sync::atomic::AtomicU64>,
+    data: Arc<std::sync::Mutex<CheckedCallEventRegistryData>>,
+}
+
+impl CheckedCallEventRegistry {
+    fn new() -> Self {
+        Self {
+            identity: Arc::new(()),
+            next_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            data: Arc::new(std::sync::Mutex::new(
+                CheckedCallEventRegistryData::default(),
+            )),
+        }
+    }
+
+    fn same_registry(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.identity, &other.identity)
+    }
+
+    fn new_event(&self, canonical_view: crate::kernel::SharedCMemory) -> CheckedCallEvent {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut data = self.data.lock().expect("checked call registry poisoned");
+        data.canonical_views.insert(id, canonical_view.clone());
+        data.events_by_view
+            .entry(canonical_view)
+            .or_default()
+            .push(id);
+        CheckedCallEvent {
+            registry: self.clone(),
+            id,
+        }
+    }
+
+    fn register_view(&self, id: u64, view: crate::kernel::SharedCMemory) {
+        let mut data = self.data.lock().expect("checked call registry poisoned");
+        assert!(
+            data.canonical_views.contains_key(&id),
+            "checked call event belongs to its registry"
+        );
+        let events = data.events_by_view.entry(view).or_default();
+        if !events.contains(&id) {
+            events.push(id);
+        }
+    }
+
+    fn contains_view(&self, id: u64, view: &crate::kernel::SharedCMemory) -> bool {
+        self.data
+            .lock()
+            .expect("checked call registry poisoned")
+            .events_by_view
+            .get(view)
+            .is_some_and(|events| events.contains(&id))
+    }
+
+    fn event_ids_for_view(&self, view: &crate::kernel::SharedCMemory) -> Vec<u64> {
+        self.data
+            .lock()
+            .expect("checked call registry poisoned")
+            .events_by_view
+            .get(view)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn canonical_view(&self, id: u64) -> crate::kernel::SharedCMemory {
+        self.data
+            .lock()
+            .expect("checked call registry poisoned")
+            .canonical_views
+            .get(&id)
+            .expect("checked call event belongs to its registry")
+            .clone()
+    }
+}
+
+/// Opaque identity for one call occurrence. Membership in a proof path is
+/// carried separately by [`CheckedCallEvents`].
+#[derive(Clone)]
+pub(crate) struct CheckedCallEvent {
+    registry: CheckedCallEventRegistry,
+    id: u64,
+}
+
+impl CheckedCallEvent {
+    #[cfg(test)]
+    pub(crate) fn new(canonical_view: crate::kernel::SharedCMemory) -> Self {
+        CheckedCallEventRegistry::new().new_event(canonical_view)
+    }
+
+    fn canonical_view(&self) -> crate::kernel::SharedCMemory {
+        self.registry.canonical_view(self.id)
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.id == other.id && self.registry.same_registry(&other.registry)
+    }
+}
+
+impl std::fmt::Debug for CheckedCallEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CheckedCallEvent")
+            .field("canonical_view", &self.canonical_view().arena_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CheckedCallEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.same_authority(other)
+    }
+}
+
+impl Eq for CheckedCallEvent {}
+
+#[derive(Clone)]
+struct CheckedCallEventGroup {
+    registry: CheckedCallEventRegistry,
+    active: PersistentSet<u64>,
+}
+
+/// Indexed checked-call authority available on one proof path.
+///
+/// Registry storage is shared across forks, while `active` is persistent and
+/// path-local. Exact-view lookup is therefore proportional to the events
+/// registered for that view, not to the proof's complete call history.
+#[derive(Clone, Default)]
+pub(crate) struct CheckedCallEvents {
+    groups: Vec<CheckedCallEventGroup>,
+}
+
+impl CheckedCallEvents {
+    fn new() -> Self {
+        Self {
+            groups: vec![CheckedCallEventGroup {
+                registry: CheckedCallEventRegistry::new(),
+                active: PersistentSet::default(),
+            }],
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.groups.iter().all(|group| group.active.is_empty())
+    }
+
+    fn new_event(&mut self, canonical_view: crate::kernel::SharedCMemory) -> CheckedCallEvent {
+        if self.groups.is_empty() {
+            self.groups.push(CheckedCallEventGroup {
+                registry: CheckedCallEventRegistry::new(),
+                active: PersistentSet::default(),
+            });
+        }
+        debug_assert_eq!(self.groups.len(), 1);
+        let group = &mut self.groups[0];
+        let event = group.registry.new_event(canonical_view);
+        group.active = group.active.with_value(event.id);
+        event
+    }
+
+    fn insert(&mut self, event: &CheckedCallEvent) {
+        if let Some(group) = self
+            .groups
+            .iter_mut()
+            .find(|group| group.registry.same_registry(&event.registry))
+        {
+            group.active = group.active.with_value(event.id);
+            return;
+        }
+        self.groups.push(CheckedCallEventGroup {
+            registry: event.registry.clone(),
+            active: PersistentSet::default().with_value(event.id),
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn containing_for_test(event: &CheckedCallEvent) -> Self {
+        let mut events = Self::default();
+        events.insert(event);
+        events
+    }
+
+    pub(crate) fn extend(&mut self, other: &Self) {
+        for group in &other.groups {
+            for id in group.active.iter() {
+                self.insert(&CheckedCallEvent {
+                    registry: group.registry.clone(),
+                    id: *id,
+                });
+            }
+        }
+    }
+
+    pub(crate) fn contains(&self, event: &CheckedCallEvent) -> bool {
+        self.groups.iter().any(|group| {
+            group.registry.same_registry(&event.registry) && group.active.contains(&event.id)
+        })
+    }
+
+    pub(crate) fn contains_view(
+        &self,
+        event: &CheckedCallEvent,
+        view: &crate::kernel::SharedCMemory,
+    ) -> bool {
+        self.contains(event) && event.registry.contains_view(event.id, view)
+    }
+
+    pub(crate) fn register_view(
+        &self,
+        event: &CheckedCallEvent,
+        view: crate::kernel::SharedCMemory,
+    ) {
+        if self.contains(event) {
+            event.registry.register_view(event.id, view);
+        }
+    }
+
+    pub(crate) fn events_for_view(
+        &self,
+        view: &crate::kernel::SharedCMemory,
+    ) -> Vec<CheckedCallEvent> {
+        let mut events = Vec::new();
+        for group in &self.groups {
+            let indexed = group.registry.event_ids_for_view(view);
+            #[cfg(test)]
+            CHECKED_CALL_EVENT_LOOKUP_CANDIDATES.with(|count| {
+                count.set(count.get().saturating_add(indexed.len()));
+            });
+            events.extend(
+                indexed
+                    .into_iter()
+                    .filter(|id| group.active.contains(id))
+                    .map(|id| CheckedCallEvent {
+                        registry: group.registry.clone(),
+                        id,
+                    }),
+            );
+        }
+        events
+    }
+
+    #[cfg(test)]
+    fn reset_lookup_candidates_for_test() {
+        CHECKED_CALL_EVENT_LOOKUP_CANDIDATES.with(|count| count.set(0));
+    }
+
+    #[cfg(test)]
+    fn lookup_candidates_for_test() -> usize {
+        CHECKED_CALL_EVENT_LOOKUP_CANDIDATES.with(std::cell::Cell::get)
+    }
+}
+
+impl std::fmt::Debug for CheckedCallEvents {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CheckedCallEvents")
+            .field(
+                "active_count",
+                &self
+                    .groups
+                    .iter()
+                    .map(|group| group.active.len())
+                    .sum::<usize>(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+// This is retained checking authority, not part of an execution's semantic
+// result. Public execution equality deliberately ignores it.
+impl PartialEq for CheckedCallEvents {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CheckedCallEvents {}
 
 /// Kernel-checked evidence for a fold, unfold, or scoped open/close that
 /// changes only the definitional representation of one composite resource.
@@ -88,8 +394,10 @@ impl CheckedResourceRewrite {
         selected: &CResourceFact,
         after_state: &CState,
         after_facts: &ProofFacts,
+        call_events: &CheckedCallEvents,
     ) -> Result<Self, &'static str> {
-        let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
+        let load_equality_capture =
+            crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
         let assumptions = before_facts.assumptions();
         if before_state
             .resources()
@@ -283,13 +591,17 @@ impl CheckedResourceRewrite {
         })
     }
 
-    fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
+    fn advance_checked(
+        &self,
+        state: &CState,
+        facts: &ProofFacts,
+        call_events: &CheckedCallEvents,
+    ) -> Option<ProofFacts> {
         if state != &self.before_state
             || facts.introduced_since(&self.before_facts).is_none()
-            || self
-                .load_equalities
-                .iter()
-                .any(|equality| !equality.checks(self.before_facts.assumptions()))
+            || self.load_equalities.iter().any(|equality| {
+                !equality.checks_with_call_events(self.before_facts.assumptions(), call_events)
+            })
         {
             return None;
         }
@@ -340,8 +652,10 @@ impl CheckedResourceObservation {
         after_state: &CState,
         after_facts: &ProofFacts,
         derivations: &PersistentOrderedSet<Theorem>,
+        call_events: &CheckedCallEvents,
     ) -> Result<Self, &'static str> {
-        let load_equality_capture = crate::kernel::CheckedLoadEqualityCapture::start();
+        let load_equality_capture =
+            crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
         let assumptions = before_facts.assumptions();
         let zero_quantity = observed.has_proven_zero_quantity(assumptions);
         if !zero_quantity
@@ -496,13 +810,17 @@ impl CheckedResourceObservation {
         })
     }
 
-    fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
+    fn advance_checked(
+        &self,
+        state: &CState,
+        facts: &ProofFacts,
+        call_events: &CheckedCallEvents,
+    ) -> Option<ProofFacts> {
         if state != &self.before_state
             || facts.introduced_since(&self.before_facts).is_none()
-            || self
-                .load_equalities
-                .iter()
-                .any(|equality| !equality.checks(self.before_facts.assumptions()))
+            || self.load_equalities.iter().any(|equality| {
+                !equality.checks_with_call_events(self.before_facts.assumptions(), call_events)
+            })
         {
             return None;
         }
@@ -1864,6 +2182,10 @@ pub(crate) struct ExecutionProofCore {
     /// operation with several return outcomes can complete several traces at
     /// once. Forked proofs share every unchanged trace prefix.
     pub(crate) execution_evidence: SharedVec<PersistentSequence<CheckedExecutionEvent>>,
+    /// Events on the current unjoined path. A branch join restores its
+    /// parent's set; finalization collects all retained arm events by walking
+    /// the output trace once.
+    checked_call_events: CheckedCallEvents,
     pub(crate) function_entry: Option<Arc<CheckedFunctionEntry>>,
     pub(crate) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(crate) execution_abstraction: bool,
@@ -1917,6 +2239,87 @@ fn checked_evidence_conclusion(theorem: &Theorem) -> &Proposition {
         conclusion = body;
     }
     conclusion
+}
+
+fn statement_call_havoc_views(theorem: &Theorem) -> Vec<crate::kernel::SharedCMemory> {
+    let (before, outcome) = match checked_evidence_conclusion(theorem) {
+        Proposition::CStatementExecutes { state, outcome, .. }
+        | Proposition::CStatementVerifies { state, outcome, .. } => (state.memory(), outcome),
+        _ => return Vec::new(),
+    };
+    let after = match outcome {
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Return { state, .. } => state.memory(),
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => return Vec::new(),
+    };
+    let before = crate::kernel::intern_c_memory_ref(before);
+    let mut current = crate::kernel::intern_c_memory_ref(after);
+    let mut calls = Vec::new();
+    while current != before {
+        let Some(derivation) = current.derivation() else {
+            return Vec::new();
+        };
+        if matches!(
+            derivation.as_ref(),
+            crate::kernel::CMemoryDerivation::CallHavoc { .. }
+        ) {
+            calls.push(current.clone());
+        }
+        current = derivation.base().clone();
+    }
+    calls.reverse();
+    calls
+}
+
+fn register_recomputed_call_views(
+    events: &CheckedCallEvents,
+    running: &CMemory,
+    recomputed: &CMemory,
+    assumptions: &PureFactContext,
+) {
+    let Some(pairs) =
+        crate::kernel::api::contract_certification::matching_recomputed_call_havoc_views(
+            running,
+            recomputed,
+            assumptions,
+        )
+    else {
+        return;
+    };
+    for (running_view, recomputed_view) in pairs {
+        for event in events.events_for_view(&running_view) {
+            events.register_view(&event, recomputed_view.clone());
+        }
+        for event in events.events_for_view(&recomputed_view) {
+            events.register_view(&event, running_view.clone());
+        }
+    }
+}
+
+fn collect_retained_call_events(
+    events: &[CheckedExecutionEvent],
+    call_events: &mut CheckedCallEvents,
+) {
+    for event in events {
+        match event {
+            CheckedExecutionEvent::Call(call) => call_events.insert(call),
+            CheckedExecutionEvent::Branch(branch) => {
+                for arm in &branch.arms {
+                    collect_retained_call_events(&arm.events, call_events);
+                }
+            }
+            CheckedExecutionEvent::Statement(_)
+            | CheckedExecutionEvent::Condition(_)
+            | CheckedExecutionEvent::Context(_)
+            | CheckedExecutionEvent::ProofCase(_)
+            | CheckedExecutionEvent::ResourceObservation(_)
+            | CheckedExecutionEvent::ResourceRewrite(_) => {}
+        }
+    }
 }
 
 fn checked_evidence_premises_hold(theorem: &Theorem, facts: &ProofFacts) -> bool {
@@ -2220,8 +2623,24 @@ struct CheckedEvidenceProgress {
 fn check_evidence_events(
     events: &[CheckedExecutionEvent],
     facts: &ProofFacts,
+    state: CState,
+    remaining: Option<CStatement>,
+) -> Option<CheckedEvidenceProgress> {
+    check_evidence_events_with_call_events(
+        events,
+        facts,
+        state,
+        remaining,
+        CheckedCallEvents::default(),
+    )
+}
+
+fn check_evidence_events_with_call_events(
+    events: &[CheckedExecutionEvent],
+    facts: &ProofFacts,
     mut state: CState,
     mut remaining: Option<CStatement>,
+    mut call_events: CheckedCallEvents,
 ) -> Option<CheckedEvidenceProgress> {
     let mut completed = None;
     let mut current_facts = facts.clone();
@@ -2238,18 +2657,23 @@ fn check_evidence_events(
                 continue;
             }
             CheckedExecutionEvent::ResourceObservation(observation) => {
-                current_facts = observation.advance_checked(&state, &current_facts)?;
+                current_facts =
+                    observation.advance_checked(&state, &current_facts, &call_events)?;
                 state = observation.after_state.clone();
                 continue;
             }
             CheckedExecutionEvent::ResourceRewrite(rewrite) => {
-                current_facts = rewrite.advance_checked(&state, &current_facts)?;
+                current_facts = rewrite.advance_checked(&state, &current_facts, &call_events)?;
                 state = rewrite.after_state.clone();
                 continue;
             }
             // The retained context of the preceding theorem; the arm check
             // above already holds the arm's own facts.
             CheckedExecutionEvent::Context(_) => continue,
+            CheckedExecutionEvent::Call(call) => {
+                call_events.insert(call);
+                continue;
+            }
             CheckedExecutionEvent::Statement(_)
             | CheckedExecutionEvent::Condition(_)
             | CheckedExecutionEvent::Branch(_) => {}
@@ -2289,11 +2713,12 @@ fn check_evidence_events(
                 }
                 let full_source = prepend_checked_evidence_statement(next_statement, tail.clone());
                 for arm_index in 0..2 {
-                    let arm = check_evidence_events(
+                    let arm = check_evidence_events_with_call_events(
                         branch.arm_events(arm_index),
                         branch.arm_facts(arm_index),
                         state.clone(),
                         Some(full_source.clone()),
+                        call_events.clone(),
                     )?;
                     if arm.completed.is_some()
                         || arm.remaining != tail
@@ -2312,6 +2737,7 @@ fn check_evidence_events(
             CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => {
                 unreachable!("handled before source advance")
             }
+            CheckedExecutionEvent::Call(_) => unreachable!("handled before source advance"),
             CheckedExecutionEvent::ResourceObservation(_) => {
                 unreachable!("handled before source advance")
             }
@@ -2397,7 +2823,9 @@ fn trace_completion(
             }
             // A post-execution case split records its arm after the path's
             // returning statement; it changes only the assumed facts.
-            CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => {}
+            CheckedExecutionEvent::ProofCase(_)
+            | CheckedExecutionEvent::Context(_)
+            | CheckedExecutionEvent::Call(_) => {}
         }
     }
     let Some((outcome, executed_under)) = completed else {
@@ -2428,6 +2856,7 @@ fn events_use_the_function_definitions(
                 })
         }
         CheckedExecutionEvent::Statement(_)
+        | CheckedExecutionEvent::Call(_)
         | CheckedExecutionEvent::Condition(_)
         | CheckedExecutionEvent::Context(_)
         | CheckedExecutionEvent::ProofCase(_) => true,
@@ -2461,25 +2890,49 @@ impl From<&'static str> for EvidenceRefusal {
 }
 
 fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(), &'static str> {
+    let mut pending_call_views = Vec::new();
     for event in events {
         let (theorem, statement) = match event {
-            CheckedExecutionEvent::Statement(theorem) => (theorem, true),
-            CheckedExecutionEvent::Condition(theorem) => (theorem, false),
+            CheckedExecutionEvent::Statement(theorem) => {
+                pending_call_views = statement_call_havoc_views(theorem);
+                (theorem, true)
+            }
+            CheckedExecutionEvent::Condition(theorem) => {
+                pending_call_views.clear();
+                (theorem, false)
+            }
             CheckedExecutionEvent::Branch(branch) => {
+                pending_call_views.clear();
                 for arm in &branch.arms {
                     validate_checked_event_shapes(&arm.events)?;
                 }
                 continue;
             }
             CheckedExecutionEvent::Context(_) => continue,
+            CheckedExecutionEvent::Call(call) => {
+                let Some(index) = pending_call_views
+                    .iter()
+                    .position(|view| view == &call.canonical_view())
+                else {
+                    return Err(
+                        "retained checked-call event is not introduced by its preceding statement",
+                    );
+                };
+                pending_call_views.remove(index);
+                continue;
+            }
             CheckedExecutionEvent::ProofCase(arm) => {
+                pending_call_views.clear();
                 if !arm.is_valid() {
                     return Err("retained proof-case evidence has an invalid checked arm");
                 }
                 continue;
             }
             CheckedExecutionEvent::ResourceObservation(_)
-            | CheckedExecutionEvent::ResourceRewrite(_) => continue,
+            | CheckedExecutionEvent::ResourceRewrite(_) => {
+                pending_call_views.clear();
+                continue;
+            }
         };
         let right_shape = if statement {
             matches!(
@@ -2504,6 +2957,33 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
 }
 
 impl ExecutionProofCore {
+    pub(crate) fn register_current_call_views(&self, assumptions: &PureFactContext) {
+        let Some(evidence_state) = &self.evidence_state else {
+            return;
+        };
+        if evidence_state.memory() == self.state.memory() {
+            return;
+        }
+        register_recomputed_call_views(
+            &self.checked_call_events,
+            evidence_state.memory(),
+            self.state.memory(),
+            assumptions,
+        );
+    }
+
+    pub(crate) fn checked_call_events(&self) -> CheckedCallEvents {
+        self.checked_call_events.clone()
+    }
+
+    fn retained_call_events(&self) -> CheckedCallEvents {
+        let mut call_events = CheckedCallEvents::default();
+        for trace in &self.execution_evidence {
+            collect_retained_call_events(&trace.to_vec(), &mut call_events);
+        }
+        call_events
+    }
+
     pub(crate) fn at_entry(state: CState, frontier: ExecutionFrontier) -> Self {
         Self {
             state: state.into(),
@@ -2513,6 +2993,7 @@ impl ExecutionProofCore {
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
+            checked_call_events: CheckedCallEvents::new(),
             function_entry: None,
             frontier_loop_rules: Default::default(),
             execution_abstraction: false,
@@ -2576,9 +3057,16 @@ impl ExecutionProofCore {
             execution_facts,
             obligations,
         )?;
+        let call_events = statement_call_havoc_views(&theorem)
+            .into_iter()
+            .map(|view| self.checked_call_events.new_event(view))
+            .collect::<Vec<_>>();
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
+            for call in &call_events {
+                trace.push(CheckedExecutionEvent::Call(call.clone()));
+            }
         }
         self.evidence_source = matches!(&outcome, CStatementOutcome::Normal(_))
             .then_some(source_after.clone())
@@ -2699,16 +3187,18 @@ impl ExecutionProofCore {
             }
         }
         let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
-        self.execution_evidence = outcomes
-            .iter()
-            .map(|(theorem, _, _)| {
-                let mut trace = prefix.clone();
-                trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
-                trace.push(CheckedExecutionEvent::Context(context.clone()));
-                trace
-            })
-            .collect::<Vec<_>>()
-            .into();
+        let mut traces = Vec::with_capacity(outcomes.len());
+        for (theorem, _, _) in outcomes {
+            let mut trace = prefix.clone();
+            trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
+            trace.push(CheckedExecutionEvent::Context(context.clone()));
+            for view in statement_call_havoc_views(theorem) {
+                let event = self.checked_call_events.new_event(view);
+                trace.push(CheckedExecutionEvent::Call(event));
+            }
+            traces.push(trace);
+        }
+        self.execution_evidence = traces.into();
         self.evidence_state = None;
         self.evidence_source = None;
         self.evidence_completed = true;
@@ -3131,6 +3621,16 @@ impl ExecutionProofCore {
                 premise: Some(premise),
             });
         }
+        if running_state.memory() != proved_state.memory() {
+            let theorem_assumptions =
+                crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
+            register_recomputed_call_views(
+                &self.checked_call_events,
+                running_state.memory(),
+                proved_state.memory(),
+                &theorem_assumptions,
+            );
+        }
         Ok(())
     }
 
@@ -3252,6 +3752,7 @@ impl ExecutionProofCore {
             after_state,
             after_facts,
             &self.function_entry_derivations,
+            &self.checked_call_events,
         )?;
         if self.frontier.is_at_function_entry() {
             observation.before_state = crate::kernel::c_function_entry_state(
@@ -3297,6 +3798,7 @@ impl ExecutionProofCore {
             selected,
             after_state,
             after_facts,
+            &self.checked_call_events,
         )?;
         if self.frontier.is_at_function_entry() {
             rewrite.before_state =
@@ -3352,6 +3854,7 @@ impl ExecutionProofCore {
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
+        self.checked_call_events = parent.checked_call_events.clone();
         self.evidence_state = Some(joined_state);
         self.evidence_source = source;
         self.evidence_completed = false;
@@ -3405,6 +3908,7 @@ impl ExecutionProofCore {
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
+        self.checked_call_events = parent.checked_call_events.clone();
         self.evidence_state = Some(joined_state);
         self.evidence_source = source;
         self.evidence_completed = false;
@@ -3564,6 +4068,7 @@ impl ExecutionProofCore {
                 .then(|| self.function_entry.as_ref())
                 .flatten()
                 .map(|entry| entry.caller_state().clone()),
+            checked_call_events: self.retained_call_events(),
         })
     }
 
@@ -3639,6 +4144,108 @@ mod tests {
             condition: condition.clone(),
             outcome: CConditionOutcome::Value(value),
         }))
+    }
+
+    #[test]
+    fn checked_call_event_must_name_a_call_introduced_by_its_statement() {
+        let assumptions = PureFactContext::new();
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let range = CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let before = CState::new().with_memory(CMemory::new().with_block("arg-memory", 4));
+        let after = before
+            .clone()
+            .with_memory(before.memory().clone().with_call_memory_havoc(
+                crate::kernel::Variable(700),
+                std::slice::from_ref(&range),
+                &assumptions,
+            ));
+        let theorem = Theorem::new(Proposition::CStatementVerifies {
+            state: before.clone(),
+            statement: CStatement::Skip,
+            outcome: CStatementOutcome::Normal(after),
+        });
+        let views = statement_call_havoc_views(&theorem);
+        let [view] = views.as_slice() else {
+            panic!("expected one checked call view");
+        };
+        let valid = CheckedCallEvent::new(view.clone());
+        assert!(
+            validate_checked_event_shapes(&[
+                CheckedExecutionEvent::Statement(theorem.clone()),
+                CheckedExecutionEvent::Context(PureFactContext::new()),
+                CheckedExecutionEvent::Call(valid),
+            ])
+            .is_ok()
+        );
+
+        let unrelated = before.memory().clone().with_call_memory_havoc(
+            crate::kernel::Variable(701),
+            std::slice::from_ref(&range),
+            &assumptions,
+        );
+        let unrelated = CheckedCallEvent::new(crate::kernel::intern_c_memory(unrelated));
+        assert_eq!(
+            validate_checked_event_shapes(&[
+                CheckedExecutionEvent::Statement(theorem),
+                CheckedExecutionEvent::Context(PureFactContext::new()),
+                CheckedExecutionEvent::Call(unrelated),
+            ]),
+            Err("retained checked-call event is not introduced by its preceding statement")
+        );
+    }
+
+    #[test]
+    fn checked_call_authority_is_path_local_across_forks() {
+        let ancestor_view = crate::kernel::intern_c_memory(CMemory::new());
+        let sibling_view = crate::kernel::intern_c_memory(
+            CMemory::new().with_block_without_derivation("local:sibling", 4),
+        );
+        let mut ancestor = CheckedCallEvents::default();
+        ancestor.new_event(ancestor_view);
+        let mut left_arm = ancestor.clone();
+        let right_arm = ancestor;
+        let left_only = left_arm.new_event(sibling_view.clone());
+
+        assert!(left_arm.contains(&left_only));
+        assert!(left_arm.contains_view(&left_only, &sibling_view));
+        assert!(
+            !right_arm.contains(&left_only),
+            "a registry shared for indexing must not make a sibling event active",
+        );
+    }
+
+    #[test]
+    fn checked_call_view_lookup_does_not_scan_unrelated_events() {
+        for event_count in [1usize, 64, 1024] {
+            let mut events = CheckedCallEvents::new();
+            let mut selected = None;
+            for index in 0..event_count {
+                let view = crate::kernel::intern_c_memory(
+                    CMemory::new().with_block_without_derivation(format!("local:call-{index}"), 4),
+                );
+                let event = events.new_event(view.clone());
+                if index + 1 == event_count {
+                    selected = Some((event, view));
+                }
+            }
+            let (selected_event, selected_view) = selected.expect("the corpus is nonempty");
+            CheckedCallEvents::reset_lookup_candidates_for_test();
+            let found = events.events_for_view(&selected_view);
+            assert_eq!(found.len(), 1);
+            assert!(found[0].same_authority(&selected_event));
+            assert_eq!(
+                CheckedCallEvents::lookup_candidates_for_test(),
+                1,
+                "exact-view lookup should visit only its indexed event at size {event_count}",
+            );
+        }
     }
 
     #[test]
@@ -3748,6 +4355,7 @@ mod tests {
             &observed,
             &facts,
             &PersistentOrderedSet::default(),
+            &CheckedCallEvents::default(),
         )
         .expect("the exact one-layer child view should check");
 
@@ -3766,6 +4374,7 @@ mod tests {
                 &forged_resource,
                 &facts,
                 &PersistentOrderedSet::default(),
+                &CheckedCallEvents::default(),
             )
             .is_err(),
             "observation must not invent an unrelated child view"
@@ -3783,6 +4392,7 @@ mod tests {
                 &observed,
                 &forged_fact,
                 &PersistentOrderedSet::default(),
+                &CheckedCallEvents::default(),
             )
             .is_err(),
             "observation must not invent an unrelated pure fact"
@@ -3803,6 +4413,7 @@ mod tests {
                 &changed_memory,
                 &facts,
                 &PersistentOrderedSet::default(),
+                &CheckedCallEvents::default(),
             )
             .is_err(),
             "observation must not change C memory"
@@ -3811,8 +4422,16 @@ mod tests {
         let unfolded = before
             .clone()
             .with_resource_context(ResourceContext::new().unchecked_with_fact(child.clone()));
-        CheckedResourceRewrite::check(&function, &before, &facts, &selected, &unfolded, &facts)
-            .expect("the exact folded-to-body representation change should check");
+        CheckedResourceRewrite::check(
+            &function,
+            &before,
+            &facts,
+            &selected,
+            &unfolded,
+            &facts,
+            &CheckedCallEvents::default(),
+        )
+        .expect("the exact folded-to-body representation change should check");
         let forged_unfold = unfolded.clone().with_resource_context(
             unfolded
                 .resources()
@@ -3827,6 +4446,7 @@ mod tests {
                 &selected,
                 &forged_unfold,
                 &facts,
+                &CheckedCallEvents::default(),
             )
             .is_err(),
             "rewrite must not invent an unrelated owned resource"

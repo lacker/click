@@ -740,9 +740,10 @@ pub struct SpecAlgebraicExpression {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecAlgebraicExpressionNode {
     Variable(Variable),
+    Binding(String),
     Constructor {
         variant: String,
-        fields: Vec<SpecExpression>,
+        fields: Vec<SpecAlgebraicValue>,
     },
     Match {
         scrutinee: Box<SpecAlgebraicExpression>,
@@ -766,10 +767,16 @@ pub enum SpecPureFunctionArgument {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecAlgebraicValue {
+    C(SpecExpression),
+    Algebraic(SpecAlgebraicExpression),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct SpecAlgebraicMatchArm {
     pub variant: String,
     pub bindings: Vec<String>,
-    pub binding_types: Vec<CType>,
+    pub binding_types: Vec<AlgebraicValueType>,
     pub body: SpecExpression,
 }
 
@@ -777,7 +784,7 @@ pub struct SpecAlgebraicMatchArm {
 pub struct SpecAlgebraicResultMatchArm {
     pub variant: String,
     pub bindings: Vec<String>,
-    pub binding_types: Vec<CType>,
+    pub binding_types: Vec<AlgebraicValueType>,
     pub body: Box<SpecAlgebraicExpression>,
 }
 
@@ -785,17 +792,29 @@ pub struct SpecAlgebraicResultMatchArm {
 /// instantiated constructor schema in the kernel term lets the kernel check
 /// constructor formation and exhaustive elimination without trusting names
 /// supplied by surface lowering.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct AlgebraicType {
     pub name: String,
-    pub arguments: Vec<CType>,
+    pub arguments: Vec<AlgebraicValueType>,
     pub variants: std::sync::Arc<[AlgebraicVariantType]>,
+    pub schemas: std::sync::Arc<
+        std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
+    >,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum AlgebraicValueType {
+    C(CType),
+    Algebraic {
+        name: String,
+        arguments: Vec<AlgebraicValueType>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AlgebraicVariantType {
     pub name: String,
-    pub fields: Vec<CType>,
+    pub fields: Vec<AlgebraicValueType>,
 }
 
 /// A logical algebraic value. An arbitrary Click binder is one typed
@@ -812,7 +831,7 @@ pub enum AlgebraicTermNode {
     Variable(Variable),
     Constructor {
         variant: String,
-        fields: Vec<CValue>,
+        fields: Vec<AlgebraicValue>,
     },
     Match {
         scrutinee: Box<AlgebraicTerm>,
@@ -836,16 +855,22 @@ pub enum PureFunctionArgument {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum AlgebraicValue {
+    C(CValue),
+    Algebraic(AlgebraicTerm),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AlgebraicBitvectorMatchArm {
     pub variant: String,
-    pub bindings: Vec<CValue>,
+    pub bindings: Vec<AlgebraicValue>,
     pub body: Bitvector32Term,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AlgebraicResultMatchArm {
     pub variant: String,
-    pub bindings: Vec<CValue>,
+    pub bindings: Vec<AlgebraicValue>,
     pub body: AlgebraicTerm,
 }
 
@@ -853,7 +878,10 @@ impl AlgebraicTerm {
     /// Returns a constructor's fields only when the constructor is formed
     /// against this term's resolved datatype schema. Logical variables are
     /// well formed but have no constructor fields.
-    pub(in crate::kernel) fn checked_constructor_fields(&self) -> Option<&[CValue]> {
+    pub(in crate::kernel) fn checked_constructor_fields(&self) -> Option<&[AlgebraicValue]> {
+        if !self.algebraic_type.has_consistent_root_schema() {
+            return None;
+        }
         let AlgebraicTermNode::Constructor { variant, fields } = &self.node else {
             return None;
         };
@@ -863,15 +891,16 @@ impl AlgebraicTerm {
             .iter()
             .find(|schema| schema.name == *variant)?;
         (schema.fields.len() == fields.len()
-            && schema
-                .fields
-                .iter()
-                .zip(fields)
-                .all(|(expected, field)| *expected == field.c_type()))
+            && schema.fields.iter().zip(fields).all(|(expected, field)| {
+                field.is_well_formed_for(expected, &self.algebraic_type.schemas)
+            }))
         .then_some(fields)
     }
 
     pub(in crate::kernel) fn is_well_formed(&self) -> bool {
+        if !self.algebraic_type.has_consistent_root_schema() {
+            return false;
+        }
         match &self.node {
             AlgebraicTermNode::Variable(_) => true,
             AlgebraicTermNode::Constructor { .. } => self.checked_constructor_fields().is_some(),
@@ -891,15 +920,113 @@ impl AlgebraicTerm {
                                 .find(|arm| arm.variant == variant.name)
                                 .is_some_and(|arm| {
                                     arm.bindings.len() == variant.fields.len()
-                                        && arm
-                                            .bindings
-                                            .iter()
-                                            .map(CValue::c_type)
-                                            .eq(variant.fields.iter().copied())
+                                        && arm.bindings.iter().zip(&variant.fields).all(
+                                            |(binding, expected)| {
+                                                binding.is_well_formed_for(
+                                                    expected,
+                                                    &scrutinee.algebraic_type.schemas,
+                                                )
+                                            },
+                                        )
                                         && arm.body.algebraic_type == self.algebraic_type
                                         && arm.body.is_well_formed()
                                 })
                     })
+            }
+        }
+    }
+}
+
+impl AlgebraicType {
+    pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
+        AlgebraicValueType::Algebraic {
+            name: self.name.clone(),
+            arguments: self.arguments.clone(),
+        }
+    }
+
+    pub(in crate::kernel) fn resolve_nested_type(
+        &self,
+        value_type: &AlgebraicValueType,
+    ) -> Option<Self> {
+        let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
+            return None;
+        };
+        Some(Self {
+            name: name.clone(),
+            arguments: arguments.clone(),
+            variants: self.schemas.get(value_type)?.clone(),
+            schemas: self.schemas.clone(),
+        })
+    }
+
+    fn has_consistent_root_schema(&self) -> bool {
+        self.schemas
+            .get(&self.value_type())
+            .is_some_and(|variants| variants == &self.variants)
+    }
+}
+
+impl PartialEq for AlgebraicType {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.arguments == other.arguments
+            && self.variants == other.variants
+    }
+}
+
+impl Eq for AlgebraicType {}
+
+impl std::hash::Hash for AlgebraicType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.arguments.hash(state);
+        self.variants.hash(state);
+    }
+}
+
+impl PartialOrd for AlgebraicType {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AlgebraicType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.name, &self.arguments, &self.variants).cmp(&(
+            &other.name,
+            &other.arguments,
+            &other.variants,
+        ))
+    }
+}
+
+impl AlgebraicValue {
+    pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
+        match self {
+            Self::C(value) => AlgebraicValueType::C(value.c_type()),
+            Self::Algebraic(value) => value.algebraic_type.value_type(),
+        }
+    }
+
+    fn is_well_formed_for(
+        &self,
+        expected: &AlgebraicValueType,
+        schemas: &std::collections::BTreeMap<
+            AlgebraicValueType,
+            std::sync::Arc<[AlgebraicVariantType]>,
+        >,
+    ) -> bool {
+        if &self.value_type() != expected {
+            return false;
+        }
+        match self {
+            Self::C(_) => true,
+            Self::Algebraic(value) => {
+                schemas
+                    .get(expected)
+                    .is_some_and(|variants| variants == &value.algebraic_type.variants)
+                    && value.is_well_formed()
             }
         }
     }
@@ -3385,6 +3512,7 @@ pub struct CFunctionContractExecution {
     /// Why no supplied checked artifact could be reused when certification
     /// produced no paths. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
+    pub(super) checked_call_events: super::proof::CheckedCallEvents,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -3405,6 +3533,7 @@ pub struct CCheckedFunctionExecution {
     /// Original contract caller state when a kernel-checked proof entered C
     /// execution through a definitionally equal resource representation.
     pub(super) entry_representation_origin: Option<CState>,
+    pub(super) checked_call_events: super::proof::CheckedCallEvents,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3418,6 +3547,7 @@ impl CFunctionContractExecution {
         Self {
             cases: Vec::new(),
             reuse_diagnostic: None,
+            checked_call_events: Default::default(),
         }
     }
 
