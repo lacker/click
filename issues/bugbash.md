@@ -217,10 +217,30 @@ int32 caller() {
 - `wrapper`'s `immutable` claim and `caller`'s `ensures` are both rejected.
 - Adding `mutable &g[0..1];` to `bump` makes `wrapper`'s `immutable` fail with
   the ordinary footprint diagnostic, and lets `caller` state a true claim.
-- Choose one of: treat an absent effect clause as unbounded havoc, or refuse
-  to install a verified rule for a function whose contract has no effect
-  clause. Whichever is chosen, document it in the contract reference next to
+- Document whatever is chosen in the contract reference next to
   `immutable`/`mutable`, since it changes what an omitted clause means.
+
+**Attempted and rejected: unbounded havoc at the call.** Adding a
+"contract declares an effect clause" bit to `CFunction` and havocing all
+non-stack cells when a call has neither a declared clause nor a
+resource-derived frame does reject this section's regression, but it breaks 15
+mdtests that are not unsound, among them `const_global_table.md`,
+`execute_modular_swap_get.md`, and `c_named_function_contract_pipeline.md`.
+Those callees hold only `views` requirements and write nothing; a read-only
+resource requirement is not an effect clause, so the call-site test cannot
+tell them from a callee that writes a global.
+
+The fix therefore belongs at certification, not at the call: check every
+function's writes against its declared footprint, treating an omitted clause
+as the empty footprint the callers already assume. `read_table` then certifies
+unchanged because it writes nothing, while `bump` fails at its own write with
+a diagnostic pointing at the store rather than at a caller that mysteriously
+lost its facts. The obstacle is that the effect check currently runs only for
+a claim the surface emits per written clause
+(`src/surface/verification.rs:76`, `:1359`), and a resource-derived frame
+deliberately carries no Effect claim
+(`with_resource_derived_mutable_frame`), so the implicit case needs its own
+path rather than a synthesized surface clause.
 
 ---
 
