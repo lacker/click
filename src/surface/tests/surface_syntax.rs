@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn false_library_list_equality_has_a_bounded_diagnostic() {
+    let error = verify_click_theorems(
+        r#"
+        theorem false_order() {
+            ensures List<int32>::Cons(1, List<int32>::Nil)
+                == List<int32>::Cons(2, List<int32>::Nil) by { simp(); }
+        }
+    "#,
+    )
+    .expect_err("different list elements must not be equal");
+    assert!(
+        error.message().contains("algebraic value equality"),
+        "{}",
+        error.message()
+    );
+    assert!(!error.message().contains("AlgebraicSchemas"));
+    assert!(error.message().len() < 1000, "{}", error.message());
+}
+
+#[test]
 fn parser_accepts_its_supported_parenthesis_depth() {
     let source = super::scaling_tests::theorem_with_parenthesized_requirement(
         parser::PARENTHESIS_NESTING_LIMIT,
@@ -347,18 +367,18 @@ fn parses_and_prints_pure_induction_tactics() {
 #[test]
 fn parses_and_prints_structural_induction_arms() {
     let source = r#"
-        spec enum List<T> {
+        spec enum TestList<T> {
             Nil,
-            Cons(T, List<T>),
+            Cons(T, TestList<T>),
         }
 
-        theorem induction_shape(xs: List<int32>) {
+        theorem induction_shape(xs: TestList<int32>) {
             ensures xs == xs by {
                 induct(xs) as ih {
-                    List::Nil => {
+                    TestList::Nil => {
                         assumption();
                     }
-                    List::Cons(head, tail) => {
+                    TestList::Cons(head, tail) => {
                         apply(ih(tail));
                         assumption();
                     }
@@ -381,7 +401,7 @@ fn parses_and_prints_structural_induction_arms() {
     assert_eq!(parameter, "xs");
     assert_eq!(hypothesis, "ih");
     assert_eq!(arms.len(), 2);
-    assert_eq!(arms[0].type_name, "List");
+    assert_eq!(arms[0].type_name, "TestList");
     assert_eq!(arms[0].variant, "Nil");
     assert!(arms[0].bindings.is_empty());
     assert_eq!(arms[1].bindings, ["head", "tail"]);
@@ -393,7 +413,7 @@ fn parses_and_prints_structural_induction_arms() {
 
     let printed = super::printing::format_partial_tactic_sequence(tactics);
     let reparsed = parse(&format!(
-        "spec enum List<T> {{ Nil, Cons(T, List<T>), }} theorem induction_shape(xs: List<int32>) {{ ensures xs == xs by {{ {printed} }} }}"
+        "spec enum TestList<T> {{ Nil, Cons(T, TestList<T>), }} theorem induction_shape(xs: TestList<int32>) {{ ensures xs == xs by {{ {printed} }} }}"
     ))
     .expect("printed structural induction should reparse");
     assert_eq!(

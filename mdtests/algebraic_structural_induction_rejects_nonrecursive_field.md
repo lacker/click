@@ -1,18 +1,18 @@
 # structural induction hypotheses apply only to recursive children
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-theorem rejected(xs: List<int32>) {
+theorem rejected(xs: TestList<int32>) {
     ensures xs == xs by {
         induct(xs) as ih {
-            List::Nil => {
+            TestList::Nil => {
                 simp();
             }
-            List::Cons(head, tail) => {
+            TestList::Cons(head, tail) => {
                 apply(ih(head));
                 simp();
             }

@@ -4,13 +4,13 @@ A type parameter must be determined by the call arguments. Click does not
 silently invent a logical type for an unconstrained instance.
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-function empty<T>() -> List<T> {
-    List<T>::Nil
+function empty<T>() -> TestList<T> {
+    TestList<T>::Nil
 }
 
 theorem ambiguous_empty() {

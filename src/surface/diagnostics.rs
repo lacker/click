@@ -153,6 +153,9 @@ pub(super) fn describe_pure_fact(
     arguments: &[CExpression],
 ) -> String {
     match fact {
+        Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_)) => {
+            "algebraic value equality".to_string()
+        }
         Proposition::CMemoryLoadable { base, bytes, .. } => format!(
             "loadable(base={}, bytes={})",
             describe_pointer(base, parameters, arguments),

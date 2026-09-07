@@ -3,18 +3,18 @@
 Every occurrence of one type parameter must infer the same concrete type.
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-function append<T>(xs: List<T>, ys: List<T>) -> List<T> {
+function append<T>(xs: TestList<T>, ys: TestList<T>) -> TestList<T> {
     xs
 }
 
 theorem conflicting_lists(
-    ints: List<int32>,
-    uints: List<uint32>
+    ints: TestList<int32>,
+    uints: TestList<uint32>
 ) {
     ensures append(ints, uints) == ints;
 }

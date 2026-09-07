@@ -149,12 +149,12 @@ its defining equation:
 
 <!-- verified-example: mdtests/algebraic_generic_functions.md -->
 ```click
-function append<T>(xs: List<T>, ys: List<T>) -> List<T> {
+function append<T>(xs: TestList<T>, ys: TestList<T>) -> TestList<T> {
     // ...
 }
 
-predicate is_empty<T>(xs: List<T>) {
-    xs == List<T>::Nil
+predicate is_empty<T>(xs: TestList<T>) {
+    xs == TestList<T>::Nil
 }
 ```
 
@@ -163,13 +163,13 @@ Generic theorem declarations are checked structurally and type-checked without
 choosing a concrete type. At `apply`, Click infers the concrete type arguments,
 substitutes them through the theorem statement and proof, verifies that
 monomorph, and caches the checked instance. An invalid generic proof therefore
-grants no authority, and distinct applications such as `List<int32>` and
-`List<int32*>` are checked as distinct instances:
+grants no authority, and distinct applications such as `TestList<int32>` and
+`TestList<int32*>` are checked as distinct instances:
 
 <!-- verified-example: mdtests/algebraic_generic_theorems.md -->
 ```click
-theorem append_right_identity<T>(xs: List<T>) {
-    ensures append(xs, List<T>::Nil) == xs by {
+theorem append_right_identity<T>(xs: TestList<T>) {
+    ensures append(xs, TestList<T>::Nil) == xs by {
         induct(xs) as ih {
             // ...
         }
@@ -217,14 +217,14 @@ datatype in the same recursive group. Recursive occurrences are strictly
 positive because field types contain values rather than functions, and the
 currently supported regular form must preserve the enclosing type parameters
 exactly. Every recursive group must have a finite constructor path. Schemas
-remain finite nominal descriptions: `List<T>` in the `Cons` field refers back
+remain finite nominal descriptions: `TestList<T>` in the `Cons` field refers back
 to the same instantiated schema rather than expanding it.
 
 <!-- verified-example: mdtests/algebraic_recursive_list.md -->
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 ```
 
@@ -288,9 +288,10 @@ ensures [destination[0], destination[1], destination[2]]
 ```
 
 This initial slice exposes literal sequence values in equality and membership
-propositions. The planned public model is a library-defined algebraic
-`List<T>` with `Nil` and `Cons`; typed list binders, general indexing, and
-projection of a symbolic memory range are not yet surface forms.
+propositions. The standard library also supplies the algebraic `List<T>` with
+`Nil`, `Cons`, append, and membership. Migration of the literal operators to
+that library type, general indexing, and projection of a symbolic memory range
+remain open.
 
 ## C0-expression precedence
 

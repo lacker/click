@@ -1,5 +1,104 @@
 abstract resource allocation(base: int32*, bytes: int32);
 
+spec enum List<T> {
+    Nil,
+    Cons(T, List<T>),
+}
+
+function list_append<T>(xs: List<T>, ys: List<T>) -> List<T>
+    decreases xs
+{
+    match xs {
+        List::Nil => ys,
+        List::Cons(head, tail) => List<T>::Cons(head, list_append(tail, ys)),
+    }
+}
+
+function list_contains<T>(xs: List<T>, value: T) -> int32
+    decreases xs
+{
+    match xs {
+        List::Nil => 0,
+        List::Cons(head, tail) =>
+            if head == value { 1 } else { list_contains(tail, value) },
+    }
+}
+
+theorem list_append_left_identity<T>(xs: List<T>) {
+    ensures list_append(List<T>::Nil, xs) == xs by {
+        unfold(list_append(List<T>::Nil, xs));
+        normalize();
+    }
+}
+
+theorem list_append_right_identity<T>(xs: List<T>) {
+    ensures list_append(xs, List<T>::Nil) == xs by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, List<T>::Nil));
+                normalize();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                unfold(list_append(List<T>::Cons(head, tail), List<T>::Nil));
+                rewrite(list_append(tail, List<T>::Nil) == tail);
+                normalize();
+            }
+        }
+    }
+}
+
+theorem list_append_cons<T>(head: T, tail: List<T>, ys: List<T>) {
+    ensures list_append(List<T>::Cons(head, tail), ys)
+        == List<T>::Cons(head, list_append(tail, ys)) by {
+        unfold(list_append(List<T>::Cons(head, tail), ys));
+        normalize();
+    }
+}
+
+theorem list_append_associative<T>(xs: List<T>, ys: List<T>, zs: List<T>) {
+    ensures list_append(list_append(xs, ys), zs)
+        == list_append(xs, list_append(ys, zs)) by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_append(List<T>::Nil, list_append(ys, zs)));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                apply(list_append_cons(head, list_append(tail, ys), zs));
+                rewrite(list_append(List<T>::Cons(head, list_append(tail, ys)), zs)
+                    == List<T>::Cons(head, list_append(list_append(tail, ys), zs)));
+                apply(list_append_cons(head, tail, list_append(ys, zs)));
+                rewrite(list_append(List<T>::Cons(head, tail), list_append(ys, zs))
+                    == List<T>::Cons(head, list_append(tail, list_append(ys, zs))));
+                rewrite(list_append(list_append(tail, ys), zs)
+                    == list_append(tail, list_append(ys, zs)));
+                simp();
+            }
+        }
+    }
+}
+
+theorem list_contains_nil<T>(value: T) {
+    ensures list_contains(List<T>::Nil, value) == 0 by {
+        unfold(list_contains(List<T>::Nil, value));
+        normalize();
+    }
+}
+
+theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
+    ensures list_contains(List<T>::Cons(head, tail), value)
+        == if head == value { 1 } else { list_contains(tail, value) } by {
+        unfold(list_contains(List<T>::Cons(head, tail), value));
+        normalize();
+    }
+}
+
 theorem int32_increment_upper_bound(value: int32, upper: int32) {
     requires value < upper;
 

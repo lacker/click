@@ -507,12 +507,13 @@ fn standard_library_inventory_is_bidirectional() {
                 .expect("resource name");
             declarations.insert(format!("resource.{name}"));
         }
-        for kind in ["theorem", "function", "predicate", "resource"] {
+        for kind in ["spec enum", "theorem", "function", "predicate", "resource"] {
             if let Some(rest) = line.strip_prefix(&format!("{kind} ")) {
                 let name = rest
-                    .split(|ch: char| ch == '(' || ch.is_whitespace())
+                    .split(|ch: char| ch == '(' || ch == '<' || ch.is_whitespace())
                     .next()
                     .expect("declaration name");
+                let kind = if kind == "spec enum" { "type" } else { kind };
                 declarations.insert(format!("{kind}.{name}"));
             }
         }
@@ -592,6 +593,7 @@ fn standard_library_declarations_are_exact_source_includes() {
     let mut depth = 0usize;
     for line in source.lines() {
         let starts = line.starts_with("theorem ")
+            || line.starts_with("spec enum ")
             || line.starts_with("function ")
             || line.starts_with("predicate ")
             || line.starts_with("resource ")

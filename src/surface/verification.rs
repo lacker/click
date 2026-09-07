@@ -1,3 +1,4 @@
+use super::validation::combined_algebraic_type_definitions;
 use super::*;
 
 fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String>) {
@@ -169,7 +170,7 @@ fn verify_click_file_theorems_with_environment(
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
-        file.algebraic_type_definitions(),
+        &combined_algebraic_type_definitions(&file)?,
     );
     let verified = verify_theorem_definitions(
         &theorem_definitions,
@@ -211,7 +212,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
-        file.algebraic_type_definitions(),
+        &combined_algebraic_type_definitions(&file)?,
     );
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
     let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
@@ -776,7 +777,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             .with_contracts(file.contract_definitions());
         let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
             &click_function_definitions,
-            file.algebraic_type_definitions(),
+            &combined_algebraic_type_definitions(&file)?,
         );
         let resource_environment = ResourceEnvironment::new(&resource_definitions);
         // Frame evidence may look through composite definitions to decide

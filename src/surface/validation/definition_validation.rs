@@ -192,7 +192,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
-        file.algebraic_type_definitions(),
+        &combined_algebraic_type_definitions(file)?,
     );
 
     for definition in &resource_definitions {
@@ -252,7 +252,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     validate_well_founded_click_recursion(
         &click_function_definitions,
         &function_calls,
-        file.algebraic_type_definitions(),
+        &combined_algebraic_type_definitions(file)?,
     )?;
 
     for theorem in &theorem_definitions {

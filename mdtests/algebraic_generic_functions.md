@@ -13,26 +13,26 @@ int32 passthrough(int32 value) {
 ```click
 verifying "algebraic_generic_functions.c";
 
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-function list_length<T>(xs: List<T>) -> int32
+function list_length<T>(xs: TestList<T>) -> int32
     decreases xs
 {
     match xs {
-        List::Nil => 0,
-        List::Cons(head, tail) => 1 + list_length(tail),
+        TestList::Nil => 0,
+        TestList::Cons(head, tail) => 1 + list_length(tail),
     }
 }
 
-function append<T>(xs: List<T>, ys: List<T>) -> List<T>
+function append<T>(xs: TestList<T>, ys: TestList<T>) -> TestList<T>
     decreases xs
 {
     match xs {
-        List::Nil => ys,
-        List::Cons(head, tail) => List<T>::Cons(head, append(tail, ys)),
+        TestList::Nil => ys,
+        TestList::Cons(head, tail) => TestList<T>::Cons(head, append(tail, ys)),
     }
 }
 
@@ -40,15 +40,15 @@ function identity<T>(value: T) -> T {
     value
 }
 
-function head_or<T>(xs: List<T>, fallback: T) -> T {
+function head_or<T>(xs: TestList<T>, fallback: T) -> T {
     match xs {
-        List::Nil => fallback,
-        List::Cons(head, tail) => head,
+        TestList::Nil => fallback,
+        TestList::Cons(head, tail) => head,
     }
 }
 
-predicate is_empty<T>(xs: List<T>) {
-    xs == List<T>::Nil
+predicate is_empty<T>(xs: TestList<T>) {
+    xs == TestList<T>::Nil
 }
 
 predicate same<T>(left: T, right: T) {
@@ -57,19 +57,19 @@ predicate same<T>(left: T, right: T) {
 
 theorem generic_list_instances(
     value: int32,
-    tail: List<int32>,
-    ys: List<int32>
+    tail: TestList<int32>,
+    ys: TestList<int32>
 ) {
-    ensures list_length(List<int32>::Nil) == 0 by {
-        unfold(list_length(List<int32>::Nil));
+    ensures list_length(TestList<int32>::Nil) == 0 by {
+        unfold(list_length(TestList<int32>::Nil));
         simp();
     }
-    ensures append(List<int32>::Cons(value, tail), ys)
-        == List<int32>::Cons(value, append(tail, ys)) by {
-        unfold(append(List<int32>::Cons(value, tail), ys));
+    ensures append(TestList<int32>::Cons(value, tail), ys)
+        == TestList<int32>::Cons(value, append(tail, ys)) by {
+        unfold(append(TestList<int32>::Cons(value, tail), ys));
         simp();
     }
-    ensures is_empty(List<int32>::Nil) by {
+    ensures is_empty(TestList<int32>::Nil) by {
         unfold(is_empty);
         simp();
     }
@@ -77,8 +77,8 @@ theorem generic_list_instances(
         unfold(identity(7));
         simp();
     }
-    ensures head_or(List<int32>::Cons(value, tail), 0) == value by {
-        unfold(head_or(List<int32>::Cons(value, tail), 0));
+    ensures head_or(TestList<int32>::Cons(value, tail), 0) == value by {
+        unfold(head_or(TestList<int32>::Cons(value, tail), 0));
         simp();
     }
     ensures same(value, value) by {

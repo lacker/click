@@ -3433,6 +3433,10 @@ impl<'a> Proof<'a> {
             }
             match tactic {
                 ProofTactic::ApplyTheorem(application) => {
+                    if authoritative {
+                        proof = proof.apply_theorem_application(application)?;
+                        continue;
+                    }
                     let Some(applied) = proof.try_theorem_application(application)? else {
                         return Ok(None);
                     };

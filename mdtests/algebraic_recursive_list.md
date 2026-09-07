@@ -5,9 +5,9 @@ They do not expand the schema recursively. An unknown recursive value and the
 recursive fields exposed by a match remain typed symbolic terms.
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
 spec enum Tree<T> {
@@ -24,17 +24,17 @@ spec enum OddList<T> {
     OddCons(T, EvenList<T>),
 }
 
-function tail_or_nil(xs: List<int32>) -> List<int32> {
+function tail_or_nil(xs: TestList<int32>) -> TestList<int32> {
     match xs {
-        List::Nil => List<int32>::Nil,
-        List::Cons(head, tail) => tail,
+        TestList::Nil => TestList<int32>::Nil,
+        TestList::Cons(head, tail) => tail,
     }
 }
 
-function rebuild_list(xs: List<int32>) -> List<int32> {
+function rebuild_list(xs: TestList<int32>) -> TestList<int32> {
     match xs {
-        List::Nil => List<int32>::Nil,
-        List::Cons(head, tail) => List<int32>::Cons(head, tail),
+        TestList::Nil => TestList<int32>::Nil,
+        TestList::Cons(head, tail) => TestList<int32>::Cons(head, tail),
     }
 }
 
@@ -51,14 +51,14 @@ function rebuild_odd(xs: OddList<int32>) -> OddList<int32> {
     }
 }
 
-theorem recursive_constructor_reduces(head: int32, tail: List<int32>) {
-    ensures tail_or_nil(List<int32>::Cons(head, tail)) == tail by {
-        unfold(tail_or_nil(List<int32>::Cons(head, tail)));
+theorem recursive_constructor_reduces(head: int32, tail: TestList<int32>) {
+    ensures tail_or_nil(TestList<int32>::Cons(head, tail)) == tail by {
+        unfold(tail_or_nil(TestList<int32>::Cons(head, tail)));
         simp();
     }
 }
 
-theorem recursive_symbolic_reconstruction(xs: List<int32>) {
+theorem recursive_symbolic_reconstruction(xs: TestList<int32>) {
     ensures rebuild_list(xs) == xs by {
         unfold(rebuild_list(xs));
         simp();
@@ -81,10 +81,10 @@ theorem mutually_recursive_fields_reconstruct(xs: OddList<int32>) {
 
 theorem recursive_constructor_injectivity(
     head: int32,
-    left: List<int32>,
-    right: List<int32>
+    left: TestList<int32>,
+    right: TestList<int32>
 ) {
-    requires List<int32>::Cons(head, left) == List<int32>::Cons(head, right);
+    requires TestList<int32>::Cons(head, left) == TestList<int32>::Cons(head, right);
     ensures left == right by simp;
 }
 ```

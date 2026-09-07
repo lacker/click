@@ -105,8 +105,22 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
+The prelude now supplies `List<T>`, `list_append`, and `list_contains`, with
+checked generic append identities, its constructor equation and associativity,
+and the membership constructor equations. Pure clients exercise integers,
+pointers, and nested lists in `mdtests/stdlib_list.md`.
+
+Membership's constructor law currently works for C scalar and pointer
+elements, but its conditional comparison still needs algebraic-valued
+elements. A regression should apply
+`list_contains_cons(List<int32>::Nil, xs, List<int32>::Nil)` for
+`xs: List<List<int32>>` and prove membership equals `1`. Currently the
+instantiated theorem conclusion fails lowering with zero paths. Acceptance
+requires checked symbolic algebraic equality in the conditional, including
+a negative comparison of distinct constructors; do not evaluate unknown lists.
+
 Still open are algebraic quantifiers, resource arguments, mutual structural
-induction, the library-defined `List<T>`, recursive-resource use, and symbolic
+induction, migration of sequence syntax, recursive-resource use, and symbolic
 typed-memory-range projection.
 All pure calls remain logical applications
 during lowering; an explicit checked `unfold` step exposes one defining

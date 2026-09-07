@@ -1,18 +1,18 @@
 # structural induction patterns bind every constructor field
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-theorem rejected(xs: List<int32>) {
+theorem rejected(xs: TestList<int32>) {
     ensures xs == xs by {
         induct(xs) as ih {
-            List::Nil => {
+            TestList::Nil => {
                 simp();
             }
-            List::Cons(tail) => {
+            TestList::Cons(tail) => {
                 simp();
             }
         }
@@ -21,5 +21,5 @@ theorem rejected(xs: List<int32>) {
 ```
 
 ```expect
-fail: pattern `List::Cons` expects 2 binding(s), got 1
+fail: pattern `TestList::Cons` expects 2 binding(s), got 1
 ```

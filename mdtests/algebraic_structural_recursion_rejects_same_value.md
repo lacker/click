@@ -1,17 +1,17 @@
 # algebraic recursion must use a strict structural subterm
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-function stuck(xs: List<int32>) -> int32
+function stuck(xs: TestList<int32>) -> int32
     decreases xs
 {
     match xs {
-        List::Nil => 0,
-        List::Cons(head, tail) => stuck(xs),
+        TestList::Nil => 0,
+        TestList::Cons(head, tail) => stuck(xs),
     }
 }
 ```

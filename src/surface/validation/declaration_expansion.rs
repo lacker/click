@@ -13,6 +13,15 @@ type StandardLibraryDefinitions = (
     Vec<TheoremDefinition>,
 );
 
+pub(in crate::surface) fn combined_algebraic_type_definitions(
+    file: &ClickFile,
+) -> Result<Vec<AlgebraicTypeDefinition>, ClickError> {
+    let library = parser::parse_file_items(CLICK_STANDARD_LIBRARY)?;
+    let mut definitions = library.algebraic_type_definitions;
+    definitions.extend(file.algebraic_type_definitions().iter().cloned());
+    Ok(definitions)
+}
+
 fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickError> {
     let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
     if !file.verifying_sources().is_empty()
@@ -890,6 +899,9 @@ pub(in crate::surface) fn combined_theorem_definitions_with_stdlib_ensure_count(
     let (_, _, _, mut definitions) = standard_library_definitions()?;
     let stdlib_ensure_count = definitions
         .iter()
+        // Generic schemas are checked at their use sites and do not occupy
+        // entries in the eagerly verified theorem-result prefix.
+        .filter(|definition| definition.type_parameters().is_empty())
         .map(|definition| definition.ensures().len())
         .sum();
     definitions.extend(file.theorem_definitions().iter().cloned());

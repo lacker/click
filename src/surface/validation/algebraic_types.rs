@@ -2,8 +2,9 @@ use super::*;
 use crate::surface::parser::algebraic_field_c_type_supported;
 
 pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(), ClickError> {
+    let algebraic_definitions = combined_algebraic_type_definitions(file)?;
     let mut names = BTreeSet::new();
-    for definition in file.algebraic_type_definitions() {
+    for definition in &algebraic_definitions {
         if !names.insert(definition.name().to_string()) {
             return Err(ClickError::new(format!(
                 "duplicate algebraic datatype definition `{}`",
@@ -17,12 +18,11 @@ pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(
             )));
         }
     }
-    let definitions = file
-        .algebraic_type_definitions()
+    let definitions = algebraic_definitions
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
-    for definition in file.algebraic_type_definitions() {
+    for definition in &algebraic_definitions {
         generics::validate_type_parameter_list(
             "algebraic datatype",
             definition.name(),
@@ -272,28 +272,29 @@ pub(super) fn validate_algebraic_type_uses(
     file: &ClickFile,
     click_functions: &BTreeMap<String, ClickFunctionType>,
 ) -> Result<(), ClickError> {
-    let definitions = file
-        .algebraic_type_definitions()
+    let algebraic_definitions = combined_algebraic_type_definitions(file)?;
+    let predicates = combined_predicate_definitions(file)?;
+    let functions = combined_click_function_definitions(file)?;
+    let theorems = combined_theorem_definitions(file)?;
+    let definitions = algebraic_definitions
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
-    let predicate_types = file
-        .predicate_definitions()
+    let predicate_types = predicates
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
 
-    for (kind, name, parameters) in file
-        .predicate_definitions()
+    for (kind, name, parameters) in predicates
         .iter()
         .map(|definition| ("predicate", definition.name(), definition.parameters()))
         .chain(
-            file.click_function_definitions()
+            functions
                 .iter()
                 .map(|definition| ("function", definition.name(), definition.parameters())),
         )
         .chain(
-            file.theorem_definitions()
+            theorems
                 .iter()
                 .map(|definition| ("theorem", definition.name(), definition.parameters())),
         )
@@ -308,7 +309,7 @@ pub(super) fn validate_algebraic_type_uses(
             }
         }
     }
-    for definition in file.click_function_definitions() {
+    for definition in &functions {
         if let ClickType::Algebraic(application) = definition.return_type() {
             validate_type_application(
                 application,
@@ -331,7 +332,7 @@ pub(super) fn validate_algebraic_type_uses(
         }
     }
 
-    for definition in file.predicate_definitions() {
+    for definition in &predicates {
         let variables = definition
             .parameters()
             .iter()
@@ -366,7 +367,7 @@ pub(super) fn validate_algebraic_type_uses(
             )?;
         }
     }
-    for definition in file.click_function_definitions() {
+    for definition in &functions {
         let variables = definition
             .parameters()
             .iter()
@@ -437,7 +438,7 @@ pub(super) fn validate_algebraic_type_uses(
             }
         }
     }
-    for theorem in file.theorem_definitions() {
+    for theorem in &theorems {
         let variables = theorem_type_environment(theorem);
         let click_variables = theorem
             .parameters()

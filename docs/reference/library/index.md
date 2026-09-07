@@ -9,7 +9,7 @@ documentation gate. The same gate compares declaration names bidirectionally,
 so adding, removing, or changing a public symbol requires a matching reference
 update.
 
-Pure functions are definitionally expanded when Click lowers a call. Predicates
+Pure function calls remain symbolic until explicitly unfolded. Predicates
 remain opaque until a proof explicitly unfolds them or applies a theorem that
 exposes the needed consequence. Theorems can be applied when their stated
 requirements are available. An abstract resource has no body to unfold.
@@ -27,6 +27,169 @@ abstract resource allocation(base: int32*, bytes: int32);
 **Kind:** abstract resource. Parameter types, requirements, and guarantees are normative in the declaration above.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+## Lists
+
+`List<T>` is an immutable logical value, not a C layout or ownership resource.
+It preserves order and multiplicity. Use explicit constructors and the functions
+below; `[]`, `++`, and `in` still use the older sequence representation.
+
+### `List`
+
+```click
+spec enum List<T> {
+    Nil,
+    Cons(T, List<T>),
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_append`
+
+```click
+function list_append<T>(xs: List<T>, ys: List<T>) -> List<T>
+    decreases xs
+{
+    match xs {
+        List::Nil => ys,
+        List::Cons(head, tail) => List<T>::Cons(head, list_append(tail, ys)),
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_contains`
+
+```click
+function list_contains<T>(xs: List<T>, value: T) -> int32
+    decreases xs
+{
+    match xs {
+        List::Nil => 0,
+        List::Cons(head, tail) =>
+            if head == value { 1 } else { list_contains(tail, value) },
+    }
+}
+```
+
+Returns `1` for membership and `0` otherwise, using element equality.
+Currently its checked constructor laws support C scalar and pointer elements;
+conditional equality for algebraic-valued elements remains an ADT gap.
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_append_left_identity`
+
+```click
+theorem list_append_left_identity<T>(xs: List<T>) {
+    ensures list_append(List<T>::Nil, xs) == xs by {
+        unfold(list_append(List<T>::Nil, xs));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_append_right_identity`
+
+```click
+theorem list_append_right_identity<T>(xs: List<T>) {
+    ensures list_append(xs, List<T>::Nil) == xs by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, List<T>::Nil));
+                normalize();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                unfold(list_append(List<T>::Cons(head, tail), List<T>::Nil));
+                rewrite(list_append(tail, List<T>::Nil) == tail);
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_append_cons`
+
+```click
+theorem list_append_cons<T>(head: T, tail: List<T>, ys: List<T>) {
+    ensures list_append(List<T>::Cons(head, tail), ys)
+        == List<T>::Cons(head, list_append(tail, ys)) by {
+        unfold(list_append(List<T>::Cons(head, tail), ys));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_append_associative`
+
+```click
+theorem list_append_associative<T>(xs: List<T>, ys: List<T>, zs: List<T>) {
+    ensures list_append(list_append(xs, ys), zs)
+        == list_append(xs, list_append(ys, zs)) by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_append(List<T>::Nil, list_append(ys, zs)));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                apply(list_append_cons(head, list_append(tail, ys), zs));
+                rewrite(list_append(List<T>::Cons(head, list_append(tail, ys)), zs)
+                    == List<T>::Cons(head, list_append(list_append(tail, ys), zs)));
+                apply(list_append_cons(head, tail, list_append(ys, zs)));
+                rewrite(list_append(List<T>::Cons(head, tail), list_append(ys, zs))
+                    == List<T>::Cons(head, list_append(tail, list_append(ys, zs))));
+                rewrite(list_append(list_append(tail, ys), zs)
+                    == list_append(tail, list_append(ys, zs)));
+                simp();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_contains_nil`
+
+```click
+theorem list_contains_nil<T>(value: T) {
+    ensures list_contains(List<T>::Nil, value) == 0 by {
+        unfold(list_contains(List<T>::Nil, value));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_contains_cons`
+
+```click
+theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
+    ensures list_contains(List<T>::Cons(head, tail), value)
+        == if head == value { 1 } else { list_contains(tail, value) } by {
+        unfold(list_contains(List<T>::Cons(head, tail), value));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
 
 ## Signed `int32` theorems
 

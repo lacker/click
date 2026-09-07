@@ -329,6 +329,7 @@ fn click_type_from_algebraic_value_type(
 fn prepare_structural_induction_arm_tactics(
     tactics: &[ProofTactic],
     setup: &PureStructuralInductionBranchSetup,
+    bindings: &BTreeMap<String, ContractExpression>,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     tactics
         .iter()
@@ -376,10 +377,12 @@ fn prepare_structural_induction_arm_tactics(
                 then_tactics: prepare_structural_induction_arm_tactics(
                     &proof_if.then_tactics,
                     setup,
+                    bindings,
                 )?,
                 else_tactics: prepare_structural_induction_arm_tactics(
                     &proof_if.else_tactics,
                     setup,
+                    bindings,
                 )?,
             })),
             ProofTactic::Cases(proof_cases) => Ok(ProofTactic::Cases(ProofCases {
@@ -387,10 +390,12 @@ fn prepare_structural_induction_arm_tactics(
                 left_tactics: prepare_structural_induction_arm_tactics(
                     &proof_cases.left_tactics,
                     setup,
+                    bindings,
                 )?,
                 right_tactics: prepare_structural_induction_arm_tactics(
                     &proof_cases.right_tactics,
                     setup,
+                    bindings,
                 )?,
             })),
             ProofTactic::StructuralInduct { .. } | ProofTactic::Induct { .. } => Err(
@@ -399,6 +404,28 @@ fn prepare_structural_induction_arm_tactics(
             ProofTactic::ApplyInduction { .. } | ProofTactic::ApplyInductionUsing { .. } => Err(
                 ClickError::new("internal induction-application syntax is not accepted directly"),
             ),
+            ProofTactic::ApplyTheorem(application)
+            | ProofTactic::ApplyTheoremUsing { application, .. } => {
+                // Ordinary applications use the same typed symbolic fields as
+                // the branch goal, including in their checked explicit form.
+                let mut application = application.clone();
+                application.arguments = application
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_contract_expression(argument, bindings).map_err(ClickError::new)
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(match tactic {
+                    ProofTactic::ApplyTheoremUsing { premises, .. } => {
+                        ProofTactic::ApplyTheoremUsing {
+                            application,
+                            premises: premises.clone(),
+                        }
+                    }
+                    _ => ProofTactic::ApplyTheorem(application),
+                })
+            }
             tactic => Ok(tactic.clone()),
         })
         .collect()
@@ -522,6 +549,7 @@ fn check_pure_structural_induction(
 
         let mut branch_context = context.clone();
         let mut branch_algebraic_values = BTreeMap::new();
+        let mut branch_bindings = BTreeMap::new();
         let mut constructor_arguments = Vec::new();
         for (field_index, (binding, field_type)) in
             arm.bindings.iter().zip(&variant.fields).enumerate()
@@ -585,6 +613,7 @@ fn check_pure_structural_induction(
                     )
                     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
                     branch_algebraic_values.insert(binding.clone(), captured);
+                    branch_bindings.insert(binding.clone(), symbolic);
                 }
             }
         }
@@ -701,7 +730,11 @@ fn check_pure_structural_induction(
             applications,
             algebraic_values: branch_algebraic_values,
         };
-        let prepared = prepare_structural_induction_arm_tactics(&arm.tactics, &branch_setup)?;
+        let prepared = prepare_structural_induction_arm_tactics(
+            &arm.tactics,
+            &branch_setup,
+            &branch_bindings,
+        )?;
         let root = Proof::for_pure_surface_goal_with_structural_induction(
             claim_label,
             &branch_requires,
@@ -4588,9 +4621,10 @@ fn prove_pure_theorem_tactics(
                 }
                 match simp_proposition(&goal, &assumptions) {
                     SimpProposition::True => closed = true,
-                    simplified => {
+                    _ => {
                         return Err(ClickError::new(format!(
-                            "`simp` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  {}",
+                            "`simp` failed for `{claim_label}`: simplified proposition was not true: {}\n  {}",
+                            describe_pure_fact(&goal, &[], &[]),
                             describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
                         )));
                     }

@@ -1,17 +1,17 @@
 # fields of an unrelated value do not justify recursion
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-function unrelated(xs: List<int32>, other: List<int32>) -> int32
+function unrelated(xs: TestList<int32>, other: TestList<int32>) -> int32
     decreases xs
 {
     match other {
-        List::Nil => 0,
-        List::Cons(head, tail) => unrelated(tail, other),
+        TestList::Nil => 0,
+        TestList::Cons(head, tail) => unrelated(tail, other),
     }
 }
 ```

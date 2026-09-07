@@ -6,9 +6,9 @@ inference as logical functions. Each concrete instance is checked before an
 induction and two distinct element types.
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
 spec enum Maybe<T> {
@@ -16,26 +16,26 @@ spec enum Maybe<T> {
     Some(T),
 }
 
-function append<T>(xs: List<T>, ys: List<T>) -> List<T>
+function append<T>(xs: TestList<T>, ys: TestList<T>) -> TestList<T>
     decreases xs
 {
     match xs {
-        List::Nil => ys,
-        List::Cons(head, tail) => List<T>::Cons(head, append(tail, ys)),
+        TestList::Nil => ys,
+        TestList::Cons(head, tail) => TestList<T>::Cons(head, append(tail, ys)),
     }
 }
 
-theorem append_right_identity<T>(xs: List<T>) {
-    ensures append(xs, List<T>::Nil) == xs by {
+theorem append_right_identity<T>(xs: TestList<T>) {
+    ensures append(xs, TestList<T>::Nil) == xs by {
         induct(xs) as ih {
-            List::Nil => {
-                unfold(append(List<T>::Nil, List<T>::Nil));
+            TestList::Nil => {
+                unfold(append(TestList<T>::Nil, TestList<T>::Nil));
                 simp();
             }
-            List::Cons(head, tail) => {
+            TestList::Cons(head, tail) => {
                 apply(ih(tail));
-                unfold(append(List<T>::Cons(head, tail), List<T>::Nil));
-                rewrite(append(tail, List<T>::Nil) == tail);
+                unfold(append(TestList<T>::Cons(head, tail), TestList<T>::Nil));
+                rewrite(append(tail, TestList<T>::Nil) == tail);
                 normalize();
             }
         }
@@ -60,15 +60,15 @@ theorem retain<T>(left: T, right: T) {
     }
 }
 
-theorem int32_instance(xs: List<int32>) {
-    ensures append(xs, List<int32>::Nil) == xs by {
+theorem int32_instance(xs: TestList<int32>) {
+    ensures append(xs, TestList<int32>::Nil) == xs by {
         apply(append_right_identity(xs));
         assumption();
     }
 }
 
-theorem pointer_instance(xs: List<int32*>) {
-    ensures append(xs, List<int32*>::Nil) == xs by {
+theorem pointer_instance(xs: TestList<int32*>) {
+    ensures append(xs, TestList<int32*>::Nil) == xs by {
         apply(append_right_identity(xs));
         assumption();
     }

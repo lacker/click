@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn library_list_theorem_application_expands_and_rechecks() {
+    let source = r#"
+theorem client(xs: List<int32>, ys: List<int32>, zs: List<int32>) {
+    ensures list_append(list_append(xs, ys), zs) == list_append(xs, list_append(ys, zs)) by {
+        apply(list_append_associative(xs, ys, zs));
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("library client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0)
+        .expect("application has a source position");
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("library theorem application expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded library client rechecks");
+}
+
+#[test]
 fn block_tactic_optional_semicolon_belongs_to_the_tactic() {
     let source = "by { step(); simp(); }";
     let tokens = scan_source_tokens(source).expect("source should tokenize");
@@ -22,18 +39,18 @@ fn block_tactic_optional_semicolon_belongs_to_the_tactic() {
 #[test]
 fn inventories_and_expands_smart_tactics_inside_structural_induction() {
     let click_source = r#"
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
-theorem reflexive(xs: List<int32>) {
+theorem reflexive(xs: TestList<int32>) {
     ensures xs == xs by {
         induct(xs) as ih {
-            List::Nil => {
+            TestList::Nil => {
                 simp();
             }
-            List::Cons(head, tail) => {
+            TestList::Cons(head, tail) => {
                 simp();
             }
         }
@@ -61,8 +78,8 @@ theorem reflexive(xs: List<int32>) {
         .expect("the first induction arm should have a source position");
     let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
         .expect("a smart tactic in an induction arm should expand");
-    assert!(expanded.contains("List::Nil => {\n                normalize();"));
-    assert!(expanded.contains("List::Cons(head, tail) => {\n                normalize();"));
+    assert!(expanded.contains("TestList::Nil => {\n                normalize();"));
+    assert!(expanded.contains("TestList::Cons(head, tail) => {\n                normalize();"));
     verify_c0_sources(&expanded, &[]).expect("the expanded structural proof should re-verify");
 }
 

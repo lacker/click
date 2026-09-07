@@ -5,9 +5,9 @@ recursive field. Constructor fields are scoped to their arm, and pure
 functions remain symbolic until explicitly unfolded.
 
 ```click
-spec enum List<T> {
+spec enum TestList<T> {
     Nil,
-    Cons(T, List<T>),
+    Cons(T, TestList<T>),
 }
 
 spec enum Tree<T> {
@@ -15,13 +15,13 @@ spec enum Tree<T> {
     Node(Tree<T>, T, Tree<T>),
 }
 
-function append(xs: List<int32>, ys: List<int32>) -> List<int32>
+function append(xs: TestList<int32>, ys: TestList<int32>) -> TestList<int32>
     decreases xs
 {
     match xs {
-        List::Nil => ys,
-        List::Cons(head, tail) =>
-            List<int32>::Cons(head, append(tail, ys)),
+        TestList::Nil => ys,
+        TestList::Cons(head, tail) =>
+            TestList<int32>::Cons(head, append(tail, ys)),
     }
 }
 
@@ -38,21 +38,21 @@ function copy_tree(tree: Tree<int32>) -> Tree<int32>
     }
 }
 
-theorem append_right_identity(xs: List<int32>) {
+theorem append_right_identity(xs: TestList<int32>) {
     requires xs == xs;
-    ensures append(xs, List<int32>::Nil) == xs by {
+    ensures append(xs, TestList<int32>::Nil) == xs by {
         induct(xs) as ih {
-            List::Nil => {
-                unfold(append(List<int32>::Nil, List<int32>::Nil));
+            TestList::Nil => {
+                unfold(append(TestList<int32>::Nil, TestList<int32>::Nil));
                 simp();
             }
-            List::Cons(head, tail) => {
+            TestList::Cons(head, tail) => {
                 apply(ih(tail));
                 unfold(append(
-                    List<int32>::Cons(head, tail),
-                    List<int32>::Nil
+                    TestList<int32>::Cons(head, tail),
+                    TestList<int32>::Nil
                 ));
-                rewrite(append(tail, List<int32>::Nil) == tail);
+                rewrite(append(tail, TestList<int32>::Nil) == tail);
                 normalize();
             }
         }
