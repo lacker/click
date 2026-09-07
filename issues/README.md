@@ -72,6 +72,13 @@ large rbtree proof might exercise it. If MVR work exposes one of the tooling
 failures described in `AGENTS.md`, that issue becomes a blocker under the
 normal tooling-first policy and should then be added to this list.
 
+## Soundness bugs: 1
+
+- [Bug bash: soundness holes and C mis-models found on 2026-09-06](bugbash.md)
+  bundles 24 root causes with reproductions, each of which certifies a claim
+  that is false under C. Split each section into its own file as it is picked
+  up.
+
 ## Architecture issues: 4
 
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
