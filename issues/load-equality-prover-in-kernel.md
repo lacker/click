@@ -149,8 +149,8 @@ direct `c_memory_load_is_unchanged` call had typed witnesses for
 `StoreExplicitRange` hops, but the selected DAG path could still finish at a
 snapshot whose loaded cell agreed with the target only after comparing their
 small, bounded snapshot delta. The censuses and implementation slices below
-resolve that direct consumer; the prover now remains only on the separately
-described dependent-load-address route.
+resolve that direct consumer. The later residual census separately isolates
+the old prover's last caller and the depth-bounded recursive equality route.
 
 ### `StoreExplicitRange` evidence census (2026-09-05)
 
@@ -370,24 +370,81 @@ direct framed-transport fallback to `c_memory_load_is_unchanged` has been
 deleted. The complete example and mdtest harnesses pass with bounded-pool
 verifying through the retained event evidence.
 
-Separately, removing `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` exposes a branching
-relation in `owned_string_pipeline.contract`: one `unfold` expands roughly
-60,000–120,000 distinct recursive equality subqueries at a maximum active
-depth of only six. The roots are registered load variables whose load
-addresses themselves contain other registered loads. An exact-query cycle
-guard therefore terminates but does not control the branching search. The next
-dependent-address evidence must retain the selected congruence/equality paths;
-treating two registered load variables as direct atomic DAG queries is
-insufficient because their pointers are not structurally equal.
+### Residual recursion and uint64 caller census (2026-09-06)
+
+A final temporary probe separated top-level load-equality requests from their
+nested resolution requests, recorded every positive route, and associated a
+nested result with the top-level request that caused it. Both complete fixture
+harnesses passed with the probe, which was then removed.
+
+| corpus | top-level requests | depth-one requests | refused at depth two | positive answers | depth-one positives | successful roots needing a nested positive |
+|---|---:|---:|---:|---:|---:|---:|
+| examples | 37,345 | 53,352 | 423,266 | 363 | 20 | 16 |
+| mdtests | 66,159 | 168,075 | 263,471 | 278 | 28 | 14 |
+| total | 103,504 | 221,427 | 686,737 | 641 | 48 | 30 |
+
+The two harnesses made 1,011,668 calls in total. Crucially, no successful
+top-level request encountered a depth refusal. Every one of the 686,737
+refusals was below a request that ultimately returned false. Only 30
+successful roots needed any nested positive answer, and every such root used
+exactly one depth-one answer:
+
+| fixture | successful roots | selected nested route | shape |
+|---|---:|---|---|
+| `owned-vector` | 16 | exact fact transport | the outer loads have the same exact pointer; a materialized cell variable is related to the source load by one recorded equality |
+| `copy3_array_demo` | 14 | resolve one side, then exact fact transport | one resolved load variable is related to the other load variable by one recorded equality |
+
+`bubble_sort3_two_pass` produced 13 depth-one direct-snapshot positives, but
+all were below top-level requests that still returned false. The remaining
+depth-one positive was likewise below a failed `copy3` root. `owned-string`
+made 121,137 calls, including 94,160 depth refusals, and had no depth-one
+positive. `arena` made 122,017 calls, including 92,872 refusals, and had no
+positive at either level.
+
+These results correct the earlier interpretation of the negative frontier.
+Registered load variables whose addresses contain registered loads explain
+the explosive failed search, especially in `owned-string`; they do not
+describe the observed positive proof obligations. The positive obligations
+are finite two-hop selections over already retained exact fact-transport or
+memory-DAG evidence. They do not require a general recursive
+load-address-congruence evidence graph.
+
+As a controlled check, setting the depth limit to one did not make either
+positive fixture fail, because later search found alternate routes. It was not
+a viable implementation: `copy3_array_demo` slowed from 3.35 s to 14.42 s and
+made 2,545,052 refused calls, while `owned-vector` slowed from about 8.43 s to
+40.50 s and made 1,455,643 refused calls. Disabling nested answers changes
+route selection and greatly amplifies ambient search. The replacement should
+retain the selected two-hop evidence and remove the surrounding speculation.
+
+The census also isolated the final direct caller of
+`c_memory_load_is_unchanged`. `recorded_uint64_equals`, used for tagged-pointer
+reasoning, first consults its exact equality index and otherwise scans recorded
+64-bit equality facts while invoking the global prover:
+
+| corpus and fixture | calls to `recorded_uint64_equals` | global attempts | positives | misses | every positive route |
+|---|---:|---:|---:|---:|---|
+| examples: `marked-linked-list` | 626 | 26 | 14 | 12 | direct snapshot match |
+| mdtests: `c_decreases_resource_witness_child.md` | 289 | 9 | 4 | 5 | direct snapshot match |
+| total | 915 | 35 | 18 | 17 | direct snapshot match |
+
+All 18 transported answers are assumption-free
+`memories_match_for_pointer_load` decisions. None uses canonical comparison,
+the memory DAG, effect facts, or any other global-prover route. Replace this
+caller with that exact structural rule; if no production caller remains,
+delete `c_memory_load_is_unchanged` and its search memos.
+
+The remaining implementation should then make the surface planner select the
+resolved endpoint and its exact equality edge for the two observed positive
+shapes. The checked execution retains and verifies that finite sequence using
+the existing fact-transport and memory-DAG evidence. Once arbitrary term-pair
+matching no longer recursively asks for load equality, delete
+`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`; no numeric bound or generic recursive
+evidence object replaces it.
 
 There were no positive fallback decisions in perpetual-service. It remains a
 useful negative hot-path fixture: removing the fallback should eliminate its
-speculative calls without requiring replacement evidence. Owned-vector also
-had only one fresh positive decision in the earlier deciding-route census; the
-two identical framed-transport checks in the endpoint census are repeated
-uses of the same canonical-projection/store path shape. Its many other probes
-are likewise evidence for deleting, rather than reproducing, the ambient
-search.
+speculative calls without requiring replacement evidence.
 
 ## Violated invariant
 
@@ -431,9 +488,10 @@ comparisons do not invoke a framed-load planner.
   canonical load-projection evidence plus common-base store evidence, one
   matching call-havoc sibling case, and two repeated checks of a separate
   incomplete typed DAG edge. The canonical projection, common-base store, and
-  `copy3` pointer-membership cases are now migrated; the residual complete
-  census is one call-havoc check. A general arbitrary snapshot-delta object is
-  not required by the observed fixtures.
+  `copy3` pointer-membership cases are now migrated, and checked-call event
+  evidence covers the final call-havoc case. Framed atomic transport has no
+  global-prover fallback. A general arbitrary snapshot-delta object is not
+  required by the observed fixtures.
 - A surface tactic (transport, frame, or a completion of the call step)
   advances the proof object with the snapshot-equality fact and its checked
   evidence. When the tactic is smart, expansion serializes corresponding
@@ -442,9 +500,15 @@ comparisons do not invoke a framed-load planner.
   longer call the framed-load reconstruction prover. Canonical projections,
   typed store edges, symbolic range membership, and checked-call event
   equality cover every positive framed-transport case in the latest census.
-  The separate dependent-load-address congruence search still uses
-  `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`; replace that remaining route with typed
-  evidence and delete the limit with no counter, depth, or tier in its place.
+  The residual recursion census found only 30 successful roots requiring one
+  nested exact fact-transport step, with no successful root reaching the depth
+  refusal. Retain those selected finite paths, stop recursively comparing
+  arbitrary term pairs, and delete the limit with no counter, depth, or tier
+  in its place.
+- **Partial:** the last production caller of the global framed-load prover is
+  `recorded_uint64_equals`. Its 18 observed positives are all exact direct
+  snapshot matches. Replace that call with the structural match and delete the
+  global prover if the caller audit is then empty.
 - The scaling regression above lands, both harnesses pass, and the
   `click profile` work units of perpetual-service and owned-vector do not
   rise.
