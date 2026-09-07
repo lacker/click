@@ -12,11 +12,36 @@ pub(in crate::surface) fn verify_theorem_definitions(
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(&[]);
     for theorem in theorem_definitions {
-        let context =
-            pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
-        for (ensure_index, ensure_clause) in theorem.ensures().iter().enumerate() {
+        if theorem.type_parameters().is_empty() {
+            verified.extend(verify_concrete_theorem_definition(
+                theorem,
+                predicate_environment,
+                click_function_environment,
+                &theorem_environment,
+                function_environment,
+            )?);
+        }
+        theorem_environment.insert(theorem.clone());
+    }
+    Ok(verified)
+}
+
+pub(in crate::surface) fn verify_concrete_theorem_definition(
+    theorem: &TheoremDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function_environment: Option<&CExecutionEnvironment>,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    debug_assert!(theorem.type_parameters().is_empty());
+    let context = pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
+    theorem
+        .ensures()
+        .iter()
+        .enumerate()
+        .map(|(ensure_index, ensure_clause)| {
             let claim_label = theorem_claim_label(theorem.name(), ensure_index, ensure_clause);
-            let theorem = verify_theorem_ensure(
+            verify_theorem_ensure(
                 theorem,
                 ensure_index,
                 ensure_clause,
@@ -24,14 +49,11 @@ pub(in crate::surface) fn verify_theorem_definitions(
                 &context,
                 predicate_environment,
                 click_function_environment,
-                &theorem_environment,
+                theorem_environment,
                 function_environment,
-            )?;
-            verified.push(theorem);
-        }
-        theorem_environment.insert(theorem.clone());
-    }
-    Ok(verified)
+            )
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]

@@ -378,6 +378,328 @@ pub(super) fn instantiate_predicate_for_surface_call(
     instantiate_predicate(definition, &substitution)
 }
 
+pub(super) fn instantiate_theorem(
+    definition: &TheoremDefinition,
+    substitution: &TypeSubstitution,
+) -> Result<TheoremDefinition, String> {
+    let parameters = definition
+        .parameters()
+        .iter()
+        .map(|parameter| instantiate_parameter(parameter, substitution))
+        .collect::<Result<Vec<_>, _>>()?;
+    let algebraic_parameters = parameters
+        .iter()
+        .enumerate()
+        .filter_map(|(binder_index, parameter)| {
+            let ClickType::Algebraic(algebraic_type) = parameter.click_type() else {
+                return None;
+            };
+            Some((
+                parameter.name().to_string(),
+                ContractExpression::AlgebraicVariable {
+                    name: parameter.name().to_string(),
+                    algebraic_type: algebraic_type.clone(),
+                    binder_index,
+                },
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok(TheoremDefinition {
+        name: instance_name(
+            definition.name(),
+            definition.type_parameters(),
+            substitution,
+        )?,
+        type_parameters: Vec::new(),
+        parameters,
+        requires: definition
+            .requires()
+            .iter()
+            .map(|requirement| {
+                instantiate_requirement(requirement, substitution, &algebraic_parameters)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        ensures: definition
+            .ensures()
+            .iter()
+            .map(|ensure| instantiate_ensure_clause(ensure, substitution, &algebraic_parameters))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn instantiate_requirement(
+    requirement: &Requirement,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<Requirement, String> {
+    Ok(match requirement {
+        Requirement::Labeled { label, requirement } => Requirement::Labeled {
+            label: label.clone(),
+            requirement: Box::new(instantiate_requirement(
+                requirement,
+                substitution,
+                algebraic_parameters,
+            )?),
+        },
+        Requirement::Proposition(proposition) => {
+            Requirement::Proposition(substitute_click_proposition(
+                &instantiate_proposition(proposition, substitution)?,
+                algebraic_parameters,
+            )?)
+        }
+        requirement => requirement.clone(),
+    })
+}
+
+fn instantiate_ensure_clause(
+    ensure: &EnsureClause,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<EnsureClause, String> {
+    let ensure_value = match ensure.ensure() {
+        Ensure::Proposition(proposition) => Ensure::Proposition(substitute_click_proposition(
+            &instantiate_proposition(proposition, substitution)?,
+            algebraic_parameters,
+        )?),
+        resource @ Ensure::Resource(_) => resource.clone(),
+    };
+    Ok(EnsureClause {
+        name: ensure.name.clone(),
+        ensure: ensure_value,
+        proof: instantiate_source_proof(ensure.proof(), substitution, algebraic_parameters)?,
+    })
+}
+
+fn instantiate_source_proof(
+    proof: &SourceProof,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<SourceProof, String> {
+    Ok(match proof {
+        SourceProof::Default => SourceProof::Default,
+        SourceProof::Tactic(tactic) => SourceProof::Tactic(*tactic),
+        SourceProof::Script(tactics) => SourceProof::Script(
+            tactics
+                .iter()
+                .map(|tactic| instantiate_proof_tactic(tactic, substitution, algebraic_parameters))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+    })
+}
+
+fn instantiate_theorem_application(
+    application: &TheoremApplication,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<TheoremApplication, String> {
+    Ok(TheoremApplication {
+        name: application.name.clone(),
+        arguments: application
+            .arguments
+            .iter()
+            .map(|argument| {
+                substitute_contract_expression(
+                    &instantiate_expression(argument, substitution)?,
+                    algebraic_parameters,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn instantiate_function_application(
+    application: &ClickFunctionApplication,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<ClickFunctionApplication, String> {
+    Ok(ClickFunctionApplication {
+        name: application.name.clone(),
+        arguments: application
+            .arguments
+            .iter()
+            .map(|argument| {
+                substitute_contract_expression(
+                    &instantiate_expression(argument, substitution)?,
+                    algebraic_parameters,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn instantiate_proof_tactics(
+    tactics: &[ProofTactic],
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<Vec<ProofTactic>, String> {
+    tactics
+        .iter()
+        .map(|tactic| instantiate_proof_tactic(tactic, substitution, algebraic_parameters))
+        .collect()
+}
+
+fn instantiate_proof_tactic(
+    tactic: &ProofTactic,
+    substitution: &TypeSubstitution,
+    algebraic_parameters: &BTreeMap<String, ContractExpression>,
+) -> Result<ProofTactic, String> {
+    let expression = |value: &ContractExpression| {
+        substitute_contract_expression(
+            &instantiate_expression(value, substitution)?,
+            algebraic_parameters,
+        )
+    };
+    let proposition = |value: &ClickProposition| {
+        substitute_click_proposition(
+            &instantiate_proposition(value, substitution)?,
+            algebraic_parameters,
+        )
+    };
+    Ok(match tactic {
+        ProofTactic::UnfoldFunction(application) => ProofTactic::UnfoldFunction(
+            instantiate_function_application(application, substitution, algebraic_parameters)?,
+        ),
+        ProofTactic::StructuralInduct {
+            parameter,
+            hypothesis,
+            arms,
+        } => ProofTactic::StructuralInduct {
+            parameter: parameter.clone(),
+            hypothesis: hypothesis.clone(),
+            arms: arms
+                .iter()
+                .map(|arm| {
+                    let mut scoped_parameters = algebraic_parameters.clone();
+                    for binding in &arm.bindings {
+                        scoped_parameters.remove(binding);
+                    }
+                    Ok(ProofInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        tactics: instantiate_proof_tactics(
+                            &arm.tactics,
+                            substitution,
+                            &scoped_parameters,
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        },
+        ProofTactic::ApplyInduction {
+            hypothesis,
+            argument,
+        } => ProofTactic::ApplyInduction {
+            hypothesis: hypothesis.clone(),
+            argument: expression(argument)?,
+        },
+        ProofTactic::ApplyInductionUsing {
+            hypothesis,
+            argument,
+            premises,
+        } => ProofTactic::ApplyInductionUsing {
+            hypothesis: hypothesis.clone(),
+            argument: expression(argument)?,
+            premises: premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ProofTactic::ApplyTheorem(application) => ProofTactic::ApplyTheorem(
+            instantiate_theorem_application(application, substitution, algebraic_parameters)?,
+        ),
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => ProofTactic::ApplyTheoremUsing {
+            application: instantiate_theorem_application(
+                application,
+                substitution,
+                algebraic_parameters,
+            )?,
+            premises: premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ProofTactic::Have(have) => ProofTactic::Have(ProofHave {
+            proposition: proposition(&have.proposition)?,
+            proof: instantiate_source_proof(&have.proof, substitution, algebraic_parameters)?,
+        }),
+        ProofTactic::If(proof_if) => ProofTactic::If(ProofIf {
+            condition: proposition(&proof_if.condition)?,
+            then_tactics: instantiate_proof_tactics(
+                &proof_if.then_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+            else_tactics: instantiate_proof_tactics(
+                &proof_if.else_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+        }),
+        ProofTactic::Cases(cases) => ProofTactic::Cases(ProofCases {
+            disjunction: proposition(&cases.disjunction)?,
+            left_tactics: instantiate_proof_tactics(
+                &cases.left_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+            right_tactics: instantiate_proof_tactics(
+                &cases.right_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+        }),
+        ProofTactic::Extract(value) => ProofTactic::Extract(proposition(value)?),
+        ProofTactic::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(
+            premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        ProofTactic::Contradiction(value) => ProofTactic::Contradiction(proposition(value)?),
+        ProofTactic::Rewrite(value) => ProofTactic::Rewrite(proposition(value)?),
+        ProofTactic::Transport { source, target } => ProofTactic::Transport {
+            source: proposition(source)?,
+            target: proposition(target)?,
+        },
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => ProofTactic::TransportUsing {
+            source: proposition(source)?,
+            target: proposition(target)?,
+            premises: premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ProofTactic::InstantiateUsing {
+            quantified,
+            argument,
+            premises,
+        } => ProofTactic::InstantiateUsing {
+            quantified: proposition(quantified)?,
+            argument: expression(argument)?,
+            premises: premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ProofTactic::SimpUsing(using) => ProofTactic::SimpUsing(ProofSimpUsing {
+            premises: using
+                .premises
+                .iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        tactic => tactic.clone(),
+    })
+}
+
 fn instantiate_parameter(
     parameter: &FunctionParameter,
     substitution: &TypeSubstitution,

@@ -4,6 +4,7 @@
 //! binding targets C0; additional program languages belong under
 //! `crate::languages` rather than beside this module.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -3471,6 +3472,8 @@ impl ResourceEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TheoremEnvironment {
     definitions: BTreeMap<String, TheoremDefinition>,
+    verified_generic_instances: RefCell<BTreeSet<String>>,
+    active_generic_instances: RefCell<BTreeSet<String>>,
 }
 
 impl TheoremEnvironment {
@@ -3480,6 +3483,8 @@ impl TheoremEnvironment {
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            verified_generic_instances: RefCell::new(BTreeSet::new()),
+            active_generic_instances: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -3490,6 +3495,25 @@ impl TheoremEnvironment {
     fn insert(&mut self, definition: TheoremDefinition) {
         self.definitions
             .insert(definition.name().to_string(), definition);
+    }
+
+    fn generic_instance_is_verified(&self, name: &str) -> bool {
+        self.verified_generic_instances.borrow().contains(name)
+    }
+
+    fn begin_generic_instance_verification(&self, name: &str) -> bool {
+        self.active_generic_instances
+            .borrow_mut()
+            .insert(name.to_string())
+    }
+
+    fn finish_generic_instance_verification(&self, name: &str, verified: bool) {
+        self.active_generic_instances.borrow_mut().remove(name);
+        if verified {
+            self.verified_generic_instances
+                .borrow_mut()
+                .insert(name.to_string());
+        }
     }
 }
 

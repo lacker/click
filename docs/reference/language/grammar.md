@@ -140,11 +140,12 @@ and theorems may receive arbitrary algebraic values, pure functions may return
 them, and an exhaustive `match` may inspect an unknown variant and return a
 common C or algebraic type:
 
-Pure functions and predicates may declare Rust-like type parameters after
-their name. Calls infer each type argument from the concrete argument types;
-there is no separate call-site type-argument syntax. Each inferred function
-instance has a distinct typed kernel identity, and an explicit `unfold`
-instantiates the signature and body before exposing its defining equation:
+Pure functions, predicates, and theorems may declare Rust-like type parameters
+after their name. Calls and theorem applications infer each type argument from
+the concrete argument types; there is no separate call-site type-argument
+syntax. Each inferred function instance has a distinct typed kernel identity,
+and an explicit `unfold` instantiates the signature and body before exposing
+its defining equation:
 
 <!-- verified-example: mdtests/algebraic_generic_functions.md -->
 ```click
@@ -158,9 +159,23 @@ predicate is_empty<T>(xs: List<T>) {
 ```
 
 Inference rejects both unconstrained parameters and conflicting arguments.
-Generic theorem declarations are reserved but not yet accepted: sound
-Rust-like monomorphization must verify each concrete theorem instance before
-that instance becomes proof authority.
+Generic theorem declarations are checked structurally and type-checked without
+choosing a concrete type. At `apply`, Click infers the concrete type arguments,
+substitutes them through the theorem statement and proof, verifies that
+monomorph, and caches the checked instance. An invalid generic proof therefore
+grants no authority, and distinct applications such as `List<int32>` and
+`List<int32*>` are checked as distinct instances:
+
+<!-- verified-example: mdtests/algebraic_generic_theorems.md -->
+```click
+theorem append_right_identity<T>(xs: List<T>) {
+    ensures append(xs, List<T>::Nil) == xs by {
+        induct(xs) as ih {
+            // ...
+        }
+    }
+}
+```
 
 <!-- verified-example: mdtests/algebraic_maybe.md -->
 ```click

@@ -232,8 +232,16 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
     let theorem = theorem_environment
         .get(&application.name)
         .ok_or_else(|| format!("unknown theorem `{}`", application.name))?;
-    let (values, array_refs, algebraic_values) = theorem_application_bindings(
+    let theorem = instantiate_generic_theorem_application_definition(
         theorem,
+        application,
+        assumptions,
+        context,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let (values, array_refs, algebraic_values) = theorem_application_bindings(
+        &theorem,
         application,
         context,
         assumptions,

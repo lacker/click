@@ -151,6 +151,16 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             format!("unknown theorem `{}`", application.name),
         )
     })?;
+    let theorem = resolve_generic_theorem_application(
+        theorem,
+        application,
+        theorem_environment,
+        lowering_assumptions,
+        context,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| theorem_application_error(claim_label, path_index, tactic_index, message))?;
     if application.arguments.len() != theorem.parameters().len() {
         return Err(theorem_application_error(
             claim_label,
@@ -166,7 +176,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     }
 
     let (values, array_refs, algebraic_values) = theorem_application_bindings(
-        theorem,
+        &theorem,
         application,
         context,
         lowering_assumptions,
@@ -284,6 +294,163 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     Ok(conclusions)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn resolve_generic_theorem_application(
+    definition: &TheoremDefinition,
+    application: &TheoremApplication,
+    theorem_environment: &TheoremEnvironment,
+    assumptions: &PureFactContext,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<TheoremDefinition, String> {
+    let concrete = instantiate_generic_theorem_application_definition(
+        definition,
+        application,
+        assumptions,
+        context,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    if definition.type_parameters().is_empty() {
+        return Ok(concrete);
+    }
+    if theorem_environment.generic_instance_is_verified(concrete.name()) {
+        return Ok(concrete);
+    }
+    if !theorem_environment.begin_generic_instance_verification(concrete.name()) {
+        return Err(format!(
+            "cyclic verification of generic theorem instance `{}`",
+            concrete.name()
+        ));
+    }
+    let result = verify_concrete_theorem_definition(
+        &concrete,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+        None,
+    )
+    .map(|_| ())
+    .map_err(|error| {
+        format!(
+            "generic theorem instance `{}` failed verification: {}",
+            concrete.name(),
+            error.message()
+        )
+    });
+    theorem_environment.finish_generic_instance_verification(concrete.name(), result.is_ok());
+    result?;
+    Ok(concrete)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn instantiate_generic_theorem_application_definition(
+    definition: &TheoremDefinition,
+    application: &TheoremApplication,
+    assumptions: &PureFactContext,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<TheoremDefinition, String> {
+    if definition.type_parameters().is_empty() {
+        return Ok(definition.clone());
+    }
+    if application.arguments.len() != definition.parameters().len() {
+        return Ok(definition.clone());
+    }
+    let argument_types = application
+        .arguments
+        .iter()
+        .map(|argument| {
+            theorem_application_argument_type(
+                argument,
+                assumptions,
+                context,
+                predicate_environment,
+                click_function_environment,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let substitution = generics::infer_type_substitution(
+        "theorem",
+        definition.name(),
+        definition.type_parameters(),
+        definition
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.click_type().clone()),
+        argument_types,
+    )?;
+    generics::instantiate_theorem(definition, &substitution)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn theorem_application_argument_type(
+    argument: &ContractExpression,
+    assumptions: &PureFactContext,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Option<ClickType>, String> {
+    match argument {
+        ContractExpression::AlgebraicVariable { algebraic_type, .. }
+        | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
+            return Ok(Some(ClickType::Algebraic(algebraic_type.clone())));
+        }
+        ContractExpression::CFragment(CExpression::Value(value)) => {
+            return Ok(Some(ClickType::C(generics::c0_type_from_kernel(
+                value.c_type(),
+            ))));
+        }
+        ContractExpression::Binding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => {
+            if let Some(value) = context.values.get(name) {
+                return Ok(Some(ClickType::C(generics::c0_type_from_kernel(
+                    value.c_type(),
+                ))));
+            }
+        }
+        _ => {}
+    }
+
+    if let Ok(value) = capture_fixed_state_algebraic_expression(
+        argument,
+        assumptions,
+        context.values,
+        context.array_refs,
+        context.pre_state,
+        context.post_state,
+        context.result,
+        context.recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        return Ok(Some(generics::click_type_from_algebraic_value_type(
+            &crate::kernel::AlgebraicValueType::Algebraic {
+                name: value.algebraic_type.name,
+                arguments: value.algebraic_type.arguments,
+            },
+        )));
+    }
+
+    let mut active_functions = BTreeSet::new();
+    evaluate_contract_expression_with_environment(
+        context.values,
+        context.array_refs,
+        context.pre_state,
+        context.post_state,
+        context.result,
+        assumptions,
+        argument,
+        predicate_environment,
+        click_function_environment,
+        context.recorded_snapshots,
+        &mut active_functions,
+    )
+    .map(|value| Some(ClickType::C(generics::c0_type_from_kernel(value.c_type()))))
+}
+
 pub(super) fn theorem_application_bindings(
     theorem: &TheoremDefinition,
     application: &TheoremApplication,
@@ -306,7 +473,12 @@ pub(super) fn theorem_application_bindings(
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
         let Some(parameter_type) = parameter.click_type().c_type() else {
             let ClickType::Algebraic(expected_type) = parameter.click_type() else {
-                unreachable!("Click theorem parameters are C or algebraic values")
+                return Err(format!(
+                    "theorem `{}` parameter `{}` has unresolved type {}",
+                    theorem.name(),
+                    parameter.name(),
+                    validation::describe_click_type(parameter.click_type())
+                ));
             };
             let value = capture_fixed_state_algebraic_expression(
                 argument,

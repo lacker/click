@@ -439,6 +439,11 @@ pub(super) fn validate_algebraic_type_uses(
     }
     for theorem in file.theorem_definitions() {
         let variables = theorem_type_environment(theorem);
+        let click_variables = theorem
+            .parameters()
+            .iter()
+            .map(|parameter| (parameter.name().to_string(), parameter.click_type().clone()))
+            .collect::<BTreeMap<_, _>>();
         for requirement in theorem
             .requires()
             .iter()
@@ -452,6 +457,16 @@ pub(super) fn validate_algebraic_type_uses(
                 &definitions,
                 &format!("theorem `{}` requirement", theorem.name()),
             )?;
+            if !theorem.type_parameters().is_empty() {
+                validate_generic_proposition_types(
+                    requirement,
+                    &click_variables,
+                    click_functions,
+                    &predicate_types,
+                    &definitions,
+                    &format!("theorem `{}` requirement", theorem.name()),
+                )?;
+            }
         }
         for ensure in theorem.ensures() {
             if let Ensure::Proposition(proposition) = ensure.ensure() {
@@ -463,6 +478,16 @@ pub(super) fn validate_algebraic_type_uses(
                     &definitions,
                     &format!("theorem `{}` ensure", theorem.name()),
                 )?;
+                if !theorem.type_parameters().is_empty() {
+                    validate_generic_proposition_types(
+                        proposition,
+                        &click_variables,
+                        click_functions,
+                        &predicate_types,
+                        &definitions,
+                        &format!("theorem `{}` ensure", theorem.name()),
+                    )?;
+                }
             }
         }
     }

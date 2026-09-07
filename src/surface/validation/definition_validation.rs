@@ -145,12 +145,6 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             definition.name(),
             definition.type_parameters(),
         )?;
-        if !definition.type_parameters().is_empty() {
-            return Err(ClickError::new(format!(
-                "generic theorem `{}` requires use-site monomorphization, which is not supported yet",
-                definition.name()
-            )));
-        }
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a theorem",

@@ -662,6 +662,15 @@ impl<'a> Proof<'a> {
             .theorem_environment
             .get(&application.name)
             .ok_or_else(|| self.step_error(format!("unknown theorem `{}`", application.name)))?;
+        let theorem = instantiate_generic_theorem_application_definition(
+            theorem,
+            application,
+            self.facts().assumptions(),
+            &application_context,
+            context.predicate_environment,
+            context.click_function_environment,
+        )
+        .map_err(|message| self.step_error(message))?;
         let substitutions = theorem
             .parameters()
             .iter()
