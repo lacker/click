@@ -643,8 +643,9 @@ int32 f32lt() {
 `-1.0f < 1.0f` is true, so the function returns 1. Click also certifies the
 mirror claim that `-1.0f > 1.0f`.
 
-**Regression B**, cancellation
-(`mdtests/float_cancellation_folding_rejected.md`):
+**Regression B**, cancellation — **fixed** in `Normalize a cancelling float
+result before encoding it`, regression
+`mdtests/float_cancellation_is_exact.md`:
 
 ```c
 int32 cancel() {

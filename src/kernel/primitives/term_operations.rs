@@ -923,11 +923,16 @@ fn round_float_result(
     let significand_bits = 128 - significand.leading_zeros();
     let mut unbiased_exponent = exponent + significand_bits as i32 - 1;
     if unbiased_exponent >= min_normal_exponent {
-        let shift = significand_bits.saturating_sub(precision);
-        let mut rounded = if shift == 0 {
-            significand
+        // The fraction field below is the significand with its leading bit
+        // masked off, so the significand has to be normalized to exactly
+        // `precision` bits first. Cancellation and division can leave fewer
+        // than that: `1.0 - 0.96875` reaches here as one bit at exponent -5,
+        // which without the left shift would encode as 2^-5 * (1 + 2^-52)
+        // rather than 2^-5.
+        let mut rounded = if significand_bits > precision {
+            round_right_to_even(significand, significand_bits - precision)
         } else {
-            round_right_to_even(significand, shift)
+            significand << (precision - significand_bits)
         };
         if rounded >= (1u128 << precision) {
             rounded >>= 1;
