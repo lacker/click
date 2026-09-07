@@ -1097,8 +1097,10 @@ fn validate_recursive_calls_in_expression(
             };
             for arm in arms {
                 let mut arm_subterms = structural_subterms.clone();
+                let mut arm_bounds = lower_bounds.clone();
                 for binding in &arm.bindings {
                     arm_subterms.remove(binding);
+                    arm_bounds.remove(binding);
                 }
                 if let Some(ClickType::Algebraic(application)) = &structural_scrutinee_type {
                     let datatype = algebraic_definitions
@@ -1116,7 +1118,7 @@ fn validate_recursive_calls_in_expression(
                         }
                     }
                 }
-                recurse(&arm.body, lower_bounds, &arm_subterms)?;
+                recurse(&arm.body, &arm_bounds, &arm_subterms)?;
             }
             Ok(())
         }
@@ -1188,21 +1190,34 @@ fn validate_recursive_calls_in_expression(
             start,
             end,
             initial,
+            accumulator,
+            item,
             body,
-            ..
         } => {
             recurse(start, lower_bounds, structural_subterms)?;
             recurse(end, lower_bounds, structural_subterms)?;
             recurse(initial, lower_bounds, structural_subterms)?;
-            recurse(body, lower_bounds, structural_subterms)
+            // A fold binder that reuses the measure's spelling is a different
+            // variable, so the body may not descend on it: `decreases n` with
+            // a `|acc, n|` binder would otherwise accept `f(n - 1)` as a
+            // descending edge while the parameter never changes.
+            let mut body_bounds = lower_bounds.clone();
+            let mut body_subterms = structural_subterms.clone();
+            for binder in [accumulator, item] {
+                body_bounds.remove(binder);
+                body_subterms.remove(binder);
+            }
+            recurse(body, &body_bounds, &body_subterms)
         }
         ContractExpression::Let {
             name, value, body, ..
         } => {
             recurse(value, lower_bounds, structural_subterms)?;
+            let mut body_bounds = lower_bounds.clone();
+            body_bounds.remove(name);
             let mut body_subterms = structural_subterms.clone();
             body_subterms.remove(name);
-            recurse(body, lower_bounds, &body_subterms)
+            recurse(body, &body_bounds, &body_subterms)
         }
         ContractExpression::Call { name, arguments } => {
             for argument in arguments {

@@ -548,6 +548,10 @@ postcondition asserts `3 == 7` for an entry state with `p[0] == 3`.
 
 ## 7. The pure-function `decreases` check is name-based and scope-blind
 
+**Fixed** in `Scope the pure-function decreases check to real binders`;
+regressions `mdtests/pure_decreases_shadowed_binder_rejected.md` and
+`mdtests/pure_decreases_under_binders.md`.
+
 **Severity: critical.** A `let`, fold, or match binder that shadows the measure
 parameter satisfies the descent check, so an inconsistent pure definition is
 accepted and its equations leak into C claims.
