@@ -106,7 +106,9 @@ Likely additions:
   cross-file qualifiers are checked; scalar array bounds may be inferred from
   non-empty positional initializers; incomplete definitions without an
   initializer, non-literal designators, multidimensional, and dynamically
-  initialized aggregate tables remain open.
+  initialized aggregate tables remain open. File-scope `static` incomplete
+  scalar arrays now resolve against complete definitions in their own
+  translation unit, while unresolved private arrays remain rejected.
   Static-storage pointers now also accept address constants for declared scalar
   objects, array elements, and scalar struct fields, preserving stable global or
   function-qualified static provenance and pointee-`const` views across
@@ -123,10 +125,11 @@ Likely additions:
   one-dimensional scalar arrays now include coalesced tentative declarations
   and one initialized definition across translation units, and are also
   supported for function-local statics;
-  multidimensional, file-scope `static` incomplete definitions, unresolved
-  incomplete tentative definitions, and dynamic-initialization cases remain
-  open; external incomplete declarations and tentative definitions resolve
-  against complete fixed-size definitions; scalar array bounds may be inferred
+  multidimensional, unresolved incomplete tentative definitions, and
+  dynamic-initialization cases remain open; external incomplete declarations
+  and tentative definitions resolve against complete fixed-size definitions,
+  and file-scope `static` incomplete scalar arrays resolve against complete
+  definitions in the same translation unit; scalar array bounds may be inferred
   from non-empty positional initializers; zero-initialized and positional compile-time initialized
   scalar-field aggregate globals, aggregate arrays, and function-local statics
   now use the same stable typed-field storage model, with compatible tentative

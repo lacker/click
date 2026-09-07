@@ -5937,11 +5937,6 @@ impl Parser {
             let array_length = match parsed_array_length {
                 Some(GlobalArrayLength::Incomplete) if !is_extern => {
                     if self.peek() != Some(&Token::Equal) {
-                        if is_file_static {
-                            return Err(self.error_here(
-                                "incomplete file-scope static array definitions are not supported yet",
-                            ));
-                        }
                         incomplete_tentative = true;
                         Some(GlobalArrayLength::Incomplete)
                     } else {

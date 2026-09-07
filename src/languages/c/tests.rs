@@ -1423,6 +1423,37 @@ fn c0_accepts_incomplete_tentative_scalar_array_declarations() {
 }
 
 #[test]
+fn c0_resolves_incomplete_file_static_scalar_arrays_within_one_translation_unit() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        static int32 values[];
+
+        int32 read() {
+            return values[1];
+        }
+
+        static int32 values[3] = {2, 6, 9};
+        "#,
+        "file-static-incomplete.c",
+    )
+    .expect("a file-scope static incomplete array should resolve locally");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert!(values.is_file_static());
+    assert_eq!(values.length(), 3);
+    assert!(values.is_defined());
+    assert!(!values.is_tentative());
+    assert_eq!(
+        functions[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(2),
+            crate::kernel::int32(6),
+            crate::kernel::int32(9)
+        ]
+    );
+}
+
+#[test]
 fn c0_resolves_incomplete_tentative_scalar_arrays_to_complete_definitions() {
     let functions = syntax::parse_functions_for_source(
         r#"
@@ -1457,7 +1488,6 @@ fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
         "int32 values[] = {}; int32 read() { return values[0]; }",
         "int32 values[] = {[1] = 2}; int32 read() { return values[0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
-        "static int32 values[]; int32 read() { return values[0]; }",
         "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
     ] {
         let error = syntax::parse_functions(source)
@@ -1539,6 +1569,42 @@ fn c0_links_incomplete_tentative_array_to_complete_tentative_definition() {
         ],
     )
     .expect("an incomplete tentative array should link to a complete tentative definition");
+}
+
+#[test]
+fn c0_rejects_unresolved_file_static_incomplete_arrays_even_with_external_match() {
+    let error = crate::surface::verify_c0_sources(
+        r#"
+        verifying "private.c";
+        verifying "external.c";
+
+        int32 read() {
+            ensures result == 0 by auto;
+        }
+
+        int32 external_value() {
+            ensures result == 7 by auto;
+        }
+        "#,
+        &[
+            (
+                "private.c",
+                "static int32 values[]; int32 read() { return values[0]; }",
+            ),
+            (
+                "external.c",
+                "int32 values[2] = {7, 8}; int32 external_value() { return values[0]; }",
+            ),
+        ],
+    )
+    .expect_err("an external array must not complete a private static array");
+    assert!(
+        error
+            .message()
+            .contains("file-scope static array `values` has an incomplete tentative definition"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

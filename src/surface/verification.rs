@@ -2273,6 +2273,16 @@ pub(in crate::surface) fn parse_verified_sources(
             }
         }
     }
+    for (source_path, source_arrays) in &global_arrays_by_source {
+        if let Some((name, _)) = source_arrays
+            .iter()
+            .find(|(_, array)| array.is_file_static() && !array.is_defined())
+        {
+            return Err(ClickError::new(format!(
+                "file-scope static array `{name}` has an incomplete tentative definition but no complete definition in `{source_path}`"
+            )));
+        }
+    }
     let mut global_arrays = BTreeMap::<String, syntax::C0GlobalArray>::new();
     for source_arrays in global_arrays_by_source.values() {
         for (name, array) in source_arrays {

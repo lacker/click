@@ -37,11 +37,12 @@ and reject field writes. Compatible `extern const` aggregate declarations are
 checked against their linked definitions.
 Static scalar arrays now accept literal index designators with zero-filled
 omitted elements across external, file-scope `static`, and function-local
-`static` storage. File-scope `static` incomplete arrays, unresolved external
-incomplete tentative definitions, multidimensional array definitions, and
-wider string-literal forms remain unsupported; dynamic initialization remains
-unsupported, while bounded integer constant expressions are folded for scalar
-objects and arrays. Static address initializer chains are resolved
+`static` storage. File-scope `static` incomplete scalar arrays now resolve to
+complete definitions in the same translation unit; unresolved private or
+external incomplete tentative definitions, multidimensional array definitions,
+and wider string-literal forms remain unsupported. Dynamic initialization
+remains unsupported, while bounded integer constant expressions are folded for
+scalar objects and arrays. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
 definition order does not affect stable relocations. Fixed-size one-dimensional arrays
 of those aggregates now use one stable ABI-sized block, support nested
@@ -112,7 +113,10 @@ unresolved-declaration diagnostic when no definition supplies the bound.
 `mdtests/file_scope_incomplete_tentative_arrays.md` covers external-linkage
 incomplete tentative definitions resolved by a complete fixed-size definition,
 and `mdtests/file_scope_incomplete_tentative_array_link_errors.md` covers the
-unresolved tentative-definition diagnostic.
+unresolved tentative-definition diagnostic. `mdtests/file_scope_static_incomplete_arrays.md`
+covers same-translation-unit completion for private arrays, while
+`mdtests/file_scope_static_incomplete_array_link_errors.md` covers the retained
+internal-linkage failure when only an external same-named array exists.
 `mdtests/file_scope_inferred_scalar_array_bounds.md` covers bound inference
 from non-empty positional initializers for external and file-scope `static`
 scalar arrays, while
@@ -183,9 +187,10 @@ propagation, and indirect-write rejection.
   `T name[];` for supported scalar arrays, and bundle linking resolves the
   omitted bound against one complete fixed-size external definition. Incomplete
   aggregate definitions, inferred initializer bounds for aggregate arrays,
-  empty or designated scalar-array initializers, file-scope `static` incomplete
-  arrays, unresolved incomplete tentative definitions, and multidimensional
-  forms remain rejected. Non-empty positional scalar-array initializers may
+  empty or designated scalar-array initializers, unresolved incomplete
+  tentative definitions, and multidimensional forms remain rejected. File-scope
+  `static` incomplete scalar arrays resolve only within their own translation
+  unit. Non-empty positional scalar-array initializers may
   infer the fixed bound before the normal array model is built.
 - The kernel materializes each aggregate array as one stable byte-addressed
   block with complete ABI element stride, zero-fills every leaf, applies
@@ -214,8 +219,7 @@ propagation, and indirect-write rejection.
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
   non-literal designators, const-qualified automatic aggregate locals,
-  multidimensional arrays, file-scope `static` incomplete arrays, unresolved
-  incomplete tentative definitions, dynamic or
+  multidimensional arrays, unresolved incomplete tentative definitions, dynamic or
   non-literal initialization, and wider literal forms remain open. Scalar
   array bounds may be inferred from non-empty positional initializers; static
   address initializers are revalidated after external globals are linked,
