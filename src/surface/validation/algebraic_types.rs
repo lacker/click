@@ -1170,7 +1170,7 @@ fn validate_algebraic_expression(
     }
 }
 
-fn instantiate_field_type(
+pub(super) fn instantiate_field_type(
     definition: &AlgebraicTypeDefinition,
     application: &AlgebraicTypeApplication,
     field: &AlgebraicFieldType,

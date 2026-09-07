@@ -88,9 +88,10 @@ The kernel has selected reasoning support for the current standard-library
 folds, especially `count` and `permutation`. It is not yet a general induction
 engine for arbitrary folds.
 
-## Well-Founded recursion
+## Well-founded recursion
 
-A pure function may recurse when it declares an integer measure:
+A pure function may recurse when it declares a checked measure. Integer
+recursion uses a nonnegative, strictly decreasing `int32` parameter:
 
 <!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
@@ -108,18 +109,39 @@ strictly smaller than the caller measure. A path that makes no recursive call
 does not need a nonnegative incoming measure, so the example returns `0` for a
 negative argument without recursing.
 
-The first recursion slice deliberately keeps the proof rule easy to audit:
-`decreases` names one `int32` parameter, recursive components use only `int32`
-parameters and results, and a decreasing call is written as that parameter
-minus a positive constant (or as a smaller nonnegative constant) under an
-explicit comparison guard. Lexicographic measures and recursive array
-summaries are not yet supported.
+Recursive algebraic datatypes provide a second checked measure. After an
+exhaustive match on the measure, a recursive call may pass an algebraic field
+bound by that arm:
 
-Concrete arguments unfold until evaluation reaches a base case. At symbolic
-arguments, Click exposes one defining equation and preserves the next
-unknown-depth call as an opaque pure-function application. The same application
-is structurally equal to itself, but Click does not recursively normalize it by
-an arbitrary depth budget.
+<!-- verified-example: mdtests/algebraic_structural_recursion.md -->
+```click
+function list_length(xs: List<int32>) -> int32
+    decreases xs
+{
+    match xs {
+        List::Nil => 0,
+        List::Cons(head, tail) => 1 + list_length(tail),
+    }
+}
+```
+
+The checker follows further exhaustive matches on already-smaller fields, so
+nested descent is accepted. Multiple recursive fields and mutually recursive
+datatype/function groups use the same rule. Matching an unrelated value does
+not establish descent, and neither aliases nor arbitrary algebraic expressions
+are guessed to be subterms.
+
+The integer rule deliberately remains easy to audit: its recursive components
+use only `int32` parameters and results, and a decreasing call is written as
+the measure minus a positive constant (or as a smaller nonnegative constant)
+under an explicit comparison guard. Lexicographic measures and recursive
+array summaries are not yet supported.
+
+All calls remain symbolic logical applications. An explicit `unfold` exposes
+one defining equation and preserves the next unknown-depth call as an opaque
+pure-function application, even when the selected call has constructor or
+constant arguments. The same application is structurally equal to itself, but
+Click does not recursively normalize it by an arbitrary depth budget.
 
 ## Proving recursive results
 
@@ -153,12 +175,18 @@ Bare `apply(ih(m))` is smart because it plans explicit proofs of those fixed
 obligations. Expansion ends in `apply(ih(m)) using { ... }`, the simple form
 that checks exactly the listed obligations without searching.
 
-The induction variable must be an `int32` theorem parameter. Other theorem
+The induction variable must currently be an `int32` theorem parameter. Other theorem
 parameters remain fixed, so `ih` takes only the replacement value for the
 named induction parameter. This is strong induction, so calls such as
 `ih(n - 2)` are supported when the branch facts prove the argument is
 nonnegative and smaller. The local hypothesis is not a global theorem and is
 not available in C execution proofs.
+
+Structural induction over an algebraic theorem parameter still needs a
+proof-level constructor case operation. Expression-level `match` remains a
+symbolic pure expression and intentionally does not split a proof or introduce
+field names. The datatype issue tracks that proof-language design separately
+from the implemented structural termination check.
 
 `unfold(function(args))` explicitly exposes one symbolic defining equation.
 A recursive call produced by that layer stays opaque. Neither `simp` nor
