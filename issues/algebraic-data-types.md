@@ -43,19 +43,18 @@ unchanged.
 - proposition-level `element in sequence` membership over literals and
   concatenations; and
 - a checked exact-result contract for `sequence_contains3`.
-- generic nonrecursive `spec enum` declarations with nullary and product
-  variants;
+- generic `spec enum` declarations with nullary and product variants;
 - fully type-applied constructors, structural `==`/`!=`, and exhaustive
   `match` expressions over constructed values whose fields may be symbolic C
   values; and
 - checked rejection of wrong constructor field types, nonexhaustive matches,
-  and recursive fields in this initial datatype slice;
+  duplicate match arms, and escaping pattern binders;
 - a first-class `ClickType` family distinct from C's `C0Type`, with algebraic
   types accepted as pure-function, predicate, and theorem parameter types and
   as pure-function result types; and
-- arbitrary symbolic nonrecursive algebraic values, structural reflexivity,
-  exhaustive elimination, and pure positive/negative mdtests that require no
-  C translation unit; and
+- arbitrary symbolic algebraic values, structural reflexivity, exhaustive
+  elimination, and pure positive/negative mdtests that require no C
+  translation unit; and
 - typed kernel algebraic terms with one variable node per arbitrary value,
   constructor nodes with checked instantiated schemas, symbolic match nodes,
   opaque typed pure-function applications, and shared datatype definitions.
@@ -72,8 +71,12 @@ unchanged.
 - acyclic nested algebraic fields and algebraic type arguments, including
   generic substitution through declarations such as `Present(Maybe<T>)` and
   applications such as `Holder<Maybe<int32>>`. Symbolic matches bind nested
-  fields as typed algebraic terms, and direct or indirect datatype cycles are
-  rejected pending the recursive slice.
+  fields as typed algebraic terms; and
+- regular, strictly positive recursive datatype declarations, including
+  `List<T>`, binary `Tree<T>`, and mutually recursive groups. Recursive fields
+  are nominal references to finite schemas, preserve the enclosing type
+  parameters exactly, and remain symbolic under one-layer matches. Recursive
+  groups with no finite constructor value are rejected.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -81,12 +84,12 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic quantifiers, resource arguments, strictly positive
-recursive fields, structural decreases and induction, the library-defined
-`List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
-Recursive algebraic-valued pure functions also wait on that recursive
-representation. All pure calls remain logical applications during lowering;
-an explicit checked `unfold` step exposes one defining equation. Generated
+Still open are algebraic quantifiers, resource arguments, structural decreases
+and induction, the library-defined `List<T>`, recursive-resource use, and
+symbolic typed-memory-range projection. Recursive algebraic-valued pure
+functions are not yet accepted merely because their value representation is
+now available. All pure calls remain logical applications during lowering; an
+explicit checked `unfold` step exposes one defining equation. Generated
 structural induction principles remain to be added as checked datatype rules.
 
 ## Violated invariant
@@ -106,12 +109,12 @@ resources. Negative regressions reject wrong constructor arguments,
 nonexhaustive or duplicate match arms, escaping pattern binders, and invalid
 recursive declarations.
 
-Then define the recursive `List<T>` above. Define append and membership by
-pattern matching, with recursive calls justified by structural descent. Prove
-empty identity, append associativity, and the membership law using explicit
-structural induction. Negative claims must distinguish `[a, b]` from `[b, a]`,
-`[a]` from `[a, a]`, and membership from ownership of an object addressed by a
-pointer element.
+With the recursive `List<T>` declaration and one-layer symbolic matching now
+implemented, define append and membership by pattern matching, with recursive
+calls justified by structural descent. Prove empty identity, append
+associativity, and the membership law using explicit structural induction.
+Negative claims must distinguish `[a, b]` from `[b, a]`, `[a]` from `[a, a]`,
+and membership from ownership of an object addressed by a pointer element.
 
 Then verify the unchanged `sequence-transform` C fixture with contracts that
 express these results conceptually:

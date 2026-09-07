@@ -1545,7 +1545,9 @@ mod algebraic_term_tests {
             name: "Maybe".to_string(),
             arguments,
             variants: variants.clone(),
-            schemas: std::sync::Arc::new(BTreeMap::from([(value_type, variants)])),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                value_type, variants,
+            )]))),
         }
     }
 
@@ -1586,13 +1588,60 @@ mod algebraic_term_tests {
             name: "Envelope".to_string(),
             arguments: vec![AlgebraicValueType::C(CType::Int32)],
         };
-        let mut schemas = maybe_type.schemas.as_ref().clone();
+        let mut schemas = maybe_type.schemas.definitions().clone();
         schemas.insert(value_type, variants.clone());
         AlgebraicType {
             name: "Envelope".to_string(),
             arguments: vec![AlgebraicValueType::C(CType::Int32)],
             variants,
-            schemas: std::sync::Arc::new(schemas),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(schemas)),
+        }
+    }
+
+    fn recursive_list_type() -> AlgebraicType {
+        let arguments = vec![AlgebraicValueType::C(CType::Int32)];
+        let value_type = AlgebraicValueType::Algebraic {
+            name: "List".to_string(),
+            arguments: arguments.clone(),
+        };
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+            AlgebraicVariantType {
+                name: "Nil".to_string(),
+                fields: Vec::new(),
+            },
+            AlgebraicVariantType {
+                name: "Cons".to_string(),
+                fields: vec![AlgebraicValueType::C(CType::Int32), value_type.clone()],
+            },
+        ]
+        .into();
+        AlgebraicType {
+            name: "List".to_string(),
+            arguments,
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                value_type, variants,
+            )]))),
+        }
+    }
+
+    fn ungrounded_recursive_type() -> AlgebraicType {
+        let value_type = AlgebraicValueType::Algebraic {
+            name: "Loop".to_string(),
+            arguments: Vec::new(),
+        };
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![AlgebraicVariantType {
+            name: "Again".to_string(),
+            fields: vec![value_type.clone()],
+        }]
+        .into();
+        AlgebraicType {
+            name: "Loop".to_string(),
+            arguments: Vec::new(),
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                value_type, variants,
+            )]))),
         }
     }
 
@@ -1613,7 +1662,9 @@ mod algebraic_term_tests {
             name: "Wide".to_string(),
             arguments,
             variants: variants.clone(),
-            schemas: std::sync::Arc::new(BTreeMap::from([(value_type, variants)])),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                value_type, variants,
+            )]))),
         }
     }
 
@@ -1667,6 +1718,34 @@ mod algebraic_term_tests {
             &variable.algebraic_type.variants,
             &constructor.algebraic_type.variants,
         ));
+    }
+
+    #[test]
+    fn grounded_recursive_schema_accepts_symbolic_recursive_fields() {
+        let algebraic_type = recursive_list_type();
+        let tail = AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(8)),
+        };
+        let cons = AlgebraicTerm {
+            algebraic_type,
+            node: AlgebraicTermNode::Constructor {
+                variant: "Cons".to_string(),
+                fields: vec![AlgebraicValue::C(int32(7)), AlgebraicValue::Algebraic(tail)],
+            },
+        };
+
+        assert!(cons.is_well_formed());
+    }
+
+    #[test]
+    fn ungrounded_recursive_schema_rejects_an_arbitrary_variable() {
+        let term = AlgebraicTerm {
+            algebraic_type: ungrounded_recursive_type(),
+            node: AlgebraicTermNode::Variable(Variable(9)),
+        };
+
+        assert!(!term.is_well_formed());
     }
 
     #[test]

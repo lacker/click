@@ -52,7 +52,7 @@ pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(
             }
         }
     }
-    reject_recursive_algebraic_declarations(&definitions)?;
+    validate_recursive_algebraic_declarations(&definitions)?;
     Ok(())
 }
 
@@ -72,13 +72,6 @@ fn validate_algebraic_field_declaration(
         ))),
         AlgebraicFieldType::C(_) => Ok(()),
         AlgebraicFieldType::Algebraic { name, arguments } => {
-            if name == owner.name() {
-                return Err(ClickError::new(format!(
-                    "recursive algebraic datatype field `{}::{}` is not supported in the nonrecursive first slice",
-                    owner.name(),
-                    variant.name()
-                )));
-            }
             let nested = definitions.get(name.as_str()).ok_or_else(|| {
                 ClickError::new(format!(
                     "variant `{}::{}` uses unknown algebraic datatype `{name}`",
@@ -121,28 +114,111 @@ fn collect_algebraic_field_dependencies<'a>(
     }
 }
 
-fn reject_recursive_algebraic_declarations(
+fn validate_recursive_algebraic_declarations(
     definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
 ) -> Result<(), ClickError> {
-    fn visit<'a>(
-        name: &'a str,
-        definitions: &BTreeMap<&'a str, &'a AlgebraicTypeDefinition>,
-        visiting: &mut Vec<&'a str>,
-        complete: &mut BTreeSet<&'a str>,
-    ) -> Result<(), ClickError> {
-        if complete.contains(name) {
-            return Ok(());
+    let components = algebraic_recursive_components(definitions);
+    for definition in definitions.values() {
+        for variant in definition.variants() {
+            for field in variant.fields() {
+                validate_regular_recursive_occurrences(definition, variant, field, &components)?;
+            }
         }
-        if let Some(index) = visiting.iter().position(|candidate| *candidate == name) {
-            let mut cycle = visiting[index..].to_vec();
-            cycle.push(name);
-            return Err(ClickError::new(format!(
-                "recursive algebraic datatype cycle `{}` is not supported in the nonrecursive slice",
-                cycle.join(" -> ")
-            )));
+    }
+
+    let mut grounded = BTreeSet::new();
+    loop {
+        let before = grounded.len();
+        for definition in definitions.values() {
+            if definition.variants().iter().any(|variant| {
+                variant
+                    .fields()
+                    .iter()
+                    .all(|field| algebraic_field_is_grounded(field, &grounded))
+            }) {
+                grounded.insert(definition.name());
+            }
         }
-        visiting.push(name);
-        let definition = definitions[name];
+        if grounded.len() == before {
+            break;
+        }
+    }
+    if let Some(definition) = definitions
+        .values()
+        .find(|definition| !grounded.contains(definition.name()))
+    {
+        return Err(ClickError::new(format!(
+            "recursive algebraic datatype `{}` has no finite constructor value",
+            definition.name()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_regular_recursive_occurrences(
+    owner: &AlgebraicTypeDefinition,
+    variant: &AlgebraicVariantDefinition,
+    field: &AlgebraicFieldType,
+    components: &BTreeMap<&str, usize>,
+) -> Result<(), ClickError> {
+    let AlgebraicFieldType::Algebraic { name, arguments } = field else {
+        return Ok(());
+    };
+    if components.get(name.as_str()) == components.get(owner.name())
+        && !arguments_preserve_owner_parameters(arguments, owner.type_parameters())
+    {
+        return Err(ClickError::new(format!(
+            "recursive algebraic datatype occurrence in variant `{}::{}` must preserve type parameters exactly",
+            owner.name(),
+            variant.name()
+        )));
+    }
+    for argument in arguments {
+        validate_regular_recursive_occurrences(owner, variant, argument, components)?;
+    }
+    Ok(())
+}
+
+fn algebraic_recursive_components<'a>(
+    definitions: &BTreeMap<&'a str, &'a AlgebraicTypeDefinition>,
+) -> BTreeMap<&'a str, usize> {
+    fn visit_forward<'a>(
+        current: &'a str,
+        graph: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+        visited: &mut BTreeSet<&'a str>,
+        order: &mut Vec<&'a str>,
+    ) {
+        if !visited.insert(current) {
+            return;
+        }
+        for dependency in &graph[current] {
+            visit_forward(dependency, graph, visited, order);
+        }
+        order.push(current);
+    }
+
+    fn visit_reverse<'a>(
+        current: &'a str,
+        reverse: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+        component: usize,
+        components: &mut BTreeMap<&'a str, usize>,
+    ) {
+        if components.contains_key(current) {
+            return;
+        }
+        components.insert(current, component);
+        for dependency in &reverse[current] {
+            visit_reverse(dependency, reverse, component, components);
+        }
+    }
+
+    let mut graph = BTreeMap::new();
+    let mut reverse = definitions
+        .keys()
+        .copied()
+        .map(|name| (name, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for (name, definition) in definitions {
         let mut dependencies = BTreeSet::new();
         for field in definition
             .variants()
@@ -151,19 +227,45 @@ fn reject_recursive_algebraic_declarations(
         {
             collect_algebraic_field_dependencies(field, &mut dependencies);
         }
-        for dependency in dependencies {
-            visit(dependency, definitions, visiting, complete)?;
+        for dependency in &dependencies {
+            reverse
+                .get_mut(dependency)
+                .expect("algebraic dependencies were validated")
+                .insert(*name);
         }
-        visiting.pop();
-        complete.insert(name);
-        Ok(())
+        graph.insert(*name, dependencies);
     }
 
-    let mut complete = BTreeSet::new();
+    let mut order = Vec::new();
+    let mut visited = BTreeSet::new();
     for name in definitions.keys().copied() {
-        visit(name, definitions, &mut Vec::new(), &mut complete)?;
+        visit_forward(name, &graph, &mut visited, &mut order);
     }
-    Ok(())
+    let mut components = BTreeMap::new();
+    for name in order.into_iter().rev() {
+        if !components.contains_key(name) {
+            let component = components.len();
+            visit_reverse(name, &reverse, component, &mut components);
+        }
+    }
+    components
+}
+
+fn arguments_preserve_owner_parameters(
+    arguments: &[AlgebraicFieldType],
+    parameters: &[String],
+) -> bool {
+    arguments.len() == parameters.len()
+        && arguments.iter().zip(parameters).all(|(argument, parameter)| {
+            matches!(argument, AlgebraicFieldType::Parameter(name) if name == parameter)
+        })
+}
+
+fn algebraic_field_is_grounded(field: &AlgebraicFieldType, grounded: &BTreeSet<&str>) -> bool {
+    match field {
+        AlgebraicFieldType::Parameter(_) | AlgebraicFieldType::C(_) => true,
+        AlgebraicFieldType::Algebraic { name, .. } => grounded.contains(name.as_str()),
+    }
 }
 
 pub(super) fn validate_algebraic_type_uses(

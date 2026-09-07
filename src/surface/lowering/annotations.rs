@@ -52,8 +52,9 @@ use crate::kernel::CFloatClassification;
 use crate::kernel::CPredicateUnfolding;
 use crate::kernel::SpecSequenceExpression;
 use crate::kernel::{
-    AlgebraicType, AlgebraicValueType, AlgebraicVariantType, SpecAlgebraicExpression,
-    SpecAlgebraicExpressionNode, SpecAlgebraicResultMatchArm, SpecAlgebraicValue,
+    AlgebraicSchemas, AlgebraicType, AlgebraicValueType, AlgebraicVariantType,
+    SpecAlgebraicExpression, SpecAlgebraicExpressionNode, SpecAlgebraicResultMatchArm,
+    SpecAlgebraicValue,
 };
 
 type FunctionContractSummary = (
@@ -3181,7 +3182,7 @@ fn algebraic_kernel_type_from_parts(
     };
     let mut schemas = BTreeMap::new();
     collect_algebraic_kernel_schemas(environment, &root_type, &mut schemas)?;
-    let schemas = std::sync::Arc::new(schemas);
+    let schemas = std::sync::Arc::new(AlgebraicSchemas::new(schemas));
     let variants = schemas
         .get(&root_type)
         .cloned()

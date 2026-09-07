@@ -1,4 +1,4 @@
-# nested algebraic datatype declarations reject cycles
+# recursive algebraic datatype declarations require a finite constructor
 
 ```click
 spec enum First {
@@ -11,5 +11,5 @@ spec enum Second {
 ```
 
 ```expect
-fail: recursive algebraic datatype cycle `First -> Second -> First` is not supported in the nonrecursive slice
+fail: recursive algebraic datatype `First` has no finite constructor value
 ```

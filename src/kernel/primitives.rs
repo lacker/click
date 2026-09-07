@@ -797,9 +797,7 @@ pub struct AlgebraicType {
     pub name: String,
     pub arguments: Vec<AlgebraicValueType>,
     pub variants: std::sync::Arc<[AlgebraicVariantType]>,
-    pub schemas: std::sync::Arc<
-        std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
-    >,
+    pub schemas: std::sync::Arc<AlgebraicSchemas>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -815,6 +813,64 @@ pub enum AlgebraicValueType {
 pub struct AlgebraicVariantType {
     pub name: String,
     pub fields: Vec<AlgebraicValueType>,
+}
+
+/// The finite nominal schema graph shared by every term of one resolved
+/// algebraic type family. Groundedness is computed once when the graph is
+/// formed so checking each constructor or variable does not rescan schemas
+/// unrelated to that term.
+#[derive(Debug)]
+pub struct AlgebraicSchemas {
+    variants:
+        std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>,
+    grounded: std::collections::BTreeSet<AlgebraicValueType>,
+}
+
+impl AlgebraicSchemas {
+    pub(crate) fn new(
+        variants: std::collections::BTreeMap<
+            AlgebraicValueType,
+            std::sync::Arc<[AlgebraicVariantType]>,
+        >,
+    ) -> Self {
+        let mut grounded = std::collections::BTreeSet::new();
+        loop {
+            let before = grounded.len();
+            for (value_type, constructors) in &variants {
+                if constructors.iter().any(|constructor| {
+                    constructor.fields.iter().all(|field| match field {
+                        AlgebraicValueType::C(_) => true,
+                        AlgebraicValueType::Algebraic { .. } => grounded.contains(field),
+                    })
+                }) {
+                    grounded.insert(value_type.clone());
+                }
+            }
+            if grounded.len() == before {
+                break;
+            }
+        }
+        Self { variants, grounded }
+    }
+
+    pub(crate) fn get(
+        &self,
+        value_type: &AlgebraicValueType,
+    ) -> Option<&std::sync::Arc<[AlgebraicVariantType]>> {
+        self.variants.get(value_type)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn definitions(
+        &self,
+    ) -> &std::collections::BTreeMap<AlgebraicValueType, std::sync::Arc<[AlgebraicVariantType]>>
+    {
+        &self.variants
+    }
+
+    fn is_grounded(&self, value_type: &AlgebraicValueType) -> bool {
+        self.grounded.contains(value_type)
+    }
 }
 
 /// A logical algebraic value. An arbitrary Click binder is one typed
@@ -961,9 +1017,11 @@ impl AlgebraicType {
     }
 
     fn has_consistent_root_schema(&self) -> bool {
+        let value_type = self.value_type();
         self.schemas
-            .get(&self.value_type())
+            .get(&value_type)
             .is_some_and(|variants| variants == &self.variants)
+            && self.schemas.is_grounded(&value_type)
     }
 }
 
@@ -1012,10 +1070,7 @@ impl AlgebraicValue {
     fn is_well_formed_for(
         &self,
         expected: &AlgebraicValueType,
-        schemas: &std::collections::BTreeMap<
-            AlgebraicValueType,
-            std::sync::Arc<[AlgebraicVariantType]>,
-        >,
+        schemas: &AlgebraicSchemas,
     ) -> bool {
         if &self.value_type() != expected {
             return false;

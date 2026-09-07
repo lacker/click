@@ -21,7 +21,9 @@ fn maybe_int32_type() -> AlgebraicType {
         name: "Maybe".to_string(),
         arguments,
         variants: variants.clone(),
-        schemas: std::sync::Arc::new(BTreeMap::from([(value_type, variants)])),
+        schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+            value_type, variants,
+        )]))),
     }
 }
 
