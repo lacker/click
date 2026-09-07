@@ -186,18 +186,19 @@ that force `x == constant` and the proof of the substituted proposition. It
 does not retain, clone, or scan the ambient context.
 
 The former `bounded_snapshot_comparison_active`, `ENDPOINT_BRIDGE_ACTIVE`, and
-`DERIVATION_WALK_ACTIVE` tiers are already deleted. The three names still in
-the code have different dispositions:
+`DERIVATION_WALK_ACTIVE` tiers are already deleted. The remaining names have
+these dispositions:
 
 - `LOAD_EQUALITY_RESOLUTION_ACTIVE` guarded 1 example, 293 mdtest, and 29 unit
   attempts. The guarded route proved zero queries and suppressed zero nested
-  calls in every corpus. This is a dead fallback, not a replacement-evidence
-  problem: delete the route and the flag together.
+  calls in every corpus. It was a dead fallback, not a replacement-evidence
+  problem; the route and flag are deleted.
 - `ALIAS_GUARD_REFUTATION_ACTIVE` guarded 718 example, 4,063 mdtest, and 6,676
   unit attempts. The rule proved zero fixture queries and exactly one unit
-  regression; the broad flag suppressed zero nested calls. Retain the narrow
-  alias-refutation rule, delete the unused boolean tier, and rely on or extend
-  exact-query cycle guards if a cycle can be constructed.
+  regression; the broad flag suppressed zero nested calls. The narrow
+  alias-refutation rule remains, but the unused boolean tier is deleted. Its
+  range checks use only the bounded shallow fact graph; any demonstrated cycle
+  belongs in an exact-query guard rather than a rule-wide switch.
 - `inside_condition_decision` was observed 14,417 times in examples and 21,339
   times in mdtests, but it does not reject a nested decision. It only prevents
   a nested fact set from installing a new ambient memo-id scope; the exact
@@ -213,9 +214,9 @@ the code have different dispositions:
    916 / 1,788 exact repeated-condition cuts and zero resolution-cycle,
    resource-cycle, or deadline events. `SimpFactReasoningGuard` has another
    exact repeated-query return that is not recorded by the epoch; it fired
-   zero times in both fixture corpora, but remains a latent negative-memo
-   correctness gap. Account for it or prove that no enclosing negative memo
-   can observe it, then rename the counter to `incomplete_reasoning_epoch`.
+   zero times in both fixture corpora. The guard now records every refused
+   exact query in the epoch, so enclosing negative memos cannot retain the
+   path-dependent miss. Rename the counter to `incomplete_reasoning_epoch`.
    Delete the mechanism only when incomplete nested answers cannot reach a
    memo boundary.
 2. **Deadline checks**, currently 31 `deadline_exceeded` sites under
@@ -271,12 +272,13 @@ comparison now use only that narrower predicate for distinctness.
 6. **Complete:** retain finite typed load-equality evidence, delete the global
    framed-load prover, prevent arbitrary term-pair recursion, and remove the
    load-equality depth limit.
-7. Delete the dead atomic load-equality fallback and its boolean flag. Retain
-   the alias-refutation rule but remove its unobserved broad boolean tier.
-   Account for the `SimpFactReasoningGuard` cycle at negative-memo boundaries,
-   rename `search_truncations` to describe incomplete reasoning, and audit the
-   31 deadline sites for distinct error propagation. `inside_condition_decision`
-   is memo-scope policy, not an answer-suppressing tier.
+7. **Partially complete:** the dead atomic load-equality fallback and boolean
+   flag are deleted; the alias-refutation rule remains without its unobserved
+   broad boolean tier; and `SimpFactReasoningGuard` cycles advance the epoch so
+   they cannot poison enclosing negative memos. Rename `search_truncations` to
+   describe incomplete reasoning, and audit the 31 deadline sites for distinct
+   error propagation. `inside_condition_decision` is memo-scope policy, not an
+   answer-suppressing tier.
 8. Finish the authoritative general-prover caller audit, or narrow the stated
    invariant with an explicit rationale for any retained kernel planner. The
    resource-invariant theorem constructors are complete; loop and effect

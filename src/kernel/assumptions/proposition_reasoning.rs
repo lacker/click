@@ -777,18 +777,6 @@ impl PureFactContext {
                                 if crate::kernel::api::canonicalize_atomic_loads(left)
                                         == crate::kernel::api::canonicalize_atomic_loads(right)
                         )
-                    // Equalities over loads resolve through materialized
-                    // cells and snapshot matching; the bounded resolution
-                    // prover carries its own fuel but can re-enter this
-                    // prover, so guard against reentrancy.
-                    || *value
-                        && matches!(
-                            condition,
-                            ConditionTerm::Bitvector32Equal(left, right)
-                                if (bitvector_term_contains_load(left)
-                                    || bitvector_term_contains_load(right))
-                                    && atomic_load_equality_resolves(self, left, right)
-                        )
                     || self.proves_condition_from_facts(condition, *value)
             }
             Proposition::Not(body) => match body.as_ref() {
@@ -4643,14 +4631,6 @@ impl PureFactContext {
     /// offsets asks precisely "do these two offsets fall in disjoint intervals
     /// of one block", which is a statement about the offset terms alone.
     fn alias_guard_refuted_by_separation(&self) -> bool {
-        // `pointer_in_range` re-enters condition reasoning, which can reach
-        // `is_inconsistent` again; one level is all this rule ever needs.
-        thread_local! {
-            static ALIAS_GUARD_REFUTATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
-        }
-        if ALIAS_GUARD_REFUTATION_ACTIVE.with(Cell::get) {
-            return false;
-        }
         let guards = self
             .condition_facts
             .iter()
@@ -4679,8 +4659,7 @@ impl PureFactContext {
         if separated.is_empty() && self.resource_compositions.is_empty() {
             return false;
         }
-        ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(true));
-        let refuted = guards.iter().any(|(left, right)| {
+        guards.iter().any(|(left, right)| {
             self.resource_compositions.iter().any(|resources| {
                 resources.refutes_offset_alias(left, right, |pointer, range| {
                     self.pointer_in_range_by_shallow_fact_graph_with_width(
@@ -4713,9 +4692,7 @@ impl PureFactContext {
                 holds(first, left) && holds(second, right)
                     || holds(first, right) && holds(second, left)
             })
-        });
-        ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(false));
-        refuted
+        })
     }
 
     pub(in crate::kernel) fn proves_not(&self, proposition: &Proposition) -> bool {

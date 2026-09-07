@@ -659,11 +659,15 @@ struct SimpFactReasoningGuard {
 impl SimpFactReasoningGuard {
     fn enter(condition: &ConditionTerm, value: bool) -> Option<Self> {
         let key = (condition.clone(), value);
-        // `then`, not `then_some`: a guard built eagerly and discarded on
-        // the cycle path would run `drop` and unregister the outer proof.
-        SIMP_FACT_CONDITIONS_IN_PROGRESS
-            .with(|conditions| conditions.borrow_mut().insert(key.clone()))
-            .then(|| Self { key })
+        let entered = SIMP_FACT_CONDITIONS_IN_PROGRESS
+            .with(|conditions| conditions.borrow_mut().insert(key.clone()));
+        if !entered {
+            // Refusing the repeated query makes any enclosing negative
+            // answer path-dependent, so it must not populate a memo.
+            note_search_truncation();
+            return None;
+        }
+        Some(Self { key })
     }
 }
 
@@ -675,8 +679,9 @@ impl Drop for SimpFactReasoningGuard {
     }
 }
 
-/// A condition already being proved from the facts refuses re-entry
-/// without unregistering the outer proof, and distinct conditions nest.
+/// A condition already being proved from the facts refuses re-entry, records
+/// incomplete reasoning without unregistering the outer proof, and distinct
+/// conditions nest.
 #[cfg(test)]
 #[test]
 fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
@@ -688,10 +693,16 @@ fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
         Bitvector32Term::Variable(Variable(7_400_001)),
         Bitvector32Term::Constant(2),
     );
+    let truncations_before = search_truncations();
     let outer = SimpFactReasoningGuard::enter(&first, true).expect("the first proof registers");
     assert!(
         SimpFactReasoningGuard::enter(&first, true).is_none(),
         "re-entering the condition is a cycle"
+    );
+    assert_eq!(
+        search_truncations(),
+        truncations_before + 1,
+        "the cycle makes an enclosing negative answer unsafe to memoize"
     );
     let nested = SimpFactReasoningGuard::enter(&second, true);
     assert!(nested.is_some(), "a distinct condition nests");
@@ -703,6 +714,11 @@ fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
     assert!(
         SimpFactReasoningGuard::enter(&first, true).is_none(),
         "the refused re-entry left the outer proof registered"
+    );
+    assert_eq!(
+        search_truncations(),
+        truncations_before + 2,
+        "each refused query advances the incompleteness epoch"
     );
     drop(outer);
     assert!(SimpFactReasoningGuard::enter(&first, true).is_some());
@@ -3581,119 +3597,4 @@ impl SymbolicCConditionEvaluationPath {
     pub fn theorem(&self) -> &Theorem {
         &self.theorem
     }
-}
-
-/// True when a term contains any memory load, at any depth.
-fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
-    match term {
-        Bitvector32Term::MemoryLoad(_, _) => true,
-        Bitvector32Term::PointerAddress(pointer) => pointer
-            .offset
-            .scaled_values()
-            .into_iter()
-            .any(bitvector_term_contains_load),
-        Bitvector32Term::Constant(_)
-        | Bitvector32Term::Variable(_)
-        | Bitvector32Term::Int64Constant(_)
-        | Bitvector32Term::UInt64Constant(_) => false,
-        Bitvector32Term::Add(left, right)
-        | Bitvector32Term::Subtract(left, right)
-        | Bitvector32Term::Multiply(left, right)
-        | Bitvector32Term::Divide(left, right)
-        | Bitvector32Term::UnsignedDivide(left, right)
-        | Bitvector32Term::Remainder(left, right)
-        | Bitvector32Term::UnsignedRemainder(left, right)
-        | Bitvector32Term::ShiftLeft(left, right)
-        | Bitvector32Term::ArithmeticShiftRight(left, right)
-        | Bitvector32Term::LogicalShiftRight(left, right)
-        | Bitvector32Term::BitwiseAnd(left, right)
-        | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
-            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
-        }
-        Bitvector32Term::Int64From32(value)
-        | Bitvector32Term::Int64FromUInt32(value)
-        | Bitvector32Term::UInt64From32(value)
-        | Bitvector32Term::UInt64FromInt32(value)
-        | Bitvector32Term::UInt64FromInt64(value)
-        | Bitvector32Term::Int64BitwiseNot(value)
-        | Bitvector32Term::UInt64BitwiseNot(value) => bitvector_term_contains_load(value),
-        Bitvector32Term::Int64Add(left, right)
-        | Bitvector32Term::Int64Subtract(left, right)
-        | Bitvector32Term::Int64Multiply(left, right)
-        | Bitvector32Term::Int64Divide(left, right)
-        | Bitvector32Term::Int64Remainder(left, right)
-        | Bitvector32Term::Int64ShiftLeft(left, right)
-        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
-        | Bitvector32Term::Int64BitwiseAnd(left, right)
-        | Bitvector32Term::Int64BitwiseOr(left, right)
-        | Bitvector32Term::Int64BitwiseXor(left, right)
-        | Bitvector32Term::UInt64Add(left, right)
-        | Bitvector32Term::UInt64Subtract(left, right)
-        | Bitvector32Term::UInt64Multiply(left, right)
-        | Bitvector32Term::UInt64Divide(left, right)
-        | Bitvector32Term::UInt64Remainder(left, right)
-        | Bitvector32Term::UInt64ShiftLeft(left, right)
-        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
-        | Bitvector32Term::UInt64BitwiseAnd(left, right)
-        | Bitvector32Term::UInt64BitwiseOr(left, right)
-        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
-            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
-        }
-        Bitvector32Term::Float32Binary { left, right, .. }
-        | Bitvector32Term::Float64Binary { left, right, .. } => {
-            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
-        }
-        Bitvector32Term::BitwiseNot(value)
-        | Bitvector32Term::Float32Negate(value)
-        | Bitvector32Term::Float64Negate(value) => bitvector_term_contains_load(value),
-        Bitvector32Term::If {
-            then_term,
-            else_term,
-            ..
-        } => bitvector_term_contains_load(then_term) || bitvector_term_contains_load(else_term),
-        Bitvector32Term::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            bitvector_term_contains_load(start)
-                || bitvector_term_contains_load(end)
-                || bitvector_term_contains_load(initial)
-                || bitvector_term_contains_load(body)
-        }
-        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().any(bitvector_term_contains_load)
-        }
-        Bitvector32Term::ClickFunctionApplication { .. } => true,
-        Bitvector32Term::AlgebraicMatch { arms, .. } => arms
-            .iter()
-            .any(|arm| bitvector_term_contains_load(&arm.body)),
-    }
-}
-
-/// Reentrancy-guarded load-equality resolution: the memory-resolution prover
-/// can re-enter the atomic prover through condition decisions, so run it at
-/// most once per call tree.
-fn atomic_load_equality_resolves(
-    assumptions: &PureFactContext,
-    left: &Bitvector32Term,
-    right: &Bitvector32Term,
-) -> bool {
-    thread_local! {
-        static LOAD_EQUALITY_RESOLUTION_ACTIVE: Cell<bool> = const { Cell::new(false) };
-    }
-    if LOAD_EQUALITY_RESOLUTION_ACTIVE.with(Cell::get) {
-        return false;
-    }
-    LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(true));
-    let resolved = super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
-        left,
-        right,
-        assumptions,
-    );
-    LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(false));
-    resolved
 }
