@@ -11,8 +11,7 @@ one-cell contract footprints. Bounded integer
 constant expressions in those initializers are folded before storage lowering;
 comparisons, short-circuit logical expressions, selected conditional branches,
 and checked integer casts are included; runtime loads and calls remain rejected.
-Fixed-size
-one-dimensional scalar arrays now use the same stable linkage,
+Fixed-size scalar arrays now use the same stable linkage,
 coalesced tentative-definition, and element-initialization model.
 Function-local scalar `static` objects and
 fixed-size one-dimensional scalar `static` arrays are also initialized once
@@ -38,9 +37,11 @@ checked against their linked definitions.
 Static scalar arrays now accept literal index designators with zero-filled
 omitted elements across external, file-scope `static`, and function-local
 `static` storage. File-scope `static` incomplete scalar arrays now resolve to
-complete definitions in the same translation unit; unresolved private or
-external incomplete tentative definitions, multidimensional array definitions,
-and wider string-literal forms remain unsupported. Dynamic initialization
+complete definitions in the same translation unit. Fixed multidimensional
+file-scope scalar arrays retain their declared shape, use row-major flat
+storage, and require shape-compatible cross-file declarations. Unresolved
+private or external incomplete tentative definitions and wider string-literal
+forms remain unsupported. Dynamic initialization
 remains unsupported, while bounded integer constant expressions are folded for
 scalar objects and arrays. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
@@ -122,6 +123,10 @@ from non-empty positional initializers for external and file-scope `static`
 scalar arrays, while
 `mdtests/file_scope_inferred_scalar_array_rejections.md` covers the retained
 designator boundary.
+`mdtests/file_scope_multidimensional_arrays.md` covers fixed multidimensional
+scalar-array initialization, row-major indexing, zero-fill, and cross-file
+sharing, while `mdtests/file_scope_multidimensional_array_link_errors.md`
+covers incompatible shapes with the same flattened element count.
 `mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
 bounds remaining rejected during cross-translation-unit linking.
 `mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
@@ -150,12 +155,14 @@ propagation, and indirect-write rejection.
   block, materialized at entry with its folded integer literal, null, or stable address
   initial value (or zero) and
   shared across that object's function frames.
-- The kernel models each fixed-size one-dimensional scalar global as one stable
-  array block, initialized element-by-element with bounded integer constant
-  expressions folded to literals and omitted values set to zero;
+- The kernel models each fixed-size scalar global as one stable flat array
+  block, initialized element-by-element with bounded integer constant
+  expressions folded to literals and omitted values set to zero; fixed
+  multidimensional definitions retain their declared shape for C0 indexing and
+  use row-major offsets into that block;
   compatible tentative declarations coalesce across translation units and one
   initialized definition supersedes them;
-  incompatible array bounds and multiple initialized definitions remain
+  incompatible array bounds or shapes and multiple initialized definitions remain
   rejected;
   literal index designators select sparse elements without changing the block
   identity or linkage;
@@ -183,12 +190,16 @@ propagation, and indirect-write rejection.
   designators, and zero-fills omitted fields and elements. Non-literal
   designators, multidimensional, incomplete definitions, and dynamic-initialization forms
   remain rejected.
-- The parser accepts `extern T name[];` and external-linkage tentative
+- The parser accepts fixed-dimensional scalar arrays and `extern T name[];`
+  and external-linkage tentative
   `T name[];` for supported scalar arrays, and bundle linking resolves the
   omitted bound against one complete fixed-size external definition. Incomplete
   aggregate definitions, inferred initializer bounds for aggregate arrays,
   empty or designated scalar-array initializers, unresolved incomplete
-  tentative definitions, and multidimensional forms remain rejected. File-scope
+  tentative definitions, and incomplete multidimensional forms remain rejected.
+  Fixed multidimensional definitions require nested positional initializer
+  groups, retain their declared row-major shape, and reject shape-mismatched
+  cross-file declarations. File-scope
   `static` incomplete scalar arrays resolve only within their own translation
   unit. Non-empty positional scalar-array initializers may
   infer the fixed bound before the normal array model is built.

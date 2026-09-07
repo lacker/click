@@ -170,14 +170,20 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts, aggregate_objects, aggregate_array_objects) =
-        parse_c_layouts(click_source, &sources)?;
+    let (
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+        aggregate_array_objects,
+        global_array_shapes,
+    ) = parse_c_layouts(click_source, &sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
         union_layouts,
         aggregate_objects,
         aggregate_array_objects,
+        global_array_shapes,
     )?;
     verify_click_file_theorems(&file)
 }
@@ -187,14 +193,20 @@ pub(in crate::surface) fn parse_c0_click_file(
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts, aggregate_objects, aggregate_array_objects) =
-        parse_c_layouts(click_source, &sources)?;
+    let (
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+        aggregate_array_objects,
+        global_array_shapes,
+    ) = parse_c_layouts(click_source, &sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
         union_layouts,
         aggregate_objects,
         aggregate_array_objects,
+        global_array_shapes,
     )
 }
 
@@ -579,14 +591,20 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
-        let (struct_layouts, union_layouts, aggregate_objects, aggregate_array_objects) =
-            parse_c_layouts(click_source, &c_sources)?;
+        let (
+            struct_layouts,
+            union_layouts,
+            aggregate_objects,
+            aggregate_array_objects,
+            global_array_shapes,
+        ) = parse_c_layouts(click_source, &c_sources)?;
         let file = parser::parse_with_layouts_and_aggregate_objects(
             click_source,
             struct_layouts,
             union_layouts,
             aggregate_objects,
             aggregate_array_objects,
+            global_array_shapes,
         )?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
         let expansion_functions = expansion_capture
@@ -1468,14 +1486,20 @@ pub fn c0_external_dependencies(
     c_sources: &[(&str, &str)],
 ) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
-    let (struct_layouts, union_layouts, aggregate_objects, aggregate_array_objects) =
-        parse_c_layouts(click_source, &sources)?;
+    let (
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+        aggregate_array_objects,
+        global_array_shapes,
+    ) = parse_c_layouts(click_source, &sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
         union_layouts,
         aggregate_objects,
         aggregate_array_objects,
+        global_array_shapes,
     )?;
     let parsed_sources = parse_verified_sources(&file, &sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
@@ -2033,6 +2057,7 @@ pub(in crate::surface) fn parse_c_layouts(
         BTreeMap<String, syntax::C0UnionLayout>,
         BTreeMap<String, BTreeMap<String, String>>,
         BTreeMap<String, BTreeSet<String>>,
+        BTreeMap<String, BTreeMap<String, Vec<u32>>>,
     ),
     ClickError,
 > {
@@ -2040,6 +2065,7 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut union_layouts = BTreeMap::new();
     let mut aggregate_objects = BTreeMap::new();
     let mut aggregate_array_objects = BTreeMap::new();
+    let mut global_array_shapes = BTreeMap::new();
     for source_path in super::verifying_source_paths(click_source)? {
         let functions = parse_c_source_functions(&source_path, c_sources)?;
         for function in functions {
@@ -2094,6 +2120,14 @@ pub(in crate::surface) fn parse_c_layouts(
                 function.name().to_string(),
                 function_aggregate_array_objects,
             );
+            let function_global_array_shapes = function
+                .global_arrays()
+                .iter()
+                .filter_map(|(name, array)| {
+                    array.shape().map(|shape| (name.clone(), shape.to_vec()))
+                })
+                .collect();
+            global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
         }
     }
     Ok((
@@ -2101,6 +2135,7 @@ pub(in crate::surface) fn parse_c_layouts(
         union_layouts,
         aggregate_objects,
         aggregate_array_objects,
+        global_array_shapes,
     ))
 }
 
@@ -2244,10 +2279,7 @@ pub(in crate::surface) fn parse_verified_sources(
             match source_arrays.get(name) {
                 Some(previous)
                     if previous.element_type() != array.element_type()
-                        || !syntax::array_lengths_compatible(
-                            previous.array_length(),
-                            array.array_length(),
-                        ) =>
+                        || !syntax::array_shapes_compatible(previous.shape(), array.shape()) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"
@@ -2297,10 +2329,7 @@ pub(in crate::surface) fn parse_verified_sources(
             match global_arrays.get(name) {
                 Some(previous)
                     if previous.element_type() != array.element_type()
-                        || !syntax::array_lengths_compatible(
-                            previous.array_length(),
-                            array.array_length(),
-                        ) =>
+                        || !syntax::array_shapes_compatible(previous.shape(), array.shape()) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"

@@ -20,6 +20,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
 ) -> Result<ClickFile, ClickError> {
     Parser::new_with_layouts_and_aggregate_objects(
         source,
@@ -27,6 +28,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
         union_layouts,
         aggregate_objects_by_function,
         aggregate_array_objects_by_function,
+        global_array_shapes_by_function,
     )?
     .parse_file()
 }
@@ -161,8 +163,10 @@ struct Parser {
     current_struct_params: BTreeMap<String, String>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
+    current_global_array_shapes: BTreeMap<String, Vec<u32>>,
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
     current_contract_bindings: BTreeSet<String>,
 }
@@ -324,6 +328,7 @@ impl Parser {
             union_layouts,
             BTreeMap::new(),
             BTreeMap::new(),
+            BTreeMap::new(),
         )
     }
 
@@ -333,6 +338,7 @@ impl Parser {
         union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
         aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
         aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+        global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
     ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
@@ -346,8 +352,10 @@ impl Parser {
             current_struct_params: BTreeMap::new(),
             aggregate_objects_by_function,
             aggregate_array_objects_by_function,
+            global_array_shapes_by_function,
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
+            current_global_array_shapes: BTreeMap::new(),
             current_algebraic_params: BTreeMap::new(),
             current_contract_bindings: BTreeSet::new(),
         })
@@ -1066,6 +1074,13 @@ impl Parser {
             .unwrap_or_default();
         let previous_aggregate_objects =
             std::mem::replace(&mut self.current_aggregate_objects, aggregate_objects);
+        let global_array_shapes = self
+            .global_array_shapes_by_function
+            .get(signature.name())
+            .cloned()
+            .unwrap_or_default();
+        let previous_global_array_shapes =
+            std::mem::replace(&mut self.current_global_array_shapes, global_array_shapes);
         let mut visible_struct_array_params = struct_array_params;
         if let Some(aggregate_array_objects) = self
             .aggregate_array_objects_by_function
@@ -1281,6 +1296,7 @@ impl Parser {
         }
         self.current_struct_params = previous_struct_params;
         self.current_aggregate_objects = previous_aggregate_objects;
+        self.current_global_array_shapes = previous_global_array_shapes;
         self.current_struct_array_params = previous_struct_array_params;
 
         let requires: Vec<Requirement> = requires
@@ -3294,6 +3310,13 @@ impl Parser {
             _ => None,
         };
         let mut struct_array_shape: Option<Vec<u32>> = None;
+        let mut scalar_array_shape = match &surface_base {
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => {
+                self.current_global_array_shapes.get(name).cloned()
+            }
+            _ => None,
+        };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
@@ -3347,7 +3370,8 @@ impl Parser {
                 } else if let Some(shape) = struct_array_shape.take() {
                     let mut indexes = vec![index.clone()];
                     let mut surface_indexes = vec![ContractExpression::CFragment(index)];
-                    while self.peek() == Some(&Token::LBracket) {
+                    while self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range()
+                    {
                         self.position += 1;
                         let next_index = self.parse_contract_expression()?;
                         self.expect(Token::RBracket)?;
@@ -3375,6 +3399,44 @@ impl Parser {
                     struct_name = None;
                     union_name = None;
                     struct_array_element_width = None;
+                } else if let Some(shape) = scalar_array_shape.take() {
+                    let mut indexes = vec![index.clone()];
+                    let mut surface_indexes = vec![ContractExpression::CFragment(index)];
+                    while self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range()
+                    {
+                        self.position += 1;
+                        let next_index = self.parse_contract_expression()?;
+                        self.expect(Token::RBracket)?;
+                        let next_index = contract_expression_as_c_fragment(&next_index)
+                            .ok_or_else(|| {
+                                self.error("global array indices must be current C expressions")
+                            })?;
+                        indexes.push(next_index.clone());
+                        surface_indexes.push(ContractExpression::CFragment(next_index));
+                    }
+                    let has_following_range =
+                        self.peek() == Some(&Token::LBracket) && self.contract_bracket_is_range();
+                    if indexes.len() != shape.len() && !has_following_range {
+                        return Err(self.error(format!(
+                            "multidimensional global array requires {} indices, got {}",
+                            shape.len(),
+                            indexes.len()
+                        )));
+                    }
+                    let offset = flatten_array_indices(indexes, &shape);
+                    base = if has_following_range {
+                        CExpression::Add(Box::new(base), Box::new(offset))
+                    } else {
+                        CExpression::Index(Box::new(base), Box::new(offset))
+                    };
+                    surface_base = surface_indexes
+                        .into_iter()
+                        .fold(surface_base_before_index, |base, index| {
+                            ContractExpression::Index(Box::new(base), Box::new(index))
+                        });
+                    struct_name = None;
+                    union_name = None;
+                    struct_array_element_width = None;
                 } else {
                     let surface_index = ContractExpression::CFragment(index.clone());
                     base = CExpression::Index(Box::new(base), Box::new(index));
@@ -3385,6 +3447,7 @@ impl Parser {
                     struct_name = None;
                     union_name = None;
                     struct_array_shape = None;
+                    scalar_array_shape = None;
                     indexed_scalar_field = None;
                 }
                 continue;
@@ -4178,6 +4241,13 @@ impl Parser {
             _ => None,
         };
         let mut struct_array_shape: Option<Vec<u32>> = None;
+        let mut scalar_array_shape = match &expression {
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => {
+                self.current_global_array_shapes.get(name).cloned()
+            }
+            _ => None,
+        };
         loop {
             match self.peek() {
                 Some(Token::LBracket) => {
@@ -4235,7 +4305,9 @@ impl Parser {
                             vec![contract_expression_as_c_fragment(&index).ok_or_else(|| {
                                 self.error("struct array indices must be current C expressions")
                             })?];
-                        while self.peek() == Some(&Token::LBracket) {
+                        while self.peek() == Some(&Token::LBracket)
+                            && !self.contract_bracket_is_range()
+                        {
                             self.position += 1;
                             let next_index = self.parse_contract_expression()?;
                             self.expect(Token::RBracket)?;
@@ -4264,6 +4336,42 @@ impl Parser {
                         struct_name = None;
                         union_name = None;
                         struct_array_element_width = None;
+                    } else if let Some(shape) = scalar_array_shape.take() {
+                        let mut indexes =
+                            vec![contract_expression_as_c_fragment(&index).ok_or_else(|| {
+                                self.error("global array indices must be current C expressions")
+                            })?];
+                        while self.peek() == Some(&Token::LBracket)
+                            && !self.contract_bracket_is_range()
+                        {
+                            self.position += 1;
+                            let next_index = self.parse_contract_expression()?;
+                            self.expect(Token::RBracket)?;
+                            indexes.push(
+                                contract_expression_as_c_fragment(&next_index).ok_or_else(
+                                    || {
+                                        self.error(
+                                            "global array indices must be current C expressions",
+                                        )
+                                    },
+                                )?,
+                            );
+                        }
+                        if indexes.len() != shape.len() {
+                            return Err(self.error(format!(
+                                "multidimensional global array requires {} indices, got {}",
+                                shape.len(),
+                                indexes.len()
+                            )));
+                        }
+                        let offset = flatten_array_indices(indexes, &shape);
+                        expression = ContractExpression::Index(
+                            Box::new(expression),
+                            Box::new(ContractExpression::CFragment(offset)),
+                        );
+                        struct_name = None;
+                        union_name = None;
+                        struct_array_element_width = None;
                     } else {
                         expression =
                             ContractExpression::Index(Box::new(expression), Box::new(index));
@@ -4271,6 +4379,7 @@ impl Parser {
                         union_name = None;
                         struct_array_element_width = None;
                         struct_array_shape = None;
+                        scalar_array_shape = None;
                     }
                 }
                 Some(Token::Arrow | Token::Dot) => {
@@ -4312,6 +4421,7 @@ impl Parser {
                         union_name = field.union_name.clone();
                         struct_array_element_width = field.array_element_width;
                         struct_array_shape = field.array_shape.clone();
+                        scalar_array_shape = None;
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name,
@@ -4325,6 +4435,7 @@ impl Parser {
                         };
                         struct_array_element_width = None;
                         struct_array_shape = None;
+                        scalar_array_shape = None;
                     }
                 }
                 _ => return Ok(expression),

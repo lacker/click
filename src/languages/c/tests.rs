@@ -572,6 +572,70 @@ fn c0_collects_file_scope_scalar_arrays() {
 }
 
 #[test]
+fn c0_collects_multidimensional_file_scope_scalar_arrays() {
+    let functions = syntax::parse_functions(
+        r#"
+        int32 values[2][3] = {{1, 2}, {3, 4}};
+        uint8 bytes[2][2];
+
+        int32 read_values() {
+            return values[1][2] + bytes[0][1];
+        }
+        "#,
+    )
+    .expect("multidimensional file-scope scalar arrays should parse");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert_eq!(values.shape(), Some(&[2, 3][..]));
+    assert_eq!(values.length(), 6);
+    assert_eq!(
+        values.initializer(),
+        Some(
+            [
+                syntax::C0Expression::Int32Literal(1),
+                syntax::C0Expression::Int32Literal(2),
+                syntax::C0Expression::Int32Literal(0),
+                syntax::C0Expression::Int32Literal(3),
+                syntax::C0Expression::Int32Literal(4),
+                syntax::C0Expression::Int32Literal(0),
+            ]
+            .as_slice()
+        )
+    );
+    let kernel_function = functions[0].to_kernel_function();
+    let kernel_values = kernel_function
+        .global_arrays()
+        .iter()
+        .find(|array| array.name() == "values")
+        .expect("kernel multidimensional array metadata");
+    assert_eq!(
+        kernel_values.initial_values(),
+        &[
+            crate::kernel::int32(1),
+            crate::kernel::int32(2),
+            crate::kernel::int32(0),
+            crate::kernel::int32(3),
+            crate::kernel::int32(4),
+            crate::kernel::int32(0),
+        ]
+    );
+}
+
+#[test]
+fn c0_rejects_wrong_number_of_global_array_indices() {
+    let error =
+        syntax::parse_functions("int32 values[2][3]; int32 read_values() { return values[1]; }")
+            .expect_err("multidimensional global arrays require every index");
+    assert!(
+        error
+            .message()
+            .contains("multidimensional array `values` requires 2 indices, got 1"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_infers_file_scope_scalar_array_bounds() {
     let functions = syntax::parse_functions_for_source(
         r#"
@@ -1296,7 +1360,7 @@ fn c0_rejects_unsupported_aggregate_array_initializers() {
     for (source, expected) in [
         (
             "struct state { int32 value; }; struct state shared[2][2];",
-            "multidimensional file-scope arrays",
+            "multidimensional aggregate arrays are not supported yet",
         ),
         (
             "struct state { int32 value; }; struct state shared[2] = {1};",

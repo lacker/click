@@ -122,11 +122,12 @@ Likely additions:
   translation-unit-qualified storage, while function-local scalar `static`
   objects use stable function-qualified storage; both support one-time
   literal/zero initialization and explicit contract footprints. Fixed-size
-  one-dimensional scalar arrays now include coalesced tentative declarations
-  and one initialized definition across translation units, and are also
-  supported for function-local statics;
-  multidimensional, unresolved incomplete tentative definitions, and
-  dynamic-initialization cases remain open; external incomplete declarations
+  scalar arrays now include coalesced tentative declarations and one
+  initialized definition across translation units; fixed multidimensional
+  definitions retain their row-major shape metadata and require
+  shape-compatible linkage. They are also supported for function-local
+  statics; unresolved incomplete tentative definitions and
+  dynamic-initialization cases remain open. External incomplete declarations
   and tentative definitions resolve against complete fixed-size definitions,
   and file-scope `static` incomplete scalar arrays resolve against complete
   definitions in the same translation unit; scalar array bounds may be inferred

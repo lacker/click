@@ -365,6 +365,7 @@ pub struct C0GlobalArray {
     kernel_name: String,
     element_type: C0Type,
     length: Option<u32>,
+    shape: Option<Vec<u32>>,
     initializer: Option<Vec<C0Expression>>,
     tentative: bool,
     file_static: bool,
@@ -376,14 +377,18 @@ impl C0GlobalArray {
         name: String,
         kernel_name: String,
         element_type: C0Type,
-        length: Option<u32>,
+        shape: Option<Vec<u32>>,
         file_static: bool,
     ) -> Self {
+        let length = shape
+            .as_deref()
+            .map(|shape| array_shape_element_count(shape).expect("validated global array shape"));
         Self {
             name,
             kernel_name,
             element_type,
             length,
+            shape,
             initializer: None,
             tentative: false,
             file_static,
@@ -395,15 +400,17 @@ impl C0GlobalArray {
         name: String,
         kernel_name: String,
         element_type: C0Type,
-        length: u32,
+        shape: Vec<u32>,
         initializer: Vec<C0Expression>,
         file_static: bool,
     ) -> Self {
+        let length = array_shape_element_count(&shape).expect("validated global array shape");
         Self {
             name,
             kernel_name,
             element_type,
             length: Some(length),
+            shape: Some(shape),
             initializer: Some(initializer),
             tentative: false,
             file_static,
@@ -430,6 +437,10 @@ impl C0GlobalArray {
 
     pub(crate) fn array_length(&self) -> Option<u32> {
         self.length
+    }
+
+    pub fn shape(&self) -> Option<&[u32]> {
+        self.shape.as_deref()
     }
 
     pub fn is_incomplete(&self) -> bool {
@@ -4495,13 +4506,24 @@ struct ErrorContext {
     position: Option<SourcePosition>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum GlobalArrayLength {
-    Complete(u32),
+    Complete(Vec<u32>),
     Incomplete,
 }
 
+fn array_shape_element_count(shape: &[u32]) -> Option<u32> {
+    shape.iter().copied().try_fold(1u32, u32::checked_mul)
+}
+
 pub(crate) fn array_lengths_compatible(left: Option<u32>, right: Option<u32>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right,
+        _ => true,
+    }
+}
+
+pub(crate) fn array_shapes_compatible(left: Option<&[u32]>, right: Option<&[u32]>) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => left == right,
         _ => true,
@@ -5777,7 +5799,13 @@ impl Parser {
                         .parse_global_array_length(&name)?
                         .expect("aggregate array has an array suffix");
                     let declaration = match array_length {
-                        GlobalArrayLength::Complete(length) => {
+                        GlobalArrayLength::Complete(shape) => {
+                            if shape.len() != 1 {
+                                return Err(self.error_here(
+                                    "multidimensional aggregate arrays are not supported yet",
+                                ));
+                            }
+                            let length = shape[0];
                             let has_initializer = self.peek() == Some(&Token::Equal);
                             let initializer = if has_initializer {
                                 if is_extern {
@@ -5954,7 +5982,7 @@ impl Parser {
                             )));
                         }
                         inferred_initializer = Some(initializer);
-                        Some(GlobalArrayLength::Complete(length))
+                        Some(GlobalArrayLength::Complete(vec![length]))
                     }
                 }
                 other => other,
@@ -5970,109 +5998,117 @@ impl Parser {
                 ));
             }
             if let Some(array_length) = array_length {
-                let length = match array_length {
-                    GlobalArrayLength::Complete(length) => Some(length),
-                    GlobalArrayLength::Incomplete => None,
-                };
-                if length.is_none() && self.peek() == Some(&Token::Equal) {
-                    return Err(self.error_here(
-                        "incomplete external array declarations may not have an initializer",
-                    ));
-                }
-                if let Some(length) = length {
-                    let has_initializer =
-                        inferred_initializer.is_some() || self.peek() == Some(&Token::Equal);
-                    let initializer = if has_initializer {
-                        if is_extern {
-                            return Err(self.error_here(
+                match array_length {
+                    GlobalArrayLength::Complete(shape) => {
+                        let length = array_shape_element_count(&shape).ok_or_else(|| {
+                            self.error_here(format!(
+                                "file-scope array dimensions are too large for `{name}`"
+                            ))
+                        })?;
+                        let has_initializer =
+                            inferred_initializer.is_some() || self.peek() == Some(&Token::Equal);
+                        let initializer = if has_initializer {
+                            if is_extern {
+                                return Err(self.error_here(
                                 "`extern` global array declarations may not have an initializer",
                             ));
-                        }
-                        if let Some(initializer) = inferred_initializer {
-                            Some(initializer)
+                            }
+                            if let Some(initializer) = inferred_initializer {
+                                Some(initializer)
+                            } else {
+                                self.position += 1;
+                                Some(self.parse_global_array_initializer(
+                                    &name,
+                                    parsed_type.c_type,
+                                    &shape,
+                                )?)
+                            }
+                        } else if is_extern {
+                            None
                         } else {
-                            self.position += 1;
-                            Some(self.parse_global_array_initializer(
-                                &name,
-                                parsed_type.c_type,
-                                length,
-                            )?)
-                        }
-                    } else if is_extern {
-                        None
-                    } else {
-                        Some(vec![zero_initializer(parsed_type.c_type); length as usize])
-                    };
-                    let tentative = !has_initializer && !is_extern;
-                    self.register_global_array_declaration(
-                        name.clone(),
-                        parsed_type.c_type,
-                        Some(length),
-                        initializer
-                            .map(|initializer| {
-                                C0GlobalArray::definition(
-                                    name.clone(),
-                                    kernel_name.clone(),
-                                    parsed_type.c_type,
-                                    length,
-                                    initializer,
-                                    is_file_static,
-                                )
-                                .with_constant(parsed_type.is_constant)
-                                .with_tentative(tentative)
-                            })
-                            .unwrap_or_else(|| {
-                                C0GlobalArray::declaration(
-                                    name.clone(),
-                                    kernel_name.clone(),
-                                    parsed_type.c_type,
-                                    Some(length),
-                                    is_file_static,
-                                )
-                                .with_constant(parsed_type.is_constant)
-                            }),
-                    )?;
-                    self.variable_types.insert(
-                        kernel_name.clone(),
-                        array_type_for_element(parsed_type.c_type, length)
-                            .expect("validated global array element type"),
-                    );
-                    self.incomplete_array_names.remove(&kernel_name);
-                } else {
-                    self.register_global_array_declaration(
-                        name.clone(),
-                        parsed_type.c_type,
-                        None,
-                        C0GlobalArray::declaration(
+                            Some(vec![zero_initializer(parsed_type.c_type); length as usize])
+                        };
+                        let tentative = !has_initializer && !is_extern;
+                        self.register_global_array_declaration(
                             name.clone(),
-                            kernel_name.clone(),
                             parsed_type.c_type,
-                            None,
-                            is_file_static,
-                        )
-                        .with_constant(parsed_type.is_constant)
-                        .with_tentative(incomplete_tentative),
-                    )?;
-                    if let Some(length) = self
-                        .global_arrays
-                        .get(&name)
-                        .and_then(C0GlobalArray::array_length)
-                    {
+                            Some(&shape),
+                            initializer
+                                .map(|initializer| {
+                                    C0GlobalArray::definition(
+                                        name.clone(),
+                                        kernel_name.clone(),
+                                        parsed_type.c_type,
+                                        shape.clone(),
+                                        initializer,
+                                        is_file_static,
+                                    )
+                                    .with_constant(parsed_type.is_constant)
+                                    .with_tentative(tentative)
+                                })
+                                .unwrap_or_else(|| {
+                                    C0GlobalArray::declaration(
+                                        name.clone(),
+                                        kernel_name.clone(),
+                                        parsed_type.c_type,
+                                        Some(shape.clone()),
+                                        is_file_static,
+                                    )
+                                    .with_constant(parsed_type.is_constant)
+                                }),
+                        )?;
                         self.variable_types.insert(
                             kernel_name.clone(),
                             array_type_for_element(parsed_type.c_type, length)
                                 .expect("validated global array element type"),
                         );
+                        self.variable_array_shapes
+                            .insert(kernel_name.clone(), shape);
                         self.incomplete_array_names.remove(&kernel_name);
-                    } else {
-                        let element_pointer = parsed_type
-                            .c_type
-                            .pointer_type()
-                            .expect("validated incomplete external array element type");
-                        self.variable_types
-                            .insert(kernel_name.clone(), element_pointer);
-                        self.variable_array_shapes.remove(&kernel_name);
-                        self.incomplete_array_names.insert(kernel_name.clone());
+                    }
+                    GlobalArrayLength::Incomplete => {
+                        if self.peek() == Some(&Token::Equal) {
+                            return Err(self.error_here(
+                                "incomplete external array declarations may not have an initializer",
+                            ));
+                        }
+                        self.register_global_array_declaration(
+                            name.clone(),
+                            parsed_type.c_type,
+                            None,
+                            C0GlobalArray::declaration(
+                                name.clone(),
+                                kernel_name.clone(),
+                                parsed_type.c_type,
+                                None,
+                                is_file_static,
+                            )
+                            .with_constant(parsed_type.is_constant)
+                            .with_tentative(incomplete_tentative),
+                        )?;
+                        if let Some(shape) =
+                            self.global_arrays.get(&name).and_then(C0GlobalArray::shape)
+                        {
+                            let length = array_shape_element_count(shape)
+                                .expect("validated global array shape");
+                            self.variable_types.insert(
+                                kernel_name.clone(),
+                                array_type_for_element(parsed_type.c_type, length)
+                                    .expect("validated global array element type"),
+                            );
+                            self.variable_array_shapes
+                                .insert(kernel_name.clone(), shape.to_vec());
+                            self.incomplete_array_names.remove(&kernel_name);
+                        } else {
+                            let element_pointer = parsed_type
+                                .c_type
+                                .pointer_type()
+                                .expect("validated incomplete external array element type");
+                            self.variable_types
+                                .insert(kernel_name.clone(), element_pointer);
+                            self.variable_array_shapes.remove(&kernel_name);
+                            self.incomplete_array_names.insert(kernel_name.clone());
+                        }
                     }
                 }
             } else {
@@ -6218,60 +6254,78 @@ impl Parser {
             return Ok(None);
         }
         self.position += 1;
-        let length = match self.peek().cloned() {
-            Some(Token::RBracket) => {
-                self.position += 1;
-                if self.peek() == Some(&Token::LBracket) {
-                    return Err(
-                        self.error_here("multidimensional file-scope arrays are not supported yet")
-                    );
+        if self.peek() == Some(&Token::RBracket) {
+            self.position += 1;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(self.error_here(
+                    "incomplete multidimensional file-scope arrays are not supported yet",
+                ));
+            }
+            return Ok(Some(GlobalArrayLength::Incomplete));
+        }
+        let mut dimensions = Vec::new();
+        loop {
+            let length = match self.peek().cloned() {
+                Some(Token::Number(number)) => {
+                    self.position += 1;
+                    let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                        self.error_at_previous(format!(
+                            "invalid file-scope array length `{number}`: {reason}"
+                        ))
+                    })?;
+                    u32::try_from(length).map_err(|_| {
+                        self.error_at_previous(format!(
+                            "file-scope array length `{number}` is out of range"
+                        ))
+                    })?
                 }
-                return Ok(Some(GlobalArrayLength::Incomplete));
-            }
-            Some(Token::Number(number)) => {
-                self.position += 1;
-                let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
-                    self.error_at_previous(format!(
-                        "invalid file-scope array length `{number}`: {reason}"
-                    ))
-                })?;
-                u32::try_from(length).map_err(|_| {
-                    self.error_at_previous(format!(
-                        "file-scope array length `{number}` is out of range"
-                    ))
-                })?
-            }
-            Some(token) => {
+                Some(token) => {
+                    return Err(self.error_at_previous(format!(
+                        "expected positive file-scope array length, got {}",
+                        token.describe()
+                    )));
+                }
+                None => {
+                    return Err(self.error_here(
+                        "expected positive file-scope array length, got end of input",
+                    ));
+                }
+            };
+            if length == 0 {
                 return Err(self.error_at_previous(format!(
-                    "expected positive file-scope array length, got {}",
-                    token.describe()
+                    "file-scope array `{name}` must have positive length"
                 )));
             }
-            None => {
-                return Err(
-                    self.error_here("expected positive file-scope array length, got end of input")
-                );
+            dimensions.push(length);
+            self.expect(Token::RBracket)?;
+            if self.peek() != Some(&Token::LBracket) {
+                break;
             }
-        };
-        if length == 0 {
-            return Err(self.error_at_previous(format!(
-                "file-scope array `{name}` must have positive length"
-            )));
+            self.position += 1;
         }
-        self.expect(Token::RBracket)?;
-        if self.peek() == Some(&Token::LBracket) {
-            return Err(self.error_here("multidimensional file-scope arrays are not supported yet"));
-        }
-        Ok(Some(GlobalArrayLength::Complete(length)))
+        Ok(Some(GlobalArrayLength::Complete(dimensions)))
     }
 
     fn parse_global_array_initializer(
         &mut self,
         name: &str,
         element_type: C0Type,
-        length: u32,
+        shape: &[u32],
     ) -> Result<Vec<C0Expression>, C0SyntaxError> {
-        self.parse_scalar_array_initializer(name, element_type, length, false)
+        let length = array_shape_element_count(shape).expect("validated global array shape");
+        if shape.len() == 1 {
+            self.parse_scalar_array_initializer(name, element_type, length, false)
+        } else {
+            let zero = zero_initializer(element_type);
+            let mut values = Vec::new();
+            self.parse_array_initializer_level(name, shape, 0, &mut values, &zero)?;
+            values
+                .into_iter()
+                .map(|value| {
+                    normalize_static_initializer(self, element_type, false, &value, "global", false)
+                })
+                .collect()
+        }
     }
 
     fn parse_scalar_array_initializer(
@@ -6465,7 +6519,7 @@ impl Parser {
         &mut self,
         name: String,
         element_type: C0Type,
-        length: Option<u32>,
+        shape: Option<&[u32]>,
         declaration: C0GlobalArray,
     ) -> Result<(), C0SyntaxError> {
         if self.function_declarations.contains_key(&name)
@@ -6479,7 +6533,7 @@ impl Parser {
         }
         if let Some(previous) = self.global_arrays.get(&name) {
             if previous.element_type != element_type
-                || !array_lengths_compatible(previous.array_length(), length)
+                || !array_shapes_compatible(previous.shape(), shape)
             {
                 return Err(self.error_here(format!(
                     "conflicting declarations for global array `{name}`"
