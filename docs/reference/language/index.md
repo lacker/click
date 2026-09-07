@@ -968,7 +968,8 @@ Supported expression features include parameters, literals, `+`, `-`, `*`,
 `let name [: type] = value; body`, `if proposition { then } else { else }`,
 range `.fold`, and calls to other Click functions.
 
-Recursive pure functions must declare a well-founded natural-number measure:
+Recursive pure functions must declare a well-founded measure. One supported
+form is a natural-number measure:
 
 <!-- verified-example: mdtests/pure_recursive_function.md -->
 ```click
@@ -979,12 +980,18 @@ function countdown(n: int32) -> int32
 }
 ```
 
-Every direct or mutual recursive edge must pass a nonnegative measure strictly
-smaller than the caller's. The initial slice restricts the measure to one named
-`int32` parameter and recursive components to `int32` parameters and results.
-Concrete calls evaluate to a base case. Symbolic calls expose one equation and
-leave the next recursive application opaque, so verification never guesses a
-recursion depth. This total value semantics is intentionally different from
+Every direct or mutual integer-recursive edge must pass a nonnegative measure
+strictly smaller than the caller's. This form restricts the measure to one
+named `int32` parameter and recursive components to `int32` parameters and
+results.
+
+A recursive algebraic datatype parameter can also be the named measure. After
+matching it, recursive calls may pass algebraic fields bound by that match;
+nested matches on already-smaller fields, multiple recursive fields, and
+mutually recursive datatype groups are checked the same way. Calls remain
+symbolic. Explicit `unfold` exposes one defining equation and leaves the next
+recursive application opaque, so verification never guesses a recursion
+depth. This total value semantics is intentionally different from
 partial-correctness C recursion.
 
 General properties of symbolic recursive calls use theorem-level
@@ -992,7 +999,9 @@ General properties of symbolic recursive calls use theorem-level
 the local hypothesis checks a nonnegative strictly smaller argument and the
 theorem's substituted requirements. `simp` does not invent induction, and a
 pure function's `decreases` clause remains definition-totality evidence rather
-than a theorem about the result.
+than a theorem about the result. This theorem rule currently accepts only
+`int32`; algebraic structural induction awaits proof-level constructor case
+elimination.
 
 Function contracts may also use contract-level `let` bindings:
 

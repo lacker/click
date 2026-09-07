@@ -7,5 +7,5 @@ function missing(n: int32) -> int32 {
 ```
 
 ```expect
-fail: recursive pure function `missing` requires `decreases <int32 parameter>`
+fail: recursive pure function `missing` requires `decreases <parameter>`
 ```

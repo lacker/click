@@ -218,10 +218,12 @@ terms; a match introduces constructor cases only when its definition is used
 by a proof. This is specification elaboration, not execution of Click code or
 of a logical value.
 
-Algebraic quantifiers, resource arguments, recursive pure functions, and
-structural descent/induction remain tracked in the algebraic data types issue.
-Recursive datatype declarations alone do not authorize recursive function
-calls or generate induction hypotheses. Reusing one constructor refinement
+Algebraic quantifiers, resource arguments, and structural induction remain
+tracked in the algebraic data types issue. A recursive pure function may name
+an algebraic parameter in `decreases` and recurse on algebraic fields introduced
+by exhaustive matches of that parameter or an already-smaller field. Such calls
+stay symbolic until explicitly unfolded. Recursive datatype declarations do
+not by themselves generate induction hypotheses. Reusing one constructor refinement
 across repeated matches is tracked separately in the algebraic match
 path-correlation issue.
 

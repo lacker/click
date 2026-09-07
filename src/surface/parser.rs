@@ -4635,17 +4635,22 @@ impl Parser {
             Some(Token::Ident(name)) if name == "by" => {
                 Err(self.error("expected contract expression, got `by`"))
             }
-            Some(Token::Ident(name)) => match self.current_algebraic_params.get(&name) {
-                Some((algebraic_type, binder_index)) => Ok(ContractExpression::AlgebraicVariable {
-                    name,
-                    algebraic_type: algebraic_type.clone(),
-                    binder_index: *binder_index,
-                }),
-                None if self.current_contract_bindings.contains(&name) => {
+            Some(Token::Ident(name)) => {
+                if self.current_contract_bindings.contains(&name) {
                     Ok(ContractExpression::Binding(name))
+                } else {
+                    match self.current_algebraic_params.get(&name) {
+                        Some((algebraic_type, binder_index)) => {
+                            Ok(ContractExpression::AlgebraicVariable {
+                                name,
+                                algebraic_type: algebraic_type.clone(),
+                                binder_index: *binder_index,
+                            })
+                        }
+                        None => Ok(ContractExpression::CFragment(CExpression::Variable(name))),
+                    }
                 }
-                None => Ok(ContractExpression::CFragment(CExpression::Variable(name))),
-            },
+            }
             Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
                 CValue::Int32(Bitvector32Term::Constant(value)),
             ))),

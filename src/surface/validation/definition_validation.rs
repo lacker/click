@@ -233,7 +233,11 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         collect_click_function_calls(definition.body(), &mut calls);
         function_calls.insert(definition.name().to_string(), calls);
     }
-    validate_well_founded_click_recursion(&click_function_definitions, &function_calls)?;
+    validate_well_founded_click_recursion(
+        &click_function_definitions,
+        &function_calls,
+        file.algebraic_type_definitions(),
+    )?;
 
     for theorem in &theorem_definitions {
         validate_theorem_definition(

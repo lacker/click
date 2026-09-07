@@ -782,6 +782,7 @@ pub(in crate::surface) fn collect_click_function_calls_in_proposition(
 pub(super) fn validate_well_founded_click_recursion(
     definitions: &[ClickFunctionDefinition],
     function_calls: &BTreeMap<String, BTreeSet<String>>,
+    algebraic_definitions: &[AlgebraicTypeDefinition],
 ) -> Result<(), ClickError> {
     let definitions = definitions
         .iter()
@@ -804,16 +805,21 @@ pub(super) fn validate_well_founded_click_recursion(
         })
         .copied()
         .collect::<BTreeSet<_>>();
+    let algebraic_definitions = algebraic_definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
 
     let mut measures = BTreeMap::new();
     for (name, definition) in &definitions {
         let measure = click_function_decreases_parameter(definition)?;
         if recursive_functions.contains(name) && measure.is_none() {
             return Err(ClickError::new(format!(
-                "recursive pure function `{name}` requires `decreases <int32 parameter>`"
+                "recursive pure function `{name}` requires `decreases <parameter>`"
             )));
         }
         if recursive_functions.contains(name)
+            && matches!(measure, Some(ClickRecursionMeasure::Int32 { .. }))
             && (definition.return_type() != &ClickType::C(C0Type::Int32)
                 || definition
                     .parameters()
@@ -825,7 +831,7 @@ pub(super) fn validate_well_founded_click_recursion(
             )));
         }
         if let Some(measure) = measure {
-            measures.insert((*name).to_string(), measure.to_string());
+            measures.insert((*name).to_string(), measure);
         }
     }
 
@@ -834,9 +840,11 @@ pub(super) fn validate_well_founded_click_recursion(
             caller,
             definitions[caller].body(),
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &definitions,
             function_calls,
             &measures,
+            &algebraic_definitions,
         )?;
     }
     Ok(())
@@ -858,15 +866,34 @@ fn click_function_reaches(
     })
 }
 
+#[derive(Clone, Debug)]
+enum ClickRecursionMeasure {
+    Int32 {
+        parameter: String,
+    },
+    Algebraic {
+        parameter: String,
+        algebraic_type: AlgebraicTypeApplication,
+    },
+}
+
+impl ClickRecursionMeasure {
+    fn parameter(&self) -> &str {
+        match self {
+            Self::Int32 { parameter } | Self::Algebraic { parameter, .. } => parameter,
+        }
+    }
+}
+
 fn click_function_decreases_parameter(
     definition: &ClickFunctionDefinition,
-) -> Result<Option<&str>, ClickError> {
+) -> Result<Option<ClickRecursionMeasure>, ClickError> {
     let Some(measure) = definition.decreases() else {
         return Ok(None);
     };
     let Some(name) = contract_expression_variable(measure) else {
         return Err(ClickError::new(format!(
-            "function `{}` currently requires `decreases` to name one int32 parameter",
+            "function `{}` requires `decreases` to name one int32 or algebraic datatype parameter",
             definition.name()
         )));
     };
@@ -880,18 +907,25 @@ fn click_function_decreases_parameter(
             definition.name()
         )));
     };
-    if parameter.click_type() != &ClickType::C(C0Type::Int32) {
-        return Err(ClickError::new(format!(
-            "function `{}` decreases measure `{name}` must be int32",
+    match parameter.click_type() {
+        ClickType::C(C0Type::Int32) => Ok(Some(ClickRecursionMeasure::Int32 {
+            parameter: name.to_string(),
+        })),
+        ClickType::Algebraic(algebraic_type) => Ok(Some(ClickRecursionMeasure::Algebraic {
+            parameter: name.to_string(),
+            algebraic_type: algebraic_type.clone(),
+        })),
+        _ => Err(ClickError::new(format!(
+            "function `{}` decreases measure `{name}` must be int32 or an algebraic datatype",
             definition.name()
-        )));
+        ))),
     }
-    Ok(Some(name))
 }
 
 fn contract_expression_variable(expression: &ContractExpression) -> Option<&str> {
     match expression {
         ContractExpression::Binding(name)
+        | ContractExpression::AlgebraicVariable { name, .. }
         | ContractExpression::CFragment(CExpression::Variable(name))
         | ContractExpression::CBinding(name) => Some(name),
         _ => None,
@@ -921,9 +955,10 @@ fn validate_recursive_call_edge(
     callee: &str,
     arguments: &[ContractExpression],
     lower_bounds: &BTreeMap<String, i64>,
+    structural_subterms: &BTreeMap<String, ClickType>,
     definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     function_calls: &BTreeMap<String, BTreeSet<String>>,
-    measures: &BTreeMap<String, String>,
+    measures: &BTreeMap<String, ClickRecursionMeasure>,
 ) -> Result<(), ClickError> {
     if !component_internal_call(caller, callee, function_calls) {
         return Ok(());
@@ -942,11 +977,12 @@ fn validate_recursive_call_edge(
             definition
                 .parameters()
                 .iter()
-                .position(|parameter| parameter.name() == callee_measure)
+                .position(|parameter| parameter.name() == callee_measure.parameter())
         })
         .ok_or_else(|| {
             ClickError::new(format!(
-                "internal error locating decreases parameter `{callee_measure}` for `{callee}`"
+                "internal error locating decreases parameter `{}` for `{callee}`",
+                callee_measure.parameter()
             ))
         })?;
     let next = arguments.get(measure_index).ok_or_else(|| {
@@ -954,20 +990,51 @@ fn validate_recursive_call_edge(
             "recursive call `{caller}` -> `{callee}` is missing its decreases argument"
         ))
     })?;
-    let caller_lower = lower_bounds.get(caller_measure).copied();
-    let valid = match next {
-        ContractExpression::Subtract(left, right)
-            if contract_expression_variable(left).is_some_and(|name| name == caller_measure) =>
-        {
-            let step = contract_expression_int32_constant(right);
-            step.is_some_and(|step| step > 0 && caller_lower.is_some_and(|lower| lower >= step))
+    let valid = match (caller_measure, callee_measure) {
+        (
+            ClickRecursionMeasure::Int32 {
+                parameter: caller_parameter,
+            },
+            ClickRecursionMeasure::Int32 { .. },
+        ) => {
+            let caller_lower = lower_bounds.get(caller_parameter).copied();
+            match next {
+                ContractExpression::Subtract(left, right)
+                    if contract_expression_variable(left)
+                        .is_some_and(|name| name == caller_parameter) =>
+                {
+                    let step = contract_expression_int32_constant(right);
+                    step.is_some_and(|step| {
+                        step > 0 && caller_lower.is_some_and(|lower| lower >= step)
+                    })
+                }
+                _ => contract_expression_int32_constant(next).is_some_and(|next| {
+                    next >= 0 && caller_lower.is_some_and(|lower| lower > next)
+                }),
+            }
         }
-        _ => contract_expression_int32_constant(next)
-            .is_some_and(|next| next >= 0 && caller_lower.is_some_and(|lower| lower > next)),
+        (
+            ClickRecursionMeasure::Algebraic { .. },
+            ClickRecursionMeasure::Algebraic {
+                algebraic_type: callee_type,
+                ..
+            },
+        ) => contract_expression_variable(next)
+            .and_then(|name| structural_subterms.get(name))
+            .is_some_and(|subterm_type| subterm_type == &ClickType::Algebraic(callee_type.clone())),
+        _ => false,
     };
     if !valid {
+        let requirement = match caller_measure {
+            ClickRecursionMeasure::Int32 { parameter } => format!(
+                "a nonnegative decreases measure strictly smaller than `{parameter}` on this path"
+            ),
+            ClickRecursionMeasure::Algebraic { parameter, .. } => format!(
+                "a recursive field structurally below `{parameter}` as its decreases argument"
+            ),
+        };
         return Err(ClickError::new(format!(
-            "recursive call `{caller}` -> `{callee}` must pass a nonnegative decreases measure strictly smaller than `{caller_measure}` on this path"
+            "recursive call `{caller}` -> `{callee}` must pass {requirement}"
         )));
     }
     Ok(())
@@ -977,44 +1044,91 @@ fn validate_recursive_calls_in_expression(
     caller: &str,
     expression: &ContractExpression,
     lower_bounds: &BTreeMap<String, i64>,
+    structural_subterms: &BTreeMap<String, ClickType>,
     definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     function_calls: &BTreeMap<String, BTreeSet<String>>,
-    measures: &BTreeMap<String, String>,
+    measures: &BTreeMap<String, ClickRecursionMeasure>,
+    algebraic_definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
 ) -> Result<(), ClickError> {
-    let recurse = |expression: &ContractExpression, bounds: &BTreeMap<String, i64>| {
+    let recurse = |expression: &ContractExpression,
+                   bounds: &BTreeMap<String, i64>,
+                   subterms: &BTreeMap<String, ClickType>| {
         validate_recursive_calls_in_expression(
             caller,
             expression,
             bounds,
+            subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         )
     };
     match expression {
         ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
-                recurse(argument, lower_bounds)?;
+                recurse(argument, lower_bounds, structural_subterms)?;
             }
             Ok(())
         }
         ContractExpression::AlgebraicMatch { scrutinee, arms } => {
-            recurse(scrutinee, lower_bounds)?;
+            recurse(scrutinee, lower_bounds, structural_subterms)?;
+            // Parameter nodes retain their binder identity, whereas a match
+            // or `let` binder that shadows the same spelling is a `Binding`.
+            // Require that identity here so shadowing cannot turn a field of
+            // an unrelated value into the root termination measure.
+            let structural_scrutinee_type = match (scrutinee.as_ref(), measures.get(caller)) {
+                (
+                    ContractExpression::AlgebraicVariable {
+                        name,
+                        algebraic_type: actual_type,
+                        ..
+                    },
+                    Some(ClickRecursionMeasure::Algebraic {
+                        parameter,
+                        algebraic_type,
+                    }),
+                ) if name == parameter && actual_type == algebraic_type => {
+                    Some(ClickType::Algebraic(algebraic_type.clone()))
+                }
+                _ => contract_expression_variable(scrutinee)
+                    .and_then(|name| structural_subterms.get(name).cloned()),
+            };
             for arm in arms {
-                recurse(&arm.body, lower_bounds)?;
+                let mut arm_subterms = structural_subterms.clone();
+                for binding in &arm.bindings {
+                    arm_subterms.remove(binding);
+                }
+                if let Some(ClickType::Algebraic(application)) = &structural_scrutinee_type {
+                    let datatype = algebraic_definitions
+                        .get(application.name())
+                        .expect("validated algebraic match has a declared datatype");
+                    let variant = datatype
+                        .variants()
+                        .iter()
+                        .find(|variant| variant.name() == arm.variant)
+                        .expect("validated algebraic match has a declared variant");
+                    for (binding, field) in arm.bindings.iter().zip(variant.fields()) {
+                        let field_type = instantiate_field_type(datatype, application, field)?;
+                        if matches!(field_type, ClickType::Algebraic(_)) {
+                            arm_subterms.insert(binding.clone(), field_type);
+                        }
+                    }
+                }
+                recurse(&arm.body, lower_bounds, &arm_subterms)?;
             }
             Ok(())
         }
         ContractExpression::SequenceLiteral(elements) => {
             for element in elements {
-                recurse(element, lower_bounds)?;
+                recurse(element, lower_bounds, structural_subterms)?;
             }
             Ok(())
         }
         ContractExpression::SequenceConcat(left, right) => {
-            recurse(left, lower_bounds)?;
-            recurse(right, lower_bounds)
+            recurse(left, lower_bounds, structural_subterms)?;
+            recurse(right, lower_bounds, structural_subterms)
         }
         ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
@@ -1022,16 +1136,18 @@ fn validate_recursive_calls_in_expression(
         ContractExpression::ResourceCount(resource) => {
             if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
                 for argument in arguments {
-                    recurse(argument, lower_bounds)?;
+                    recurse(argument, lower_bounds, structural_subterms)?;
                 }
             }
             Ok(())
         }
-        ContractExpression::Field { base, .. } => recurse(base, lower_bounds),
+        ContractExpression::Field { base, .. } => recurse(base, lower_bounds, structural_subterms),
         ContractExpression::Old(body) | ContractExpression::BitwiseNot(body) => {
-            recurse(body, lower_bounds)
+            recurse(body, lower_bounds, structural_subterms)
         }
-        ContractExpression::At { expression, .. } => recurse(expression, lower_bounds),
+        ContractExpression::At { expression, .. } => {
+            recurse(expression, lower_bounds, structural_subterms)
+        }
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
@@ -1043,8 +1159,8 @@ fn validate_recursive_calls_in_expression(
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right)
         | ContractExpression::Index(left, right) => {
-            recurse(left, lower_bounds)?;
-            recurse(right, lower_bounds)
+            recurse(left, lower_bounds, structural_subterms)?;
+            recurse(right, lower_bounds, structural_subterms)
         }
         ContractExpression::If {
             condition,
@@ -1055,16 +1171,18 @@ fn validate_recursive_calls_in_expression(
                 caller,
                 condition,
                 lower_bounds,
+                structural_subterms,
                 definitions,
                 function_calls,
                 measures,
+                algebraic_definitions,
             )?;
             let mut then_bounds = lower_bounds.clone();
             add_condition_lower_bounds(condition, true, &mut then_bounds);
             let mut else_bounds = lower_bounds.clone();
             add_condition_lower_bounds(condition, false, &mut else_bounds);
-            recurse(then_branch, &then_bounds)?;
-            recurse(else_branch, &else_bounds)
+            recurse(then_branch, &then_bounds, structural_subterms)?;
+            recurse(else_branch, &else_bounds, structural_subterms)
         }
         ContractExpression::RangeFold {
             start,
@@ -1073,24 +1191,29 @@ fn validate_recursive_calls_in_expression(
             body,
             ..
         } => {
-            recurse(start, lower_bounds)?;
-            recurse(end, lower_bounds)?;
-            recurse(initial, lower_bounds)?;
-            recurse(body, lower_bounds)
+            recurse(start, lower_bounds, structural_subterms)?;
+            recurse(end, lower_bounds, structural_subterms)?;
+            recurse(initial, lower_bounds, structural_subterms)?;
+            recurse(body, lower_bounds, structural_subterms)
         }
-        ContractExpression::Let { value, body, .. } => {
-            recurse(value, lower_bounds)?;
-            recurse(body, lower_bounds)
+        ContractExpression::Let {
+            name, value, body, ..
+        } => {
+            recurse(value, lower_bounds, structural_subterms)?;
+            let mut body_subterms = structural_subterms.clone();
+            body_subterms.remove(name);
+            recurse(body, lower_bounds, &body_subterms)
         }
         ContractExpression::Call { name, arguments } => {
             for argument in arguments {
-                recurse(argument, lower_bounds)?;
+                recurse(argument, lower_bounds, structural_subterms)?;
             }
             validate_recursive_call_edge(
                 caller,
                 name,
                 arguments,
                 lower_bounds,
+                structural_subterms,
                 definitions,
                 function_calls,
                 measures,
@@ -1103,18 +1226,22 @@ fn validate_recursive_calls_in_proposition(
     caller: &str,
     proposition: &ClickProposition,
     lower_bounds: &BTreeMap<String, i64>,
+    structural_subterms: &BTreeMap<String, ClickType>,
     definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     function_calls: &BTreeMap<String, BTreeSet<String>>,
-    measures: &BTreeMap<String, String>,
+    measures: &BTreeMap<String, ClickRecursionMeasure>,
+    algebraic_definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
 ) -> Result<(), ClickError> {
     let expression = |expression: &ContractExpression| {
         validate_recursive_calls_in_expression(
             caller,
             expression,
             lower_bounds,
+            structural_subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         )
     };
     let recurse_proposition = |proposition: &ClickProposition| {
@@ -1122,9 +1249,11 @@ fn validate_recursive_calls_in_proposition(
             caller,
             proposition,
             lower_bounds,
+            structural_subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         )
     };
     match proposition {
@@ -1173,26 +1302,32 @@ fn validate_recursive_calls_in_proposition(
                 caller,
                 left,
                 lower_bounds,
+                structural_subterms,
                 definitions,
                 function_calls,
                 measures,
+                algebraic_definitions,
             )?;
             validate_recursive_calls_in_resource_subject(
                 caller,
                 right,
                 lower_bounds,
+                structural_subterms,
                 definitions,
                 function_calls,
                 measures,
+                algebraic_definitions,
             )
         }
         ClickProposition::Loadable { segment } => validate_recursive_calls_in_segment(
             caller,
             segment,
             lower_bounds,
+            structural_subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         ),
     }
 }
@@ -1201,18 +1336,22 @@ fn validate_recursive_calls_in_resource_subject(
     caller: &str,
     subject: &ResourceSubject,
     lower_bounds: &BTreeMap<String, i64>,
+    structural_subterms: &BTreeMap<String, ClickType>,
     definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     function_calls: &BTreeMap<String, BTreeSet<String>>,
-    measures: &BTreeMap<String, String>,
+    measures: &BTreeMap<String, ClickRecursionMeasure>,
+    algebraic_definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
 ) -> Result<(), ClickError> {
     match subject {
         ResourceSubject::Memory(segment) => validate_recursive_calls_in_segment(
             caller,
             segment,
             lower_bounds,
+            structural_subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         ),
         ResourceSubject::Declared { arguments, .. } => {
             for argument in arguments {
@@ -1220,9 +1359,11 @@ fn validate_recursive_calls_in_resource_subject(
                     caller,
                     argument,
                     lower_bounds,
+                    structural_subterms,
                     definitions,
                     function_calls,
                     measures,
+                    algebraic_definitions,
                 )?;
             }
             Ok(())
@@ -1234,9 +1375,11 @@ fn validate_recursive_calls_in_segment(
     caller: &str,
     segment: &ContractSegment,
     lower_bounds: &BTreeMap<String, i64>,
+    structural_subterms: &BTreeMap<String, ClickType>,
     definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     function_calls: &BTreeMap<String, BTreeSet<String>>,
-    measures: &BTreeMap<String, String>,
+    measures: &BTreeMap<String, ClickRecursionMeasure>,
+    algebraic_definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
 ) -> Result<(), ClickError> {
     let expressions = match &segment.surface {
         ContractSegmentSurface::Range { base, start, end } => vec![base, start, end],
@@ -1247,9 +1390,11 @@ fn validate_recursive_calls_in_segment(
             caller,
             expression,
             lower_bounds,
+            structural_subterms,
             definitions,
             function_calls,
             measures,
+            algebraic_definitions,
         )?;
     }
     Ok(())

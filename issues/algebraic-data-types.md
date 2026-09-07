@@ -76,7 +76,13 @@ unchanged.
   `List<T>`, binary `Tree<T>`, and mutually recursive groups. Recursive fields
   are nominal references to finite schemas, preserve the enclosing type
   parameters exactly, and remain symbolic under one-layer matches. Recursive
-  groups with no finite constructor value are rejected.
+  groups with no finite constructor value are rejected; and
+- structurally recursive pure functions whose `decreases` parameter is a
+  recursive algebraic datatype. Direct fields, nested descent through fields,
+  multiple recursive fields, and mutually recursive datatype/function groups
+  are checked; recursion on the original value or a field of an unrelated
+  value is rejected. Calls remain symbolic and explicit `unfold` exposes only
+  one defining equation.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -84,13 +90,15 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic quantifiers, resource arguments, structural decreases
-and induction, the library-defined `List<T>`, recursive-resource use, and
-symbolic typed-memory-range projection. Recursive algebraic-valued pure
-functions are not yet accepted merely because their value representation is
-now available. All pure calls remain logical applications during lowering; an
-explicit checked `unfold` step exposes one defining equation. Generated
-structural induction principles remain to be added as checked datatype rules.
+Still open are algebraic quantifiers, resource arguments, structural induction,
+the library-defined `List<T>`, recursive-resource use, and symbolic
+typed-memory-range projection. All pure calls remain logical applications
+during lowering; an explicit checked `unfold` step exposes one defining
+equation. Generated structural induction principles remain to be added as
+checked datatype rules. That work also needs a proof-level constructor case
+operation: expression-level `match` is deliberately symbolic, so it neither
+splits a proof nor introduces arm field names such as the `tail` needed to
+apply an induction hypothesis.
 
 ## Violated invariant
 
