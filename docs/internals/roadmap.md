@@ -125,8 +125,10 @@ Likely additions:
   scalar arrays now include coalesced tentative declarations and one
   initialized definition across translation units; fixed multidimensional
   definitions retain their row-major shape metadata and require
-  shape-compatible linkage. They are also supported for function-local
-  statics; unresolved incomplete tentative definitions and
+  shape-compatible linkage. External declarations may omit the outer dimension
+  while retaining complete inner dimensions, which are resolved against a
+  complete fixed-size definition during bundle linking. They are also supported
+  for function-local statics; unresolved incomplete tentative definitions and
   dynamic-initialization cases remain open. External incomplete declarations
   and tentative definitions resolve against complete fixed-size definitions,
   and file-scope `static` incomplete scalar arrays resolve against complete

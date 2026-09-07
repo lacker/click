@@ -1466,6 +1466,41 @@ fn c0_accepts_incomplete_extern_scalar_and_aggregate_arrays() {
 }
 
 #[test]
+fn c0_accepts_incomplete_outer_dimension_extern_scalar_arrays() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        extern int32 values[][3];
+
+        int32 read() {
+            return values[1][2];
+        }
+        "#,
+        "incomplete-extern-multidimensional.c",
+    )
+    .expect("an incomplete outer dimension should parse before bundle linking");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .unwrap();
+    let values = &function.global_arrays()["values"];
+    assert!(values.is_incomplete());
+    assert_eq!(values.shape(), None);
+    assert_eq!(values.incomplete_shape(), Some(&[3][..]));
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Index(base, index))
+            if matches!(base.as_ref(), syntax::C0Expression::Variable(name) if name == "values")
+                && matches!(index.as_ref(), syntax::C0Expression::Add(left, right)
+                    if matches!(left.as_ref(), syntax::C0Expression::Multiply(multiplier, stride)
+                        if matches!(multiplier.as_ref(), syntax::C0Expression::Int32Literal(1))
+                            && matches!(stride.as_ref(), syntax::C0Expression::Int32Literal(3)))
+                    && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(2))
+                )
+    ));
+}
+
+#[test]
 fn c0_accepts_incomplete_tentative_scalar_array_declarations() {
     let functions = syntax::parse_functions_for_source(
         r#"

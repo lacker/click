@@ -2219,9 +2219,7 @@ pub(in crate::surface) fn parse_c_layouts(
             let function_global_array_shapes = function
                 .global_arrays()
                 .iter()
-                .filter_map(|(name, array)| {
-                    array.shape().map(|shape| (name.clone(), shape.to_vec()))
-                })
+                .filter_map(|(name, array)| array.index_shape().map(|shape| (name.clone(), shape)))
                 .collect();
             global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
         }
@@ -2375,7 +2373,7 @@ pub(in crate::surface) fn parse_verified_sources(
             match source_arrays.get(name) {
                 Some(previous)
                     if previous.element_type() != array.element_type()
-                        || !syntax::array_shapes_compatible(previous.shape(), array.shape()) =>
+                        || !syntax::array_shapes_compatible(previous, array) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"
@@ -2425,7 +2423,7 @@ pub(in crate::surface) fn parse_verified_sources(
             match global_arrays.get(name) {
                 Some(previous)
                     if previous.element_type() != array.element_type()
-                        || !syntax::array_shapes_compatible(previous.shape(), array.shape()) =>
+                        || !syntax::array_shapes_compatible(previous, array) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"
