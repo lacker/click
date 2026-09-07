@@ -692,7 +692,7 @@ impl PropositionDerivation {
 impl PointerOffsetCongruenceEvidence {
     fn equality_paths(&self) -> Vec<&[BitvectorEqualityDerivationStep]> {
         match self {
-            Self::Exact => Vec::new(),
+            Self::Exact | Self::ExactPremise(_) => Vec::new(),
             Self::Add { first, second, .. } => {
                 let mut paths = first.equality_paths();
                 paths.extend(second.equality_paths());
@@ -701,10 +701,11 @@ impl PointerOffsetCongruenceEvidence {
             Self::Int32Scaled { path, .. }
             | Self::Int64Scaled { path, .. }
             | Self::ElementIndex { path, .. } => vec![path],
+            Self::Int32ScaledDerived { .. } | Self::ElementIndexDerived { .. } => Vec::new(),
         }
     }
 
-    fn checks(
+    pub(in crate::kernel) fn checks(
         &self,
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
@@ -712,6 +713,18 @@ impl PointerOffsetCongruenceEvidence {
     ) -> bool {
         match self {
             Self::Exact => left == right,
+            Self::ExactPremise(premise) => {
+                let Proposition::ConditionIs(
+                    ConditionTerm::PointerOffsetEqual(premise_left, premise_right),
+                    true,
+                ) = premise.as_ref()
+                else {
+                    return false;
+                };
+                assumptions.contains_assumed_exact(premise)
+                    && ((premise_left.as_ref() == left && premise_right.as_ref() == right)
+                        || (premise_left.as_ref() == right && premise_right.as_ref() == left))
+            }
             Self::Add {
                 first,
                 second,
@@ -749,6 +762,27 @@ impl PointerOffsetCongruenceEvidence {
                 left_width == byte_width
                     && right_width == byte_width
                     && assumptions.checks_exact_bitvector_equality_path(path, left, right)
+            }
+            Self::Int32ScaledDerived {
+                byte_width,
+                equality,
+            } => {
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: right_width,
+                    },
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                left_width == byte_width
+                    && right_width == byte_width
+                    && equality.checks(left, right, assumptions)
             }
             Self::Int64Scaled {
                 byte_width,
@@ -789,6 +823,125 @@ impl PointerOffsetCongruenceEvidence {
                     return false;
                 };
                 assumptions.checks_exact_bitvector_equality_path(path, &left, &right)
+            }
+            Self::ElementIndexDerived {
+                byte_width,
+                equality,
+            } => {
+                if crate::kernel::reasoning::common_pointer_offset_element_width(left, right)
+                    != Some(*byte_width)
+                {
+                    return false;
+                }
+                let (Some(left), Some(right)) = (
+                    crate::kernel::reasoning::element_index_from_offset(left, *byte_width),
+                    crate::kernel::reasoning::element_index_from_offset(right, *byte_width),
+                ) else {
+                    return false;
+                };
+                equality.checks(&left, &right, assumptions)
+            }
+        }
+    }
+}
+
+impl DirectBitvectorEqualityEvidence {
+    fn checks(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        match self {
+            Self::AdditiveCancellation {
+                left: reduced_left,
+                right: reduced_right,
+                equality,
+            } => {
+                crate::kernel::reasoning::bitvector_equality_after_additive_cancellation(
+                    left, right,
+                ) == Some((reduced_left.clone(), reduced_right.clone()))
+                    && equality.checks(reduced_left, reduced_right, assumptions)
+            }
+            Self::EqualSignedConstants {
+                value,
+                left: left_evidence,
+                right: right_evidence,
+            } => {
+                let checks =
+                    |term: &Bitvector32Term, evidence: &SignedConstantEvidence| match evidence {
+                        SignedConstantEvidence::Constant => {
+                            signed_bitvector_constant(term) == Some(*value)
+                        }
+                        SignedConstantEvidence::SingletonBounds {
+                            variable,
+                            lower,
+                            upper,
+                        } => {
+                            let bound =
+                                |evidence: &IndexedSignedOrderBoundEvidence, lower_bound: bool| {
+                                    let recorded =
+                                        assumptions.signed_order_bound_entries(term).any(|entry| {
+                                            entry
+                                                == (
+                                                    evidence.endpoint.clone(),
+                                                    evidence.other.clone(),
+                                                    evidence.strict,
+                                                    evidence.forward,
+                                                )
+                                        });
+                                    if !recorded || lower_bound == evidence.forward {
+                                        return None;
+                                    }
+                                    let bound = signed_bitvector_constant(&evidence.other)?;
+                                    if lower_bound {
+                                        if evidence.strict {
+                                            bound.checked_add(1)
+                                        } else {
+                                            Some(bound)
+                                        }
+                                    } else {
+                                        if evidence.strict {
+                                            bound.checked_sub(1)
+                                        } else {
+                                            Some(bound)
+                                        }
+                                    }
+                                };
+                            bitvector_variable(term) == Some(*variable)
+                                && bound(lower, true) == Some(*value)
+                                && bound(upper, false) == Some(*value)
+                        }
+                    };
+                checks(left, left_evidence) && checks(right, right_evidence)
+            }
+            Self::LeAndNotLt(evidence) => {
+                let less_equal = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                );
+                let not_less_than = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    false,
+                );
+                evidence.less_equal == less_equal
+                    && evidence.not_less_than == not_less_than
+                    && assumptions.contains_assumed_exact(&evidence.less_equal)
+                    && assumptions.contains_assumed_exact(&evidence.not_less_than)
+            }
+            Self::GeAndNotGt(evidence) => {
+                let greater_equal = Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                );
+                let not_greater_than = Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    false,
+                );
+                evidence.greater_equal == greater_equal
+                    && evidence.not_greater_than == not_greater_than
+                    && assumptions.contains_assumed_exact(&evidence.greater_equal)
+                    && assumptions.contains_assumed_exact(&evidence.not_greater_than)
             }
         }
     }

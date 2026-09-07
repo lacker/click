@@ -1,6 +1,134 @@
 use super::*;
 
 impl PureFactContext {
+    fn direct_bitvector_equality_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<DirectBitvectorEqualityEvidence> {
+        if let Some(evidence) = self.direct_bitvector_equality_leaf_evidence(left, right) {
+            return Some(evidence);
+        }
+        let mut current = (left.clone(), right.clone());
+        let mut reductions = Vec::new();
+        loop {
+            let reduced = bitvector_equality_after_additive_cancellation(&current.0, &current.1)?;
+            if reduced == current {
+                return None;
+            }
+            reductions.push(reduced.clone());
+            current = reduced;
+            if let Some(mut evidence) =
+                self.direct_bitvector_equality_leaf_evidence(&current.0, &current.1)
+            {
+                for (left, right) in reductions.into_iter().rev() {
+                    evidence = DirectBitvectorEqualityEvidence::AdditiveCancellation {
+                        left,
+                        right,
+                        equality: Box::new(evidence),
+                    };
+                }
+                return Some(evidence);
+            }
+        }
+    }
+
+    fn direct_bitvector_equality_leaf_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<DirectBitvectorEqualityEvidence> {
+        let signed_constant_evidence = |term: &Bitvector32Term| {
+            if let Some(value) = signed_bitvector_constant(term) {
+                return Some((value, SignedConstantEvidence::Constant));
+            }
+            let variable = bitvector_variable(term)?;
+            let mut lower: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
+            let mut upper: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
+            for (endpoint, other, strict, forward) in self.signed_order_bound_entries(term) {
+                let evidence = IndexedSignedOrderBoundEvidence {
+                    endpoint,
+                    other: other.clone(),
+                    strict,
+                    forward,
+                };
+                if !forward
+                    && let Some(bound) = signed_bitvector_constant(&other)
+                    && let Some(bound) = if strict {
+                        bound.checked_add(1)
+                    } else {
+                        Some(bound)
+                    }
+                    && lower.as_ref().is_none_or(|(current, _)| bound > *current)
+                {
+                    lower = Some((bound, evidence.clone()));
+                }
+                if forward
+                    && let Some(bound) = signed_bitvector_constant(&other)
+                    && let Some(bound) = if strict {
+                        bound.checked_sub(1)
+                    } else {
+                        Some(bound)
+                    }
+                    && upper.as_ref().is_none_or(|(current, _)| bound < *current)
+                {
+                    upper = Some((bound, evidence));
+                }
+            }
+            let ((lower_value, lower), (upper_value, upper)) = lower.zip(upper)?;
+            (lower_value == upper_value).then_some((
+                lower_value,
+                SignedConstantEvidence::SingletonBounds {
+                    variable,
+                    lower,
+                    upper,
+                },
+            ))
+        };
+        if let Some(((left_value, left), (_right_value, right))) = signed_constant_evidence(left)
+            .zip(signed_constant_evidence(right))
+            .filter(|((left, _), (right, _))| left == right)
+        {
+            return Some(DirectBitvectorEqualityEvidence::EqualSignedConstants {
+                value: left_value,
+                left,
+                right,
+            });
+        }
+        let less_equal = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+            true,
+        );
+        let not_less_than = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(left.clone(), right.clone()),
+            false,
+        );
+        if self.contains_assumed_exact(&less_equal) && self.contains_assumed_exact(&not_less_than) {
+            return Some(DirectBitvectorEqualityEvidence::LeAndNotLt(Box::new(
+                Int32LeAndNotLtEqualityEvidence {
+                    less_equal,
+                    not_less_than,
+                },
+            )));
+        }
+        let greater_equal = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+            true,
+        );
+        let not_greater_than = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+            false,
+        );
+        (self.contains_assumed_exact(&greater_equal)
+            && self.contains_assumed_exact(&not_greater_than))
+        .then_some(DirectBitvectorEqualityEvidence::GeAndNotGt(Box::new(
+            Int32GeAndNotGtEqualityEvidence {
+                greater_equal,
+                not_greater_than,
+            },
+        )))
+    }
+
     /// Decides a condition against this fact set, memoizing results by the
     /// fact set's content identity.
     ///
@@ -482,13 +610,34 @@ impl PureFactContext {
         None
     }
 
-    fn pointer_offset_congruence_evidence(
+    pub(in crate::kernel) fn pointer_offset_congruence_evidence(
         &self,
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
     ) -> Option<PointerOffsetCongruenceEvidence> {
         if left == right {
             return Some(PointerOffsetCongruenceEvidence::Exact);
+        }
+        let exact_premise = Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(left.clone(), right.clone()),
+            true,
+        );
+        if self.contains_assumed_exact(&exact_premise) {
+            return Some(PointerOffsetCongruenceEvidence::ExactPremise(Box::new(
+                exact_premise,
+            )));
+        }
+        let mirrored_premise = Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(right.clone(), left.clone()),
+            true,
+        );
+        if self.contains_assumed_exact(&mirrored_premise) {
+            return Some(PointerOffsetCongruenceEvidence::ExactPremise(Box::new(
+                mirrored_premise,
+            )));
+        }
+        if let Some(evidence) = self.pointer_offset_element_index_evidence(left, right) {
+            return Some(evidence);
         }
         match (left, right) {
             (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
@@ -502,14 +651,15 @@ impl PureFactContext {
                         swapped: false,
                     });
                 }
-                let (first, second) = self
+                let swapped = self
                     .pointer_offset_congruence_evidence(left_a, right_b)
-                    .zip(self.pointer_offset_congruence_evidence(left_b, right_a))?;
-                Some(PointerOffsetCongruenceEvidence::Add {
-                    first: Box::new(first),
-                    second: Box::new(second),
-                    swapped: true,
-                })
+                    .zip(self.pointer_offset_congruence_evidence(left_b, right_a))
+                    .map(|(first, second)| PointerOffsetCongruenceEvidence::Add {
+                        first: Box::new(first),
+                        second: Box::new(second),
+                        swapped: true,
+                    });
+                swapped
             }
             (
                 PointerOffsetTerm::Int32Scaled {
@@ -520,10 +670,21 @@ impl PureFactContext {
                     value: right,
                     byte_width: right_width,
                 },
-            ) if left_width == right_width => Some(PointerOffsetCongruenceEvidence::Int32Scaled {
-                byte_width: *left_width,
-                path: self.exact_bitvector_equality_path_evidence(left, right)?,
-            }),
+            ) if left_width == right_width => self
+                .exact_bitvector_equality_path_evidence(left, right)
+                .map(|path| PointerOffsetCongruenceEvidence::Int32Scaled {
+                    byte_width: *left_width,
+                    path,
+                })
+                .or_else(|| {
+                    self.direct_bitvector_equality_evidence(left, right)
+                        .map(
+                            |equality| PointerOffsetCongruenceEvidence::Int32ScaledDerived {
+                                byte_width: *left_width,
+                                equality,
+                            },
+                        )
+                }),
             (
                 PointerOffsetTerm::Int64Scaled {
                     value: left,
@@ -542,18 +703,31 @@ impl PureFactContext {
                     path: self.exact_bitvector_equality_path_evidence(left, right)?,
                 })
             }
-            _ => {
-                let byte_width = common_pointer_offset_element_width(left, right)?;
-                let (left_index, right_index) = (
-                    element_index_from_offset(left, byte_width)?,
-                    element_index_from_offset(right, byte_width)?,
-                );
-                Some(PointerOffsetCongruenceEvidence::ElementIndex {
-                    byte_width,
-                    path: self.exact_bitvector_equality_path_evidence(&left_index, &right_index)?,
-                })
-            }
+            _ => None,
         }
+    }
+
+    fn pointer_offset_element_index_evidence(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> Option<PointerOffsetCongruenceEvidence> {
+        let byte_width = common_pointer_offset_element_width(left, right)?;
+        let (left_index, right_index) = (
+            element_index_from_offset(left, byte_width)?,
+            element_index_from_offset(right, byte_width)?,
+        );
+        self.exact_bitvector_equality_path_evidence(&left_index, &right_index)
+            .map(|path| PointerOffsetCongruenceEvidence::ElementIndex { byte_width, path })
+            .or_else(|| {
+                self.direct_bitvector_equality_evidence(&left_index, &right_index)
+                    .map(
+                        |equality| PointerOffsetCongruenceEvidence::ElementIndexDerived {
+                            byte_width,
+                            equality,
+                        },
+                    )
+            })
     }
 
     pub(in crate::kernel) fn load_address_congruence_evidence(

@@ -3,7 +3,7 @@ use super::api::{
 };
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
-    bitvector_terms_proven_equal_for_memory_resolution,
+    bitvector_terms_proven_equal_for_memory_resolution, bitvector_variable,
     c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
     memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
     pointers_proven_equal_for_memory_resolution, resource_context_has_read,
@@ -3207,6 +3207,7 @@ pub struct BitvectorEqualityDerivationStep {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PointerOffsetCongruenceEvidence {
     Exact,
+    ExactPremise(Box<Proposition>),
     Add {
         first: Box<PointerOffsetCongruenceEvidence>,
         second: Box<PointerOffsetCongruenceEvidence>,
@@ -3215,6 +3216,10 @@ pub(super) enum PointerOffsetCongruenceEvidence {
     Int32Scaled {
         byte_width: i64,
         path: Vec<BitvectorEqualityDerivationStep>,
+    },
+    Int32ScaledDerived {
+        byte_width: i64,
+        equality: DirectBitvectorEqualityEvidence,
     },
     Int64Scaled {
         byte_width: i64,
@@ -3225,6 +3230,47 @@ pub(super) enum PointerOffsetCongruenceEvidence {
         byte_width: u32,
         path: Vec<BitvectorEqualityDerivationStep>,
     },
+    ElementIndexDerived {
+        byte_width: u32,
+        equality: DirectBitvectorEqualityEvidence,
+    },
+}
+
+/// A finite, target-directed equality path used inside retained pointer
+/// congruence. Each variant names exact equality or order evidence; the
+/// checker follows that path without proposition search.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DirectBitvectorEqualityEvidence {
+    AdditiveCancellation {
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        equality: Box<DirectBitvectorEqualityEvidence>,
+    },
+    EqualSignedConstants {
+        value: i64,
+        left: SignedConstantEvidence,
+        right: SignedConstantEvidence,
+    },
+    LeAndNotLt(Box<Int32LeAndNotLtEqualityEvidence>),
+    GeAndNotGt(Box<Int32GeAndNotGtEqualityEvidence>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum SignedConstantEvidence {
+    Constant,
+    SingletonBounds {
+        variable: Variable,
+        lower: IndexedSignedOrderBoundEvidence,
+        upper: IndexedSignedOrderBoundEvidence,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct IndexedSignedOrderBoundEvidence {
+    pub(in crate::kernel) endpoint: Bitvector32Term,
+    pub(in crate::kernel) other: Bitvector32Term,
+    pub(in crate::kernel) strict: bool,
+    pub(in crate::kernel) forward: bool,
 }
 
 /// Evidence that two load variables name one cell because their

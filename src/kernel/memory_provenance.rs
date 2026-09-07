@@ -313,460 +313,6 @@ pub(crate) fn c_memories_canonically_equal(left: &CMemory, right: &CMemory) -> b
     left == right || canonical_c_memory_deep(left) == canonical_c_memory_deep(right)
 }
 
-pub(crate) fn c_memory_load_is_unchanged(
-    before: &CMemory,
-    after: &CMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    if crate::instrumentation::deadline_exceeded() {
-        return false;
-    }
-    let memo_key = crate::kernel::assumptions::ambient_assumptions_memo_id(assumptions).map(
-        |assumptions_id| {
-            let before = intern_c_memory_ref(before).arena_id();
-            let after = intern_c_memory_ref(after).arena_id();
-            UnchangedLoadMemoKey {
-                assumptions_id,
-                memories: if before <= after {
-                    (before, after)
-                } else {
-                    (after, before)
-                },
-                pointer: pointer.clone(),
-            }
-        },
-    );
-    if let Some(key) = &memo_key
-        && UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| memo.borrow().contains(key))
-    {
-        return true;
-    }
-    let derivation_generation = c_memory_derivation_generation();
-    if let Some(key) = &memo_key
-        && UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| {
-            memo.borrow()
-                .contains(&(derivation_generation, key.clone()))
-        })
-    {
-        return false;
-    }
-    let truncations_before = crate::kernel::assumptions::search_truncations();
-    let result = c_memory_load_is_unchanged_unmemoized(before, after, pointer, assumptions);
-    if let Some(key) = memo_key {
-        if result {
-            UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                if memo.len() >= UNCHANGED_LOAD_MEMO_LIMIT {
-                    memo.clear();
-                }
-                memo.insert(key);
-            });
-        } else if !crate::instrumentation::deadline_exceeded()
-            && crate::kernel::assumptions::search_truncations() == truncations_before
-        {
-            UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                if memo.len() >= UNCHANGED_LOAD_MEMO_LIMIT {
-                    memo.clear();
-                }
-                memo.insert((derivation_generation, key));
-            });
-        }
-    }
-    result
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct UnchangedLoadMemoKey {
-    assumptions_id: u64,
-    memories: ((u32, u32), (u32, u32)),
-    pointer: Pointer,
-}
-
-thread_local! {
-    static UNCHANGED_LOAD_POSITIVE_MEMO: std::cell::RefCell<
-        std::collections::HashSet<UnchangedLoadMemoKey>,
-    > = std::cell::RefCell::new(std::collections::HashSet::new());
-    static UNCHANGED_LOAD_NEGATIVE_MEMO: std::cell::RefCell<
-        std::collections::HashSet<(u64, UnchangedLoadMemoKey)>,
-    > = std::cell::RefCell::new(std::collections::HashSet::new());
-}
-
-const UNCHANGED_LOAD_MEMO_LIMIT: usize = 200_000;
-
-fn c_memory_load_is_unchanged_unmemoized(
-    before: &CMemory,
-    after: &CMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    if memories_match_for_pointer_load(before, after, pointer) {
-        return true;
-    }
-    if canonical_memory_for_pointer_load(before, pointer)
-        == canonical_memory_for_pointer_load(after, pointer)
-    {
-        return true;
-    }
-    // Small field-update snapshots usually differ at only one or two cells.
-    // Compare those directly before paying for a derivation-DAG walk — but
-    // with the bounded, memoized alias check only. The general alias check
-    // consults the composition-backed separation provers, whose per-query
-    // cost scales with the carrier count; running it per differing cell
-    // before the bounded DAG walk turned this "fast path" into the dominant
-    // cost of a simple step (measured at 370k of a 500k budget on
-    // bounded-pool). The full comparison still runs after the DAG walk, so
-    // nothing provable is lost — only reordered behind the bounded answers.
-    let small_snapshot_pair = before.cells.len() <= 8 && after.cells.len() <= 8;
-    if small_snapshot_pair
-        && crate::instrumentation::measure_operation(
-            "kernel",
-            "resource context equality",
-            "framed load: small snapshot comparison",
-            || memories_match_for_pointer_load_bounded_alias(before, after, pointer, assumptions),
-        )
-    {
-        return true;
-    }
-    // For larger snapshots the DAG walk runs before the snapshot comparison:
-    // it answers from recorded edges in a bounded number of hops, where
-    // `memories_match_for_pointer_load_under_assumptions` first compares
-    // whole non-local block sets and then every differing cell.
-    // This API is a certificate-check query. No-op block declarations,
-    // forgotten caches, and allocations of a distinct block are sound DAG
-    // bridges here; enabling them keeps check on the bounded derivation walk
-    // instead of falling into whole-snapshot alias search.
-    if crate::instrumentation::measure_operation(
-        "kernel",
-        "resource context equality",
-        "framed load: memory derivation walk",
-        || {
-            with_extended_dag_bridging(|| {
-                load_unchanged_along_memory_derivations(before, after, pointer, assumptions)
-            })
-        },
-    ) {
-        return true;
-    }
-    if crate::instrumentation::deadline_exceeded() {
-        return false;
-    }
-    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
-        return true;
-    }
-    // Predicate framing is deliberately bounded: use exact certified writes
-    // and direct address cancellation, without invoking general alias search.
-    if assumptions.prop_facts.iter().any(|proposition| {
-        if crate::instrumentation::deadline_exceeded() {
-            return false;
-        }
-        match proposition {
-            Proposition::CMemoryMutatesOnly {
-                before: effect_before,
-                after: effect_after,
-                pointers,
-            } => {
-                (effect_before == before
-                    || memory_materializes_atomic_load(effect_before, before, pointer)
-                    || c_memories_canonically_equal(effect_before, before)
-                    || canonical_memory_for_pointer_load(effect_before, pointer)
-                        == canonical_memory_for_pointer_load(before, pointer))
-                    && (effect_after == after
-                        || c_memories_canonically_equal(effect_after, after)
-                        || canonical_memory_for_pointer_load(effect_after, pointer)
-                            == canonical_memory_for_pointer_load(after, pointer))
-                    && pointers.iter().all(|write| {
-                        write.blocks_proven_distinct(pointer)
-                            || pointer_offsets_with_common_base_proven_distinct(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                            || pointers_proven_distinct_for_memory_resolution(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                            || assumptions.pointers_proven_disjoint_by_range(write, pointer)
-                            || pointer_byte_offset_from_base(write, pointer)
-                                .and_then(|offset| offset.as_const())
-                                .is_some_and(|offset| offset != 0)
-                    })
-            }
-            Proposition::CMemoryEffectSummary {
-                before: effect_before,
-                after: effect_after,
-                mutable_ranges,
-            } => {
-                let before_matches =
-                    memory_matches_effect_summary_endpoint(effect_before, before, pointer);
-                let after_matches =
-                    memory_matches_effect_summary_endpoint(effect_after, after, pointer);
-                before_matches
-                    && after_matches
-                    && assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-            }
-            Proposition::CHeapAllocationFreed {
-                before: effect_before,
-                after: effect_after,
-                allocation_base,
-                bytes,
-            } => {
-                let before_matches =
-                    memory_matches_effect_summary_endpoint(effect_before, before, pointer);
-                let after_matches =
-                    memory_matches_effect_summary_endpoint(effect_after, after, pointer);
-                before_matches
-                    && after_matches
-                    && heap_allocation_proven_separate_from_pointer(
-                        allocation_base,
-                        bytes,
-                        pointer,
-                        assumptions,
-                    )
-            }
-            _ => false,
-        }
-    }) {
-        return true;
-    }
-    load_unchanged_via_effect_chain(before, after, pointer, assumptions)
-}
-
-/// Answers load preservation from the memory DAG rather than by searching
-/// recorded effect facts: follows the derivations that execution recorded
-/// when it built the snapshots, refusing any edge that could have written
-/// the pointer.
-///
-/// This is the first consumer of the named-memory-states representation
-/// (`docs/internals/memory-dag.md`). Where
-/// [`load_unchanged_via_effect_chain`] reconstructs a write history at proof
-/// time from `CMemoryMutatesOnly` / `CMemoryEffectSummary` facts and links
-/// hops by deep-canonical snapshot equality, this walks the history itself
-/// and links hops by arena identity, so two forms of one location cannot
-/// drift apart between program points.
-///
-/// Soundness rests on three things. Each `Store` hop is crossed only when
-/// the written pointer is *provably distinct* from the loaded one, using the
-/// same distinctness predicates as the fact-based paths. Each `CallHavoc`
-/// hop is crossed only when the call's mutable ranges are provably disjoint
-/// from the pointer, matching the `CMemoryEffectSummary` arm above. A
-/// `LoopHavoc` hop follows the same rule when a checked whole-loop footprint
-/// is present; an unevaluated footprint is never crossed, so its freshness
-/// marker is honoured here at the edge, which is where conventions.md's
-/// havoc-identity trap is disarmed for this arc.
-///
-/// The walk terminates because a derivation's base always holds a strictly
-/// smaller arena id (see `record_c_memory_derivation`); the hop cap and the
-/// reentrancy guard are the belt-and-braces conventions.md asks of any new
-/// recursive prover arm, since the per-hop distinctness checks can re-enter
-/// memory reasoning.
-fn load_unchanged_along_memory_derivations(
-    before: &CMemory,
-    after: &CMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    thread_local! {
-        static DERIVATION_WALK_ACTIVE: std::cell::Cell<bool> =
-            const { std::cell::Cell::new(false) };
-    }
-    if DERIVATION_WALK_ACTIVE.with(std::cell::Cell::get) {
-        return false;
-    }
-    DERIVATION_WALK_ACTIVE.with(|active| active.set(true));
-    let before = intern_c_memory_ref(before);
-    let after = intern_c_memory_ref(after);
-    // "Unchanged" is symmetric, and callers pass the pair in either order.
-    let reached = memory_derivations_reach(&after, &before, pointer, assumptions)
-        || memory_derivations_reach(&before, &after, pointer, assumptions);
-    DERIVATION_WALK_ACTIVE.with(|active| active.set(false));
-    reached
-}
-
-/// Walks `from` back along its derivations looking for `target`, crossing
-/// only edges that provably leave `pointer`'s cell alone. See
-/// [`load_unchanged_along_memory_derivations`] for the soundness argument.
-fn memory_derivations_reach(
-    from: &SharedCMemory,
-    target: &SharedCMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    let mut current = from.clone();
-    // The walk ends at a snapshot with no derivation: ids strictly
-    // decrease along `base` (see `record_c_memory_derivation`), so every
-    // chain is finite and the work is the chain's length.
-    loop {
-        if current == *target {
-            return true;
-        }
-        // The check and the independent kernel certification build parallel
-        // derivation chains for one execution, so the target is often a
-        // sibling form of a snapshot on this chain rather than the same
-        // interned object. Decide that pair with the bounded pointer-load
-        // matcher — havoc marker sets must agree, so this never crosses a
-        // mutation event the edge rules would have refused.
-        if memories_match_for_pointer_load(current.memory(), target.memory(), pointer)
-            || memories_match_for_pointer_load_bounded_alias(
-                current.memory(),
-                target.memory(),
-                pointer,
-                assumptions,
-            )
-        {
-            return true;
-        }
-
-        // Ids strictly decrease along `base`, so an id at or below the
-        // target's can no longer reach the target *object* — but a sibling
-        // form of the target on this chain can still match below that
-        // point, so the walk continues to the chain's end instead of exiting.
-        let Some(derivation) = current.derivation() else {
-            return false;
-        };
-        let edge_name = match derivation.as_ref() {
-            CMemoryDerivation::Store { .. } => "memory derivation edge: store",
-            CMemoryDerivation::BlockDeclared { .. }
-            | CMemoryDerivation::HeapAllocationPending { .. }
-            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-            | CMemoryDerivation::CellsForgotten { .. } => "memory derivation edge: bookkeeping",
-            CMemoryDerivation::HeapAllocated { .. } => "memory derivation edge: allocation",
-            CMemoryDerivation::HeapFreed { .. } => "memory derivation edge: free",
-            CMemoryDerivation::CallHavoc { .. } => "memory derivation edge: call havoc",
-            CMemoryDerivation::LoopHavoc { .. } => "memory derivation edge: loop havoc",
-        };
-        let crossable = crate::instrumentation::measure_operation(
-            "kernel",
-            "memory derivation walk",
-            edge_name,
-            || match derivation.as_ref() {
-                CMemoryDerivation::Store {
-                    pointer: write,
-                    context,
-                    ..
-                } => {
-                    write != pointer
-                        && (crate::instrumentation::measure_operation(
-                            "kernel",
-                            "memory derivation store edge",
-                            "store edge: distinct blocks",
-                            || write.blocks_proven_distinct(pointer),
-                        ) || store_frozen_order_crosses(&current, context, write, pointer)
-                            || crate::instrumentation::measure_operation(
-                                "kernel",
-                                "memory derivation store edge",
-                                "store edge: common-base offsets",
-                                || {
-                                    pointer_offsets_with_common_base_proven_distinct(
-                                        write,
-                                        pointer,
-                                        assumptions,
-                                    )
-                                },
-                            )
-                            || crate::instrumentation::measure_operation(
-                                "kernel",
-                                "memory derivation store edge",
-                                "store edge: general pointer distinctness",
-                                || {
-                                    pointers_proven_distinct_for_memory_resolution(
-                                        write,
-                                        pointer,
-                                        assumptions,
-                                    )
-                                },
-                            )
-                            || crate::instrumentation::measure_operation(
-                                "kernel",
-                                "memory derivation store edge",
-                                "store edge: range-separated pointers",
-                                // The same range-membership route the fact-based
-                                // MutatesOnly arm uses: the write inside one
-                                // separated range and the load inside the other.
-                                || {
-                                    crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
-                                        write,
-                                        pointer,
-                                        assumptions,
-                                    )
-                                },
-                            ))
-                }
-                // Declaring a block or forgetting cached cells writes nothing,
-                // so every load is untouched — but only the extended-bridging
-                // scope may exploit that: elsewhere these edges must look like
-                // the pre-arc absence of an edge.
-                CMemoryDerivation::BlockDeclared { .. }
-                | CMemoryDerivation::HeapAllocationPending { .. }
-                | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-                | CMemoryDerivation::CellsForgotten { .. } => extended_dag_bridging_active(),
-                CMemoryDerivation::HeapAllocated { block, .. } => {
-                    pointer.block != *block && extended_dag_bridging_active()
-                }
-                CMemoryDerivation::HeapFreed {
-                    allocation_base,
-                    bytes,
-                    ..
-                } => {
-                    extended_dag_bridging_active()
-                        && (allocation_base.blocks_proven_distinct(pointer)
-                            || pointers_proven_distinct_for_memory_resolution(
-                                allocation_base,
-                                pointer,
-                                assumptions,
-                            )
-                            || heap_allocation_proven_separate_from_pointer(
-                                allocation_base,
-                                bytes,
-                                pointer,
-                                assumptions,
-                            ))
-                }
-                CMemoryDerivation::CallHavoc {
-                    mutable_ranges,
-                    context,
-                    ..
-                } => {
-                    assumptions.ranges_proven_disjoint_from_pointer_for_frame(
-                        mutable_ranges,
-                        pointer,
-                        current.memory(),
-                    ) || call_havoc_frozen_context_crosses(
-                        &current,
-                        mutable_ranges,
-                        context,
-                        pointer,
-                    )
-                }
-                CMemoryDerivation::LoopHavoc {
-                    mutable_ranges: Some(mutable_ranges),
-                    ..
-                } => {
-                    explicit_dag_check_active()
-                        && typed_ranges_disjoint_from_pointer_evidence(
-                            mutable_ranges,
-                            pointer,
-                            assumptions,
-                        )
-                        .is_some()
-                }
-                // An interface or otherwise unevaluated loop footprint is a
-                // hard provenance barrier.
-                CMemoryDerivation::LoopHavoc {
-                    mutable_ranges: None,
-                    ..
-                } => false,
-            },
-        );
-        if !crossable {
-            return false;
-        }
-        current = derivation.base().clone();
-    }
-}
-
 /// Where the memory DAG says the cell at a pointer came from: the
 /// select-over-store answer to "what does this cell hold after these
 /// stores", read off the write history execution recorded rather than
@@ -1115,31 +661,6 @@ fn store_frozen_order_condition(
         .then_some(condition)
 }
 
-/// Whether a store edge's frozen context proves the load misses the written
-/// cell. Memoized per edge and pointer like the call-havoc crossing: the
-/// derived snapshot identifies the edge, and every later naming walk crosses
-/// it for the same cells.
-fn store_frozen_order_crosses(
-    derived: &crate::kernel::SharedCMemory,
-    context: &PureFactContext,
-    write: &Pointer,
-    pointer: &Pointer,
-) -> bool {
-    let key = (derived.clone(), pointer.clone());
-    if let Some(hit) = FROZEN_CROSSING_MEMO.with(|memo| memo.borrow().get(&key).copied()) {
-        return hit;
-    }
-    let crosses = store_frozen_order_condition(context, write, pointer).is_some();
-    FROZEN_CROSSING_MEMO.with(|memo| {
-        let mut memo = memo.borrow_mut();
-        if memo.len() >= 100_000 {
-            memo.clear();
-        }
-        memo.insert(key, crosses);
-    });
-    crosses
-}
-
 impl PositiveTermEvidence {
     fn for_term(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<Self> {
         if signed_bitvector_constant(term).is_some_and(|value| value > 0) {
@@ -1325,9 +846,65 @@ enum CheckedLoadEqualityEvidence {
     Canonical,
     /// Both loads resolve to one cell by the execution-recorded memory DAG.
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
+    /// The two source-level load terms have congruent addresses, and their
+    /// recorded origin snapshots are structurally identical at that cell.
+    /// Keeping both endpoints and the selected offset proof makes this a
+    /// finite checked path rather than a request to rediscover pointer
+    /// equality during proof-object validation.
+    OriginDirectSnapshot {
+        left: OriginLoadEndpoint,
+        right: OriginLoadEndpoint,
+        offset: PointerOffsetCongruenceEvidence,
+    },
+    /// The two source-level load terms meet along the recorded memory DAG
+    /// when viewed at their original execution snapshots.
+    OriginMemoryDag {
+        left: OriginLoadEndpoint,
+        right: OriginLoadEndpoint,
+        equality: AtomicMemoryLoadEqualityEvidence,
+    },
+    /// One exact effect-summary fact connects the two original snapshots,
+    /// and each mutable range carries its selected local proof of
+    /// disjointness from the loaded pointer.
+    OriginEffectSummary {
+        left: OriginLoadEndpoint,
+        right: OriginLoadEndpoint,
+        summary: Box<Proposition>,
+        reversed: bool,
+        ranges: Vec<RangeDisjointFromPointerEvidence>,
+    },
     /// Both DAG walks stop at registered result views of one opaque call
     /// occurrence owned by the current execution proof.
     SameCheckedCallEvent(CheckedCallLoadEqualityEvidence),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OriginLoadEndpoint {
+    memory: SharedCMemory,
+    pointer: Pointer,
+}
+
+impl OriginLoadEndpoint {
+    fn for_term(term: &Bitvector32Term) -> Option<Self> {
+        let (memory, pointer) = match term {
+            Bitvector32Term::MemoryLoad(memory, pointer) => {
+                (memory.clone(), pointer.as_ref().clone())
+            }
+            Bitvector32Term::Variable(variable) => {
+                crate::kernel::eval::registered_load_origin_for_variable(variable)?
+            }
+            _ => return None,
+        };
+        Some(Self { memory, pointer })
+    }
+
+    fn matches_term(&self, term: &Bitvector32Term) -> bool {
+        Self::for_term(term).as_ref() == Some(self)
+    }
+
+    fn as_term(&self) -> Bitvector32Term {
+        Bitvector32Term::MemoryLoad(self.memory.clone(), Box::new(self.pointer.clone()))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1357,6 +934,35 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
     static CHECKED_CALL_EVENT_SCOPES: std::cell::RefCell<Vec<CheckedCallEventScopeFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static CHECKED_ORIGIN_LOAD_EQUALITIES_IN_PROGRESS: std::cell::RefCell<
+        BTreeSet<(Bitvector32Term, Bitvector32Term)>,
+    > = const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+struct CheckedOriginLoadEqualityGuard {
+    query: (Bitvector32Term, Bitvector32Term),
+}
+
+impl CheckedOriginLoadEqualityGuard {
+    fn enter(left: &Bitvector32Term, right: &Bitvector32Term) -> Option<Self> {
+        let query = if left <= right {
+            (left.clone(), right.clone())
+        } else {
+            (right.clone(), left.clone())
+        };
+        CHECKED_ORIGIN_LOAD_EQUALITIES_IN_PROGRESS.with(|queries| {
+            let inserted = queries.borrow_mut().insert(query.clone());
+            inserted.then_some(Self { query })
+        })
+    }
+}
+
+impl Drop for CheckedOriginLoadEqualityGuard {
+    fn drop(&mut self) {
+        CHECKED_ORIGIN_LOAD_EQUALITIES_IN_PROGRESS.with(|queries| {
+            queries.borrow_mut().remove(&self.query);
+        });
+    }
 }
 
 pub(crate) struct CheckedCallEventScope {
@@ -1573,6 +1179,15 @@ impl CheckedLoadEquality {
         right: &Bitvector32Term,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
+        Self::new_with_canonical_fallback(left, right, assumptions, true)
+    }
+
+    fn new_with_canonical_fallback(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        assumptions: &PureFactContext,
+        allow_canonical_fallback: bool,
+    ) -> Option<Self> {
         if !matches!(left, Bitvector32Term::MemoryLoad(_, _))
             || !matches!(right, Bitvector32Term::MemoryLoad(_, _))
         {
@@ -1602,8 +1217,9 @@ impl CheckedLoadEquality {
             CheckedLoadEqualityEvidence::MemoryDag(evidence)
         } else if let Some(evidence) = call_evidence {
             CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence)
-        } else if crate::kernel::eval::canonical_term(left)
-            == crate::kernel::eval::canonical_term(right)
+        } else if allow_canonical_fallback
+            && crate::kernel::eval::canonical_term(left)
+                == crate::kernel::eval::canonical_term(right)
         {
             CheckedLoadEqualityEvidence::Canonical
         } else {
@@ -1641,6 +1257,64 @@ impl CheckedLoadEquality {
                 ),
                 assumptions,
             ),
+            CheckedLoadEqualityEvidence::OriginDirectSnapshot {
+                left,
+                right,
+                offset,
+            } => {
+                left.matches_term(&self.left)
+                    && right.matches_term(&self.right)
+                    && left.pointer.block == right.pointer.block
+                    && offset.checks(&left.pointer.offset, &right.pointer.offset, assumptions)
+                    && memories_match_for_pointer_load(&left.memory, &right.memory, &left.pointer)
+            }
+            CheckedLoadEqualityEvidence::OriginMemoryDag {
+                left,
+                right,
+                equality,
+            } => {
+                left.matches_term(&self.left)
+                    && right.matches_term(&self.right)
+                    && equality.checks(
+                        &Proposition::ConditionIs(
+                            ConditionTerm::equal(left.as_term(), right.as_term()),
+                            true,
+                        ),
+                        assumptions,
+                    )
+            }
+            CheckedLoadEqualityEvidence::OriginEffectSummary {
+                left,
+                right,
+                summary,
+                reversed,
+                ranges,
+            } => {
+                let Proposition::CMemoryEffectSummary {
+                    before,
+                    after,
+                    mutable_ranges,
+                } = summary.as_ref()
+                else {
+                    return false;
+                };
+                let (expected_left, expected_right) = if *reversed {
+                    (after, before)
+                } else {
+                    (before, after)
+                };
+                left.matches_term(&self.left)
+                    && right.matches_term(&self.right)
+                    && left.pointer == right.pointer
+                    && left.memory.memory() == expected_left
+                    && right.memory.memory() == expected_right
+                    && assumptions.contains_assumed_exact(summary)
+                    && ranges.len() == mutable_ranges.len()
+                    && ranges
+                        .iter()
+                        .zip(mutable_ranges)
+                        .all(|(evidence, range)| evidence.checks(range, &left.pointer, assumptions))
+            }
             CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence) => {
                 let (
                     Bitvector32Term::MemoryLoad(left_memory, left_pointer),
@@ -1677,6 +1351,9 @@ impl CheckedLoadEquality {
         match &self.evidence {
             CheckedLoadEqualityEvidence::MemoryDag(evidence) => Some(evidence),
             CheckedLoadEqualityEvidence::Canonical
+            | CheckedLoadEqualityEvidence::OriginDirectSnapshot { .. }
+            | CheckedLoadEqualityEvidence::OriginMemoryDag { .. }
+            | CheckedLoadEqualityEvidence::OriginEffectSummary { .. }
             | CheckedLoadEqualityEvidence::SameCheckedCallEvent(_) => None,
         }
     }
@@ -1715,6 +1392,144 @@ pub(crate) fn checked_atomic_load_equality(
         return false;
     };
     retain_checked_load_equality(equality);
+    true
+}
+
+/// The recorded-edge subset used by broad fact matching. Canonicalizing an
+/// arbitrary failed term pair here would turn a local lookup back into
+/// speculative whole-term work; origin matching below owns its direct
+/// structural snapshot rule separately.
+pub(crate) fn checked_recorded_atomic_load_equality(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let Some(equality) =
+        CheckedLoadEquality::new_with_canonical_fallback(left, right, assumptions, false)
+    else {
+        return false;
+    };
+    retain_checked_load_equality(equality);
+    true
+}
+
+/// Select a finite equality witness for two loads at the snapshots where the
+/// execution first observed them. This is the evidence-producing replacement
+/// for the former recursive origin fallback in `memory_loads_proven_equal`.
+pub(crate) fn checked_origin_load_equality(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let Some(_query) = CheckedOriginLoadEqualityGuard::enter(left, right) else {
+        return false;
+    };
+    let (Some(left_endpoint), Some(right_endpoint)) = (
+        OriginLoadEndpoint::for_term(left),
+        OriginLoadEndpoint::for_term(right),
+    ) else {
+        return false;
+    };
+    if left_endpoint.pointer.block != right_endpoint.pointer.block {
+        return false;
+    }
+
+    let direct = assumptions
+        .pointer_offset_congruence_evidence(
+            &left_endpoint.pointer.offset,
+            &right_endpoint.pointer.offset,
+        )
+        .filter(|_| {
+            memories_match_for_pointer_load(
+                &left_endpoint.memory,
+                &right_endpoint.memory,
+                &left_endpoint.pointer,
+            )
+        })
+        .map(|offset| CheckedLoadEqualityEvidence::OriginDirectSnapshot {
+            left: left_endpoint.clone(),
+            right: right_endpoint.clone(),
+            offset,
+        });
+
+    let dag = direct.is_none().then(|| {
+        if left_endpoint.pointer != right_endpoint.pointer {
+            return None;
+        }
+        let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
+        let evidence = with_extended_dag_bridging(|| {
+            atomic_memory_load_equality_evidence(
+                &left_endpoint.as_term(),
+                &right_endpoint.as_term(),
+                assumptions,
+            )
+            .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+            .or_else(|| {
+                typed_canonical_projection_load_equality_evidence(
+                    &left_endpoint.as_term(),
+                    &right_endpoint.as_term(),
+                    assumptions,
+                )
+            })
+        });
+        EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
+        evidence.map(|equality| CheckedLoadEqualityEvidence::OriginMemoryDag {
+            left: left_endpoint.clone(),
+            right: right_endpoint.clone(),
+            equality,
+        })
+    });
+
+    let effect_summary = (direct.is_none() && dag.as_ref().is_none_or(Option::is_none))
+        .then(|| {
+            assumptions.prop_facts.iter().find_map(|summary| {
+                let Proposition::CMemoryEffectSummary {
+                    before,
+                    after,
+                    mutable_ranges,
+                } = summary
+                else {
+                    return None;
+                };
+                let reversed = if before == left_endpoint.memory.memory()
+                    && after == right_endpoint.memory.memory()
+                {
+                    false
+                } else if after == left_endpoint.memory.memory()
+                    && before == right_endpoint.memory.memory()
+                {
+                    true
+                } else {
+                    return None;
+                };
+                (left_endpoint.pointer == right_endpoint.pointer)
+                    .then(|| {
+                        typed_ranges_disjoint_from_pointer_evidence(
+                            mutable_ranges,
+                            &left_endpoint.pointer,
+                            assumptions,
+                        )
+                    })
+                    .flatten()
+                    .map(|ranges| CheckedLoadEqualityEvidence::OriginEffectSummary {
+                        left: left_endpoint.clone(),
+                        right: right_endpoint.clone(),
+                        summary: Box::new(summary.clone()),
+                        reversed,
+                        ranges,
+                    })
+            })
+        })
+        .flatten();
+
+    let Some(evidence) = direct.or_else(|| dag.flatten()).or(effect_summary) else {
+        return false;
+    };
+    retain_checked_load_equality(CheckedLoadEquality {
+        left: left.clone(),
+        right: right.clone(),
+        evidence,
+    });
     true
 }
 
@@ -2478,7 +2293,7 @@ fn memory_dag_cell_source_walk(
                 // The recorded-range fallback covers writes into a
                 // proven-separate region (a buffer store crossed while
                 // resolving a struct field); the same predicate
-                // `memory_derivations_reach` crosses `Store` hops with.
+                // The memory-DAG cell resolver crosses `Store` hops with.
                 // Extended-bridging scope only, and under its own capped
                 // budget so this advisory walk can never drain the
                 // enclosing query's fuel — fuel-coupled forms elsewhere
@@ -2727,7 +2542,7 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
         })
 }
 
-/// Answers "are these two loads equal" from the memory DAG: both sides are
+/// Produces checked evidence that two loads are equal from the memory DAG: both sides are
 /// resolved to their source cell by [`memory_dag_cell_source`], and the loads
 /// are equal when the two lookups land on the same node or pin down the same
 /// value.
@@ -2740,22 +2555,9 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
 /// by stores that provably missed it — costs a short walk instead of a deep
 /// term rewrite.
 ///
-/// Advisory as ever: a `false` here means "the DAG did not answer", and every
-/// caller falls through to its previous path. Derivations are not guaranteed
-/// to connect every pair of snapshots, so falling through is the normal case,
-/// not an error.
-pub(super) fn loads_equal_along_memory_derivations_at(
-    left_memory: &SharedCMemory,
-    right_memory: &SharedCMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    memory_load_equality_evidence_at(left_memory, right_memory, pointer, assumptions).is_some()
-}
-
-/// Evidence-producing form of [`loads_equal_along_memory_derivations_at`].
-/// Successful certificate-producing callers must retain this value rather
-/// than calling the boolean adapter and later searching for the walk again.
+/// A missing result means "the DAG did not answer". Derivations are not
+/// guaranteed to connect every pair of snapshots, so callers may try another
+/// exact evidence source.
 pub(super) fn memory_load_equality_evidence_at(
     left_memory: &SharedCMemory,
     right_memory: &SharedCMemory,
@@ -2798,7 +2600,7 @@ pub(super) fn memory_load_equality_evidence_at(
     }
 }
 
-/// The [`loads_equal_along_memory_derivations_at`] arm as a term-level test:
+/// The memory-DAG equality arm as a term-level test:
 /// true only when both sides are atomic loads the DAG resolves alike.
 ///
 /// Beyond the node-identity comparison, one side's walk may land on a
@@ -2974,107 +2776,6 @@ thread_local! {
 }
 
 const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
-
-/// Bounded search for a chain of recorded effects carrying a load from one
-/// snapshot to another with the pointer untouched at every hop. Endpoints
-/// link by deep-canonical equality, and each hop's write set must be
-/// provably distinct from the pointer, so the chain never crosses a write
-/// to the loaded cell and never bridges havoc without a recorded effect.
-fn load_unchanged_via_effect_chain(
-    before: &CMemory,
-    after: &CMemory,
-    pointer: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    // Real allocator/copy/install/free paths routinely cross more than eight
-    // individually certified effects. The effect graph is finite, so a proof
-    // must not fail merely because its certified chain is long.
-    let mut steps = Vec::new();
-    for proposition in assumptions.prop_facts.iter() {
-        match proposition {
-            Proposition::CMemoryMutatesOnly {
-                before: step_before,
-                after: step_after,
-                pointers,
-            } => {
-                let untouched = pointers.iter().all(|write| {
-                    write.blocks_proven_distinct(pointer)
-                        || pointer_offsets_with_common_base_proven_distinct(
-                            write,
-                            pointer,
-                            assumptions,
-                        )
-                        || pointers_proven_distinct_for_memory_resolution(
-                            write,
-                            pointer,
-                            assumptions,
-                        )
-                });
-                if untouched {
-                    steps.push((step_before, step_after));
-                }
-            }
-            Proposition::CMemoryEffectSummary {
-                before: step_before,
-                after: step_after,
-                mutable_ranges,
-            } => {
-                if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
-                    steps.push((step_before, step_after));
-                }
-            }
-            Proposition::CHeapAllocationFreed {
-                before: step_before,
-                after: step_after,
-                allocation_base,
-                bytes,
-            } => {
-                if heap_allocation_proven_separate_from_pointer(
-                    allocation_base,
-                    bytes,
-                    pointer,
-                    assumptions,
-                ) {
-                    steps.push((step_before, step_after));
-                }
-            }
-            _ => {}
-        }
-    }
-    if steps.is_empty() {
-        return false;
-    }
-    // Hops link pointer-relatively: two forms of one snapshot may carry
-    // different unrelated cells (deep-canonical equality then fails), but a
-    // load-preservation chain only needs the pointed-at cell to agree at
-    // every junction. The effect graph is finite, so traverse it to a fixed
-    // point instead of rejecting valid chains after an arbitrary hop count.
-    let joins = |expected: &CMemory, actual: &CMemory| {
-        memory_matches_effect_summary_endpoint(expected, actual, pointer)
-    };
-    let mut frontier: Vec<&CMemory> = vec![before];
-    let mut seen: Vec<&CMemory> = vec![before];
-    while !frontier.is_empty() {
-        let mut next = Vec::new();
-        for current in frontier {
-            for (step_before, step_after) in &steps {
-                for (from, to) in [(step_before, step_after), (step_after, step_before)] {
-                    if joins(from, current) {
-                        if joins(to, after) {
-                            return true;
-                        }
-                        if !seen.iter().any(|seen| joins(seen, to)) {
-                            seen.push(*to);
-                            next.push(*to);
-                        }
-                    }
-                }
-            }
-        }
-        frontier = next;
-    }
-    false
-}
 
 /// Searches the finite graph of recorded effects connecting two memory
 /// snapshots, regardless of what the effects wrote. Used for properties that
@@ -3554,8 +3255,6 @@ pub(crate) fn atomic_canonicalization_term_visits() -> usize {
 }
 
 pub(crate) fn clear_provenance_memos() {
-    UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
-    UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
     DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
     DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
 }
@@ -6041,257 +5740,6 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
     assumptions: &PureFactContext,
 ) -> Bitvector32Term {
     normalize_exact_memory_loads_in_bitvector_iterative(term, assumptions)
-}
-
-fn normalize_exact_memory_loads_in_bitvector_recursive(
-    term: &Bitvector32Term,
-    assumptions: &PureFactContext,
-    depth: usize,
-) -> Bitvector32Term {
-    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
-        return term.clone();
-    }
-    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        (
-            normalize_exact_memory_loads_in_bitvector_recursive(left, assumptions, depth + 1),
-            normalize_exact_memory_loads_in_bitvector_recursive(right, assumptions, depth + 1),
-        )
-    };
-    match term {
-        Bitvector32Term::Constant(_)
-        | Bitvector32Term::Int64Constant(_)
-        | Bitvector32Term::UInt64Constant(_)
-        | Bitvector32Term::Variable(_) => term.clone(),
-        Bitvector32Term::Add(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::add(left, right)
-        }
-        Bitvector32Term::Subtract(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::subtract(left, right)
-        }
-        Bitvector32Term::Multiply(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::multiply(left, right)
-        }
-        Bitvector32Term::Divide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::divide(left, right)
-        }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::unsigned_divide(left, right)
-        }
-        Bitvector32Term::Remainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::remainder(left, right)
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::unsigned_remainder(left, right)
-        }
-        Bitvector32Term::ShiftLeft(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::shift_left(left, right)
-        }
-        Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::arithmetic_shift_right(left, right)
-        }
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::logical_shift_right(left, right)
-        }
-        Bitvector32Term::BitwiseAnd(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_and(left, right)
-        }
-        Bitvector32Term::BitwiseOr(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_or(left, right)
-        }
-        Bitvector32Term::BitwiseXor(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::bitwise_xor(left, right)
-        }
-        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::bitwise_not(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::Float32Negate(value) => Bitvector32Term::float32_negate(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::Float32Binary {
-            operator,
-            left,
-            right,
-        } => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::float32_binary(left, right, *operator)
-        }
-        Bitvector32Term::Float64Negate(value) => Bitvector32Term::float64_negate(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::Float64Binary {
-            operator,
-            left,
-            right,
-        } => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::float64_binary(left, right, *operator)
-        }
-        Bitvector32Term::Int64From32(value) => Bitvector32Term::int64_from_32(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::UInt64From32(value) => Bitvector32Term::uint64_from_32(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::Int64FromUInt32(value) => Bitvector32Term::int64_from_uint32(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::UInt64FromInt32(value) => Bitvector32Term::uint64_from_int32(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::UInt64FromInt64(value) => Bitvector32Term::uint64_from_int64(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::Int64Add(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_add(left, right)
-        }
-        Bitvector32Term::Int64Subtract(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_subtract(left, right)
-        }
-        Bitvector32Term::Int64Multiply(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_multiply(left, right)
-        }
-        Bitvector32Term::Int64Divide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_divide(left, right)
-        }
-        Bitvector32Term::Int64Remainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_remainder(left, right)
-        }
-        Bitvector32Term::Int64ShiftLeft(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_shift_left(left, right)
-        }
-        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_arithmetic_shift_right(left, right)
-        }
-        Bitvector32Term::Int64BitwiseAnd(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_bitwise_and(left, right)
-        }
-        Bitvector32Term::Int64BitwiseOr(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_bitwise_or(left, right)
-        }
-        Bitvector32Term::Int64BitwiseXor(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::int64_bitwise_xor(left, right)
-        }
-        Bitvector32Term::Int64BitwiseNot(value) => Bitvector32Term::int64_bitwise_not(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::UInt64Add(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_add(left, right)
-        }
-        Bitvector32Term::UInt64Subtract(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_subtract(left, right)
-        }
-        Bitvector32Term::UInt64Multiply(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_multiply(left, right)
-        }
-        Bitvector32Term::UInt64Divide(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_divide(left, right)
-        }
-        Bitvector32Term::UInt64Remainder(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_remainder(left, right)
-        }
-        Bitvector32Term::UInt64ShiftLeft(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_shift_left(left, right)
-        }
-        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_logical_shift_right(left, right)
-        }
-        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_bitwise_and(left, right)
-        }
-        Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_bitwise_or(left, right)
-        }
-        Bitvector32Term::UInt64BitwiseXor(left, right) => {
-            let (left, right) = binary(left, right);
-            Bitvector32Term::uint64_bitwise_xor(left, right)
-        }
-        Bitvector32Term::UInt64BitwiseNot(value) => Bitvector32Term::uint64_bitwise_not(
-            normalize_exact_memory_loads_in_bitvector_recursive(value, assumptions, depth + 1),
-        ),
-        Bitvector32Term::If {
-            condition,
-            then_term,
-            else_term,
-        } => Bitvector32Term::If {
-            condition: condition.clone(),
-            then_term: Box::new(normalize_exact_memory_loads_in_bitvector_recursive(
-                then_term,
-                assumptions,
-                depth + 1,
-            )),
-            else_term: Box::new(normalize_exact_memory_loads_in_bitvector_recursive(
-                else_term,
-                assumptions,
-                depth + 1,
-            )),
-        },
-        Bitvector32Term::RangeFold { .. } => term.clone(),
-        Bitvector32Term::PureFunctionApplication { name, arguments } => {
-            Bitvector32Term::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        normalize_exact_memory_loads_in_bitvector_recursive(
-                            argument,
-                            assumptions,
-                            depth + 1,
-                        )
-                    })
-                    .collect(),
-            }
-        }
-        Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
-        Bitvector32Term::PointerAddress(_) => term.clone(),
-        Bitvector32Term::MemoryLoad(memory, pointer) => {
-            if let Some(CValue::Int32(value)) = memory.known_value(pointer)
-                && &value != term
-            {
-                return normalize_exact_memory_loads_in_bitvector_recursive(
-                    &value,
-                    assumptions,
-                    depth + 1,
-                );
-            }
-            let Some(value) = assumptions.resolve_memory_load_term(term) else {
-                return term.clone();
-            };
-            normalize_exact_memory_loads_in_bitvector_recursive(&value, assumptions, depth + 1)
-        }
-    }
 }
 
 #[cfg(test)]

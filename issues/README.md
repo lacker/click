@@ -76,7 +76,6 @@ normal tooling-first policy and should then be added to this list.
 
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
-- [Move the global load-equality prover out of the kernel](load-equality-prover-in-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 ## Functionality gaps: 24

@@ -595,31 +595,6 @@ fn target_directed_transport_preserves_one_old_load_form() {
 }
 
 #[test]
-fn exact_changed_cell_frame_precedes_abstract_effect_search() {
-    let queried = Pointer {
-        block: "arg-memory".into(),
-        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_000)), 4),
-    };
-    let materialized = Pointer {
-        block: queried.block.clone(),
-        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_001)), 4),
-    };
-    let before = CMemory::new().with_block("call-havoc:0", 0);
-    let after = before.clone().store(materialized.clone(), int32(7));
-    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
-        left: CResource::Memory(memory_range(queried.clone(), 0, 1)),
-        right: CResource::Memory(memory_range(materialized, 0, 1)),
-    });
-
-    assert!(c_memory_load_is_unchanged(
-        &before,
-        &after,
-        &queried,
-        &assumptions,
-    ));
-}
-
-#[test]
 fn exact_separation_resolves_contained_symbolic_ranges_without_general_search() {
     let owner = Pointer {
         block: "arg-memory".into(),
@@ -779,8 +754,6 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
         assumptions.memory_separation_candidate_count(&left.block, &right.block),
         1
     );
-    assert!(assumptions.pointers_proven_disjoint_by_range(&left, &right));
-
     PureFactContext::reset_memory_separation_candidate_checks();
     assert!(
         assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &right)

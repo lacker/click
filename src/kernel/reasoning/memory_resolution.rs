@@ -100,7 +100,6 @@ pub(in crate::kernel) fn resolution_interrupted() -> bool {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResolutionQueryKey {
     PointerDistinct(u64, bool, Pointer, Pointer),
-    PointerRangeDisjoint(u64, bool, Pointer, Pointer),
     PointerEqual(u64, bool, Pointer, Pointer),
     PointerOffsetEqual(u64, bool, PointerOffsetTerm, PointerOffsetTerm),
     BitvectorEqual(u64, bool, Bitvector32Term, Bitvector32Term),
@@ -268,29 +267,6 @@ fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce()
         });
     }
     result
-}
-
-/// Memoized entry for the range-membership disjointness prover: the DAG
-/// walk re-asks it per store edge per caller, and the underlying candidate
-/// scan is expensive. Positive answers are found evidence; negatives cache
-/// per derivation generation exactly like the other resolution queries.
-/// Symmetric, so the key orders the pair.
-pub(crate) fn pointers_disjoint_by_range_memoized(
-    left: &Pointer,
-    right: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    let (first, second) = if left <= right {
-        (left, right)
-    } else {
-        (right, left)
-    };
-    let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
-        ResolutionQueryKey::PointerRangeDisjoint(id, bridging, first.clone(), second.clone())
-    });
-    memoized_resolution_query(key, || {
-        assumptions.pointers_directly_disjoint_by_range(left, right)
-    })
 }
 
 /// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.

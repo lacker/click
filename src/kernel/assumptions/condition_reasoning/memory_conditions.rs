@@ -37,63 +37,34 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
-        let Some(_depth_guard) = MemoryLoadEqualityDepthGuard::enter() else {
-            return false;
+        let checked_load_equality = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            let atomic = || {
+                let (Some(left), Some(right)) = (
+                    crate::kernel::eval::viewed_as_memory_load(left),
+                    crate::kernel::eval::viewed_as_memory_load(right),
+                ) else {
+                    return false;
+                };
+                crate::kernel::memory_provenance::checked_recorded_atomic_load_equality(
+                    &left, &right, self,
+                )
+            };
+            crate::kernel::memory_provenance::checked_origin_load_equality(left, right, self)
+                || atomic()
         };
-        if memory_load_terms_equal_for_fact_transport(left, right, self) {
+        if checked_load_equality(left, right) {
             return true;
         }
         if let Some(left) = self.resolve_memory_load_term(left) {
-            return self.bitvector_terms_proven_equal(&left, right);
+            return left == *right
+                || self.bitvector_terms_equal_from_facts(&left, right)
+                || checked_load_equality(&left, right);
         }
         if let Some(right) = self.resolve_memory_load_term(right) {
-            return self.bitvector_terms_proven_equal(left, &right);
+            return *left == right
+                || self.bitvector_terms_equal_from_facts(left, &right)
+                || checked_load_equality(left, &right);
         }
-
-        // Load variables are compared as the loads they represent, viewed at the
-        // live snapshot each was first read from: the canonical epoch has
-        // no derivation history, while the origin is DAG-connected, so the
-        // frame legs below can relate two load variables for one cell across an
-        // effect the facts frame it through; two variables over one epoch
-        // whose addresses this context proves equal are one cell.
-        let view_at_origin = |term: &Bitvector32Term| match term {
-            Bitvector32Term::Variable(variable) => {
-                crate::kernel::eval::registered_load_origin_for_variable(variable)
-                    .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)))
-            }
-            Bitvector32Term::MemoryLoad(_, _) => Some(term.clone()),
-            _ => None,
-        };
-        let left_view = view_at_origin(left);
-        let right_view = view_at_origin(right);
-        let (
-            Some(Bitvector32Term::MemoryLoad(left_memory, left_pointer)),
-            Some(Bitvector32Term::MemoryLoad(right_memory, right_pointer)),
-        ) = (&left_view, &right_view)
-        else {
-            return false;
-        };
-        if !pointers_proven_equal(left_pointer, right_pointer, self) {
-            return false;
-        }
-        if memories_match_for_pointer_load(left_memory, right_memory, left_pointer) {
-            return true;
-        }
-        // The DAG answers from recorded edges before either snapshot
-        // comparison below, and long before the two `prop_facts` scans that
-        // reconstruct the same write history from effect summaries.
-        if crate::kernel::api::loads_equal_along_memory_derivations_at(
-            left_memory,
-            right_memory,
-            left_pointer,
-            self,
-        ) {
-            return true;
-        }
-        // Fact matching stops at recorded evidence. Reconstructing a framed
-        // write history here is global proof search; a surface tactic must
-        // instead select an explicit transport whose checker can consume the
-        // recorded memory-DAG path.
         false
     }
 

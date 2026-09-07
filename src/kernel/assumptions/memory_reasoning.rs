@@ -570,11 +570,8 @@ impl PureFactContext {
         false
     }
 
-    /// The indexed-candidates leg of [`Self::pointers_proven_disjoint_by_range`]
-    /// alone: separation facts plus range membership, no derived-separation
-    /// fallback. Per-edge callers (the memory-DAG walk) use this so an
-    /// undecided edge fails prompt instead of paying the composition-backed
-    /// search per hop.
+    /// Decides separation from indexed facts plus range membership, without
+    /// invoking the composition-backed derived-separation search.
     pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
         &self,
         left: &Pointer,
@@ -615,79 +612,6 @@ impl PureFactContext {
             return true;
         }
         false
-    }
-
-    pub(in crate::kernel) fn pointers_proven_disjoint_by_range(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
-        let direct = crate::instrumentation::measure_operation(
-            "kernel",
-            "resource context equality",
-            "range disjointness: indexed facts",
-            || {
-                self.memory_separation_candidates(&left.block, &right.block)
-                    .find_map(|(proposition, left_range, right_range, _)| {
-                        crate::instrumentation::measure_operation(
-                            "kernel",
-                            "resource context equality",
-                            "range disjointness: indexed candidate",
-                            || {
-                                self.pointer_in_range_with_width(
-                                    left,
-                                    left_range.base(),
-                                    left_range.start(),
-                                    left_range.end(),
-                                    left_range.element_width(),
-                                ) && self.pointer_in_range_with_width(
-                                    right,
-                                    right_range.base(),
-                                    right_range.start(),
-                                    right_range.end(),
-                                    right_range.element_width(),
-                                ) || self.pointer_in_range_with_width(
-                                    right,
-                                    left_range.base(),
-                                    left_range.start(),
-                                    left_range.end(),
-                                    left_range.element_width(),
-                                ) && self.pointer_in_range_with_width(
-                                    left,
-                                    right_range.base(),
-                                    right_range.start(),
-                                    right_range.end(),
-                                    right_range.element_width(),
-                                )
-                            },
-                        )
-                        .then_some(proposition)
-                    })
-            },
-        );
-        if let Some(proposition) = direct {
-            record_implicit_reasoning_provenance(self, proposition);
-            return true;
-        }
-        crate::instrumentation::measure_operation(
-            "kernel",
-            "resource context equality",
-            "range disjointness: derived separation",
-            || {
-                self.proves_resource_separate(
-                    &CResource::Memory(CMemoryRange::new(
-                        left.clone(),
-                        Bitvector32Term::Constant(0),
-                        Bitvector32Term::Constant(1),
-                    )),
-                    &CResource::Memory(CMemoryRange::new(
-                        right.clone(),
-                        Bitvector32Term::Constant(0),
-                        Bitvector32Term::Constant(1),
-                    )),
-                )
-            },
-        )
     }
 
     pub(in crate::kernel) fn pointers_proven_disjoint_by_shallow_explicit_range(

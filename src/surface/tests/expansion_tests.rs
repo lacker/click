@@ -11037,7 +11037,7 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
 }
 
 #[test]
-fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
+fn outcome_simp_retains_checked_unchanged_old_equality_on_the_proof() {
     let c_source = r#"
         int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
             int32 i;
@@ -11075,7 +11075,7 @@ fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
 
     let (verified, events) =
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
-    verified.expect("the unchanged old equality should transport through Proof");
+    verified.expect("the unchanged old equality should advance Proof");
     let simp_start = events
         .iter()
         .rposition(|event| {
@@ -11105,7 +11105,7 @@ fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                 if name == "outcome simp compatibility construction"
         )),
-        "outcome old-equality transport must bypass compatibility construction during the final simp: {:#?}",
+        "outcome old equality must bypass compatibility construction during the final simp: {:#?}",
         &events[simp_start..=simp_end]
     );
 
@@ -11115,13 +11115,13 @@ fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
         "shifted_loop_effect_preserves_prefix",
         CProofClaim::Grouped,
     )
-    .expect("the retained old-equality transport should expand");
+    .expect("the retained old equality should expand");
     assert!(
-        expanded.contains("transport(old(p[0]) == old(p[0]), p[0] == old(p[0])) using {"),
+        expanded.contains("have p[0] == old(p[0]) by {\n                normalize();"),
         "{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained old-equality transport should check independently");
+        .expect("the retained old equality should check independently");
 }
 
 #[test]

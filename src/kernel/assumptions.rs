@@ -18,37 +18,6 @@ mod proposition_reasoning;
 pub(crate) use proposition_reasoning::clear_context_inconsistency_memos;
 pub(crate) use proposition_reasoning::finite_forall_goal_instances;
 
-// Global equality resolution can re-enter itself through snapshot and alias
-// facts. Two levels retain the framed symbolic-load cases while making failed
-// searches terminate conservatively instead of overflowing the stack.
-const MEMORY_LOAD_EQUALITY_DEPTH_LIMIT: usize = 2;
-
-thread_local! {
-    static MEMORY_LOAD_EQUALITY_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
-
-struct MemoryLoadEqualityDepthGuard;
-
-impl MemoryLoadEqualityDepthGuard {
-    fn enter() -> Option<Self> {
-        MEMORY_LOAD_EQUALITY_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= MEMORY_LOAD_EQUALITY_DEPTH_LIMIT {
-                note_search_truncation();
-                return None;
-            }
-            depth.set(current + 1);
-            Some(Self)
-        })
-    }
-}
-
-impl Drop for MemoryLoadEqualityDepthGuard {
-    fn drop(&mut self) {
-        MEMORY_LOAD_EQUALITY_DEPTH.with(|depth| depth.set(depth.get() - 1));
-    }
-}
-
 /// How a structural walk compares two load atoms. The walk itself is exact —
 /// it only ever descends through matching constructors — so the whole
 /// relation is only as strong as the load-atom rule plugged in here.
@@ -1539,11 +1508,10 @@ impl PureFactContext {
     }
 
     /// The terms recorded as 64-bit equal to `term` by one exact fact, each
-    /// with the stored fact so a certificate can cite it exactly. A load is
-    /// also matched against facts about the same cell in another memory
-    /// snapshot when the kernel's frame evidence shows the cell unchanged
-    /// between them, so a resource fact recorded at entry still describes
-    /// the word after resource rewrites that touched no memory.
+    /// with the stored fact so a certificate can cite it exactly. Loads may
+    /// also match the same pointer in a snapshot whose differing cells are
+    /// structurally irrelevant to that pointer; this is an assumption-free
+    /// snapshot check, not contextual frame reconstruction.
     pub(in crate::kernel) fn recorded_uint64_equals(
         &self,
         term: &Bitvector32Term,
@@ -1574,12 +1542,7 @@ impl PureFactContext {
                     continue;
                 };
                 if fact_pointer != pointer
-                    || !crate::kernel::memory_provenance::c_memory_load_is_unchanged(
-                        &fact_memory,
-                        &query_memory,
-                        &pointer,
-                        self,
-                    )
+                    || !memories_match_for_pointer_load(&fact_memory, &query_memory, &pointer)
                 {
                     continue;
                 }

@@ -27,6 +27,42 @@ fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
 }
 
 #[test]
+fn origin_load_equality_retains_singleton_index_bounds() {
+    let index = Bitvector32Term::Variable(Variable(710));
+    let left_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::add(Bitvector32Term::Constant(5), index.clone()),
+            4,
+        ),
+    };
+    let right_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Constant(5), 4),
+    };
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("arg-memory", 32));
+    let left = Bitvector32Term::MemoryLoad(memory.clone(), Box::new(left_pointer));
+    let right = Bitvector32Term::MemoryLoad(memory, Box::new(right_pointer));
+    let lower = ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
+    let upper = ConditionTerm::signed_less_than(index, Bitvector32Term::Constant(1));
+    let assumptions = PureFactContext::new()
+        .assume_condition(lower, true)
+        .assume_condition(upper, true);
+
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_origin_load_equality(&left, &right, &assumptions));
+    let equalities = capture.finish();
+    let [equality] = equalities.as_slice() else {
+        panic!("expected one retained origin equality, got {equalities:?}");
+    };
+    assert!(equality.checks(&assumptions));
+    assert!(
+        !equality.checks(&PureFactContext::new()),
+        "the retained equality must recheck both named singleton bounds",
+    );
+}
+
+#[test]
 fn checked_call_event_equality_requires_one_proof_owned_event_and_exact_query() {
     let assumptions = PureFactContext::new();
     let loaded = arc_pointer(0);

@@ -57,10 +57,8 @@ steps are charged as deterministic work per instance. Deterministic work over
 the profiled examples fell or held during that cleanup.
 
 The earlier claim that every structural depth cut was gone was incorrect. The
-inventory below is the current boundary as of 2026-09-03. The load-equality
-depth of two (`MEMORY_LOAD_EQUALITY_DEPTH_LIMIT`) remains separately measured
-and designed in `issues/load-equality-prover-in-kernel.md` because it caps a
-fact-branching search rather than a structural walk.
+inventory below is the current boundary after the subsequent structural,
+canonicalization, and load-equality migrations.
 
 The 2026-09-05 deciding-route census refined that older depth-hit count. After
 all cheaper load-equality rules had failed, the global fallback proved only 31
@@ -96,14 +94,25 @@ structural element index and exact signed bounds, including the `k < i + 1`,
 `i < 3` successor case.
 
 The checked-call event slice is complete, and the direct framed-transport
-fallback has been deleted. A residual-recursion census now shows that the
-positive dependent load-equality obligation is much smaller than the earlier
-negative search frontier suggested: only 30 successful roots across both
-fixture harnesses need one nested exact fact-transport step, and no successful
-root reaches the depth refusal. All 686,737 depth refusals occur below failed
-roots. The last separate global-prover caller is tagged-pointer
-`recorded_uint64_equals`; all 18 observed positives there are
-assumption-free direct snapshot matches.
+fallback has been deleted. The final load-equality slice is also complete.
+Tagged-pointer `recorded_uint64_equals` now uses only its observed
+assumption-free direct snapshot match, and the unused global framed-load
+prover and its memos are deleted. The 30 successful dependent roots found by
+the residual census now retain a finite witness: the two load origins, pointer
+offset congruence, and either a direct snapshot match, a typed memory-DAG path,
+or an exact effect-summary fact with per-range disjointness evidence. Broad
+fact matching checks this retained evidence and at most one resolved endpoint;
+it no longer launches arbitrary term-pair recursion.
+
+Consequently `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` and its truncation accounting
+are deleted without a replacement tier. The regression suite covers retained
+singleton-bound evidence, memory-DAG paths of increasing length, indexed
+separation in the presence of unrelated facts, and independent rechecking of
+the expanded old-load proof. On owned-vector, the slowest simple check fell
+from 9,230 to 3,855 deterministic work units and the previous 10,079-unit
+load-equality-dependent smart hotspot disappeared; total profile time fell
+from about 5.70s to 5.31s. Perpetual-service's measured simple work remained
+essentially flat (1,731 to 1,678 units for its slowest check).
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -194,22 +203,7 @@ change an answer.
    in the listed cases. The certificate must name only the range evidence and
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
-2. **Global and dependent load equality**,
-   `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. Framed atomic transport is fully
-   migrated, including checked-call event identity, and no longer calls the
-   global prover. The fresh residual census observed 103,504 top-level and
-   221,427 depth-one requests plus 686,737 depth refusals. Only 30 successful
-   roots needed a nested positive, always one exact fact-transport step; no
-   successful root encountered a refusal. The explosive dependent-address
-   population is therefore failed ambient search, not evidence that a general
-   recursive congruence object is required. Retain the selected finite two-hop
-   paths, prevent arbitrary term-pair matching from launching recursion, and
-   delete the limit. Separately, `recorded_uint64_equals` is the final
-   production caller of the old global prover; its 18 observed positives are
-   all direct `memories_match_for_pointer_load` decisions, so that caller can
-   be narrowed before the prover is deleted. This work is owned by
-   `issues/load-equality-prover-in-kernel.md`.
-3. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
+2. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
    `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
@@ -220,7 +214,7 @@ change an answer.
 
 1. **`search_truncations` and negative-memo gating**. The counter currently
    records more than search: exact-query cycle cuts, wall-clock deadlines,
-   load-equality depth refusal, and coarse tier suppression. While incomplete
+   and coarse tier suppression. While incomplete
    answers remain, rename it to describe that role (for example,
    `incomplete_reasoning_epoch`) rather than documenting it as cycle-only.
    Audit every conservative early return, including `SimpFactReasoningGuard`,
@@ -274,7 +268,9 @@ comparison now use only that narrower predicate for distinctness.
    emits checked proof branches; delete the kernel rule and depth limit.
 5. Move finite context splitting to explicit surface branches/certificates and
    remove the whole-context derivation payload.
-6. Complete the separately measured load-equality typed-evidence migration.
+6. **Complete:** retain finite typed load-equality evidence, delete the global
+   framed-load prover, prevent arbitrary term-pair recursion, and remove the
+   load-equality depth limit.
 7. Remove coarse reentrancy tiers and audit deadline propagation, cycle cuts,
    and negative-memo gating; then delete or accurately rename the incompleteness
    epoch.
@@ -342,8 +338,7 @@ the bound can change what the checker accepts.
 ## Acceptance criteria
 
 - No authoritative result under `src/kernel/` depends on a fuel counter or
-  numeric depth cut. `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT` may remain only while
-  `issues/load-equality-prover-in-kernel.md` is open; no new tier replaces it.
+  numeric depth cut.
 - Every structural walk is complete over its named input, cycle-safe where
   necessary, and covered by a deterministic multi-size scaling regression.
 - The finite context split and upper-bound split are surface planning whose
