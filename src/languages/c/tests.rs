@@ -1330,6 +1330,96 @@ fn c0_headers_accept_extern_scalar_arrays() {
 }
 
 #[test]
+fn c0_accepts_incomplete_extern_scalar_and_aggregate_arrays() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        extern int32 values[];
+
+        struct state {
+            int32 value;
+            uint8 ready;
+        };
+        extern struct state entries[];
+
+        int32 read() {
+            return values[1] + entries[0].value;
+        }
+        "#,
+        "incomplete-extern.c",
+    )
+    .expect("incomplete extern arrays should parse before bundle linking");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .unwrap();
+    assert!(function.global_arrays()["values"].is_incomplete());
+    assert_eq!(function.global_arrays()["values"].array_length(), None);
+    assert!(function.global_aggregate_arrays()["entries"].is_incomplete());
+    assert_eq!(
+        function.global_aggregate_arrays()["entries"].array_length(),
+        None
+    );
+}
+
+#[test]
+fn c0_rejects_incomplete_file_scope_array_definitions() {
+    for source in [
+        "int32 values[]; int32 read() { return 0; }",
+        "int32 values[] = {1, 2}; int32 read() { return values[0]; }",
+        "extern int32 values[] = {1}; int32 read() { return values[0]; }",
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("unsupported incomplete array definitions should be rejected");
+        assert!(
+            error.message().contains("incomplete") || error.message().contains("initializer"),
+            "{}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_links_incomplete_extern_arrays_to_complete_definitions() {
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "reader.c";
+        verifying "definitions.c";
+
+        int32 definitions_anchor() {
+            ensures result == 2 by auto;
+        }
+
+        int32 run() {
+            ensures result == 10 by auto;
+        }
+        "#,
+        &[
+            (
+                "tables.h",
+                r#"
+                struct state {
+                    int32 value;
+                    uint8 ready;
+                };
+                extern int32 values[];
+                extern struct state entries[];
+                "#,
+            ),
+            (
+                "reader.c",
+                "#include \"tables.h\"\nint32 run() { return values[1] + entries[0].value; }",
+            ),
+            (
+                "definitions.c",
+                "#include \"tables.h\"\nint32 values[3] = {2, 6, 9};\nstruct state entries[2] = {{4, 1}, {5}};\nint32 definitions_anchor() { return values[0]; }\n",
+            ),
+        ],
+    )
+    .expect("incomplete extern arrays should link to complete definitions");
+}
+
+#[test]
 fn c0_file_static_globals_are_qualified_by_translation_unit() {
     let alpha = syntax::parse_functions_for_source(
         "static int32 counter = 1; int32 read_alpha() { return counter; }",

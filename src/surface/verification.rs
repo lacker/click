@@ -2241,7 +2241,13 @@ pub(in crate::surface) fn parse_verified_sources(
                 )));
             }
             match source_arrays.get(name) {
-                Some(previous) if previous.c_type() != array.c_type() => {
+                Some(previous)
+                    if previous.element_type() != array.element_type()
+                        || !syntax::array_lengths_compatible(
+                            previous.array_length(),
+                            array.array_length(),
+                        ) =>
+                {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"
                     )));
@@ -2281,7 +2287,13 @@ pub(in crate::surface) fn parse_verified_sources(
                 )));
             }
             match global_arrays.get(name) {
-                Some(previous) if previous.c_type() != array.c_type() => {
+                Some(previous)
+                    if previous.element_type() != array.element_type()
+                        || !syntax::array_lengths_compatible(
+                            previous.array_length(),
+                            array.array_length(),
+                        ) =>
+                {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for global array `{name}`"
                     )));
@@ -2451,7 +2463,10 @@ pub(in crate::surface) fn parse_verified_sources(
                 Some(previous)
                     if previous.struct_name() != aggregate.struct_name()
                         || previous.layout() != aggregate.layout()
-                        || previous.length() != aggregate.length() =>
+                        || !syntax::array_lengths_compatible(
+                            previous.array_length(),
+                            aggregate.array_length(),
+                        ) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for aggregate global array `{name}`"
@@ -2508,7 +2523,10 @@ pub(in crate::surface) fn parse_verified_sources(
                 Some(previous)
                     if previous.struct_name() != aggregate.struct_name()
                         || previous.layout() != aggregate.layout()
-                        || previous.length() != aggregate.length() =>
+                        || !syntax::array_lengths_compatible(
+                            previous.array_length(),
+                            aggregate.array_length(),
+                        ) =>
                 {
                     return Err(ClickError::new(format!(
                         "conflicting declarations for aggregate global array `{name}`"
