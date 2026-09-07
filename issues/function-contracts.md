@@ -36,19 +36,21 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   provably contained in a range permitted by the named contract. Constant and
   symbolic subranges are accepted, while a larger concrete footprint is
   rejected from the published contract rather than inferred from the C body.
-- Owned-memory resource transitions refine with an inferred frame. Named input
-  ownership must provide the concrete requirements; the residual ownership is
-  preserved and recombined with the concrete guarantees, which must then
-  provide the named guarantees. Constant and symbolic subranges are accepted;
-  extra concrete requirements and missing concrete returns are rejected.
+- Memory resource transitions refine with an inferred frame. Named input
+  resources must provide the concrete requirements; residual ownership and
+  scoped borrows are preserved and recombined with the concrete guarantees,
+  which must then provide the named guarantees. Constant and symbolic owned
+  subranges are accepted, as are concrete subrange views supplied by named
+  ownership. Requiring concrete ownership from a named view, extra concrete
+  requirements, and missing concrete returns are rejected.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
 The remaining semantic step is refinement for non-memory resources, guarded
 effects, and broader state-dependent propositions at concrete-pointer
-formation. Views, abstract tokens, and composite resources still match
-exactly. Stateful sequence, algebraic, resource-predicate,
+formation. Abstract tokens and composite resources still match exactly.
+Stateful sequence, algebraic, resource-predicate,
 explicit-memory-snapshot, and guarded-footprint propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.

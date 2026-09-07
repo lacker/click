@@ -1535,7 +1535,7 @@ fn resource_transition_is_compatible(
     )? {
         return Ok(true);
     }
-    framed_owned_memory_transition_refines(
+    framed_memory_transition_refines(
         contract,
         function,
         contract_entry,
@@ -1620,13 +1620,13 @@ fn exact_resource_interfaces_match(
     Ok(true)
 }
 
-fn context_contains_only_owned_memory(resources: &ResourceContext) -> bool {
+fn context_contains_only_memory(resources: &ResourceContext) -> bool {
     resources.facts().iter().all(|resource| {
         matches!(
             resource,
             CResourceFact::Own(CResource::Memory(_), quantity)
                 if quantity.as_const() == Some(1)
-        )
+        ) || matches!(resource, CResourceFact::View(CResource::Memory(_)))
     })
 }
 
@@ -1644,12 +1644,14 @@ fn evaluate_refinement_resource_context(
     )
 }
 
-/// Checks `named_requires = concrete_requires * frame` and then requires
-/// `concrete_ensures * frame` to provide `named_ensures`. The resource
-/// context's indexed split/merge algebra performs both range operations; no
-/// project functions or unrelated proof state are inspected.
+/// Checks that the named requirements can supply the concrete requirements,
+/// preserving everything the concrete transition only borrows or does not
+/// need as a frame. Then requires `concrete_ensures * frame` to provide the
+/// named ensures. The resource context's indexed memory algebra performs
+/// ownership splitting, range containment, and scoped borrowing; no project
+/// functions or unrelated proof state are inspected.
 #[allow(clippy::too_many_arguments)]
-fn framed_owned_memory_transition_refines(
+fn framed_memory_transition_refines(
     contract: &CFunction,
     function: &CFunction,
     contract_entry: &CState,
@@ -1665,7 +1667,12 @@ fn framed_owned_memory_transition_refines(
         .chain(contract.resource_ensures())
         .chain(function.resource_requires())
         .chain(function.resource_ensures())
-        .all(|resource| matches!(resource, CResourceSpec::OwnMemory(_)))
+        .all(|resource| {
+            matches!(
+                resource,
+                CResourceSpec::OwnMemory(_) | CResourceSpec::ViewMemory(_)
+            )
+        })
     {
         return Ok(false);
     }
@@ -1712,7 +1719,7 @@ fn framed_owned_memory_transition_refines(
         &contract_ensures,
     ]
     .into_iter()
-    .any(|resources| !context_contains_only_owned_memory(resources))
+    .any(|resources| !context_contains_only_memory(resources))
     {
         return Ok(false);
     }
