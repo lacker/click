@@ -32,10 +32,12 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   uses one symbolic entry memory and one footprint-havoced post memory; a
   callback that promises an exact increment satisfies a progress contract,
   while a callback that also permits no change does not.
-- Unguarded mutable footprints are covariant: each concrete range must be
-  provably contained in a range permitted by the named contract. Constant and
-  symbolic subranges are accepted, while a larger concrete footprint is
-  rejected from the published contract rather than inferred from the C body.
+- Mutable footprints are covariant: each concrete range must be provably
+  contained in a range permitted by the named contract. For load-free guards
+  inferred from conditional resources, the concrete guard must imply the
+  named guard under the named preconditions. A concrete callback may omit a
+  guarded effect or borrow its resource without writing; a weaker guard and a
+  larger range are rejected.
 - Memory resource transitions refine with an inferred frame. Named input
   resources must provide the concrete requirements; residual ownership and
   scoped borrows are preserved and recombined with the concrete guarantees,
@@ -57,10 +59,12 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is refinement for explicitly quantified resources,
-guarded effects, and broader state-dependent propositions at concrete-pointer
-formation. Stateful sequence, algebraic, resource-predicate,
-explicit-memory-snapshot, and guarded-footprint propositions are not yet part
+The remaining semantic step is refinement for explicitly quantified resources
+and broader state-dependent propositions at concrete-pointer formation.
+Guarded effects participate in footprint containment, but stateful
+postconditions still require an unguarded named footprint because refinement
+does not yet model conditional post-call memory. Stateful sequence, algebraic,
+resource-predicate, and explicit-memory-snapshot propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.
 

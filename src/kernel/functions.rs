@@ -1463,21 +1463,34 @@ fn evaluate_contract_mutable_ranges(
         if require_unguarded && segment.guard().is_some() {
             return Ok(None);
         }
-        let segment =
-            match evaluate_loop_effect_segment_with_facts(entry, segment, assumptions, budget)? {
-                Ok((segment, _)) => segment,
-                Err(_) => return Ok(None),
-            };
-        ranges.push(canonical_memory_range(
-            CMemoryRange::new_with_element_width(
-                segment.base,
-                segment.start,
-                segment.end,
-                segment.element_width,
-            ),
-        ));
+        let Some(range) = evaluate_contract_mutable_range(entry, segment, assumptions, budget)?
+        else {
+            return Ok(None);
+        };
+        ranges.push(range);
     }
     Ok(Some(ranges))
+}
+
+fn evaluate_contract_mutable_range(
+    entry: &CState,
+    segment: &CMemorySegment,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<CMemoryRange>> {
+    let segment =
+        match evaluate_loop_effect_segment_with_facts(entry, segment, assumptions, budget)? {
+            Ok((segment, _)) => segment,
+            Err(_) => return Ok(None),
+        };
+    Ok(Some(canonical_memory_range(
+        CMemoryRange::new_with_element_width(
+            segment.base,
+            segment.start,
+            segment.end,
+            segment.element_width,
+        ),
+    )))
 }
 
 fn compatible_resource_and_effect_interfaces(
@@ -1768,43 +1781,267 @@ fn mutable_footprint_is_compatible(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
-    let Some(contract_ranges) =
-        evaluate_contract_mutable_ranges(contract, contract_entry, assumptions, budget, false)?
-    else {
-        return Ok(false);
-    };
-    let Some(function_ranges) =
-        evaluate_contract_mutable_ranges(function, function_entry, assumptions, budget, false)?
-    else {
-        return Ok(false);
-    };
-
-    let guards_match = contract.contract_mutable().len() == function.contract_mutable().len()
-        && contract
-            .contract_mutable()
-            .iter()
-            .zip(function.contract_mutable())
-            .all(|(contract, function)| contract.guard() == function.guard());
-    if guards_match && contract_ranges == function_ranges {
+    if function.contract_mutable().is_empty() {
         return Ok(true);
     }
-
-    // Guard implication is a separate refinement problem. Until it is
-    // modeled, only unguarded, unequal footprints participate in containment.
-    if contract
-        .contract_mutable()
-        .iter()
-        .chain(function.contract_mutable())
-        .any(|segment| segment.guard().is_some())
-    {
+    let mut guard_assumptions = assumptions.clone();
+    let Some(contract_guards) =
+        lower_refinement_mutable_guards(contract, contract_entry, &mut guard_assumptions, budget)?
+    else {
         return Ok(false);
+    };
+    let Some(function_guards) =
+        lower_refinement_mutable_guards(function, function_entry, &mut guard_assumptions, budget)?
+    else {
+        return Ok(false);
+    };
+
+    for (required_segment, required_guard) in
+        function.contract_mutable().iter().zip(&function_guards)
+    {
+        if required_guard.as_ref().is_some_and(|guard| {
+            guard_assumptions.proves(&Proposition::Not(Box::new(guard.clone())))
+        }) {
+            continue;
+        }
+        let mut active_assumptions = guard_assumptions.clone();
+        if let Some(guard) = required_guard {
+            active_assumptions = active_assumptions.assume_proposition(guard.clone());
+        }
+        let Some(required_range) = evaluate_contract_mutable_range(
+            function_entry,
+            required_segment,
+            &active_assumptions,
+            budget,
+        )?
+        else {
+            return Ok(false);
+        };
+
+        let mut covered = false;
+        for (available_segment, available_guard) in
+            contract.contract_mutable().iter().zip(&contract_guards)
+        {
+            if let Some(guard) = available_guard {
+                if !active_assumptions.proves(guard) {
+                    continue;
+                }
+            }
+            let Some(available_range) = evaluate_contract_mutable_range(
+                contract_entry,
+                available_segment,
+                &active_assumptions,
+                budget,
+            )?
+            else {
+                continue;
+            };
+            if memory_range_covers(&available_range, &required_range, &active_assumptions) {
+                covered = true;
+                break;
+            }
+        }
+        if !covered {
+            return Ok(false);
+        }
     }
 
-    Ok(function_ranges.iter().all(|required| {
-        contract_ranges
+    Ok(true)
+}
+
+/// Lowers each load-free entry guard once. Facts produced while evaluating a
+/// guard are unconditional after its obligations have been proved, so later
+/// guards and range expressions may reuse them without searching unrelated
+/// functions or proof state.
+fn lower_refinement_mutable_guards(
+    function: &CFunction,
+    entry: &CState,
+    assumptions: &mut PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<Option<Proposition>>>> {
+    let mut guards = Vec::with_capacity(function.contract_mutable().len());
+    for segment in function.contract_mutable() {
+        let Some(guard) = segment.guard() else {
+            guards.push(None);
+            continue;
+        };
+        if !spec_proposition_is_state_independent(guard) {
+            return Ok(None);
+        }
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            entry,
+            guard,
+            Some(entry),
+            assumptions,
+            budget,
+        )?;
+        let [path] = paths.as_slice() else {
+            return Ok(None);
+        };
+        for fact in &path.facts {
+            *assumptions = assumptions
+                .clone()
+                .assume_proposition(fact.proposition().clone());
+        }
+        if path
+            .obligations
             .iter()
-            .any(|available| memory_range_covers(available, required, assumptions))
-    }))
+            .any(|obligation| !assumptions.proves(obligation.proposition()))
+        {
+            return Ok(None);
+        }
+        guards.push(Some(path.proposition.clone()));
+    }
+    Ok(Some(guards))
+}
+
+#[cfg(test)]
+mod guarded_mutable_refinement_tests {
+    use super::*;
+
+    fn guard(operator: CComparisonOperator, value: u32) -> SpecProposition {
+        SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("active")),
+            operator,
+            right: SpecExpression::CExpression(c_int32_literal(value)),
+        }
+    }
+
+    fn segment(guard: Option<SpecProposition>, start: u32, end: u32) -> CMemorySegment {
+        let segment = CMemorySegment::new(
+            c_variable("cells"),
+            c_int32_literal(start),
+            c_int32_literal(end),
+        );
+        match guard {
+            Some(guard) => segment.with_guard(guard),
+            None => segment,
+        }
+    }
+
+    fn function_with_segment(name: &str, segment: CMemorySegment) -> CFunction {
+        c_function(CType::Void, name, Vec::new(), c_return(c_void_value())).with_contract(
+            Vec::new(),
+            Vec::new(),
+            vec![segment],
+            Vec::new(),
+            true,
+        )
+    }
+
+    fn entry_state() -> CState {
+        CState::new()
+            .with_local(
+                "active",
+                int32(Bitvector32Term::Variable(Variable(980_001))),
+            )
+            .with_local(
+                "cells",
+                CValue::pointer(Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            )
+    }
+
+    fn compatible_with_assumptions(
+        contract: &CFunction,
+        function: &CFunction,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let entry = entry_state();
+        mutable_footprint_is_compatible(
+            contract,
+            function,
+            &entry,
+            &entry,
+            assumptions,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("guarded mutable refinement should execute")
+    }
+
+    fn compatible(contract: &CFunction, function: &CFunction) -> bool {
+        compatible_with_assumptions(contract, function, &PureFactContext::new())
+    }
+
+    #[test]
+    fn stronger_concrete_guard_and_subrange_refine_named_footprint() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 2),
+        );
+        let function = function_with_segment(
+            "function",
+            segment(Some(guard(CComparisonOperator::Equal, 1)), 1, 2),
+        );
+        assert!(compatible(&contract, &function));
+    }
+
+    #[test]
+    fn guarded_concrete_effect_refines_unguarded_named_footprint() {
+        let contract = function_with_segment("contract", segment(None, 0, 2));
+        let function = function_with_segment(
+            "function",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 1),
+        );
+        assert!(compatible(&contract, &function));
+    }
+
+    #[test]
+    fn unguarded_concrete_effect_does_not_refine_guarded_named_footprint() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 2),
+        );
+        let function = function_with_segment("function", segment(None, 0, 1));
+        assert!(!compatible(&contract, &function));
+    }
+
+    #[test]
+    fn named_precondition_can_establish_guard_for_unconditional_concrete_effect() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 2),
+        );
+        let function = function_with_segment("function", segment(None, 0, 1));
+        let active = Bitvector32Term::Variable(Variable(980_001));
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::equal(active, Bitvector32Term::Constant(0)),
+            false,
+        ));
+        assert!(compatible_with_assumptions(
+            &contract,
+            &function,
+            &assumptions,
+        ));
+    }
+
+    #[test]
+    fn unrelated_concrete_guard_does_not_refine_named_guard() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::GreaterThan, 0)), 0, 2),
+        );
+        let function = function_with_segment(
+            "function",
+            segment(Some(guard(CComparisonOperator::LessThan, 0)), 0, 1),
+        );
+        assert!(!compatible(&contract, &function));
+    }
+
+    #[test]
+    fn guard_implication_does_not_relax_range_containment() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 1),
+        );
+        let function = function_with_segment(
+            "function",
+            segment(Some(guard(CComparisonOperator::Equal, 1)), 0, 2),
+        );
+        assert!(!compatible(&contract, &function));
+    }
 }
 
 fn assume_contract_propositions(
