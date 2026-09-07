@@ -182,7 +182,16 @@ fn float_significand_as_integer(
         )
     };
     let magnitude = if base >= 0 {
-        significand.checked_shl(base as u32)?
+        // `checked_shl` only rejects a shift count of 128 or more; it drops
+        // any bits carried off the top, which would turn a value too large
+        // for the container into a small in-range magnitude. A value that
+        // does not fit has no integer conversion at all, which is the same
+        // answer the range check below gives for a merely out-of-range one.
+        let shift = base as u32;
+        if shift >= 128 || significand.leading_zeros() < shift {
+            return None;
+        }
+        significand << shift
     } else if (-base) >= 128 {
         0
     } else {

@@ -603,9 +603,12 @@ definition unfolds to `bad(1) == bad(1) + 2`, which no `int32` satisfies.
 
 ## 8. Floating-point constant folding is wrong in four distinct ways
 
-**Severity: critical.** The integer-space IEEE evaluator gets mixed-sign
+**Severity: critical.** The integer-space IEEE evaluator got mixed-sign
 `float` comparison, cancellation, widening, and out-of-range conversion wrong.
-Each yields a verified false claim about a program with no symbolic inputs.
+Each yielded a verified false claim about a program with no symbolic inputs.
+**Regressions A through D are fixed**; only the mis-rounded subnormal division
+noted at the end remains, along with the differential test in the acceptance
+criteria.
 
 **Violated invariant.** Constant folding agrees with IEEE-754 at the declared
 width: comparison is a total order on non-NaN values, an exactly representable
@@ -693,9 +696,11 @@ int32 widen() {
 
 Widening infinity yields infinity, not NaN, so the function returns 0.
 
-**Regression D**, out-of-range conversion: `(int32) 3.4e38` folds to 0 instead
-of being reported as undefined behaviour. A fifth, lower-severity case is
-mis-rounded subnormal division.
+**Regression D**, out-of-range conversion — **fixed** in `Reject a float to
+integer conversion that overflows the container`, regressions
+`mdtests/float_to_integer_out_of_range_rejected.md` and
+`mdtests/float_to_integer_in_range.md`. A fifth, lower-severity case is
+mis-rounded subnormal division, still open.
 
 **Acceptance criteria.**
 - All four regressions are rejected, and the corresponding true claims verify.
