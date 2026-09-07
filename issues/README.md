@@ -85,7 +85,7 @@ normal tooling-first policy and should then be added to this list.
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 24
+## Functionality gaps: 25
 
 C language coverage:
 
@@ -118,6 +118,7 @@ Proof language and tooling:
 
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
+- [Add modules and imports for Click specifications](specification-imports.md)
 
 ## Hard bucket: 1
 
