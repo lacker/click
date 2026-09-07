@@ -1316,11 +1316,11 @@ impl CFunctionContract {
             && self.function.predicate_unfoldings == function.predicate_unfoldings
     }
 
-    /// Checks the portion of a callback interface that the first behavioral
-    /// refinement rule does not yet vary. Parameter names are binders, but
-    /// their types, layouts, and qualifiers remain part of the signature.
-    /// Resources and effects deliberately remain exact until their own
-    /// variance rules are defined.
+    /// Checks the portion of a callback interface that behavioral refinement
+    /// does not vary. Parameter names are binders, but their types, layouts,
+    /// and qualifiers remain part of the signature. Whether a mutable frame
+    /// was certified by an explicit effect claim or inferred from resource
+    /// ownership is proof metadata, not part of the behavioral interface.
     pub(crate) fn has_compatible_signature_and_contract_vocabulary(
         &self,
         function: &CFunction,
@@ -1341,8 +1341,6 @@ impl CFunctionContract {
                         && contract.constant == implementation.constant
                         && contract.pointee_constant == implementation.pointee_constant
                 })
-            && self.function.contract_effect_claim_required
-                == function.contract_effect_claim_required
             && self.function.composite_resource_definitions
                 == function.composite_resource_definitions
             && self.function.predicate_unfoldings == function.predicate_unfoldings
