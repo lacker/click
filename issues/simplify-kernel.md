@@ -209,11 +209,11 @@ these dispositions:
 ### Incomplete-answer and authority audit
 
 1. **`search_truncations` and negative-memo gating**. The counter currently
-   records exact condition-, memory-resolution-, and resource-composition
+   records exact condition-, simp-fact-, memory-resolution-, and resource-composition
    cycle cuts plus two deadline wrappers. The 2026-09-07 fixture census saw
    916 / 1,788 exact repeated-condition cuts and zero resolution-cycle,
-   resource-cycle, or deadline events. `SimpFactReasoningGuard` has another
-   exact repeated-query return that is not recorded by the epoch; it fired
+   resource-cycle, or deadline events. `SimpFactReasoningGuard` had another
+   exact repeated-query return that was not recorded by the epoch; it fired
    zero times in both fixture corpora. The guard now records every refused
    exact query in the epoch, so enclosing negative memos cannot retain the
    path-dependent miss. Rename the counter to `incomplete_reasoning_epoch`.
