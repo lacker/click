@@ -11446,7 +11446,8 @@ impl Parser {
                 // continue gets the same call-and-check sequence before
                 // returning to the shell head; nested loops keep their own
                 // continue targets.
-                let body = prepend_condition_check_before_loop_continues(body, &prefix, &condition);
+                let body =
+                    prepend_condition_check_before_loop_continues(body, &prefix, &condition)?;
                 let condition_check = prepend_statements(
                     prefix,
                     C0Statement::If {
@@ -13930,12 +13931,53 @@ fn prepend_statements(prefix: Vec<C0Statement>, statement: C0Statement) -> C0Sta
 /// `continue` that targets the current loop. Nested loops consume their own
 /// `continue` statements, while a `switch` does not introduce a continue
 /// target and is traversed.
+/// Whether a statement can `continue` the loop that encloses it.
+///
+/// An inner loop owns its own `continue`, so one nested inside a `while`,
+/// `do ... while`, or `for` does not belong to the enclosing loop.
+fn statement_continues_enclosing_loop(statement: &C0Statement) -> bool {
+    match statement {
+        C0Statement::Continue => true,
+        C0Statement::Seq(first, second) => {
+            statement_continues_enclosing_loop(first) || statement_continues_enclosing_loop(second)
+        }
+        C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_continues_enclosing_loop(then_branch)
+                || statement_continues_enclosing_loop(else_branch)
+        }
+        C0Statement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| statement_continues_enclosing_loop(&case.body)),
+        C0Statement::While { .. }
+        | C0Statement::DoWhile { .. }
+        | C0Statement::For { .. }
+        | C0Statement::Skip
+        | C0Statement::Break
+        | C0Statement::Declare { .. }
+        | C0Statement::DeclareStructValue { .. }
+        | C0Statement::Assign { .. }
+        | C0Statement::CallAssign { .. }
+        | C0Statement::Call { .. }
+        | C0Statement::IndirectCall { .. }
+        | C0Statement::HeapAllocate { .. }
+        | C0Statement::HeapFree { .. }
+        | C0Statement::Return(_)
+        | C0Statement::Store { .. }
+        | C0Statement::AggregateCopy { .. }
+        | C0Statement::Update { .. } => false,
+    }
+}
+
 fn prepend_condition_check_before_loop_continues(
     statement: C0Statement,
     prefix: &[C0Statement],
     loop_condition: &C0Expression,
-) -> C0Statement {
-    match statement {
+) -> Result<C0Statement, C0SyntaxError> {
+    Ok(match statement {
         C0Statement::Continue => prepend_statements(
             prefix.to_vec(),
             C0Statement::If {
@@ -13949,12 +13991,12 @@ fn prepend_condition_check_before_loop_continues(
                 *first,
                 prefix,
                 loop_condition,
-            )),
+            )?),
             Box::new(prepend_condition_check_before_loop_continues(
                 *second,
                 prefix,
                 loop_condition,
-            )),
+            )?),
         ),
         C0Statement::If {
             condition: if_condition,
@@ -13966,27 +14008,29 @@ fn prepend_condition_check_before_loop_continues(
                 *then_branch,
                 prefix,
                 loop_condition,
-            )),
+            )?),
             else_branch: Box::new(prepend_condition_check_before_loop_continues(
                 *else_branch,
                 prefix,
                 loop_condition,
-            )),
+            )?),
         },
-        C0Statement::Switch { expression, cases } => C0Statement::Switch {
-            expression,
-            cases: cases
-                .into_iter()
-                .map(|case| C0SwitchCase {
-                    value: case.value,
-                    body: Box::new(prepend_condition_check_before_loop_continues(
-                        *case.body,
-                        prefix,
-                        loop_condition,
-                    )),
-                })
-                .collect(),
-        },
+        C0Statement::Switch { expression, cases } => {
+            // The rewrite ends a failing iteration with `break`, which a
+            // `switch` would capture as its own exit: the rest of the body
+            // would run and the loop would not end. C0 has no spelling for
+            // "leave the loop" from inside a switch, so reject the shape
+            // rather than lower it to different control flow.
+            if cases
+                .iter()
+                .any(|case| statement_continues_enclosing_loop(&case.body))
+            {
+                return Err(C0SyntaxError::new(
+                    "`continue` inside a `switch` is not supported in a `do ... while` whose condition contains a call",
+                ));
+            }
+            C0Statement::Switch { expression, cases }
+        }
         statement @ (C0Statement::While { .. }
         | C0Statement::DoWhile { .. }
         | C0Statement::For { .. }
@@ -14004,7 +14048,7 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::Store { .. }
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }) => statement,
-    }
+    })
 }
 
 fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosition> {

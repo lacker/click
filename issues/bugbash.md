@@ -1631,6 +1631,12 @@ After the copy `dst.fp` is null, so the function returns 21, not 20.
 
 ## 21. `continue` in a `switch` inside a `do ... while` with a call condition
 
+**Fixed** in `Reject a switch-enclosed continue in a call-condition do-while`,
+by rejecting the shape rather than lowering it; regressions
+`mdtests/do_while_switch_continue_rejected.md` and
+`mdtests/do_while_continue_shapes.md`. Supporting the shape would need a
+spelling for "leave the loop" from inside a `switch`, which C0 does not have.
+
 **Severity: high.** The `continue` is lowered as a `switch` break, so the rest
 of the body runs and the loop condition is not reached as C requires.
 
@@ -1695,9 +1701,26 @@ footprint, so a `loadable` fact is certified for memory that was never claimed.
 **Violated invariant.** The byte footprint of an element range is
 `(end - start) * element_width` without wrapping.
 
-**Mechanism.** `CMemoryRange::byte_footprint`
-(`src/kernel/primitives/contracts.rs:1197`) multiplies with the ordinary
-32-bit `Bitvector32Term::multiply` and emits no overflow obligation.
+**Mechanism.** Two sites multiply an element count by an element width with
+the ordinary 32-bit term constructor and no overflow obligation:
+`CMemoryRange::byte_footprint` (`src/kernel/primitives/contracts.rs:1197`),
+which runs only when two ranges have different element widths, and
+`loadable_base_and_bytes` (`src/surface/lowering/resource_lowering.rs:1357`),
+which builds the `CMemoryLoadable` byte count. The latter is the path this
+regression takes. It already rejects a constant reversed range, but the count
+here is the symbolic `n`, so the wrap happens later, when the kernel folds
+`n * 4` against the path's `n == 1073741825`.
+
+Measured signature, with `loadable(p[0..1])` required: `n = 2^30` (byte count
+folds to 0) and `n = 2^30 + 1` (folds to 4) both certify, while `n = 2^30 + 2`
+(folds to 8) is correctly rejected. `n = -1` also certifies, which is
+defensible: an empty range is vacuously loadable.
+
+A fix needs a decision rather than a local patch, which is why it is not
+bundled with section 6's guard: either carry byte extents in 64 bits, or emit
+a no-overflow obligation where an element range becomes a byte count. The
+memory model documents a 32-bit block extent, so the second is the smaller
+change but needs an obligation channel at both sites.
 
 **Regression** (`mdtests/range_byte_count_wraps_rejected.md`):
 
