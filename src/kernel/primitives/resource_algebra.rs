@@ -2730,6 +2730,41 @@ fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange
     left_end < right_start || right_end < left_start
 }
 
+/// Decides whether a consumed range runs forward.
+///
+/// Splitting `available` around `[start, end)` can leave a residue on each
+/// side, `[available.start, start)` and `[end, available.end)`. Two such
+/// residues overlap exactly when the consumed range runs backwards, so a
+/// reversed range such as `p[lo..hi]` with `hi < lo` would hand the holder two
+/// owned facts over the same cells. Distinct owned facts are assumed separate,
+/// so a store through one would not invalidate a load through the other.
+/// Containment does not rule this out: a reversed range is trivially contained
+/// in anything.
+///
+/// This is asked only when both residues survive, since one residue cannot
+/// overlap itself; a whole-range consumption of symbolic length stays
+/// consumable without deciding its orientation.
+///
+/// A structural difference covers the ordinary shapes (`p[i..i + 1]`,
+/// `p[0..3]`) the way [`memory_range_contained_for_memory_resolution`] already
+/// reads them; anything else has to be decided from the context, as
+/// `p[0..n]` is under `0 <= n`.
+fn consumed_range_is_well_formed(
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    if let Some(difference) =
+        crate::kernel::assumptions::affine_bitvector_difference_constant(end, start)
+    {
+        return difference >= 0;
+    }
+    assumptions.decide(&ConditionTerm::signed_less_equal(
+        start.clone(),
+        end.clone(),
+    )) == Some(true)
+}
+
 fn split_memory_range(
     available: &CMemoryRange,
     required: &CMemoryRange,
@@ -2767,19 +2802,26 @@ fn split_memory_range(
     }?;
     let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
     let required_end = Bitvector32Term::add(base_delta, required.end().clone());
-    let mut residues = Vec::new();
-    if !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
-        && !range_endpoint_terms_equal(available.start(), &required_start, assumptions)
+    let keeps_prefix =
+        !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
+            && !range_endpoint_terms_equal(available.start(), &required_start, assumptions);
+    let keeps_suffix = !bitvector_terms_proven_equal(&required_end, available.end(), assumptions)
+        && !range_endpoint_terms_equal(&required_end, available.end(), assumptions);
+    if keeps_prefix
+        && keeps_suffix
+        && !consumed_range_is_well_formed(&required_start, &required_end, assumptions)
     {
+        return None;
+    }
+    let mut residues = Vec::new();
+    if keeps_prefix {
         residues.push(available.with_bounds(
             available.base().clone(),
             available.start().clone(),
             required_start.clone(),
         ));
     }
-    if !bitvector_terms_proven_equal(&required_end, available.end(), assumptions)
-        && !range_endpoint_terms_equal(&required_end, available.end(), assumptions)
-    {
+    if keeps_suffix {
         residues.push(available.with_bounds(
             available.base().clone(),
             required_end,

@@ -3226,7 +3226,7 @@ fn pointer_in_range_shallow(
     0 <= offset && offset < length
 }
 
-fn affine_bitvector_difference_constant(
+pub(in crate::kernel) fn affine_bitvector_difference_constant(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> Option<i64> {
