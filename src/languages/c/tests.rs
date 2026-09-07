@@ -1694,7 +1694,7 @@ fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
         "int32 values[][3] = {1, 2, 3}; int32 read() { return values[0][0]; }",
         "int32 values[][3] = {}; int32 read() { return values[0][0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
-        "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
+        "struct state { int32 value; }; struct state values[] = {}; int32 read() { return values[0].value; }",
     ] {
         let error = syntax::parse_functions(source)
             .expect_err("unsupported inferred array forms should be rejected");
@@ -2233,8 +2233,8 @@ fn c0_collects_string_literals_with_terminators() {
 }
 
 #[test]
-fn c0_rejects_unsupported_static_local_shapes() {
-    let error = syntax::parse_functions(
+fn c0_accepts_zero_initialized_static_local_multidimensional_arrays() {
+    syntax::parse_functions(
         r#"
         int32 invalid() {
             static int32 values[2][2];
@@ -2242,12 +2242,25 @@ fn c0_rejects_unsupported_static_local_shapes() {
         }
         "#,
     )
-    .expect_err("multidimensional static arrays should remain outside the slice");
-    assert!(
-        error
-            .message()
-            .contains("multidimensional static local arrays")
-    );
+    .expect("fixed multidimensional static arrays have zero initializers");
+}
+
+#[test]
+fn c0_static_array_parity_rejects_invalid_initializers() {
+    for source in [
+        "int32 f() { static int32 a[]; return 0; }",
+        "int32 f() { static int32 a[] = {}; return 0; }",
+        "int32 f() { static int32 a[][2] = {}; return 0; }",
+        "int32 f() { static int32 a[][2] = {1, 2}; return 0; }",
+        "int32 f() { static int32 a[][2] = {{1, 2, 3}}; return 0; }",
+        "int32 f(int32 x) { static int32 a[][2] = {{x}}; return 0; }",
+        "struct E { int32 x; }; struct E a[] = {}; int32 f() { return 0; }",
+        "struct E { int32 x; }; struct E a[] = {[2] = {1}}; int32 f() { return 0; }",
+        "struct E { int32 x; }; int32 f() { static struct E a[]; return 0; }",
+        "struct E { int32 x; }; int32 f() { static struct E a[] = {}; return 0; }",
+    ] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
 }
 
 fn memory_range(

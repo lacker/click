@@ -1,5 +1,13 @@
 # Model file-scope objects, statics, and string literals
 
+Array initialization parity: one-dimensional struct arrays now infer bounds
+from non-empty positional element groups at file scope and in function-local
+static storage. Function-local scalar statics accept inferred one-dimensional
+bounds and fixed or inferred multidimensional shapes. The
+`static_array_parity_*.md` regressions cover linkage, initialization, and
+persistent updates. Inferred element designators, multidimensional struct
+arrays, and uninitialized incomplete struct arrays remain unsupported.
+
 Found by the 2026-09-01 kernel audit at cb034b21.
 
 The scalar file-scope slice is now implemented for both externally linked and
@@ -14,7 +22,7 @@ and checked integer casts are included; runtime loads and calls remain rejected.
 Fixed-size scalar arrays now use the same stable linkage,
 coalesced tentative-definition, and element-initialization model.
 Function-local scalar `static` objects and
-fixed-size one-dimensional scalar `static` arrays are also initialized once
+scalar `static` arrays with fixed or inferred shapes are also initialized once
 per program state with stable function-qualified storage.
 Basic ASCII C string literals are now lowered to function-owned,
 NUL-terminated, read-only `uint8` storage and remain stable through calls.
@@ -210,13 +218,13 @@ propagation, and indirect-write rejection.
   element groups, coalesces compatible tentative declarations, links one
   initialized definition, accepts literal `[index] = {...}` element
   designators, and zero-fills omitted fields and elements. Non-literal
-  designators, multidimensional, incomplete definitions, and dynamic-initialization forms
+  designators, multidimensional, uninitialized incomplete definitions, and dynamic-initialization forms
   remain rejected.
 - The parser accepts fixed-dimensional scalar arrays and `extern T name[];`
   and external-linkage tentative
   `T name[];` for supported scalar arrays, and bundle linking resolves the
   omitted bound against one complete fixed-size external definition. Incomplete
-  aggregate definitions, inferred initializer bounds for aggregate arrays,
+  aggregate definitions without initializers,
   empty or designated scalar-array initializers, and unresolved incomplete
   tentative definitions remain rejected. External multidimensional declarations
   and external-linkage tentative definitions may omit only the outer dimension
@@ -250,8 +258,9 @@ propagation, and indirect-write rejection.
   is initialized only when that block first enters the state, remains shared
   across recursive/nested calls, and is nameable by its owning function's
   contracts.
-- A function-local fixed-size one-dimensional array of a supported scalar type
-  has one function-qualified memory block, is initialized element-by-element
+- A function-local array of a supported scalar type with fixed or inferred bounds
+  has one function-qualified memory block, supports multidimensional shapes,
+  and is initialized element-by-element
   with omitted entries zero-filled, remains shared across recursive/nested
   calls, and is nameable by indexed contract ranges.
 - Effect certification treats scalar global and file-scope static writes like

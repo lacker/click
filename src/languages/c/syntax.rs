@@ -992,6 +992,7 @@ pub struct C0StaticArray {
     kernel_name: String,
     element_type: C0Type,
     length: u32,
+    shape: Vec<u32>,
     initializer: Vec<C0Expression>,
     constant: bool,
 }
@@ -1009,6 +1010,7 @@ impl C0StaticArray {
             kernel_name,
             element_type,
             length,
+            shape: vec![length],
             initializer,
             constant: false,
         }
@@ -1016,6 +1018,15 @@ impl C0StaticArray {
 
     pub fn name(&self) -> &str {
         &self.source_name
+    }
+
+    pub fn shape(&self) -> &[u32] {
+        &self.shape
+    }
+
+    fn with_shape(mut self, shape: Vec<u32>) -> Self {
+        self.shape = shape;
+        self
     }
 
     pub fn kernel_name(&self) -> &str {
@@ -5833,9 +5844,25 @@ impl Parser {
             };
             if let Some((struct_name, layout)) = &aggregate_struct {
                 if self.peek() == Some(&Token::LBracket) {
-                    let array_length = self
+                    let mut array_length = self
                         .parse_global_array_length(&name)?
                         .expect("aggregate array has an array suffix");
+                    let mut inferred_initializer = None;
+                    if matches!(&array_length, GlobalArrayLength::Incomplete(shape) if shape.is_empty())
+                        && !is_extern
+                        && self.peek() == Some(&Token::Equal)
+                    {
+                        self.position += 1;
+                        let (length, initializer) = self
+                            .parse_aggregate_array_initializer_with_bound(
+                                &name,
+                                struct_name,
+                                layout,
+                                None,
+                            )?;
+                        array_length = GlobalArrayLength::Complete(vec![length]);
+                        inferred_initializer = Some(initializer);
+                    }
                     let declaration = match array_length {
                         GlobalArrayLength::Complete(shape) => {
                             if shape.len() != 1 {
@@ -5844,8 +5871,11 @@ impl Parser {
                                 ));
                             }
                             let length = shape[0];
-                            let has_initializer = self.peek() == Some(&Token::Equal);
-                            let initializer = if has_initializer {
+                            let has_initializer = inferred_initializer.is_some()
+                                || self.peek() == Some(&Token::Equal);
+                            let initializer = if let Some(initializer) = inferred_initializer {
+                                Some(initializer)
+                            } else if has_initializer {
                                 if is_extern {
                                     return Err(self.error_here(
                                         "`extern` aggregate global array declarations may not have an initializer",
@@ -8636,12 +8666,33 @@ impl Parser {
         layout: &C0StructLayout,
         length: u32,
     ) -> Result<Vec<C0AggregateInitializer>, C0SyntaxError> {
+        self.parse_aggregate_array_initializer_with_bound(
+            object_name,
+            struct_name,
+            layout,
+            Some(length),
+        )
+        .map(|(_, initializer)| initializer)
+    }
+
+    fn parse_aggregate_array_initializer_with_bound(
+        &mut self,
+        object_name: &str,
+        struct_name: &str,
+        layout: &C0StructLayout,
+        length: Option<u32>,
+    ) -> Result<(u32, Vec<C0AggregateInitializer>), C0SyntaxError> {
         self.expect(Token::LBrace)?;
         let mut initializers = Vec::new();
         let mut next_element_index = 0u32;
         if self.peek() != Some(&Token::RBrace) {
             loop {
                 let element_index = if self.peek() == Some(&Token::LBracket) {
+                    let length = length.ok_or_else(|| {
+                        self.error_here(
+                            "inferred aggregate arrays require positional element initializers",
+                        )
+                    })?;
                     self.position += 1;
                     let index = self.parse_aggregate_array_designator(object_name, length)?;
                     self.expect(Token::Equal)?;
@@ -8656,14 +8707,14 @@ impl Parser {
                         ));
                     }
                     let index = next_element_index;
-                    next_element_index = next_element_index
-                        .checked_add(1)
-                        .expect("validated aggregate array initializer index");
+                    next_element_index = next_element_index.checked_add(1).ok_or_else(|| {
+                        self.error_here("aggregate array initializer length overflows")
+                    })?;
                     index
                 };
-                if element_index >= length {
+                if length.is_some_and(|length| element_index >= length) {
                     return Err(self.error_here(format!(
-                        "too many initializers for aggregate array `{object_name}[{length}]`"
+                        "too many initializers for aggregate array `{object_name}`"
                     )));
                 }
                 if self.peek() != Some(&Token::LBrace) {
@@ -8673,7 +8724,10 @@ impl Parser {
                 }
                 let base_offset = element_index
                     .checked_mul(layout.size_bytes())
-                    .expect("validated aggregate array initializer offset");
+                    .ok_or_else(|| self.error_here("aggregate array initializer size overflows"))?;
+                base_offset
+                    .checked_add(layout.size_bytes())
+                    .ok_or_else(|| self.error_here("aggregate array initializer size overflows"))?;
                 initializers.extend(self.parse_aggregate_initializer_level(
                     object_name,
                     struct_name,
@@ -8702,7 +8756,13 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(initializers)
+        let length = length.unwrap_or(next_element_index);
+        if length == 0 {
+            return Err(
+                self.error_here("inferred aggregate array requires a non-empty initializer")
+            );
+        }
+        Ok((length, initializers))
     }
 
     fn parse_aggregate_array_designator(
@@ -9882,21 +9942,37 @@ impl Parser {
             let kernel_name = self.declare_static_name(&source_name)?;
             if let Some((struct_name, layout)) = &aggregate_struct {
                 if self.peek() == Some(&Token::LBracket) {
-                    let length = self.parse_static_array_length(&source_name)?;
-                    let initializer = if self.peek() == Some(&Token::Equal) {
+                    let shape = self
+                        .parse_global_array_length(&source_name)?
+                        .expect("static aggregate array suffix");
+                    let bound = match shape {
+                        GlobalArrayLength::Complete(shape) if shape.len() == 1 => Some(shape[0]),
+                        GlobalArrayLength::Incomplete(shape) if shape.is_empty() => None,
+                        _ => {
+                            return Err(self.error_here(
+                                "multidimensional static aggregate arrays are not supported yet",
+                            ));
+                        }
+                    };
+                    let (length, initializer) = if self.peek() == Some(&Token::Equal) {
                         self.position += 1;
-                        self.parse_aggregate_array_initializer(
+                        self.parse_aggregate_array_initializer_with_bound(
                             &source_name,
                             struct_name,
                             layout,
-                            length,
+                            bound,
                         )?
                     } else {
-                        Vec::new()
+                        (
+                            bound.ok_or_else(|| {
+                                self.error_here("inferred static array requires an initializer")
+                            })?,
+                            Vec::new(),
+                        )
                     };
                     let bytes = length
                         .checked_mul(layout.size_bytes())
-                        .expect("validated static aggregate array size");
+                        .ok_or_else(|| self.error_here("static aggregate array size overflows"))?;
                     self.variable_types
                         .insert(kernel_name.clone(), C0Type::UInt8Array(bytes));
                     self.variable_array_shapes
@@ -9960,13 +10036,66 @@ impl Parser {
                         self.error_here("volatile static local arrays are not supported yet")
                     );
                 }
-                let length = self.parse_static_array_length(&source_name)?;
-                let initializer = if self.peek() == Some(&Token::Equal) {
-                    self.position += 1;
-                    self.parse_static_array_initializer(&source_name, parsed_type.c_type, length)?
-                } else {
-                    vec![zero_initializer(parsed_type.c_type); length as usize]
+                let dimensions = self
+                    .parse_global_array_length(&source_name)?
+                    .expect("static scalar array suffix");
+                let (shape, initializer) = match dimensions {
+                    GlobalArrayLength::Complete(shape) => {
+                        let length = shape
+                            .iter()
+                            .try_fold(1u32, |n, d| n.checked_mul(*d))
+                            .ok_or_else(|| self.error_here("static array size overflows"))?;
+                        let initializer = if self.peek() == Some(&Token::Equal) {
+                            self.position += 1;
+                            if shape.len() == 1 {
+                                self.parse_static_array_initializer(
+                                    &source_name,
+                                    parsed_type.c_type,
+                                    length,
+                                )?
+                            } else {
+                                self.parse_global_array_initializer(
+                                    &source_name,
+                                    parsed_type.c_type,
+                                    &shape,
+                                )?
+                            }
+                        } else {
+                            vec![zero_initializer(parsed_type.c_type); length as usize]
+                        };
+                        (shape, initializer)
+                    }
+                    GlobalArrayLength::Incomplete(inner) => {
+                        if self.peek() != Some(&Token::Equal) {
+                            return Err(
+                                self.error_here("inferred static array requires an initializer")
+                            );
+                        }
+                        self.position += 1;
+                        if inner.is_empty() {
+                            let initializer = self.parse_inferred_global_array_initializer(
+                                &source_name,
+                                parsed_type.c_type,
+                            )?;
+                            let length = u32::try_from(initializer.len())
+                                .ok().filter(|length| *length > 0)
+                                .ok_or_else(|| self.error_here("inferred static array requires a non-empty bounded initializer"))?;
+                            (vec![length], initializer)
+                        } else {
+                            self.parse_inferred_multidimensional_global_array_initializer(
+                                &source_name,
+                                parsed_type.c_type,
+                                &inner,
+                            )?
+                        }
+                    }
                 };
+                let length = shape
+                    .iter()
+                    .try_fold(1u32, |n, d| n.checked_mul(*d))
+                    .ok_or_else(|| self.error_here("static array size overflows"))?;
+                self.variable_array_shapes
+                    .insert(kernel_name.clone(), shape.clone());
                 self.variable_types.insert(
                     kernel_name.clone(),
                     array_type_for_element(parsed_type.c_type, length)
@@ -9984,6 +10113,7 @@ impl Parser {
                         length,
                         initializer,
                     )
+                    .with_shape(shape)
                     .with_constant(parsed_type.is_constant),
                 );
             } else {
@@ -10028,46 +10158,6 @@ impl Parser {
         // the statement tree preserves the source declaration's position
         // without reinitializing the object on every invocation.
         Ok(C0Statement::Skip)
-    }
-
-    fn parse_static_array_length(&mut self, name: &str) -> Result<u32, C0SyntaxError> {
-        self.expect(Token::LBracket)?;
-        let length = match self.next() {
-            Some(Token::Number(number)) => {
-                let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
-                    self.error_at_previous(format!(
-                        "invalid static local array length `{number}`: {reason}"
-                    ))
-                })?;
-                u32::try_from(length).map_err(|_| {
-                    self.error_at_previous(format!(
-                        "static local array length `{number}` is out of range"
-                    ))
-                })?
-            }
-            Some(token) => {
-                return Err(self.error_at_previous(format!(
-                    "expected positive static local array length, got {}",
-                    token.describe()
-                )));
-            }
-            None => {
-                return Err(self
-                    .error_here("expected positive static local array length, got end of input"));
-            }
-        };
-        if length == 0 {
-            return Err(self.error_at_previous(format!(
-                "static local array `{name}` must have positive length"
-            )));
-        }
-        self.expect(Token::RBracket)?;
-        if self.peek() == Some(&Token::LBracket) {
-            return Err(
-                self.error_here("multidimensional static local arrays are not supported yet")
-            );
-        }
-        Ok(length)
     }
 
     fn parse_static_array_initializer(

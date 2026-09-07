@@ -2239,6 +2239,12 @@ pub(in crate::surface) fn parse_c_layouts(
                 .global_arrays()
                 .iter()
                 .filter_map(|(name, array)| array.index_shape().map(|shape| (name.clone(), shape)))
+                .chain(
+                    function
+                        .static_arrays()
+                        .values()
+                        .map(|array| (array.name().to_string(), array.shape().to_vec())),
+                )
                 .collect();
             global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
         }

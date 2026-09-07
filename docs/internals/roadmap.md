@@ -113,6 +113,10 @@ Likely additions:
   designators, and dynamically initialized aggregate tables remain open.
   File-scope `static` incomplete scalar arrays now resolve against complete definitions in their own
   translation unit, while unresolved private arrays remain rejected.
+  One-dimensional struct arrays now infer bounds from positional element groups
+  at file scope and in function-local static storage. Function-local scalar
+  statics also support inferred bounds and fixed or inferred multidimensional
+  shapes using the existing row-major storage.
   Static-storage pointers now also accept address constants for declared scalar
   objects, array elements, and scalar struct fields, preserving stable global or
   function-qualified static provenance and pointee-`const` views across
