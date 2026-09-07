@@ -42,8 +42,10 @@ file-scope scalar arrays retain their declared shape, use row-major flat
 storage, and require shape-compatible cross-file declarations. External
 declarations may omit the outer dimension while retaining complete inner
 dimensions; bundle linking resolves those declarations against one complete
-fixed-size definition. Unresolved private or external incomplete tentative
-definitions and wider string-literal forms remain unsupported. Dynamic initialization
+fixed-size definition. External-linkage initialized definitions may also omit
+the outer dimension when nested positional initializer groups infer it.
+Unresolved private or external incomplete tentative definitions and wider
+string-literal forms remain unsupported. Dynamic initialization
 remains unsupported, while bounded integer constant expressions are folded for
 scalar objects and arrays. Static address initializer chains are resolved
 after the complete source bundle is linked, so declaration and translation-unit
@@ -140,6 +142,10 @@ external-linkage tentative definitions with an omitted outer dimension, while
 and `mdtests/file_scope_incomplete_multidimensional_tentative_array_definition_errors.md`
 cover unresolved declarations, incompatible retained inner dimensions, and
 duplicate complete definitions.
+`mdtests/file_scope_inferred_multidimensional_array_bounds.md` covers inferring
+an external definition's outer bound from nested positional rows, while
+`mdtests/file_scope_inferred_multidimensional_array_rejections.md` covers the
+retained flat-initializer boundary.
 `mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
 bounds remaining rejected during cross-translation-unit linking.
 `mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
@@ -213,6 +219,10 @@ propagation, and indirect-write rejection.
   and external-linkage tentative definitions may omit only the outer dimension
   while retaining complete inner dimensions; the latter resolve against one
   complete fixed-size definition during bundle linking.
+  External-linkage multidimensional definitions may likewise omit the outer
+  dimension when nested positional initializer groups infer a positive row
+  count; flat, empty, and designated inferred multidimensional initializers
+  remain rejected.
   Fixed multidimensional definitions require nested positional initializer
   groups, retain their declared row-major shape, and reject shape-mismatched
   cross-file declarations. File-scope
@@ -246,7 +256,8 @@ propagation, and indirect-write rejection.
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
   non-literal designators, const-qualified automatic aggregate locals,
-  incomplete multidimensional definitions with initializers, unresolved incomplete tentative definitions, dynamic or
+  file-scope static or aggregate incomplete multidimensional definitions with
+  initializers, unresolved incomplete tentative definitions, dynamic or
   non-literal initialization, and wider literal forms remain open. Scalar
   array bounds may be inferred from non-empty positional initializers; static
   address initializers are revalidated after external globals are linked,

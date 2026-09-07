@@ -1541,6 +1541,53 @@ fn c0_rejects_incomplete_multidimensional_static_arrays() {
 }
 
 #[test]
+fn c0_infers_incomplete_outer_dimension_from_multidimensional_initializer() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 values[][3] = {{1, 2}, {4, 5, 6}};
+
+        int32 read() {
+            return values[1][2];
+        }
+        "#,
+        "inferred-multidimensional.c",
+    )
+    .expect("nested positional initializers should infer the outer dimension");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert!(values.is_defined());
+    assert!(!values.is_tentative());
+    assert_eq!(values.shape(), Some(&[2, 3][..]));
+    assert_eq!(values.incomplete_shape(), None);
+    assert_eq!(
+        functions[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(1),
+            crate::kernel::int32(2),
+            crate::kernel::int32(0),
+            crate::kernel::int32(4),
+            crate::kernel::int32(5),
+            crate::kernel::int32(6)
+        ]
+    );
+}
+
+#[test]
+fn c0_rejects_incomplete_multidimensional_static_array_initializers() {
+    let error = syntax::parse_functions(
+        "static int32 values[][3] = {{1, 2, 3}}; int32 read() { return values[0][0]; }",
+    )
+    .expect_err("file-scope static multidimensional arrays need a complete shape");
+    assert!(
+        error
+            .message()
+            .contains("incomplete multidimensional file-scope static arrays"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_accepts_incomplete_tentative_scalar_array_declarations() {
     let functions = syntax::parse_functions_for_source(
         r#"
@@ -1626,7 +1673,8 @@ fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
     for source in [
         "int32 values[] = {}; int32 read() { return values[0]; }",
         "int32 values[] = {[1] = 2}; int32 read() { return values[0]; }",
-        "int32 values[][3] = {{1, 2, 3}}; int32 read() { return values[0][0]; }",
+        "int32 values[][3] = {1, 2, 3}; int32 read() { return values[0][0]; }",
+        "int32 values[][3] = {}; int32 read() { return values[0][0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
         "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
     ] {

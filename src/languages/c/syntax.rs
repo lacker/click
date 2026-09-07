@@ -6031,10 +6031,20 @@ impl Parser {
                         }
                         inferred_initializer = Some(initializer);
                         Some(GlobalArrayLength::Complete(vec![length]))
-                    } else {
+                    } else if is_file_static {
                         return Err(self.error_here(
-                            "incomplete multidimensional file-scope arrays with initializers are not supported yet",
+                            "incomplete multidimensional file-scope static arrays are not supported yet",
                         ));
+                    } else {
+                        self.position += 1;
+                        let (shape, initializer) = self
+                            .parse_inferred_multidimensional_global_array_initializer(
+                                &name,
+                                parsed_type.c_type,
+                                &incomplete_shape,
+                            )?;
+                        inferred_initializer = Some(initializer);
+                        Some(GlobalArrayLength::Complete(shape))
                     }
                 }
                 other => other,
@@ -6298,6 +6308,69 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
         Ok(values)
+    }
+
+    fn parse_inferred_multidimensional_global_array_initializer(
+        &mut self,
+        name: &str,
+        element_type: C0Type,
+        inner_shape: &[u32],
+    ) -> Result<(Vec<u32>, Vec<C0Expression>), C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let zero = zero_initializer(element_type);
+        let mut values = Vec::new();
+        let mut outer_length = 0u32;
+        if self.peek() == Some(&Token::RBrace) {
+            self.position += 1;
+            return Err(self.error_here(format!(
+                "inferred file-scope multidimensional array `{name}` requires a non-empty initializer"
+            )));
+        }
+        loop {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(self.error_here(format!(
+                    "nested initializer for inferred file-scope multidimensional array `{name}` expects `{}` groups",
+                    inner_shape.len()
+                )));
+            }
+            self.parse_array_initializer_level(name, inner_shape, 0, &mut values, &zero)?;
+            outer_length = outer_length.checked_add(1).ok_or_else(|| {
+                self.error_here(format!(
+                    "inferred file-scope multidimensional array `{name}` has too many initializer rows"
+                ))
+            })?;
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                    if self.peek() == Some(&Token::RBrace) {
+                        break;
+                    }
+                }
+                Some(Token::RBrace) => break,
+                Some(token) => {
+                    return Err(self.error_here(format!(
+                        "expected `,` or `}}` in inferred file-scope multidimensional array `{name}` initializer, got {}",
+                        token.describe()
+                    )));
+                }
+                None => {
+                    return Err(self.error_here(format!(
+                        "expected `,` or `}}` in inferred file-scope multidimensional array `{name}` initializer, got end of input"
+                    )));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        let mut shape = Vec::with_capacity(inner_shape.len() + 1);
+        shape.push(outer_length);
+        shape.extend_from_slice(inner_shape);
+        let initializer = values
+            .into_iter()
+            .map(|value| {
+                normalize_static_initializer(self, element_type, false, &value, "global", false)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((shape, initializer))
     }
 
     fn parse_global_array_length(

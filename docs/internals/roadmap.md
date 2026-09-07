@@ -100,14 +100,15 @@ Likely additions:
   selected conditional branches, and checked integer casts. Fixed-size
   one-dimensional arrays of supported scalar-field
   aggregates now use the same stable linkage and ABI-sized element storage;
-  external incomplete array declarations now resolve against complete
-  fixed-size definitions during bundle linking; const-qualified
+  external incomplete array declarations and external-linkage initialized
+  multidimensional definitions with inferred outer bounds now resolve against
+  complete fixed-size definitions during bundle linking; const-qualified
   static-storage aggregates now use read-only backing and compatible
   cross-file qualifiers are checked; scalar array bounds may be inferred from
   non-empty positional initializers; incomplete definitions without an
-  initializer, non-literal designators, multidimensional, and dynamically
-  initialized aggregate tables remain open. File-scope `static` incomplete
-  scalar arrays now resolve against complete definitions in their own
+  initializer, file-scope static or aggregate multidimensional definitions,
+  non-literal designators, and dynamically initialized aggregate tables remain
+  open. File-scope `static` incomplete scalar arrays now resolve against complete definitions in their own
   translation unit, while unresolved private arrays remain rejected.
   Static-storage pointers now also accept address constants for declared scalar
   objects, array elements, and scalar struct fields, preserving stable global or
