@@ -1338,9 +1338,64 @@ fn function_refines_named_contract(
     if contract.exactly_matches(function) {
         return Ok(true);
     }
-    if !contract.has_compatible_signature_and_contract_vocabulary(function) {
+    let Some(context) = prepare_function_contract_refinement_context(contract, function, budget)
+    else {
         return Ok(false);
+    };
+    function_refines_named_contract_in_case(&context, &[], false, budget)
+}
+
+pub(super) fn prepare_function_contract_refinement_context(
+    contract: &CFunctionContract,
+    function: &CFunction,
+    budget: &mut ExecutionBudget,
+) -> Option<CFunctionContractRefinementContext> {
+    if !contract.has_compatible_signature_and_contract_vocabulary(function) {
+        return None;
     }
+    let mut argument_values = Vec::with_capacity(function.parameters().len());
+    for parameter in function.parameters() {
+        let variable = Variable(budget.next_kernel_variable);
+        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        argument_values.push(symbolic_call_result(parameter.c_type(), variable));
+    }
+    let result_variable = Variable(budget.next_kernel_variable);
+    budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+    Some(CFunctionContractRefinementContext {
+        contract: contract.clone(),
+        function: function.clone(),
+        argument_values,
+        result_variable,
+        next_kernel_variable: budget.next_kernel_variable,
+    })
+}
+
+pub(super) fn function_refines_named_contract_in_explicit_case(
+    context: &CFunctionContractRefinementContext,
+    case_assumptions: &[Proposition],
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    function_refines_named_contract_in_case(context, case_assumptions, true, budget)
+}
+
+pub(super) fn function_contract_refinement_entry_state(
+    context: &CFunctionContractRefinementContext,
+) -> CState {
+    with_contract_argument_views(
+        &CState::new(),
+        context.contract.template(),
+        &context.argument_values,
+    )
+}
+
+fn function_refines_named_contract_in_case(
+    context: &CFunctionContractRefinementContext,
+    case_assumptions: &[Proposition],
+    explicit_case: bool,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    let contract = &context.contract;
+    let function = &context.function;
     let mut propositions = contract
         .template()
         .contract_requires()
@@ -1361,18 +1416,13 @@ fn function_refines_named_contract(
         return Ok(false);
     }
 
-    let mut argument_values = Vec::with_capacity(function.parameters().len());
-    for parameter in function.parameters() {
-        let variable = Variable(budget.next_kernel_variable);
-        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
-        argument_values.push(symbolic_call_result(parameter.c_type(), variable));
-    }
-    let result_variable = Variable(budget.next_kernel_variable);
-    budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
-
-    let contract_entry =
-        with_contract_argument_views(&CState::new(), contract.template(), &argument_values);
-    let function_entry = with_contract_argument_views(&CState::new(), function, &argument_values);
+    let contract_entry = with_contract_argument_views(
+        &CState::new(),
+        contract.template(),
+        &context.argument_values,
+    );
+    let function_entry =
+        with_contract_argument_views(&CState::new(), function, &context.argument_values);
     let mut preconditions = PureFactContext::new();
     if !assume_contract_propositions(
         &contract_entry,
@@ -1380,7 +1430,11 @@ fn function_refines_named_contract(
         contract.template().contract_requires(),
         &mut preconditions,
         budget,
-    )? || !prove_contract_propositions(
+    )? {
+        return Ok(false);
+    }
+    preconditions = assumptions_with_propositions(&preconditions, case_assumptions);
+    if !prove_contract_propositions(
         &function_entry,
         &function_entry,
         function.contract_requires(),
@@ -1396,15 +1450,29 @@ fn function_refines_named_contract(
     } else {
         let memory_variable = Variable(budget.next_kernel_variable);
         budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
-        let Some(mutable_ranges) = evaluate_contract_mutable_ranges(
-            contract.template(),
-            &contract_entry,
-            &preconditions,
-            budget,
-            true,
-        )?
-        else {
-            return Ok(false);
+        let mutable_ranges = if explicit_case {
+            let Some(ranges) = evaluate_decided_contract_mutable_ranges(
+                function,
+                &function_entry,
+                &preconditions,
+                budget,
+            )?
+            else {
+                return Ok(false);
+            };
+            ranges
+        } else {
+            let Some(ranges) = evaluate_contract_mutable_ranges(
+                contract.template(),
+                &contract_entry,
+                &preconditions,
+                budget,
+                true,
+            )?
+            else {
+                return Ok(false);
+            };
+            ranges
         };
         contract_entry.memory().clone().with_call_memory_havoc(
             memory_variable,
@@ -1412,7 +1480,7 @@ fn function_refines_named_contract(
             &preconditions,
         )
     };
-    let result = symbolic_call_result(function.return_type(), result_variable);
+    let result = symbolic_call_result(function.return_type(), context.result_variable);
     let mut contract_post = contract_entry.clone().with_memory(post_memory.clone());
     let mut function_post = function_entry.clone().with_memory(post_memory);
     if function.return_type() != CType::Void {
@@ -1464,6 +1532,44 @@ fn evaluate_contract_mutable_ranges(
             return Ok(None);
         }
         let Some(range) = evaluate_contract_mutable_range(entry, segment, assumptions, budget)?
+        else {
+            return Ok(None);
+        };
+        ranges.push(range);
+    }
+    Ok(Some(ranges))
+}
+
+/// Evaluates exactly the concrete ranges active in one explicit proof case.
+///
+/// Unlike automatic refinement, this never branches over a guard. Every guard
+/// must already be decided by the named preconditions and the proof's written
+/// case assumptions. A false guard contributes no possible write; a true guard
+/// contributes its ordinary evaluated range.
+fn evaluate_decided_contract_mutable_ranges(
+    function: &CFunction,
+    entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
+    let mut guard_assumptions = assumptions.clone();
+    let Some(guards) =
+        lower_refinement_mutable_guards(function, entry, &mut guard_assumptions, budget)?
+    else {
+        return Ok(None);
+    };
+    let mut ranges = Vec::with_capacity(function.contract_mutable().len());
+    for (segment, guard) in function.contract_mutable().iter().zip(guards) {
+        if let Some(guard) = guard {
+            if guard_assumptions.proves(&Proposition::Not(Box::new(guard.clone()))) {
+                continue;
+            }
+            if !guard_assumptions.proves(&guard) {
+                return Ok(None);
+            }
+        }
+        let Some(range) =
+            evaluate_contract_mutable_range(entry, segment, &guard_assumptions, budget)?
         else {
             return Ok(None);
         };
@@ -2072,11 +2178,25 @@ fn assume_contract_propositions(
                 .clone()
                 .assume_proposition(obligation.proposition().clone());
         }
-        *assumptions = assumptions
-            .clone()
-            .assume_proposition(path.proposition.clone());
+        assume_contract_proposition(assumptions, path.proposition.clone());
     }
     Ok(true)
+}
+
+/// Adds a contract proposition and the deterministic logical consequences
+/// exposed by facts already present in this local refinement context.
+fn assume_contract_proposition(assumptions: &mut PureFactContext, proposition: Proposition) {
+    *assumptions = assumptions.clone().assume_proposition(proposition.clone());
+    match proposition {
+        Proposition::And(left, right) => {
+            assume_contract_proposition(assumptions, *left);
+            assume_contract_proposition(assumptions, *right);
+        }
+        Proposition::Implies(left, right) if assumptions.proves(&left) => {
+            assume_contract_proposition(assumptions, *right);
+        }
+        _ => {}
+    }
 }
 
 fn prove_contract_propositions(
@@ -2133,6 +2253,22 @@ fn contract_refinement_proves(
     }
     if !allow_stateful_memory {
         return false;
+    }
+    match proposition {
+        Proposition::And(left, right) => {
+            return contract_refinement_proves(assumptions, left, true)
+                && contract_refinement_proves(assumptions, right, true);
+        }
+        Proposition::Implies(left, right) => {
+            if assumptions.proves(&Proposition::Not(left.clone())) {
+                return true;
+            }
+            let assumptions = assumptions
+                .clone()
+                .assume_proposition(left.as_ref().clone());
+            return contract_refinement_proves(&assumptions, right, true);
+        }
+        _ => {}
     }
     let Proposition::ConditionIs(condition, value) = proposition else {
         return false;

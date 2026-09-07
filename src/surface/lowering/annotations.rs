@@ -1440,21 +1440,24 @@ impl AnnotationLowerer<'_> {
                 })
             }
             ClickProposition::PredicateCall { name, arguments } => {
-                if self
-                    .predicate_environment
-                    .contract_signature(name)
-                    .is_some()
-                {
+                if let Some(signature) = self.predicate_environment.contract_signature(name) {
                     let [function] = arguments.as_slice() else {
                         return Err(format!(
                             "contract `{name}` expects one function-pointer argument"
                         ));
                     };
+                    let function = match contract_expression_function_address(function) {
+                        Some(target) => {
+                            SpecExpression::CExpression(CExpression::Value(CValue::typed_pointer(
+                                Pointer::function(target.to_string()),
+                                signature.to_kernel_type(),
+                            )))
+                        }
+                        None => self.lower_contract_expression_to_spec(function, environment)?,
+                    };
                     return Ok(SpecProposition::Predicate {
                         name: CFunctionContract::predicate_name_for(name),
-                        arguments: vec![SpecPredicateArgument::Value(
-                            self.lower_contract_expression_to_spec(function, environment)?,
-                        )],
+                        arguments: vec![SpecPredicateArgument::Value(function)],
                     });
                 }
                 let definition = self

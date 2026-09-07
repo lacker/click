@@ -4469,6 +4469,107 @@ pub fn prove_universally_quantified_pure_implication(
     })
 }
 
+/// Opens one verified concrete target as a local named-contract refinement
+/// problem for a pure theorem proof.
+///
+/// No project search occurs: both names are exact map lookups, and a concrete
+/// target must already carry a verified or explicitly external rule.
+pub fn c_function_contract_refinement_context(
+    environment: &CExecutionEnvironment,
+    contract_name: &str,
+    target_name: &str,
+) -> Option<CFunctionContractRefinementContext> {
+    let contract = environment.get_function_contract(contract_name)?;
+    let function = if let Some(rule) = environment.get_verified_function_rule(target_name) {
+        &rule.function
+    } else {
+        &environment
+            .get_external_function_rule(target_name)?
+            .function
+    };
+    prepare_function_contract_refinement_context(
+        contract,
+        function,
+        &mut ExecutionBudget::default(),
+    )
+}
+
+/// Returns the shared arbitrary argument values introduced by a refinement
+/// theorem's `unfold(Contract)` step.
+pub fn c_function_contract_refinement_arguments(
+    context: &CFunctionContractRefinementContext,
+) -> &[CValue] {
+    &context.argument_values
+}
+
+/// Returns the symbolic entry state used to lower explicit proof conditions.
+pub fn c_function_contract_refinement_entry_state(
+    context: &CFunctionContractRefinementContext,
+) -> CState {
+    function_contract_refinement_entry_state(context)
+}
+
+/// Checks an explicit pure proof tree and issues reusable theorem authority.
+///
+/// The checker follows exactly the written `if` tree. It never discovers or
+/// enumerates footprint guards. Every leaf performs the ordinary local
+/// contract-refinement check under the branch assumptions accumulated on the
+/// route to that leaf.
+pub fn prove_c_function_contract_refinement(
+    context: &CFunctionContractRefinementContext,
+    conclusion: Proposition,
+    proof: &CFunctionContractRefinementProof,
+) -> Option<CVerifiedPureTheorem> {
+    let Proposition::Predicate { name, arguments } = &conclusion else {
+        return None;
+    };
+    let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice() else {
+        return None;
+    };
+    if name != &context.contract.predicate_name()
+        || pointer.pointer().block != PointerBlock::Function(context.function.name().to_string())
+        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+        || pointer.c_type() != context.contract.function_pointer_type()
+    {
+        return None;
+    }
+
+    fn check(
+        context: &CFunctionContractRefinementContext,
+        proof: &CFunctionContractRefinementProof,
+        assumptions: &mut Vec<Proposition>,
+    ) -> bool {
+        match proof {
+            CFunctionContractRefinementProof::Simp => {
+                let mut budget = ExecutionBudget::default();
+                budget.next_kernel_variable = context.next_kernel_variable;
+                function_refines_named_contract_in_explicit_case(context, assumptions, &mut budget)
+                    .unwrap_or(false)
+            }
+            CFunctionContractRefinementProof::If {
+                condition,
+                then_proof,
+                else_proof,
+            } => {
+                assumptions.push(condition.clone());
+                let then_holds = check(context, then_proof, assumptions);
+                assumptions.pop();
+                if !then_holds {
+                    return false;
+                }
+                assumptions.push(Proposition::Not(Box::new(condition.clone())));
+                let else_holds = check(context, else_proof, assumptions);
+                assumptions.pop();
+                else_holds
+            }
+        }
+    }
+
+    check(context, proof, &mut Vec::new()).then(|| CVerifiedPureTheorem {
+        theorem: Theorem::new(conclusion),
+    })
+}
+
 fn rewrite_int32_term_by_exact_equality(
     term: &Bitvector32Term,
     from: &Bitvector32Term,

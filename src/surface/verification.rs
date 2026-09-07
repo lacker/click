@@ -154,6 +154,13 @@ pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheor
 pub(in crate::surface) fn verify_click_file_theorems(
     file: &ClickFile,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    verify_click_file_theorems_with_environment(file, None)
+}
+
+fn verify_click_file_theorems_with_environment(
+    file: &ClickFile,
+    function_environment: Option<&CExecutionEnvironment>,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
     let (theorem_definitions, stdlib_theorem_ensure_count) =
@@ -168,6 +175,7 @@ pub(in crate::surface) fn verify_click_file_theorems(
         &theorem_definitions,
         &predicate_environment,
         &click_function_environment,
+        function_environment,
     )?;
     Ok(verified
         .into_iter()
@@ -195,7 +203,74 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         aggregate_array_objects,
         global_array_shapes,
     )?;
-    verify_click_file_theorems(&file)
+    let parsed_sources = parse_verified_sources(&file, &sources)?;
+    let predicate_definitions = combined_predicate_definitions(&file)?;
+    let click_function_definitions = combined_click_function_definitions(&file)?;
+    let resource_definitions = combined_resource_definitions(&file)?;
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
+        .with_contracts(file.contract_definitions());
+    let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+        &click_function_definitions,
+        file.algebraic_type_definitions(),
+    );
+    let resource_environment = ResourceEnvironment::new(&resource_definitions);
+    let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
+    let mut function_environment = build_function_environment(
+        &parsed_sources,
+        &external_and_user_function_blocks,
+        file.contract_definitions(),
+        &predicate_environment,
+        &click_function_environment,
+        &resource_environment,
+    )?;
+    let refinement_targets = file
+        .theorem_definitions()
+        .iter()
+        .flat_map(|theorem| contract_refinement_targets(&file, theorem.name()))
+        .collect::<BTreeSet<_>>();
+    for target in refinement_targets {
+        let Some(function) = function_environment.get_function(&target).cloned() else {
+            continue;
+        };
+        if let Some(hypothesis) = crate::kernel::c_recursive_function_contract_hypothesis(function)
+        {
+            function_environment = function_environment.with_verified_function_rule(hypothesis);
+        }
+    }
+    verify_click_file_theorems_with_environment(&file, Some(&function_environment))
+}
+
+fn contract_refinement_targets(file: &ClickFile, theorem_name: &str) -> BTreeSet<String> {
+    let contract_names = file
+        .contract_definitions()
+        .iter()
+        .map(ContractDefinition::name)
+        .collect::<BTreeSet<_>>();
+    let mut targets = BTreeSet::new();
+    let Some(theorem) = file
+        .theorem_definitions()
+        .iter()
+        .find(|theorem| theorem.name() == theorem_name)
+    else {
+        return targets;
+    };
+    for ensure in theorem.ensures() {
+        let Ensure::Proposition(ClickProposition::PredicateCall { name, arguments }) =
+            ensure.ensure()
+        else {
+            continue;
+        };
+        if !contract_names.contains(name.as_str()) {
+            continue;
+        }
+        let [argument] = arguments.as_slice() else {
+            continue;
+        };
+        if let Some(target) = contract_expression_function_address(argument) {
+            targets.insert(target.to_string());
+        }
+    }
+    targets
 }
 
 pub(in crate::surface) fn parse_c0_click_file(
@@ -653,7 +728,17 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     }
                     Some(required)
                 }
-                Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
+                Some(VerificationTarget::Theorem(theorem_name)) => {
+                    let mut required = BTreeSet::new();
+                    for function_name in contract_refinement_targets(&file, theorem_name) {
+                        required.extend(verification_required_functions(
+                            &file,
+                            &parsed_sources,
+                            &function_name,
+                        )?);
+                    }
+                    Some(required)
+                }
                 None => None,
             }
         };
@@ -738,6 +823,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &theorem_definitions,
             &predicate_environment,
             &click_function_environment,
+            Some(&function_environment),
         )?;
         // Verified pure theorems over scalar parameters become closed
         // universally-quantified facts, so kernel contract certification can

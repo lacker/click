@@ -1304,6 +1304,7 @@ mod certificate_tests {
                 file.theorem_definitions(),
                 &predicate_environment,
                 &click_function_environment,
+                None,
             )
         });
         let verified = verified.expect("direct checked pure proofs should verify");

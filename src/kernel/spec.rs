@@ -2469,10 +2469,19 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    // A function-contract fact describes the behavior of its pointer value;
+    // it is independent of the caller's current resource-population snapshot.
+    // Keeping the uniform predicate state argument canonical lets a closed
+    // pure theorem establish the same fact at every later application site.
+    let predicate_state = if CFunctionContract::surface_name_from_predicate(name).is_some() {
+        CState::new()
+    } else {
+        state.resource_state_snapshot()
+    };
     let mut paths = vec![SpecPropositionPath {
         proposition: Proposition::Predicate {
             name: name.to_string(),
-            arguments: vec![Term::CState(state.resource_state_snapshot())],
+            arguments: vec![Term::CState(predicate_state)],
         },
         facts: Vec::new(),
         obligations: Vec::new(),

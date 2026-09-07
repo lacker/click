@@ -3120,6 +3120,38 @@ pub struct CVerifiedPureTheorem {
     pub(super) theorem: Theorem,
 }
 
+/// A local, symbolic contract-refinement problem opened by a pure theorem.
+///
+/// Construction is kernel-owned: the target must already have a verified or
+/// explicitly external rule, and the named contract and concrete function are
+/// instantiated with the same fresh arguments.  The surface proof may inspect
+/// the argument bindings and entry state only to lower explicit logical case
+/// splits; it cannot manufacture a refinement authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CFunctionContractRefinementContext {
+    pub(super) contract: CFunctionContract,
+    pub(super) function: CFunction,
+    pub(super) argument_values: Vec<CValue>,
+    pub(super) result_variable: Variable,
+    pub(super) next_kernel_variable: u64,
+}
+
+/// The explicit logical structure of a contract-refinement proof.
+///
+/// `If` is excluded-middle elimination over a condition written in the proof;
+/// both children are mandatory. `Simp` asks the kernel to check the local
+/// structural and proposition implications under the accumulated branch
+/// assumptions. There is no implicit guard enumeration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CFunctionContractRefinementProof {
+    Simp,
+    If {
+        condition: Proposition,
+        then_proof: Box<CFunctionContractRefinementProof>,
+        else_proof: Box<CFunctionContractRefinementProof>,
+    },
+}
+
 /// A proof tree produced by contextual proposition reasoning.
 ///
 /// Smart reasoning may search for this tree. Check only checks the selected

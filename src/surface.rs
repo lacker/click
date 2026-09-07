@@ -13,18 +13,20 @@ use crate::kernel::{
     CCheckedFunctionProposition, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
     CFunction, CFunctionContract, CFunctionContractClaim, CFunctionContractClaimKey,
-    CFunctionContractClaimTarget, CFunctionContractExecutionMode, CFunctionExecutionCandidates,
-    CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan,
-    CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
-    CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
-    CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
-    ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition,
-    PropositionDerivation, PureFactContext, ResourceContext, ResourceContextValidityError, Sort,
-    SpecAlgebraicExpression, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition,
-    SpecResource, SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
-    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
-    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
-    c_function_contract_entry_state, c_function_entry_state,
+    CFunctionContractClaimTarget, CFunctionContractExecutionMode, CFunctionContractRefinementProof,
+    CFunctionExecutionCandidates, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
+    CLoopEffectCheck, CLoopEffectSpan, CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory,
+    CMemoryRange, CMemorySegment, CResource, CResourceAccessMode, CResourceFact, CResourceSpec,
+    CState, CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem,
+    ConditionTerm, ExecutionBudget, ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm,
+    ProofObligation, Proposition, PropositionDerivation, PureFactContext, ResourceContext,
+    ResourceContextValidityError, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
+    SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
+    Variable, abstract_c_state_for_join, c_checked_function_proposition,
+    c_condition_fact_has_memory, c_condition_fact_memories, c_do_while_preservation_contexts,
+    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
+    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
+    c_function_contract_refinement_entry_state, c_function_entry_state,
     c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
     c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
@@ -37,6 +39,7 @@ use crate::kernel::{
     certify_int32_move_one_from_right_to_left_preserves_sum, int32,
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems,
+    prove_c_function_contract_refinement,
     prove_c_function_satisfies_specification_from_symbolic_path, prove_forall_int32_application,
     prove_int32_above_one_predecessor_is_at_least_one,
     prove_int32_add_nonnegative_left_is_at_least_right,
@@ -68,6 +71,19 @@ use crate::kernel::{
 };
 use crate::languages::c::syntax::{self, C0Expression, C0Type};
 use crate::persistent::{PersistentMap, PersistentSet};
+
+fn contract_expression_function_address(expression: &ContractExpression) -> Option<&str> {
+    match expression {
+        ContractExpression::CFragment(CExpression::FunctionAddress(name)) => Some(name),
+        ContractExpression::CFragment(CExpression::AddressOf(expression)) => {
+            match expression.as_ref() {
+                CExpression::Variable(name) => Some(name),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
 
 mod checking;
 mod diagnostics;
@@ -3344,6 +3360,7 @@ pub enum SmartTactic {
 struct PredicateEnvironment {
     definitions: BTreeMap<String, PredicateDefinition>,
     contract_signatures: BTreeMap<String, C0Type>,
+    contract_definitions: BTreeMap<String, ContractDefinition>,
 }
 
 impl PredicateEnvironment {
@@ -3354,6 +3371,7 @@ impl PredicateEnvironment {
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
             contract_signatures: BTreeMap::new(),
+            contract_definitions: BTreeMap::new(),
         }
     }
 
@@ -3367,6 +3385,10 @@ impl PredicateEnvironment {
                 )
             })
             .collect();
+        self.contract_definitions = definitions
+            .iter()
+            .map(|definition| (definition.name().to_string(), definition.clone()))
+            .collect();
         self
     }
 
@@ -3376,6 +3398,10 @@ impl PredicateEnvironment {
 
     fn contract_signature(&self, name: &str) -> Option<C0Type> {
         self.contract_signatures.get(name).copied()
+    }
+
+    fn contract_definition(&self, name: &str) -> Option<&ContractDefinition> {
+        self.contract_definitions.get(name)
     }
 }
 

@@ -7,6 +7,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(&[]);
@@ -24,6 +25,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
                 predicate_environment,
                 click_function_environment,
                 &theorem_environment,
+                function_environment,
             )?;
             verified.push(theorem);
         }
@@ -1068,6 +1070,7 @@ fn verify_theorem_ensure(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
         return Err(ClickError::new(format!(
@@ -1075,6 +1078,19 @@ fn verify_theorem_ensure(
             theorem.name()
         )));
     };
+    if let Some(verified) = verify_contract_refinement_theorem(
+        theorem,
+        ensure_index,
+        ensure_clause,
+        claim_label,
+        surface_goal,
+        context,
+        predicate_environment,
+        click_function_environment,
+        function_environment,
+    )? {
+        return Ok(verified);
+    }
     let goal = lower_pure_theorem_proposition(
         theorem.name(),
         surface_goal,
@@ -1361,6 +1377,194 @@ fn verify_theorem_ensure(
         conclusion: goal,
         kernel_authority,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_contract_refinement_theorem(
+    theorem: &TheoremDefinition,
+    ensure_index: usize,
+    ensure_clause: &EnsureClause,
+    claim_label: &str,
+    surface_goal: &ClickProposition,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    function_environment: Option<&CExecutionEnvironment>,
+) -> Result<Option<VerifiedPureTheorem>, ClickError> {
+    let ClickProposition::PredicateCall { name, arguments } = surface_goal else {
+        return Ok(None);
+    };
+    let Some(contract_definition) = predicate_environment.contract_definition(name) else {
+        return Ok(None);
+    };
+    let [argument] = arguments.as_slice() else {
+        return Ok(None);
+    };
+    let Some(target) = contract_expression_function_address(argument) else {
+        return Ok(None);
+    };
+    if !theorem.parameters().is_empty() || !theorem.requires().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: a contract-refinement theorem currently must be closed and have no `requires` clauses"
+        )));
+    }
+    let SourceProof::Script(tactics) = ensure_clause.proof() else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: proving `{name}(&{target})` requires an explicit proof beginning with `unfold({name});`"
+        )));
+    };
+    let Some((ProofTactic::UnfoldPredicate(unfolded), proof_tactics)) = tactics.split_first()
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: contract-refinement proof must begin with `unfold({name});`"
+        )));
+    };
+    if unfolded != name {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: expected `unfold({name});`, got `unfold({unfolded});`"
+        )));
+    }
+    let function_environment = function_environment.ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}`: contract-refinement theorems require the C function environment"
+        ))
+    })?;
+    let refinement = c_function_contract_refinement_context(function_environment, name, target)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}`: `{target}` is not a verified or external function compatible with contract `{name}`"
+            ))
+        })?;
+    let argument_values = c_function_contract_refinement_arguments(&refinement);
+    let contract_parameters = contract_definition
+        .function_block()
+        .signature()
+        .parameters();
+    if contract_parameters.len() != argument_values.len() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: contract parameter count does not match its lowered function"
+        )));
+    }
+    let values = contract_parameters
+        .iter()
+        .zip(argument_values)
+        .map(|(parameter, value)| (parameter.name().to_string(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let entry = c_function_contract_refinement_entry_state(&refinement);
+
+    fn lower_proof(
+        tactics: &[ProofTactic],
+        claim_label: &str,
+        values: &BTreeMap<String, CValue>,
+        memory: &CMemory,
+        predicate_environment: &PredicateEnvironment,
+        click_function_environment: &ClickFunctionEnvironment,
+    ) -> Result<CFunctionContractRefinementProof, ClickError> {
+        match tactics {
+            [ProofTactic::Simp | ProofTactic::Normalize] => {
+                Ok(CFunctionContractRefinementProof::Simp)
+            }
+            [ProofTactic::If(proof_if)] => {
+                let condition = lower_pure_theorem_proposition(
+                    claim_label,
+                    &proof_if.condition,
+                    values,
+                    &BTreeMap::new(),
+                    memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}`: could not lower contract-refinement `if` condition: {message}"
+                    ))
+                })?;
+                let then_proof = lower_proof(
+                    &proof_if.then_tactics,
+                    claim_label,
+                    values,
+                    memory,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                let else_proof = lower_proof(
+                    &proof_if.else_tactics,
+                    claim_label,
+                    values,
+                    memory,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                Ok(CFunctionContractRefinementProof::If {
+                    condition,
+                    then_proof: Box::new(then_proof),
+                    else_proof: Box::new(else_proof),
+                })
+            }
+            _ => Err(ClickError::new(format!(
+                "`{claim_label}`: after `unfold`, contract refinement currently supports explicit `if` cases with `simp();` leaves"
+            ))),
+        }
+    }
+
+    let proof = lower_proof(
+        proof_tactics,
+        claim_label,
+        &values,
+        entry.memory(),
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let goal = lower_pure_theorem_proposition(
+        theorem.name(),
+        surface_goal,
+        &context.values,
+        &context.array_refs,
+        &context.memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` failed: could not lower conclusion: {message}"
+        ))
+    })?;
+    let kernel_authority = prove_c_function_contract_refinement(&refinement, goal.clone(), &proof)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}`: contract-refinement proof does not establish `{name}(&{target})`"
+            ))
+        })?;
+    fn certificate_tactics(tactics: &[ProofTactic]) -> Vec<ProofTactic> {
+        tactics
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::Simp => ProofTactic::Normalize,
+                ProofTactic::If(proof_if) => ProofTactic::If(ProofIf {
+                    condition: proof_if.condition.clone(),
+                    then_tactics: certificate_tactics(&proof_if.then_tactics),
+                    else_tactics: certificate_tactics(&proof_if.else_tactics),
+                }),
+                tactic => tactic.clone(),
+            })
+            .collect()
+    }
+    let certificate =
+        ProofCertificate::from_proof_tactics(&certificate_tactics(tactics)).map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}`: invalid refinement certificate: {message:?}"
+            ))
+        })?;
+    Ok(Some(VerifiedPureTheorem {
+        theorem_definition: theorem.clone(),
+        ensure_index,
+        ensure_clause: ensure_clause.clone(),
+        proof_kind: ProofKind::TacticScript,
+        proof: Some(certificate),
+        requires: Vec::new(),
+        conclusion: goal,
+        kernel_authority: Some(kernel_authority),
+    }))
 }
 
 /// Lets direct smart pure proofs search by applying checked proof steps.

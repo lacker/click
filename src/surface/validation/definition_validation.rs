@@ -476,8 +476,17 @@ fn validate_contract_applications_in_proposition(
                     "contract `{name}` expects one function-pointer argument in {context}"
                 )));
             };
-            let actual =
-                infer_contract_expression_type(argument, variables, click_functions, context)?;
+            // A named C function's address carries its precise signature in
+            // the built kernel environment rather than in the pure theorem's
+            // local variable map. Accept the address shape here; contract
+            // refinement later checks the exact lowered signature before it
+            // can issue authority.
+            let actual = match contract_expression_function_address(argument) {
+                Some(_) => Some(*expected),
+                None => {
+                    infer_contract_expression_type(argument, variables, click_functions, context)?
+                }
+            };
             if actual != Some(*expected) {
                 return Err(ClickError::new(format!(
                     "contract `{name}` expects {}, got {} in {context}",

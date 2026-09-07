@@ -58,12 +58,20 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
+- A closed pure theorem can prove `Contract(&function)` explicitly. Its proof
+  starts with `unfold(Contract)`, which introduces arbitrary call arguments,
+  and may use proof-level `if` to decide guarded mutable footprints before a
+  local `simp()` refinement check. The checker follows the written proof tree;
+  it does not enumerate guards or scan project functions. The resulting
+  theorem can be applied to introduce the reusable contract fact at a
+  higher-order call site.
 
 The remaining semantic step is refinement for explicitly quantified resources
 and broader state-dependent propositions at concrete-pointer formation.
 Guarded effects participate in footprint containment, but stateful
-postconditions still require an unguarded named footprint because refinement
-does not yet model conditional post-call memory. Stateful sequence, algebraic,
+postconditions with conditional footprints require an explicit closed theorem
+and written case split; automatic concrete-pointer formation remains limited
+to an unguarded named footprint. Stateful sequence, algebraic,
 resource-predicate, and explicit-memory-snapshot propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.
