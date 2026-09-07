@@ -108,6 +108,11 @@ whose array bound is completed by a fixed-size definition in another
 translation unit.
 `mdtests/file_scope_incomplete_extern_array_link_errors.md` covers the
 unresolved-declaration diagnostic when no definition supplies the bound.
+`mdtests/file_scope_inferred_scalar_array_bounds.md` covers bound inference
+from non-empty positional initializers for external and file-scope `static`
+scalar arrays, while
+`mdtests/file_scope_inferred_scalar_array_rejections.md` covers the retained
+designator boundary.
 `mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
 bounds remaining rejected during cross-translation-unit linking.
 `mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
@@ -172,8 +177,10 @@ propagation, and indirect-write rejection.
 - The parser accepts `extern T name[];` for supported scalar and struct-array
   declarations, and bundle linking resolves the omitted bound against one
   complete fixed-size external definition. Incomplete definitions, inferred
-  initializer bounds, file-scope `static` incomplete arrays, and
-  multidimensional forms remain rejected.
+  initializer bounds for aggregate arrays, empty or designated scalar-array
+  initializers, file-scope `static` incomplete arrays, and multidimensional
+  forms remain rejected. Non-empty positional scalar-array initializers may
+  infer the fixed bound before the normal array model is built.
 - The kernel materializes each aggregate array as one stable byte-addressed
   block with complete ABI element stride, zero-fills every leaf, applies
   explicit initializer cells once, and preserves the block across calls.
@@ -202,7 +209,8 @@ propagation, and indirect-write rejection.
   read-only through copied pointers; automatic/local aggregate designators,
   non-literal designators, const-qualified automatic aggregate locals,
   multidimensional/incomplete arrays, dynamic or
-  non-literal initialization, and wider literal forms remain open. Static
+  non-literal initialization, and wider literal forms remain open. Scalar
+  array bounds may be inferred from non-empty positional initializers; static
   address initializers are revalidated after external globals are linked,
   including chains such as `alias = &target; alias_ref = &alias`, with
   deterministic unresolved-target, type-mismatch, and const-discard diagnostics.

@@ -103,8 +103,9 @@ Likely additions:
   external incomplete array declarations now resolve against complete
   fixed-size definitions during bundle linking; const-qualified
   static-storage aggregates now use read-only backing and compatible
-  cross-file qualifiers are checked; incomplete definitions, non-literal
-  designators, multidimensional, and dynamically
+  cross-file qualifiers are checked; scalar array bounds may be inferred from
+  non-empty positional initializers; incomplete definitions without an
+  initializer, non-literal designators, multidimensional, and dynamically
   initialized aggregate tables remain open.
   Static-storage pointers now also accept address constants for declared scalar
   objects, array elements, and scalar struct fields, preserving stable global or
@@ -122,9 +123,10 @@ Likely additions:
   one-dimensional scalar arrays now include coalesced tentative declarations
   and one initialized definition across translation units, and are also
   supported for function-local statics;
-  multidimensional, incomplete definitions, and dynamic-initialization cases
-  remain open; external incomplete declarations resolve against complete
-  fixed-size definitions; zero-initialized and positional compile-time initialized
+  multidimensional, incomplete definitions without an initializer, and
+  dynamic-initialization cases remain open; external incomplete declarations
+  resolve against complete fixed-size definitions; scalar array bounds may be
+  inferred from non-empty positional initializers; zero-initialized and positional compile-time initialized
   scalar-field aggregate globals, aggregate arrays, and function-local statics
   now use the same stable typed-field storage model, with compatible tentative
   aggregate definitions coalesced across translation units and one initialized

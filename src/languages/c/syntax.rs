@@ -5753,7 +5753,7 @@ impl Parser {
             if let Some((struct_name, layout)) = &aggregate_struct {
                 if self.peek() == Some(&Token::LBracket) {
                     let array_length = self
-                        .parse_global_array_length(&name, is_extern)?
+                        .parse_global_array_length(&name)?
                         .expect("aggregate array has an array suffix");
                     let declaration = match array_length {
                         GlobalArrayLength::Complete(length) => {
@@ -5803,6 +5803,11 @@ impl Parser {
                                 .with_tentative(tentative)
                         }
                         GlobalArrayLength::Incomplete => {
+                            if !is_extern {
+                                return Err(self.error_here(
+                                    "incomplete aggregate array definitions are not supported yet",
+                                ));
+                            }
                             if self.peek() == Some(&Token::Equal) {
                                 return Err(self.error_here(
                                     "incomplete external aggregate array declarations may not have an initializer",
@@ -5905,7 +5910,33 @@ impl Parser {
                 }
                 break;
             }
-            let array_length = self.parse_global_array_length(&name, is_extern)?;
+            let parsed_array_length = self.parse_global_array_length(&name)?;
+            let mut inferred_initializer = None;
+            let array_length = match parsed_array_length {
+                Some(GlobalArrayLength::Incomplete) if !is_extern => {
+                    if self.peek() != Some(&Token::Equal) {
+                        return Err(self.error_here(format!(
+                            "incomplete file-scope array definition `{name}` requires an initializer"
+                        )));
+                    }
+                    self.position += 1;
+                    let initializer =
+                        self.parse_inferred_global_array_initializer(&name, parsed_type.c_type)?;
+                    let length = u32::try_from(initializer.len()).map_err(|_| {
+                        self.error_here(format!(
+                            "inferred file-scope array `{name}` has too many initializers"
+                        ))
+                    })?;
+                    if length == 0 {
+                        return Err(self.error_here(format!(
+                            "inferred file-scope array `{name}` requires a non-empty initializer"
+                        )));
+                    }
+                    inferred_initializer = Some(initializer);
+                    Some(GlobalArrayLength::Complete(length))
+                }
+                other => other,
+            };
             if struct_pointer_name.is_some() && array_length.is_some() {
                 return Err(
                     self.error_here("file-scope arrays of struct pointers are not supported yet")
@@ -5927,19 +5958,24 @@ impl Parser {
                     ));
                 }
                 if let Some(length) = length {
-                    let has_initializer = self.peek() == Some(&Token::Equal);
+                    let has_initializer =
+                        inferred_initializer.is_some() || self.peek() == Some(&Token::Equal);
                     let initializer = if has_initializer {
                         if is_extern {
                             return Err(self.error_here(
                                 "`extern` global array declarations may not have an initializer",
                             ));
                         }
-                        self.position += 1;
-                        Some(self.parse_global_array_initializer(
-                            &name,
-                            parsed_type.c_type,
-                            length,
-                        )?)
+                        if let Some(initializer) = inferred_initializer {
+                            Some(initializer)
+                        } else {
+                            self.position += 1;
+                            Some(self.parse_global_array_initializer(
+                                &name,
+                                parsed_type.c_type,
+                                length,
+                            )?)
+                        }
                     } else if is_extern {
                         None
                     } else {
@@ -6102,10 +6138,58 @@ impl Parser {
         self.expect(Token::Semicolon)
     }
 
+    fn parse_inferred_global_array_initializer(
+        &mut self,
+        name: &str,
+        element_type: C0Type,
+    ) -> Result<Vec<C0Expression>, C0SyntaxError> {
+        self.expect(Token::LBrace)?;
+        let mut values = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if self.peek() == Some(&Token::LBracket) {
+                    return Err(self.error_here(format!(
+                        "inferred file-scope scalar array `{name}` requires positional initializers"
+                    )));
+                }
+                let value = self.parse_expression()?;
+                values.push(normalize_static_initializer(
+                    self,
+                    element_type,
+                    false,
+                    &value,
+                    "global",
+                    false,
+                )?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in inferred file-scope scalar array `{name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in inferred file-scope scalar array `{name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(values)
+    }
+
     fn parse_global_array_length(
         &mut self,
         name: &str,
-        is_extern: bool,
     ) -> Result<Option<GlobalArrayLength>, C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
             return Ok(None);
@@ -6114,11 +6198,6 @@ impl Parser {
         let length = match self.peek().cloned() {
             Some(Token::RBracket) => {
                 self.position += 1;
-                if !is_extern {
-                    return Err(self.error_at_previous(format!(
-                        "incomplete file-scope array definition `{name}` is not supported yet"
-                    )));
-                }
                 if self.peek() == Some(&Token::LBracket) {
                     return Err(
                         self.error_here("multidimensional file-scope arrays are not supported yet")

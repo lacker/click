@@ -572,6 +572,45 @@ fn c0_collects_file_scope_scalar_arrays() {
 }
 
 #[test]
+fn c0_infers_file_scope_scalar_array_bounds() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 values[] = {1, 2, 3};
+        static uint8 flags[] = {1, 0, 1};
+
+        int32 read_values() {
+            return values[2];
+        }
+
+        int32 read_flags() {
+            return flags[1];
+        }
+        "#,
+        "inferred-arrays.c",
+    )
+    .expect("positional initializers should infer file-scope scalar array bounds");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert_eq!(values.length(), 3);
+    assert_eq!(
+        values.initializer(),
+        Some(
+            [
+                syntax::C0Expression::Int32Literal(1),
+                syntax::C0Expression::Int32Literal(2),
+                syntax::C0Expression::Int32Literal(3),
+            ]
+            .as_slice()
+        )
+    );
+
+    let flags = &functions[0].global_arrays()["flags"];
+    assert!(flags.is_file_static());
+    assert_eq!(flags.length(), 3);
+    assert_eq!(flags.element_type(), syntax::C0Type::UInt8);
+}
+
+#[test]
 fn c0_coalesces_tentative_scalar_array_declarations_before_initialization() {
     let functions = syntax::parse_functions_for_source(
         r#"
@@ -1363,16 +1402,20 @@ fn c0_accepts_incomplete_extern_scalar_and_aggregate_arrays() {
 }
 
 #[test]
-fn c0_rejects_incomplete_file_scope_array_definitions() {
+fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
     for source in [
         "int32 values[]; int32 read() { return 0; }",
-        "int32 values[] = {1, 2}; int32 read() { return values[0]; }",
+        "int32 values[] = {}; int32 read() { return values[0]; }",
+        "int32 values[] = {[1] = 2}; int32 read() { return values[0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
+        "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
     ] {
         let error = syntax::parse_functions(source)
-            .expect_err("unsupported incomplete array definitions should be rejected");
+            .expect_err("unsupported inferred array forms should be rejected");
         assert!(
-            error.message().contains("incomplete") || error.message().contains("initializer"),
+            error.message().contains("incomplete")
+                || error.message().contains("initializer")
+                || error.message().contains("positional"),
             "{}",
             error.message()
         );
