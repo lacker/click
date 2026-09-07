@@ -72,12 +72,13 @@ fn float32_to_float64_bits(bits: u32) -> u64 {
     let exponent = (bits >> 23) & 0xff;
     let fraction = bits & 0x007f_ffff;
     if exponent == 0xff {
-        let payload = if fraction == 0 {
-            0
-        } else {
-            u64::from(fraction) << 29
-        };
-        return sign | (0x7ffu64 << 52) | if payload == 0 { 1 } else { payload };
+        // An infinity widens to an infinity of the same sign. A NaN keeps its
+        // payload, which cannot vanish under the shift because a nonzero
+        // binary32 fraction stays nonzero in the wider fraction field.
+        if fraction == 0 {
+            return sign | (0x7ffu64 << 52);
+        }
+        return sign | (0x7ffu64 << 52) | (u64::from(fraction) << 29);
     }
     if exponent != 0 {
         return sign | (u64::from(exponent + 1023 - 127) << 52) | (u64::from(fraction) << 29);

@@ -667,7 +667,9 @@ int32 cancel() {
 All three values are exactly representable in binary64 and the subtraction is
 exact, so the function returns 1.
 
-**Regression C**, widening (`mdtests/float_widen_infinity_rejected.md`):
+**Regression C**, widening — **fixed** in `Widen binary32 infinities to
+binary64 infinities`, regression
+`mdtests/float_widening_preserves_infinity.md`:
 
 ```c
 int32 widen() {
