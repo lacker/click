@@ -1323,9 +1323,9 @@ fn function_contract_requirement_is_proven(
 }
 
 /// Proves behavioral callback refinement. Exact matching remains the fast
-/// path. The semantic path checks framed owned-memory resource transitions
-/// and effect containment, instantiates both interfaces with the same
-/// symbolic arguments, then checks preconditions contravariantly and
+/// path. The semantic path checks framed memory and abstract-token resource
+/// transitions and effect containment, instantiates both interfaces with the
+/// same symbolic arguments, then checks preconditions contravariantly and
 /// postconditions covariantly. Concrete resource needs and mutable ranges may
 /// be narrower than the named contract's upper bounds. Stateful refinement is
 /// deliberately limited to memory propositions backed by a nonempty resource
@@ -1535,7 +1535,7 @@ fn resource_transition_is_compatible(
     )? {
         return Ok(true);
     }
-    framed_memory_transition_refines(
+    framed_resource_transition_refines(
         contract,
         function,
         contract_entry,
@@ -1620,13 +1620,16 @@ fn exact_resource_interfaces_match(
     Ok(true)
 }
 
-fn context_contains_only_memory(resources: &ResourceContext) -> bool {
+fn context_contains_only_refinable_resources(resources: &ResourceContext) -> bool {
     resources.facts().iter().all(|resource| {
         matches!(
             resource,
-            CResourceFact::Own(CResource::Memory(_), quantity)
+            CResourceFact::Own(CResource::Memory(_) | CResource::Token { .. }, quantity)
                 if quantity.as_const() == Some(1)
-        ) || matches!(resource, CResourceFact::View(CResource::Memory(_)))
+        ) || matches!(
+            resource,
+            CResourceFact::View(CResource::Memory(_) | CResource::Token { .. })
+        )
     })
 }
 
@@ -1647,11 +1650,11 @@ fn evaluate_refinement_resource_context(
 /// Checks that the named requirements can supply the concrete requirements,
 /// preserving everything the concrete transition only borrows or does not
 /// need as a frame. Then requires `concrete_ensures * frame` to provide the
-/// named ensures. The resource context's indexed memory algebra performs
-/// ownership splitting, range containment, and scoped borrowing; no project
-/// functions or unrelated proof state are inspected.
+/// named ensures. The resource context's indexed algebras perform ownership
+/// splitting, range containment, exact token identity, and scoped borrowing;
+/// no project functions or unrelated proof state are inspected.
 #[allow(clippy::too_many_arguments)]
-fn framed_memory_transition_refines(
+fn framed_resource_transition_refines(
     contract: &CFunction,
     function: &CFunction,
     contract_entry: &CState,
@@ -1670,7 +1673,9 @@ fn framed_memory_transition_refines(
         .all(|resource| {
             matches!(
                 resource,
-                CResourceSpec::OwnMemory(_) | CResourceSpec::ViewMemory(_)
+                CResourceSpec::OwnMemory(_)
+                    | CResourceSpec::ViewMemory(_)
+                    | CResourceSpec::Token { .. }
             )
         })
     {
@@ -1719,7 +1724,7 @@ fn framed_memory_transition_refines(
         &contract_ensures,
     ]
     .into_iter()
-    .any(|resources| !context_contains_only_memory(resources))
+    .any(|resources| !context_contains_only_refinable_resources(resources))
     {
         return Ok(false);
     }

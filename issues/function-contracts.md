@@ -43,14 +43,19 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   subranges are accepted, as are concrete subrange views supplied by named
   ownership. Requiring concrete ownership from a named view, extra concrete
   requirements, and missing concrete returns are rejected.
+- Unit abstract-token transitions use the same inferred-frame rule. A named
+  contract may carry tokens that the concrete callback does not need, and
+  named ownership may supply a concrete token view. Token identity remains
+  exact in the resource name and arguments; extra concrete requirements,
+  ownership from a named view, and consumption of a token promised back by
+  the named contract are rejected.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is refinement for non-memory resources, guarded
-effects, and broader state-dependent propositions at concrete-pointer
-formation. Abstract tokens and composite resources still match exactly.
-Stateful sequence, algebraic, resource-predicate,
+The remaining semantic step is refinement for explicitly quantified tokens,
+composite resources, guarded effects, and broader state-dependent propositions
+at concrete-pointer formation. Stateful sequence, algebraic, resource-predicate,
 explicit-memory-snapshot, and guarded-footprint propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.
