@@ -617,8 +617,9 @@ behaviour rather than a value.
 evaluator and `compare_float_bits`. The comparison defect is `float32`-only;
 `double` comparison is correct.
 
-**Regression A**, inverted mixed-sign `float` comparison
-(`mdtests/float32_mixed_sign_compare_rejected.md`):
+**Regression A**, inverted mixed-sign `float` comparison — **fixed** in
+`Order binary32 comparison inside the format width`, regression
+`mdtests/float32_ordering_is_signed.md`. The other three below are open:
 
 ```c
 int32 f32lt() {

@@ -2172,17 +2172,28 @@ fn compare_float_bits(
         );
     }
 
+    // Order the two payloads by the usual monotone key: complement a negative
+    // encoding, set the sign bit of a non-negative one. The complement has to
+    // stay inside the format's own width, since these payloads sit in a `u64`
+    // that is wider than every format except binary64. Complementing all 64
+    // bits of a binary32 payload would raise every negative value above every
+    // non-negative one, making `-1.0f < 1.0f` false.
+    let width = exponent_bits + fraction_bits + 1;
+    let payload_mask = if width >= u64::BITS {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
     let sign_bit = 1u64 << (exponent_bits + fraction_bits);
-    let left_key = if left & sign_bit != 0 {
-        !left
-    } else {
-        left ^ sign_bit
+    let ordering_key = |bits: u64| {
+        if bits & sign_bit != 0 {
+            !bits & payload_mask
+        } else {
+            bits ^ sign_bit
+        }
     };
-    let right_key = if right & sign_bit != 0 {
-        !right
-    } else {
-        right ^ sign_bit
-    };
+    let left_key = ordering_key(left);
+    let right_key = ordering_key(right);
     match operator {
         CComparisonOperator::Equal => false,
         CComparisonOperator::NotEqual => true,
