@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::AlgebraicValueType;
 
 pub(in crate::surface) fn unfold_available_predicate_facts(
     predicate_environment: &PredicateEnvironment,
@@ -44,7 +45,9 @@ pub(in crate::surface) fn unfold_available_predicate_facts(
 
 fn proposition_contains_named_predicate(proposition: &Proposition, names: &[String]) -> bool {
     match proposition {
-        Proposition::Predicate { name, .. } => names.iter().any(|candidate| candidate == name),
+        Proposition::Predicate { name, .. } => names
+            .iter()
+            .any(|candidate| predicate_instance_name_matches(name, candidate)),
         Proposition::And(left, right)
         | Proposition::Or(left, right)
         | Proposition::Implies(left, right) => {
@@ -88,16 +91,21 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         Proposition::Predicate { name, arguments }
             if unfolded_predicates
                 .iter()
-                .any(|predicate| predicate == name) =>
+                .any(|predicate| predicate_instance_name_matches(name, predicate)) =>
         {
             if !active.insert(name.clone()) {
                 return Err(format!("recursive unfold of predicate `{name}`"));
             }
+            let source_name = unfolded_predicates
+                .iter()
+                .find(|candidate| predicate_instance_name_matches(name, candidate))
+                .expect("the predicate guard selected a source name");
             let definition = predicate_environment
-                .get(name)
-                .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+                .get(source_name)
+                .ok_or_else(|| format!("unknown predicate `{source_name}`"))?;
+            let definition = instantiate_lowered_predicate_definition(definition, arguments)?;
             let unfolded = instantiate_predicate_definition(
-                definition,
+                &definition,
                 arguments,
                 assumptions,
                 predicate_environment,
@@ -212,6 +220,59 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         }),
         _ => Ok(proposition.clone()),
     }
+}
+
+fn predicate_instance_name_matches(instance: &str, source: &str) -> bool {
+    instance == source
+        || instance
+            .strip_prefix(source)
+            .is_some_and(|suffix| suffix.starts_with("::<"))
+}
+
+fn instantiate_lowered_predicate_definition(
+    definition: &PredicateDefinition,
+    arguments: &[Term],
+) -> Result<PredicateDefinition, String> {
+    if definition.type_parameters().is_empty() {
+        return Ok(definition.clone());
+    }
+    let mut argument_index = 1;
+    let mut argument_types = Vec::new();
+    for parameter in definition.parameters() {
+        let actual = if parameter_is_click_array_ref(parameter) {
+            argument_index += 2;
+            Some(parameter.click_type().clone())
+        } else {
+            let actual = match arguments.get(argument_index) {
+                Some(Term::CValue(value)) => {
+                    Some(ClickType::C(generics::c0_type_from_kernel(value.c_type())))
+                }
+                Some(Term::Algebraic(value)) => {
+                    Some(generics::click_type_from_algebraic_value_type(
+                        &AlgebraicValueType::Algebraic {
+                            name: value.algebraic_type.name.clone(),
+                            arguments: value.algebraic_type.arguments.clone(),
+                        },
+                    ))
+                }
+                _ => None,
+            };
+            argument_index += 1;
+            actual
+        };
+        argument_types.push(actual);
+    }
+    let substitution = generics::infer_type_substitution(
+        "predicate",
+        definition.name(),
+        definition.type_parameters(),
+        definition
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.click_type().clone()),
+        argument_types,
+    )?;
+    generics::instantiate_predicate(definition, &substitution)
 }
 
 pub(in crate::surface) fn instantiate_predicate_definition(

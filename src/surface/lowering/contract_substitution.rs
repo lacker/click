@@ -218,6 +218,24 @@ pub(in crate::surface) fn instantiate_click_predicate_definition(
         ));
     }
 
+    // Surface-only rewriting may not carry the surrounding C type
+    // environment (for example `same(value, value)`). Kernel unfolding
+    // independently reconstructs and checks the concrete instance from its
+    // typed arguments. Keep the generic surface body when syntax alone cannot
+    // recover the instance; parameter substitution can still eliminate every
+    // generic binding from bodies such as `left == right`.
+    let instantiated;
+    let definition = match generics::instantiate_predicate_for_surface_call(
+        definition,
+        arguments,
+        &BTreeMap::new(),
+    ) {
+        Ok(value) => {
+            instantiated = value;
+            &instantiated
+        }
+        Err(_) => definition,
+    };
     let substitutions = definition
         .parameters()
         .iter()

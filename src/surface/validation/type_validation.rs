@@ -339,18 +339,64 @@ fn infer_spec_value_type(
             .map_err(ClickError::new)?;
             infer_spec_value_type(&substituted, variables, click_functions, context)
         }
-        ContractExpression::Call { name, .. }
-            if matches!(
-                click_functions
-                    .get(name)
-                    .map(|function| &function.return_type),
-                Some(ClickType::Algebraic(_))
-            ) =>
-        {
-            let ClickType::Algebraic(application) = &click_functions[name].return_type else {
-                unreachable!()
+        ContractExpression::Call { name, arguments } => {
+            let Some(function) = click_functions.get(name) else {
+                return Ok(SpecValueType::Scalar(infer_contract_expression_type(
+                    expression,
+                    variables,
+                    click_functions,
+                    context,
+                )?));
             };
-            Ok(SpecValueType::Algebraic(application.clone()))
+            let substitution = if function.type_parameters.is_empty() {
+                None
+            } else {
+                let actual_types = arguments
+                    .iter()
+                    .map(|argument| {
+                        Ok(
+                            match infer_spec_value_type(
+                                argument,
+                                variables,
+                                click_functions,
+                                context,
+                            )? {
+                                SpecValueType::Algebraic(application) => {
+                                    Some(ClickType::Algebraic(application))
+                                }
+                                SpecValueType::Scalar(c_type) => c_type.map(ClickType::C),
+                                SpecValueType::Sequence(_) => None,
+                            },
+                        )
+                    })
+                    .collect::<Result<Vec<_>, ClickError>>()?;
+                Some(
+                    generics::infer_type_substitution(
+                        "function",
+                        name,
+                        &function.type_parameters,
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.click_type().clone()),
+                        actual_types,
+                    )
+                    .map_err(ClickError::new)?,
+                )
+            };
+            let return_type = substitution
+                .as_ref()
+                .map(|substitution| {
+                    generics::instantiate_click_type(&function.return_type, substitution)
+                        .map_err(ClickError::new)
+                })
+                .transpose()?
+                .unwrap_or_else(|| function.return_type.clone());
+            Ok(match return_type {
+                ClickType::Algebraic(application) => SpecValueType::Algebraic(application),
+                ClickType::C(c_type) => SpecValueType::Scalar(Some(c_type)),
+                ClickType::Parameter(_) => SpecValueType::Scalar(None),
+            })
         }
         _ => Ok(SpecValueType::Scalar(infer_contract_expression_type(
             expression,
@@ -652,6 +698,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
 
 pub(in crate::surface) fn describe_click_type(click_type: &ClickType) -> String {
     match click_type {
+        ClickType::Parameter(name) => name.clone(),
         ClickType::C(c_type) => describe_c0_type(*c_type),
         ClickType::Algebraic(application) => {
             if application.arguments.is_empty() {
@@ -672,7 +719,7 @@ pub(in crate::surface) fn describe_click_type(click_type: &ClickType) -> String 
     }
 }
 
-pub(super) fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
+pub(in crate::surface) fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
     match (actual, expected) {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,

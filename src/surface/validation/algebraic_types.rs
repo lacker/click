@@ -23,14 +23,14 @@ pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
     for definition in file.algebraic_type_definitions() {
+        generics::validate_type_parameter_list(
+            "algebraic datatype",
+            definition.name(),
+            definition.type_parameters(),
+        )?;
         let mut parameters = BTreeSet::new();
         for parameter in definition.type_parameters() {
-            if !parameters.insert(parameter.as_str()) {
-                return Err(ClickError::new(format!(
-                    "algebraic datatype `{}` repeats type parameter `{parameter}`",
-                    definition.name()
-                )));
-            }
+            parameters.insert(parameter.as_str());
         }
         let mut variants = BTreeSet::new();
         for variant in definition.variants() {
@@ -350,6 +350,21 @@ pub(super) fn validate_algebraic_type_uses(
             &definitions,
             &format!("predicate `{}`", definition.name()),
         )?;
+        if !definition.type_parameters().is_empty() {
+            let click_variables = definition
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.name().to_string(), parameter.click_type().clone()))
+                .collect();
+            validate_generic_proposition_types(
+                definition.body(),
+                &click_variables,
+                click_functions,
+                &predicate_types,
+                &definitions,
+                &format!("predicate `{}`", definition.name()),
+            )?;
+        }
     }
     for definition in file.click_function_definitions() {
         let variables = definition
@@ -371,6 +386,7 @@ pub(super) fn validate_algebraic_type_uses(
             &format!("function `{}`", definition.name()),
         )?;
         match (definition.return_type(), body_type) {
+            (ClickType::Parameter(_), _) => {}
             (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
             (ClickType::Algebraic(expected), Some(actual)) => {
                 return Err(ClickError::new(format!(
@@ -395,6 +411,30 @@ pub(super) fn validate_algebraic_type_uses(
                 )));
             }
             (ClickType::C(_), None) => {}
+        }
+        if !definition.type_parameters().is_empty() {
+            let click_variables = definition
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.name().to_string(), parameter.click_type().clone()))
+                .collect();
+            let actual = infer_generic_expression_type(
+                definition.body(),
+                &click_variables,
+                click_functions,
+                &definitions,
+                &format!("function `{}`", definition.name()),
+            )?;
+            if let Some(actual) = actual
+                && !generic_click_types_compatible(&actual, definition.return_type())
+            {
+                return Err(ClickError::new(format!(
+                    "function `{}` returns {}, but its body has type {}",
+                    definition.name(),
+                    describe_click_type(definition.return_type()),
+                    describe_click_type(&actual)
+                )));
+            }
         }
     }
     for theorem in file.theorem_definitions() {
@@ -630,44 +670,89 @@ fn validate_algebraic_proposition(
             )
         }
         ClickProposition::PredicateCall { name, arguments } => {
-            let definition = predicates.get(name.as_str());
-            for (index, argument) in arguments.iter().enumerate() {
-                let actual = validate_algebraic_expression(
-                    argument,
-                    variables,
-                    click_functions,
-                    predicates,
-                    definitions,
-                    context,
-                )?;
+            let definition = predicates.get(name.as_str()).copied();
+            let actual_types = arguments
+                .iter()
+                .map(|argument| {
+                    let algebraic = validate_algebraic_expression(
+                        argument,
+                        variables,
+                        click_functions,
+                        predicates,
+                        definitions,
+                        context,
+                    )?;
+                    Ok(match algebraic {
+                        Some(application) => Some(ClickType::Algebraic(application)),
+                        None => infer_contract_expression_type(
+                            argument,
+                            variables,
+                            click_functions,
+                            context,
+                        )?
+                        .map(ClickType::C),
+                    })
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?;
+            let instantiated = definition
+                .filter(|definition| !definition.type_parameters().is_empty())
+                .map(|definition| {
+                    let substitution = generics::infer_type_substitution(
+                        "predicate",
+                        definition.name(),
+                        definition.type_parameters(),
+                        definition
+                            .parameters()
+                            .iter()
+                            .map(|parameter| parameter.click_type().clone()),
+                        actual_types.clone(),
+                    )
+                    .map_err(ClickError::new)?;
+                    generics::instantiate_predicate(definition, &substitution)
+                        .map_err(ClickError::new)
+                })
+                .transpose()?;
+            let definition = instantiated.as_ref().or(definition);
+            for (index, actual) in actual_types.into_iter().enumerate() {
                 let Some(expected) =
                     definition.and_then(|definition| definition.parameters().get(index))
                 else {
                     continue;
                 };
                 match (expected.click_type(), actual) {
-                    (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
-                    (ClickType::Algebraic(expected), Some(actual)) => {
+                    (ClickType::Parameter(_), _) => {}
+                    (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual)))
+                        if expected == &actual => {}
+                    (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual))) => {
                         return Err(ClickError::new(format!(
                             "predicate `{name}` argument {index} expects {}, got {} in {context}",
                             describe_click_type(&ClickType::Algebraic(expected.clone())),
                             describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
-                    (ClickType::Algebraic(expected), None) => {
+                    (ClickType::Algebraic(expected), _) => {
                         return Err(ClickError::new(format!(
                             "predicate `{name}` argument {index} expects {}, got a C value in {context}",
                             describe_click_type(&ClickType::Algebraic(expected.clone()))
                         )));
                     }
-                    (ClickType::C(expected), Some(actual)) => {
+                    (ClickType::C(expected), Some(ClickType::Algebraic(actual))) => {
                         return Err(ClickError::new(format!(
                             "predicate `{name}` argument {index} expects {}, got {} in {context}",
                             describe_c0_type(*expected),
                             describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
-                    (ClickType::C(_), None) => {}
+                    (ClickType::C(expected), Some(ClickType::C(actual)))
+                        if !click_types_compatible(actual, *expected) =>
+                    {
+                        return Err(ClickError::new(format!(
+                            "predicate `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(*expected),
+                            describe_c0_type(actual)
+                        )));
+                    }
+                    (ClickType::C(_), _) => {}
                 }
             }
             Ok(())
@@ -745,6 +830,7 @@ fn validate_algebraic_expression(
                 )?;
                 let expected = instantiate_field_type(definition, algebraic_type, field)?;
                 match (&expected, actual_algebraic) {
+                    (ClickType::Parameter(_), _) => {}
                     (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
                     (ClickType::Algebraic(expected), Some(actual)) => {
                         return Err(ClickError::new(format!(
@@ -855,6 +941,7 @@ fn validate_algebraic_expression(
                         )));
                     }
                     match instantiate_field_type(definition, &algebraic_type, field)? {
+                        ClickType::Parameter(_) => {}
                         ClickType::C(c_type) => {
                             arm_variables.insert(binding.clone(), c_type);
                         }
@@ -1116,50 +1203,113 @@ fn validate_algebraic_expression(
         }
         ContractExpression::Call { name, arguments } => {
             let function = click_functions.get(name);
-            for (index, argument) in arguments.iter().enumerate() {
-                let actual_algebraic = validate_algebraic_expression(
-                    argument,
-                    variables,
-                    click_functions,
-                    predicates,
-                    definitions,
-                    context,
-                )?;
+            let actual_types = arguments
+                .iter()
+                .map(|argument| {
+                    let algebraic = validate_algebraic_expression(
+                        argument,
+                        variables,
+                        click_functions,
+                        predicates,
+                        definitions,
+                        context,
+                    )?;
+                    Ok(match algebraic {
+                        Some(application) => Some(ClickType::Algebraic(application)),
+                        None => infer_contract_expression_type(
+                            argument,
+                            variables,
+                            click_functions,
+                            context,
+                        )?
+                        .map(ClickType::C),
+                    })
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?;
+            let substitution = function
+                .filter(|function| !function.type_parameters.is_empty())
+                .map(|function| {
+                    generics::infer_type_substitution(
+                        "function",
+                        name,
+                        &function.type_parameters,
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.click_type().clone()),
+                        actual_types.clone(),
+                    )
+                    .map_err(ClickError::new)
+                })
+                .transpose()?;
+            for (index, actual) in actual_types.into_iter().enumerate() {
                 let Some(expected) = function.and_then(|function| function.parameters.get(index))
                 else {
                     continue;
                 };
-                match (expected.click_type(), actual_algebraic) {
-                    (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
-                    (ClickType::Algebraic(expected), Some(actual)) => {
+                let expected = substitution
+                    .as_ref()
+                    .map(|substitution| {
+                        generics::instantiate_click_type(expected.click_type(), substitution)
+                            .map_err(ClickError::new)
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| expected.click_type().clone());
+                match (&expected, actual) {
+                    (ClickType::Parameter(_), _) => {}
+                    (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual)))
+                        if expected == &actual => {}
+                    (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual))) => {
                         return Err(ClickError::new(format!(
                             "function `{name}` argument {index} expects {}, got {} in {context}",
                             describe_click_type(&ClickType::Algebraic(expected.clone())),
                             describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
-                    (ClickType::Algebraic(expected), None) => {
+                    (ClickType::Algebraic(expected), _) => {
                         return Err(ClickError::new(format!(
                             "function `{name}` argument {index} expects {}, got a C value in {context}",
                             describe_click_type(&ClickType::Algebraic(expected.clone()))
                         )));
                     }
-                    (ClickType::C(expected), Some(actual)) => {
+                    (ClickType::C(expected), Some(ClickType::Algebraic(actual))) => {
                         return Err(ClickError::new(format!(
                             "function `{name}` argument {index} expects {}, got {} in {context}",
                             describe_c0_type(*expected),
                             describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
-                    (ClickType::C(_), None) => {}
+                    (ClickType::C(expected), Some(ClickType::C(actual)))
+                        if !click_types_compatible(actual, *expected) =>
+                    {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(*expected),
+                            describe_c0_type(actual)
+                        )));
+                    }
+                    (ClickType::C(_), _) => {}
                 }
             }
-            Ok(click_functions
-                .get(name)
-                .and_then(|definition| match &definition.return_type {
-                    ClickType::Algebraic(application) => Some(application.clone()),
-                    ClickType::C(_) => None,
-                }))
+            let return_type = function
+                .map(|function| {
+                    substitution
+                        .as_ref()
+                        .map(|substitution| {
+                            generics::instantiate_click_type(&function.return_type, substitution)
+                                .map_err(ClickError::new)
+                        })
+                        .transpose()
+                        .map(|instantiated| {
+                            instantiated.unwrap_or_else(|| function.return_type.clone())
+                        })
+                })
+                .transpose()?;
+            Ok(return_type.and_then(|return_type| match return_type {
+                ClickType::Parameter(_) => None,
+                ClickType::Algebraic(application) => Some(application),
+                ClickType::C(_) => None,
+            }))
         }
         ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
@@ -1167,6 +1317,462 @@ fn validate_algebraic_expression(
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceCount(_)
         | ContractExpression::ResourceWildcard => Ok(None),
+    }
+}
+
+fn generic_click_types_compatible(actual: &ClickType, expected: &ClickType) -> bool {
+    match (actual, expected) {
+        (ClickType::C(actual), ClickType::C(expected)) => {
+            click_types_compatible(*actual, *expected)
+        }
+        _ => actual == expected,
+    }
+}
+
+fn infer_generic_expression_type(
+    expression: &ContractExpression,
+    variables: &BTreeMap<String, ClickType>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<Option<ClickType>, ClickError> {
+    match expression {
+        ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
+            Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
+        }
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => {
+            let definition = definitions[algebraic_type.name.as_str()];
+            let variant = definition
+                .variants()
+                .iter()
+                .find(|candidate| candidate.name() == variant)
+                .expect("constructors were validated before generic inference");
+            for (index, (argument, field)) in arguments.iter().zip(variant.fields()).enumerate() {
+                let expected = instantiate_field_type(definition, algebraic_type, field)?;
+                let actual = infer_generic_expression_type(
+                    argument,
+                    variables,
+                    click_functions,
+                    definitions,
+                    context,
+                )?;
+                if let Some(actual) = actual
+                    && !generic_click_types_compatible(&actual, &expected)
+                {
+                    return Err(ClickError::new(format!(
+                        "constructor `{}::{}` argument {index} expects {}, got {} in {context}",
+                        definition.name(),
+                        variant.name(),
+                        describe_click_type(&expected),
+                        describe_click_type(&actual)
+                    )));
+                }
+            }
+            Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
+        }
+        ContractExpression::Binding(name)
+        | ContractExpression::CBinding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => {
+            Ok(variables.get(name).cloned())
+        }
+        ContractExpression::CFragment(_) => {
+            let c_variables = variables
+                .iter()
+                .filter_map(|(name, click_type)| {
+                    click_type.c_type().map(|c_type| (name.clone(), c_type))
+                })
+                .collect();
+            infer_contract_expression_type(expression, &c_variables, click_functions, context)
+                .map(|c_type| c_type.map(ClickType::C))
+        }
+        ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => infer_generic_expression_type(inner, variables, click_functions, definitions, context),
+        ContractExpression::BitwiseNot(inner) => {
+            let actual = infer_generic_expression_type(
+                inner,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            if actual
+                .as_ref()
+                .is_some_and(|click_type| !matches!(click_type, ClickType::C(_)))
+            {
+                return Err(ClickError::new(format!(
+                    "C operator cannot be applied to a generic or algebraic value in {context}"
+                )));
+            }
+            Ok(actual)
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let Some(ClickType::Algebraic(application)) = infer_generic_expression_type(
+                scrutinee,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?
+            else {
+                return Ok(None);
+            };
+            let definition = definitions[application.name.as_str()];
+            let mut result_type = None;
+            for arm in arms {
+                let variant = definition
+                    .variants()
+                    .iter()
+                    .find(|variant| variant.name() == arm.variant)
+                    .expect("match variants were validated before generic inference");
+                let mut arm_variables = variables.clone();
+                for (binding, field) in arm.bindings.iter().zip(variant.fields()) {
+                    arm_variables.insert(
+                        binding.clone(),
+                        instantiate_field_type(definition, &application, field)?,
+                    );
+                }
+                let actual = infer_generic_expression_type(
+                    &arm.body,
+                    &arm_variables,
+                    click_functions,
+                    definitions,
+                    context,
+                )?;
+                if let (Some(expected), Some(actual)) = (&result_type, &actual)
+                    && !generic_click_types_compatible(actual, expected)
+                {
+                    return Err(ClickError::new(format!(
+                        "generic match has incompatible arm types {} and {} in {context}",
+                        describe_click_type(expected),
+                        describe_click_type(actual)
+                    )));
+                }
+                result_type = result_type.or(actual);
+            }
+            Ok(result_type)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_generic_proposition_types(
+                condition,
+                variables,
+                click_functions,
+                &BTreeMap::new(),
+                definitions,
+                context,
+            )?;
+            let then_type = infer_generic_expression_type(
+                then_branch,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            let else_type = infer_generic_expression_type(
+                else_branch,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            if let (Some(then_type), Some(else_type)) = (&then_type, &else_type)
+                && !generic_click_types_compatible(then_type, else_type)
+            {
+                return Err(ClickError::new(format!(
+                    "conditional branches have types {} and {} in {context}",
+                    describe_click_type(then_type),
+                    describe_click_type(else_type)
+                )));
+            }
+            Ok(then_type.or(else_type))
+        }
+        ContractExpression::Let {
+            name,
+            click_type,
+            value,
+            body,
+        } => {
+            let value_type = infer_generic_expression_type(
+                value,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            if let (Some(expected), Some(actual)) = (click_type, &value_type)
+                && !generic_click_types_compatible(actual, expected)
+            {
+                return Err(ClickError::new(format!(
+                    "let binding `{name}` expects {}, got {} in {context}",
+                    describe_click_type(expected),
+                    describe_click_type(actual)
+                )));
+            }
+            let mut body_variables = variables.clone();
+            if let Some(value_type) = click_type.clone().or(value_type) {
+                body_variables.insert(name.clone(), value_type);
+            }
+            infer_generic_expression_type(
+                body,
+                &body_variables,
+                click_functions,
+                definitions,
+                context,
+            )
+        }
+        ContractExpression::Call { name, arguments } => {
+            let Some(function) = click_functions.get(name) else {
+                return Ok(None);
+            };
+            let actual_types = arguments
+                .iter()
+                .map(|argument| {
+                    infer_generic_expression_type(
+                        argument,
+                        variables,
+                        click_functions,
+                        definitions,
+                        context,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let substitution = if function.type_parameters.is_empty() {
+                None
+            } else {
+                Some(
+                    generics::infer_type_substitution(
+                        "function",
+                        name,
+                        &function.type_parameters,
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.click_type().clone()),
+                        actual_types,
+                    )
+                    .map_err(ClickError::new)?,
+                )
+            };
+            substitution
+                .as_ref()
+                .map(|substitution| {
+                    generics::instantiate_click_type(&function.return_type, substitution)
+                        .map(Some)
+                        .map_err(ClickError::new)
+                })
+                .unwrap_or_else(|| Ok(Some(function.return_type.clone())))
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right)
+        | ContractExpression::SequenceConcat(left, right) => {
+            let left_type = infer_generic_expression_type(
+                left,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            let right_type = infer_generic_expression_type(
+                right,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            if left_type
+                .iter()
+                .chain(right_type.iter())
+                .any(|click_type| !matches!(click_type, ClickType::C(_)))
+            {
+                return Err(ClickError::new(format!(
+                    "C operator cannot be applied to a generic or algebraic value in {context}"
+                )));
+            }
+            let c_variables = variables
+                .iter()
+                .filter_map(|(name, click_type)| {
+                    click_type.c_type().map(|c_type| (name.clone(), c_type))
+                })
+                .collect();
+            infer_contract_expression_type(expression, &c_variables, click_functions, context)
+                .map(|c_type| c_type.map(ClickType::C))
+        }
+        ContractExpression::SequenceLiteral(_)
+        | ContractExpression::RangeFold { .. }
+        | ContractExpression::Field { .. }
+        | ContractExpression::ResourceCount(_)
+        | ContractExpression::ResourceWildcard => Ok(None),
+    }
+}
+
+fn validate_generic_proposition_types(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, ClickType>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison {
+            operator,
+            left,
+            right,
+        } => {
+            let left = infer_generic_expression_type(
+                left,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            let right = infer_generic_expression_type(
+                right,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            if let (Some(left), Some(right)) = (&left, &right)
+                && !generic_click_types_compatible(left, right)
+            {
+                return Err(ClickError::new(format!(
+                    "comparison has types {} and {} in {context}",
+                    describe_click_type(left),
+                    describe_click_type(right)
+                )));
+            }
+            if !matches!(
+                operator,
+                ComparisonOperator::Equal | ComparisonOperator::NotEqual
+            ) && left
+                .iter()
+                .chain(right.iter())
+                .any(|click_type| !matches!(click_type, ClickType::C(_)))
+            {
+                return Err(ClickError::new(format!(
+                    "ordering is not defined for a generic or algebraic value in {context}"
+                )));
+            }
+            Ok(())
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            let Some(predicate) = predicates.get(name.as_str()) else {
+                return Ok(());
+            };
+            let actual_types = arguments
+                .iter()
+                .map(|argument| {
+                    infer_generic_expression_type(
+                        argument,
+                        variables,
+                        click_functions,
+                        definitions,
+                        context,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if !predicate.type_parameters().is_empty() {
+                generics::infer_type_substitution(
+                    "predicate",
+                    name,
+                    predicate.type_parameters(),
+                    predicate
+                        .parameters()
+                        .iter()
+                        .map(|parameter| parameter.click_type().clone()),
+                    actual_types,
+                )
+                .map_err(ClickError::new)?;
+            }
+            Ok(())
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_generic_proposition_types(
+                left,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?;
+            validate_generic_proposition_types(
+                right,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        } => validate_generic_proposition_types(
+            body,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
+        ClickProposition::FloatClassification { expression, .. }
+        | ClickProposition::Defined { expression } => {
+            let _ = infer_generic_expression_type(
+                expression,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            Ok(())
+        }
+        ClickProposition::RangeAll { body, .. } | ClickProposition::RangeAny { body, .. } => {
+            validate_generic_proposition_types(
+                body,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
+        }
+        ClickProposition::ForAll { c_type, name, body }
+        | ClickProposition::Exists { c_type, name, body } => {
+            let mut variables = variables.clone();
+            variables.insert(name.clone(), ClickType::C(*c_type));
+            validate_generic_proposition_types(
+                body,
+                &variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. } => Ok(()),
     }
 }
 
@@ -1218,6 +1824,7 @@ fn validate_type_application(
     }
     for argument in &application.arguments {
         match argument {
+            ClickType::Parameter(_) => {}
             ClickType::C(c_type) if algebraic_field_c_type_supported(*c_type) => {}
             ClickType::C(c_type) => {
                 return Err(ClickError::new(format!(

@@ -1153,6 +1153,17 @@ pub(in crate::surface::proof) fn prove_pure_proposition_case_in_state(
                             application.name
                         ))
                     })?;
+                let variable_types = generics::concrete_variable_types(&values, &BTreeMap::new());
+                let definition = generics::instantiate_function_for_surface_call_with_variables(
+                    definition,
+                    &application.arguments,
+                    &variable_types,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: {message}"
+                    ))
+                })?;
                 if application.arguments.len() != definition.parameters().len() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: function `{}` expects {} argument(s), got {}",

@@ -140,6 +140,28 @@ and theorems may receive arbitrary algebraic values, pure functions may return
 them, and an exhaustive `match` may inspect an unknown variant and return a
 common C or algebraic type:
 
+Pure functions and predicates may declare Rust-like type parameters after
+their name. Calls infer each type argument from the concrete argument types;
+there is no separate call-site type-argument syntax. Each inferred function
+instance has a distinct typed kernel identity, and an explicit `unfold`
+instantiates the signature and body before exposing its defining equation:
+
+<!-- verified-example: mdtests/algebraic_generic_functions.md -->
+```click
+function append<T>(xs: List<T>, ys: List<T>) -> List<T> {
+    // ...
+}
+
+predicate is_empty<T>(xs: List<T>) {
+    xs == List<T>::Nil
+}
+```
+
+Inference rejects both unconstrained parameters and conflicting arguments.
+Generic theorem declarations are reserved but not yet accepted: sound
+Rust-like monomorphization must verify each concrete theorem instance before
+that instance becomes proof authority.
+
 <!-- verified-example: mdtests/algebraic_maybe.md -->
 ```click
 spec enum Maybe<T> {

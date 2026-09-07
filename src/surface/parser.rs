@@ -168,6 +168,7 @@ struct Parser {
     current_struct_array_params: BTreeSet<String>,
     current_global_array_shapes: BTreeMap<String, Vec<u32>>,
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
+    current_click_type_parameters: BTreeSet<String>,
     current_contract_bindings: BTreeSet<String>,
 }
 
@@ -180,7 +181,7 @@ struct ParsedType {
     pointee_constant: bool,
 }
 
-fn is_c_type_keyword(name: &str) -> bool {
+pub(super) fn is_c_type_keyword(name: &str) -> bool {
     matches!(
         name,
         "void"
@@ -265,7 +266,7 @@ fn algebraic_parameter_types(
             ClickType::Algebraic(application) => {
                 Some((parameter.name().to_string(), (application.clone(), index)))
             }
-            ClickType::C(_) => None,
+            ClickType::Parameter(_) | ClickType::C(_) => None,
         })
         .collect()
 }
@@ -357,6 +358,7 @@ impl Parser {
             current_struct_array_params: BTreeSet::new(),
             current_global_array_shapes: BTreeMap::new(),
             current_algebraic_params: BTreeMap::new(),
+            current_click_type_parameters: BTreeSet::new(),
             current_contract_bindings: BTreeSet::new(),
         })
     }
@@ -568,6 +570,11 @@ impl Parser {
     fn parse_predicate_definition(&mut self) -> Result<PredicateDefinition, ClickError> {
         self.expect_ident_spelling("predicate")?;
         let name = self.expect_ident("predicate name")?;
+        let type_parameters = self.parse_click_type_parameters()?;
+        let previous_type_parameters = std::mem::replace(
+            &mut self.current_click_type_parameters,
+            type_parameters.iter().cloned().collect(),
+        );
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
@@ -588,9 +595,11 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
+        self.current_click_type_parameters = previous_type_parameters;
         self.expect(Token::RBrace)?;
         Ok(PredicateDefinition {
             name,
+            type_parameters,
             parameters: parsed_parameters.parameters,
             body,
         })
@@ -599,6 +608,11 @@ impl Parser {
     fn parse_click_function_definition(&mut self) -> Result<ClickFunctionDefinition, ClickError> {
         self.expect_ident_spelling("function")?;
         let name = self.expect_ident("function name")?;
+        let type_parameters = self.parse_click_type_parameters()?;
+        let previous_type_parameters = std::mem::replace(
+            &mut self.current_click_type_parameters,
+            type_parameters.iter().cloned().collect(),
+        );
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
@@ -635,9 +649,11 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
+        self.current_click_type_parameters = previous_type_parameters;
         self.expect(Token::RBrace)?;
         Ok(ClickFunctionDefinition {
             name,
+            type_parameters,
             parameters: parsed_parameters.parameters,
             return_type,
             decreases,
@@ -891,6 +907,11 @@ impl Parser {
     fn parse_theorem_definition(&mut self) -> Result<TheoremDefinition, ClickError> {
         self.expect_ident_spelling("theorem")?;
         let name = self.expect_ident("theorem name")?;
+        let type_parameters = self.parse_click_type_parameters()?;
+        let previous_type_parameters = std::mem::replace(
+            &mut self.current_click_type_parameters,
+            type_parameters.iter().cloned().collect(),
+        );
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
@@ -1038,6 +1059,7 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
+        self.current_click_type_parameters = previous_type_parameters;
 
         let requires: Vec<Requirement> = requires
             .into_iter()
@@ -1050,6 +1072,7 @@ impl Parser {
 
         Ok(TheoremDefinition {
             name,
+            type_parameters,
             parameters: parsed_parameters.parameters,
             requires,
             ensures,
@@ -1675,8 +1698,39 @@ impl Parser {
             let parsed = self.parse_type()?;
             return Ok((ClickType::C(parsed.c_type), Some(parsed)));
         }
+        if self.current_click_type_parameters.contains(name) {
+            let name = name.to_string();
+            self.position += 1;
+            return Ok((ClickType::Parameter(name), None));
+        }
         let application = self.parse_algebraic_type_application()?;
         Ok((ClickType::Algebraic(application), None))
+    }
+
+    fn parse_click_type_parameters(&mut self) -> Result<Vec<String>, ClickError> {
+        if self.peek() != Some(&Token::LessThan) {
+            return Ok(Vec::new());
+        }
+        self.position += 1;
+        let mut parameters = Vec::new();
+        loop {
+            parameters.push(self.expect_ident("type parameter")?);
+            match self.peek() {
+                Some(Token::Comma) => self.position += 1,
+                Some(Token::GreaterThan) => {
+                    self.position += 1;
+                    break;
+                }
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "expected `,` or `>` after type parameter, got {}",
+                        token.describe()
+                    )));
+                }
+                None => return Err(self.error("expected `>` after type parameters")),
+            }
+        }
+        Ok(parameters)
     }
 
     fn scalar_struct_value_type(&self, struct_name: &str) -> Result<C0Type, ClickError> {

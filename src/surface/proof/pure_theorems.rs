@@ -2691,6 +2691,13 @@ fn lower_pure_simp_after_function_unfold(
             .ok_or_else(|| {
                 ClickError::new(format!("unknown pure function `{}`", application.name))
             })?;
+        let variable_types = generics::concrete_variable_types(&context.values, &BTreeMap::new());
+        let definition = generics::instantiate_function_for_surface_call_with_variables(
+            definition,
+            &application.arguments,
+            &variable_types,
+        )
+        .map_err(ClickError::new)?;
         let substitutions = definition
             .parameters()
             .iter()
@@ -4033,6 +4040,16 @@ fn prove_pure_theorem_tactics(
                             application.name
                         ))
                     })?;
+                let variable_types =
+                    generics::concrete_variable_types(&context.values, &BTreeMap::new());
+                let definition = generics::instantiate_function_for_surface_call_with_variables(
+                    definition,
+                    &application.arguments,
+                    &variable_types,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
+                })?;
                 if application.arguments.len() != definition.parameters().len() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: function `{}` expects {} argument(s), got {}",

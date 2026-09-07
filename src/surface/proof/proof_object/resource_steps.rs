@@ -121,6 +121,13 @@ impl<'a> Proof<'a> {
                     application.name
                 ))
             })?;
+        let variable_types = generics::concrete_variable_types(&values, &algebraic_values);
+        let definition = generics::instantiate_function_for_surface_call_with_variables(
+            definition,
+            &application.arguments,
+            &variable_types,
+        )
+        .map_err(|message| self.step_error(message))?;
         if application.arguments.len() != definition.parameters().len() {
             return Err(self.step_error(format!(
                 "function `{}` expects {} argument(s), got {}",

@@ -9,6 +9,11 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
     let mut predicates = BTreeMap::new();
     for definition in &predicate_definitions {
+        generics::validate_type_parameter_list(
+            "predicate",
+            definition.name(),
+            definition.type_parameters(),
+        )?;
         if predicates
             .insert(definition.name().to_string(), definition.parameters().len())
             .is_some()
@@ -47,6 +52,11 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     let mut click_functions = BTreeMap::new();
     let mut click_function_types = BTreeMap::new();
     for definition in &click_function_definitions {
+        generics::validate_type_parameter_list(
+            "function",
+            definition.name(),
+            definition.type_parameters(),
+        )?;
         if contracts.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a contract and a function",
@@ -71,6 +81,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         click_function_types.insert(
             definition.name().to_string(),
             ClickFunctionType {
+                type_parameters: definition.type_parameters().to_vec(),
                 parameters: definition.parameters().to_vec(),
                 return_type: definition.return_type().clone(),
             },
@@ -129,6 +140,17 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
     let mut theorems = BTreeMap::new();
     for definition in &theorem_definitions {
+        generics::validate_type_parameter_list(
+            "theorem",
+            definition.name(),
+            definition.type_parameters(),
+        )?;
+        if !definition.type_parameters().is_empty() {
+            return Err(ClickError::new(format!(
+                "generic theorem `{}` requires use-site monomorphization, which is not supported yet",
+                definition.name()
+            )));
+        }
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a theorem",

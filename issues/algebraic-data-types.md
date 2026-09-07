@@ -89,6 +89,12 @@ unchanged.
   field of the same datatype. Lists and binary trees are covered, including
   constructors with multiple recursive children; induction across a mutually
   recursive group remains open.
+- Rust-like type parameters on pure functions and predicates, with concrete
+  call-site inference, checked conflict/ambiguity diagnostics, distinct kernel
+  identities for concrete function instances, and concrete body
+  instantiation before `unfold`. Generic theorem declarations remain open
+  because each use-site monomorph must be verified before it grants proof
+  authority.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -96,9 +102,10 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic quantifiers, resource arguments, mutual structural
-induction, the library-defined `List<T>`, recursive-resource use, and symbolic
-typed-memory-range projection. All pure calls remain logical applications
+Still open are generic theorem monomorphization, algebraic quantifiers,
+resource arguments, mutual structural induction, the library-defined
+`List<T>`, recursive-resource use, and symbolic typed-memory-range projection.
+All pure calls remain logical applications
 during lowering; an explicit checked `unfold` step exposes one defining
 equation. Expression-level `match` is deliberately symbolic, so it neither
 splits a proof nor introduces proof-scope field names; the explicit structural

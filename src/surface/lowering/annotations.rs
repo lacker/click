@@ -1463,7 +1463,18 @@ impl AnnotationLowerer<'_> {
                 let definition = self
                     .predicate_environment
                     .get(name)
-                    .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+                    .ok_or_else(|| format!("unknown predicate `{name}`"))?
+                    .clone();
+                if arguments.len() != definition.parameters().len() {
+                    return Err(format!(
+                        "predicate `{}` expects {} argument(s), got {}",
+                        definition.name(),
+                        definition.parameters().len(),
+                        arguments.len()
+                    ));
+                }
+                let definition =
+                    self.instantiate_predicate_for_call(&definition, arguments, environment)?;
                 if definition
                     .parameters()
                     .iter()
@@ -1474,6 +1485,12 @@ impl AnnotationLowerer<'_> {
                     );
                     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
                         match parameter.click_type() {
+                            ClickType::Parameter(name) => {
+                                return Err(format!(
+                                    "predicate `{}` has unresolved type parameter `{name}`",
+                                    definition.name()
+                                ));
+                            }
                             ClickType::Algebraic(_) => {
                                 predicate_environment.algebraic_values.insert(
                                     parameter.name().to_string(),
@@ -1531,7 +1548,7 @@ impl AnnotationLowerer<'_> {
                     }
                 }
                 Ok(SpecProposition::Predicate {
-                    name: name.clone(),
+                    name: definition.name().to_string(),
                     arguments: lowered_arguments,
                 })
             }
@@ -2122,7 +2139,10 @@ impl AnnotationLowerer<'_> {
         let definition = self
             .click_function_environment
             .get(name)
-            .ok_or_else(|| format!("unknown function `{name}`"))?;
+            .ok_or_else(|| format!("unknown function `{name}`"))?
+            .clone();
+        let definition =
+            self.instantiate_click_function_for_call(&definition, arguments, environment)?;
         let ClickType::Algebraic(result_type) = definition.return_type() else {
             return Err(format!(
                 "function `{name}` does not return an algebraic value"
@@ -2139,9 +2159,9 @@ impl AnnotationLowerer<'_> {
         Ok(SpecAlgebraicExpression {
             algebraic_type: self.cached_algebraic_kernel_type(result_type)?,
             node: SpecAlgebraicExpressionNode::PureFunctionApplication {
-                name: name.to_string(),
+                name: definition.name().to_string(),
                 arguments: self.lower_click_function_arguments_to_spec(
-                    definition,
+                    &definition,
                     arguments,
                     environment,
                 )?,
@@ -2160,6 +2180,10 @@ impl AnnotationLowerer<'_> {
             .iter()
             .zip(arguments)
             .map(|(parameter, argument)| match parameter.click_type() {
+                ClickType::Parameter(name) => Err(format!(
+                    "function `{}` has unresolved type parameter `{name}`",
+                    definition.name()
+                )),
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),
@@ -2176,6 +2200,134 @@ impl AnnotationLowerer<'_> {
                     .map(crate::kernel::SpecPureFunctionArgument::Value),
             })
             .collect()
+    }
+
+    fn instantiate_click_function_for_call(
+        &mut self,
+        definition: &ClickFunctionDefinition,
+        arguments: &[ContractExpression],
+        environment: &SpecElaborationContext,
+    ) -> Result<ClickFunctionDefinition, String> {
+        if definition.type_parameters().is_empty() {
+            return Ok(definition.clone());
+        }
+        let argument_types = definition
+            .parameters()
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, argument)| {
+                self.infer_call_argument_type(parameter.click_type(), argument, environment)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let substitution = generics::infer_type_substitution(
+            "function",
+            definition.name(),
+            definition.type_parameters(),
+            definition
+                .parameters()
+                .iter()
+                .map(|parameter| parameter.click_type().clone()),
+            argument_types,
+        )?;
+        generics::instantiate_function(definition, &substitution)
+    }
+
+    fn instantiate_predicate_for_call(
+        &mut self,
+        definition: &PredicateDefinition,
+        arguments: &[ContractExpression],
+        environment: &SpecElaborationContext,
+    ) -> Result<PredicateDefinition, String> {
+        if definition.type_parameters().is_empty() {
+            return Ok(definition.clone());
+        }
+        let argument_types = definition
+            .parameters()
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, argument)| {
+                self.infer_call_argument_type(parameter.click_type(), argument, environment)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let substitution = generics::infer_type_substitution(
+            "predicate",
+            definition.name(),
+            definition.type_parameters(),
+            definition
+                .parameters()
+                .iter()
+                .map(|parameter| parameter.click_type().clone()),
+            argument_types,
+        )?;
+        generics::instantiate_predicate(definition, &substitution)
+    }
+
+    fn infer_call_argument_type(
+        &mut self,
+        expected: &ClickType,
+        argument: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<Option<ClickType>, String> {
+        match expected {
+            ClickType::Algebraic(_) => {
+                let value = self.lower_contract_algebraic_to_spec(argument, environment)?;
+                Ok(Some(generics::click_type_from_algebraic_value_type(
+                    &AlgebraicValueType::Algebraic {
+                        name: value.algebraic_type.name,
+                        arguments: value.algebraic_type.arguments,
+                    },
+                )))
+            }
+            ClickType::C(c_type) => Ok(Some(ClickType::C(*c_type))),
+            ClickType::Parameter(_) => {
+                self.infer_unconstrained_call_argument_type(argument, environment)
+            }
+        }
+    }
+
+    fn infer_unconstrained_call_argument_type(
+        &mut self,
+        argument: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<Option<ClickType>, String> {
+        match argument {
+            ContractExpression::AlgebraicVariable { algebraic_type, .. }
+            | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
+                Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
+            }
+            ContractExpression::Binding(name) => {
+                if let Some(value) = environment.algebraic_values.get(name) {
+                    return Ok(Some(generics::click_type_from_algebraic_value_type(
+                        &AlgebraicValueType::Algebraic {
+                            name: value.algebraic_type.name.clone(),
+                            arguments: value.algebraic_type.arguments.clone(),
+                        },
+                    )));
+                }
+                Ok(environment
+                    .values
+                    .get(name)
+                    .and_then(spec_expression_click_type))
+            }
+            ContractExpression::CFragment(CExpression::Value(value)) => Ok(Some(ClickType::C(
+                generics::c0_type_from_kernel(value.c_type()),
+            ))),
+            ContractExpression::CFragment(CExpression::Variable(name)) => Ok(environment
+                .values
+                .get(name)
+                .and_then(spec_expression_click_type)),
+            ContractExpression::Call { name, arguments } => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?
+                    .clone();
+                let definition =
+                    self.instantiate_click_function_for_call(&definition, arguments, environment)?;
+                Ok(Some(definition.return_type().clone()))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn lower_contract_sequence_to_spec(
@@ -2613,7 +2765,10 @@ impl AnnotationLowerer<'_> {
         let definition = self
             .click_function_environment
             .get(name)
-            .ok_or_else(|| format!("unknown function `{name}`"))?;
+            .ok_or_else(|| format!("unknown function `{name}`"))?
+            .clone();
+        let definition =
+            self.instantiate_click_function_for_call(&definition, arguments, environment)?;
         if arguments.len() != definition.parameters().len() {
             return Err(format!(
                 "function `{}` expects {} argument(s), got {}",
@@ -2627,9 +2782,9 @@ impl AnnotationLowerer<'_> {
             return Err(format!("function `{name}` does not return a C value"));
         };
         Ok(SpecExpression::PureFunctionApplication {
-            name: name.to_string(),
+            name: definition.name().to_string(),
             arguments: self.lower_click_function_arguments_to_spec(
-                definition,
+                &definition,
                 arguments,
                 environment,
             )?,
@@ -3144,6 +3299,29 @@ impl AnnotationLowerer<'_> {
     }
 }
 
+fn spec_expression_click_type(expression: &SpecExpression) -> Option<ClickType> {
+    let c_type = match expression {
+        SpecExpression::Value(value) => value.c_type(),
+        SpecExpression::PureFunctionApplication { result_type, .. }
+        | SpecExpression::MemoryLoad {
+            value_type: result_type,
+            ..
+        } => *result_type,
+        SpecExpression::LoopEntrySnapshot(inner) => {
+            return spec_expression_click_type(inner);
+        }
+        SpecExpression::If { then_branch, .. } => {
+            return spec_expression_click_type(then_branch);
+        }
+        SpecExpression::Let { body, .. } => {
+            return spec_expression_click_type(body);
+        }
+        SpecExpression::PointerOffset { .. } => CType::VoidPointer,
+        _ => return None,
+    };
+    Some(ClickType::C(generics::c0_type_from_kernel(c_type)))
+}
+
 fn algebraic_kernel_type_arguments(
     application: &AlgebraicTypeApplication,
 ) -> Result<Vec<AlgebraicValueType>, String> {
@@ -3158,6 +3336,7 @@ fn click_type_to_algebraic_value_type(
     click_type: &ClickType,
 ) -> Result<AlgebraicValueType, String> {
     match click_type {
+        ClickType::Parameter(name) => Err(format!("unresolved type parameter `{name}`")),
         ClickType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
         ClickType::Algebraic(application) => Ok(AlgebraicValueType::Algebraic {
             name: application.name.clone(),

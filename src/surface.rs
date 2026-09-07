@@ -89,6 +89,7 @@ fn contract_expression_function_address(expression: &ContractExpression) -> Opti
 mod checking;
 mod diagnostics;
 mod expansion;
+mod generics;
 mod lowering;
 mod parser;
 mod printing;
@@ -410,6 +411,10 @@ pub enum AlgebraicFieldType {
 /// of Click types; specification-only algebraic datatypes are another.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClickType {
+    /// A declaration-scoped type parameter. Generic logical declarations are
+    /// instantiated to concrete Click types before they cross into Kernel
+    /// Click.
+    Parameter(String),
     C(C0Type),
     Algebraic(AlgebraicTypeApplication),
 }
@@ -417,6 +422,7 @@ pub enum ClickType {
 impl ClickType {
     pub fn c_type(&self) -> Option<C0Type> {
         match self {
+            Self::Parameter(_) => None,
             Self::C(c_type) => Some(*c_type),
             Self::Algebraic(_) => None,
         }
@@ -450,6 +456,7 @@ pub struct AlgebraicMatchArm {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredicateDefinition {
     name: String,
+    type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
     body: ClickProposition,
 }
@@ -457,6 +464,7 @@ pub struct PredicateDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFunctionDefinition {
     name: String,
+    type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
     return_type: ClickType,
     decreases: Option<ContractExpression>,
@@ -501,6 +509,7 @@ impl ResourceWitness {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TheoremDefinition {
     name: String,
+    type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
@@ -516,6 +525,7 @@ pub struct ContractDefinition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClickFunctionType {
+    type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
     return_type: ClickType,
 }
@@ -3644,6 +3654,10 @@ impl PredicateDefinition {
         &self.parameters
     }
 
+    pub fn type_parameters(&self) -> &[String] {
+        &self.type_parameters
+    }
+
     pub fn body(&self) -> &ClickProposition {
         &self.body
     }
@@ -3656,6 +3670,10 @@ impl ClickFunctionDefinition {
 
     pub fn parameters(&self) -> &[FunctionParameter] {
         &self.parameters
+    }
+
+    pub fn type_parameters(&self) -> &[String] {
+        &self.type_parameters
     }
 
     pub fn return_type(&self) -> &ClickType {
@@ -3710,6 +3728,10 @@ impl TheoremDefinition {
 
     pub fn parameters(&self) -> &[FunctionParameter] {
         &self.parameters
+    }
+
+    pub fn type_parameters(&self) -> &[String] {
+        &self.type_parameters
     }
 
     pub fn requires(&self) -> &[Requirement] {
@@ -3825,6 +3847,9 @@ impl FunctionSignature {
 impl FunctionParameter {
     pub fn c_type(&self) -> C0Type {
         match &self.click_type {
+            ClickType::Parameter(_) => {
+                panic!("a generic Click parameter has no concrete C type")
+            }
             ClickType::C(c_type) => *c_type,
             ClickType::Algebraic(_) => {
                 panic!("an algebraic Click parameter has no C type")
