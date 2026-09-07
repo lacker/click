@@ -6031,10 +6031,6 @@ impl Parser {
                         }
                         inferred_initializer = Some(initializer);
                         Some(GlobalArrayLength::Complete(vec![length]))
-                    } else if is_file_static {
-                        return Err(self.error_here(
-                            "incomplete multidimensional file-scope static arrays are not supported yet",
-                        ));
                     } else {
                         self.position += 1;
                         let (shape, initializer) = self

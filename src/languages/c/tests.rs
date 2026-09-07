@@ -1573,17 +1573,35 @@ fn c0_infers_incomplete_outer_dimension_from_multidimensional_initializer() {
 }
 
 #[test]
-fn c0_rejects_incomplete_multidimensional_static_array_initializers() {
-    let error = syntax::parse_functions(
-        "static int32 values[][3] = {{1, 2, 3}}; int32 read() { return values[0][0]; }",
+fn c0_infers_incomplete_outer_dimension_for_static_multidimensional_initializer() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        static int32 values[][3] = {{1, 2}, {4, 5, 6}};
+
+        int32 read() {
+            return values[0][2] + values[1][2];
+        }
+        "#,
+        "static-inferred-multidimensional.c",
     )
-    .expect_err("file-scope static multidimensional arrays need a complete shape");
-    assert!(
-        error
-            .message()
-            .contains("incomplete multidimensional file-scope static arrays"),
-        "{}",
-        error.message()
+    .expect("file-scope static multidimensional definitions should infer their outer bound");
+
+    let values = &functions[0].global_arrays()["values"];
+    assert!(values.is_file_static());
+    assert!(values.is_defined());
+    assert!(!values.is_tentative());
+    assert_eq!(values.shape(), Some(&[2, 3][..]));
+    assert_eq!(values.incomplete_shape(), None);
+    assert_eq!(
+        functions[0].to_kernel_function().global_arrays()[0].initial_values(),
+        &[
+            crate::kernel::int32(1),
+            crate::kernel::int32(2),
+            crate::kernel::int32(0),
+            crate::kernel::int32(4),
+            crate::kernel::int32(5),
+            crate::kernel::int32(6)
+        ]
     );
 }
 
