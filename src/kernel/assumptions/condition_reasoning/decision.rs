@@ -38,55 +38,9 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> Option<DirectBitvectorEqualityEvidence> {
-        let signed_constant_evidence = |term: &Bitvector32Term| {
-            if let Some(value) = signed_bitvector_constant(term) {
-                return Some((value, SignedConstantEvidence::Constant));
-            }
-            let variable = bitvector_variable(term)?;
-            let mut lower: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
-            let mut upper: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
-            for (endpoint, other, strict, forward) in self.signed_order_bound_entries(term) {
-                let evidence = IndexedSignedOrderBoundEvidence {
-                    endpoint,
-                    other: other.clone(),
-                    strict,
-                    forward,
-                };
-                if !forward
-                    && let Some(bound) = signed_bitvector_constant(&other)
-                    && let Some(bound) = if strict {
-                        bound.checked_add(1)
-                    } else {
-                        Some(bound)
-                    }
-                    && lower.as_ref().is_none_or(|(current, _)| bound > *current)
-                {
-                    lower = Some((bound, evidence.clone()));
-                }
-                if forward
-                    && let Some(bound) = signed_bitvector_constant(&other)
-                    && let Some(bound) = if strict {
-                        bound.checked_sub(1)
-                    } else {
-                        Some(bound)
-                    }
-                    && upper.as_ref().is_none_or(|(current, _)| bound < *current)
-                {
-                    upper = Some((bound, evidence));
-                }
-            }
-            let ((lower_value, lower), (upper_value, upper)) = lower.zip(upper)?;
-            (lower_value == upper_value).then_some((
-                lower_value,
-                SignedConstantEvidence::SingletonBounds {
-                    variable,
-                    lower,
-                    upper,
-                },
-            ))
-        };
-        if let Some(((left_value, left), (_right_value, right))) = signed_constant_evidence(left)
-            .zip(signed_constant_evidence(right))
+        if let Some(((left_value, left), (_right_value, right))) = self
+            .signed_constant_evidence(left)
+            .zip(self.signed_constant_evidence(right))
             .filter(|((left, _), (right, _))| left == right)
         {
             return Some(DirectBitvectorEqualityEvidence::EqualSignedConstants {
@@ -127,6 +81,129 @@ impl PureFactContext {
                 not_greater_than,
             },
         )))
+    }
+
+    fn signed_constant_evidence(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<(i64, SignedConstantEvidence)> {
+        if let Some(value) = signed_bitvector_constant(term) {
+            return Some((value, SignedConstantEvidence::Constant));
+        }
+        let variable = bitvector_variable(term)?;
+        let mut lower: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
+        let mut upper: Option<(i64, IndexedSignedOrderBoundEvidence)> = None;
+        for (endpoint, other, strict, forward) in self.signed_order_bound_entries(term) {
+            let source = self.exact_order_bound_source(&endpoint, &other, strict, forward)?;
+            let evidence = IndexedSignedOrderBoundEvidence {
+                endpoint,
+                other: other.clone(),
+                strict,
+                forward,
+                source: Box::new(source),
+            };
+            if !forward
+                && let Some(bound) = signed_bitvector_constant(&other)
+                && let Some(bound) = if strict {
+                    bound.checked_add(1)
+                } else {
+                    Some(bound)
+                }
+                && lower.as_ref().is_none_or(|(current, _)| bound > *current)
+            {
+                lower = Some((bound, evidence.clone()));
+            }
+            if forward
+                && let Some(bound) = signed_bitvector_constant(&other)
+                && let Some(bound) = if strict {
+                    bound.checked_sub(1)
+                } else {
+                    Some(bound)
+                }
+                && upper.as_ref().is_none_or(|(current, _)| bound < *current)
+            {
+                upper = Some((bound, evidence));
+            }
+        }
+        let ((lower_value, lower), (upper_value, upper)) = lower.zip(upper)?;
+        (lower_value == upper_value).then_some((
+            lower_value,
+            SignedConstantEvidence::SingletonBounds {
+                variable,
+                lower,
+                upper,
+            },
+        ))
+    }
+
+    /// Exact source for one normalized order-index entry. Four condition
+    /// spellings can encode the same signed relation; indexed lookups select
+    /// among those constant-many possibilities without scanning the context.
+    fn exact_order_bound_source(
+        &self,
+        endpoint: &Bitvector32Term,
+        other: &Bitvector32Term,
+        strict: bool,
+        forward: bool,
+    ) -> Option<Proposition> {
+        let (left, right) = if forward {
+            (endpoint.clone(), other.clone())
+        } else {
+            (other.clone(), endpoint.clone())
+        };
+        let candidates = if strict {
+            [
+                (
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+                    true,
+                ),
+                (ConditionTerm::signed_greater_equal(left, right), false),
+            ]
+        } else {
+            [
+                (
+                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    false,
+                ),
+                (ConditionTerm::signed_greater_equal(right, left), true),
+            ]
+        };
+        candidates.into_iter().find_map(|(condition, value)| {
+            (self.condition_facts.get(&condition) == Some(&value))
+                .then_some(Proposition::ConditionIs(condition, value))
+        })
+    }
+
+    pub(in crate::kernel) fn singleton_constant_equality_evidence(
+        &self,
+        variable: Variable,
+    ) -> Option<(i64, DirectBitvectorEqualityEvidence)> {
+        let term = Bitvector32Term::Variable(variable);
+        let (value, variable_evidence) = self.signed_constant_evidence(&term)?;
+        Some((
+            value,
+            DirectBitvectorEqualityEvidence::EqualSignedConstants {
+                value,
+                left: variable_evidence,
+                right: SignedConstantEvidence::Constant,
+            },
+        ))
     }
 
     /// Decides a condition against this fact set, memoizing results by the

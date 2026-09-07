@@ -990,8 +990,8 @@ fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
 #[test]
 fn load_variable_free_variables_include_its_snapshot_cells() {
     // A load variable over a snapshot whose cells mention a loop counter
-    // denotes a term mentioning that counter: finite context splits keyed on
-    // a goal's variables must see it through the load variable.
+    // denotes a term mentioning that counter: goal-directed substitutions
+    // and other variable-sensitive rules must see it through the load.
     let counter = Variable(11);
     let written = CMemory::new().with_block("p", 12).store(
         Pointer {

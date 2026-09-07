@@ -33,8 +33,6 @@ pub(in crate::kernel) fn condition_as_order_fact(
     }
 }
 
-pub(in crate::kernel) const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
-
 #[derive(Clone, Debug, Default)]
 pub(in crate::kernel) struct FiniteForAllRange {
     pub(in crate::kernel) lower: i64,

@@ -310,8 +310,8 @@ impl PureFactContext {
             || crate::instrumentation::measure_operation(
                 "kernel",
                 "general proposition proof",
-                "proposition proof: finite context split",
-                || self.proves_by_finite_context_split(proposition),
+                "proposition proof: singleton substitution",
+                || self.proves_by_singleton_substitution(proposition),
             );
         if proved {
             record_implicit_reasoning_provenance(self, proposition);
@@ -720,7 +720,7 @@ impl PureFactContext {
                 },
             ));
         }
-        if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
+        if let Some(rule) = self.derive_by_singleton_substitution(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
         }
         self.derive_by_disjunction_cases(proposition, for_simp)
@@ -2938,50 +2938,34 @@ impl PureFactContext {
         crate::kernel::api::loadable_covered_by_fact(&candidate, &instantiated)
     }
 
-    fn derive_by_finite_context_split(
+    fn derive_by_singleton_substitution(
         &self,
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
         let mut variables = BTreeSet::new();
         collect_proposition_bitvector_variables(proposition, &mut variables);
-        let mut candidates = variables
+        let (variable, value, equality) = variables
             .into_iter()
             .filter_map(|variable| {
-                self.finite_context_range(variable)
-                    .map(|range| (variable, range))
+                self.singleton_constant_equality_evidence(variable)
+                    .map(|(value, evidence)| (variable, value, evidence))
             })
-            .filter(|(_, range)| range.lower <= range.upper)
-            .collect::<Vec<_>>();
-        candidates.sort_by_key(|(_, range)| range.upper - range.lower);
-
-        let (variable, range) = candidates.into_iter().next()?;
-        let width = usize::try_from(range.upper - range.lower + 1).ok()?;
-        if width > FINITE_CONTEXT_SPLIT_LIMIT {
-            return None;
-        }
-        let propositions = (range.lower..=range.upper)
-            .map(|value| {
-                substitute_bitvector_variable_in_proposition(
-                    proposition,
-                    variable,
-                    &signed_i64_bitvector_constant(value),
-                )
-            })
-            .collect::<Vec<_>>();
-        if propositions.iter().all(|instance| instance == proposition) {
-            return None;
-        }
-        let instances = propositions
-            .iter()
-            .map(|instance| self.derive_proposition_using(instance, for_simp))
-            .collect::<Option<Vec<_>>>()?;
-        Some(PropositionDerivationRule::FiniteContextSplit {
+            .next()?;
+        let instantiated = substitute_bitvector_variable_in_proposition(
+            proposition,
             variable,
-            lower: range.lower,
-            upper: range.upper,
-            premises: self.clone(),
-            instances,
+            &signed_i64_bitvector_constant(value),
+        );
+        if instantiated == *proposition {
+            return None;
+        }
+        let body = self.derive_proposition_using(&instantiated, for_simp)?;
+        Some(PropositionDerivationRule::SingletonSubstitution {
+            variable,
+            value,
+            equality,
+            body: Box::new(body),
         })
     }
 
@@ -3069,82 +3053,28 @@ impl PureFactContext {
         true
     }
 
-    pub(in crate::kernel) fn proves_by_finite_context_split(
-        &self,
-        proposition: &Proposition,
-    ) -> bool {
+    fn proves_by_singleton_substitution(&self, proposition: &Proposition) -> bool {
         let mut variables = BTreeSet::new();
         collect_proposition_bitvector_variables(proposition, &mut variables);
-        let mut candidates = variables
+        let Some((variable, value)) = variables
             .into_iter()
             .filter_map(|variable| {
-                self.finite_context_range(variable)
-                    .map(|range| (variable, range))
+                self.singleton_constant_equality_evidence(variable)
+                    .map(|(value, _)| (variable, value))
             })
-            .filter(|(_, range)| range.lower <= range.upper)
-            .collect::<Vec<_>>();
-        candidates.sort_by_key(|(_, range)| range.upper - range.lower);
-
-        let Some((variable, range)) = candidates.into_iter().next() else {
+            .next()
+        else {
             return false;
         };
-        let Ok(width) = usize::try_from(range.upper - range.lower + 1) else {
-            return false;
-        };
-        if width > FINITE_CONTEXT_SPLIT_LIMIT {
-            return false;
-        }
-
-        let instances = (range.lower..=range.upper)
-            .map(|value| {
-                substitute_bitvector_variable_in_proposition(
-                    proposition,
-                    variable,
-                    &signed_i64_bitvector_constant(value),
-                )
-            })
-            .collect::<Vec<_>>();
-        if instances
-            .iter()
-            .all(|instantiated| instantiated == proposition)
-        {
+        let instantiated = substitute_bitvector_variable_in_proposition(
+            proposition,
+            variable,
+            &signed_i64_bitvector_constant(value),
+        );
+        if instantiated == *proposition {
             return false;
         }
-
-        instances
-            .iter()
-            .all(|instantiated| self.proves(instantiated))
-    }
-
-    pub(in crate::kernel) fn finite_context_range(
-        &self,
-        variable: Variable,
-    ) -> Option<FiniteForAllRange> {
-        let mut range = IntegerRangeFacts::default();
-        for (condition, value) in self.condition_facts.iter() {
-            let Some((left, right, strict)) = condition_as_order_fact(condition, *value) else {
-                continue;
-            };
-            match (bitvector_variable(&left), signed_bitvector_constant(&right)) {
-                (Some(fact_variable), Some(bound)) if fact_variable == variable => {
-                    let upper = if strict { bound.checked_sub(1)? } else { bound };
-                    range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
-                }
-                _ => {}
-            }
-            match (signed_bitvector_constant(&left), bitvector_variable(&right)) {
-                (Some(bound), Some(fact_variable)) if fact_variable == variable => {
-                    let lower = if strict { bound.checked_add(1)? } else { bound };
-                    range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
-                }
-                _ => {}
-            }
-        }
-
-        let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
-            return None;
-        };
-        Some(FiniteForAllRange { lower, upper })
+        self.proves(&instantiated)
     }
 
     pub(in crate::kernel) fn proves_condition_from_facts(

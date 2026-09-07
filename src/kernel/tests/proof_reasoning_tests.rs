@@ -3255,7 +3255,7 @@ fn forall_derivation_check_shadows_ambient_uses_of_the_binder_id() {
 }
 
 #[test]
-fn finite_context_split_derivation_records_its_range_premises() {
+fn singleton_substitution_derivation_records_only_its_bound_premises() {
     let variable = Variable(87);
     let value = Bitvector32Term::Variable(variable);
     let lower = Proposition::ConditionIs(
@@ -3270,18 +3270,26 @@ fn finite_context_split_derivation_records_its_range_premises() {
         ConditionTerm::equal(value, Bitvector32Term::Constant(3)),
         true,
     );
+    let unrelated = Proposition::Predicate {
+        name: "unrelated".to_string(),
+        arguments: vec![],
+    };
     let assumptions = PureFactContext::new()
         .assume_proposition(lower.clone())
-        .assume_proposition(upper.clone());
+        .assume_proposition(upper.clone())
+        .assume_proposition(unrelated);
     let derivation = assumptions
         .derive_simp_proposition(&goal)
-        .expect("the singleton finite range should establish equality");
+        .expect("singleton bounds should establish equality");
 
+    assert!(matches!(
+        &derivation.rule,
+        PropositionDerivationRule::SingletonSubstitution { .. }
+    ));
     assert!(derivation.check(&assumptions));
     assert!(!derivation.check(&PureFactContext::new()));
     let context = derivation.context_premises();
-    assert!(context.contains(&lower));
-    assert!(context.contains(&upper));
+    assert_eq!(context, vec![lower, upper]);
 }
 
 #[test]
@@ -3369,7 +3377,7 @@ fn upper_bound_extends_to_a_nonoverflowing_successor() {
 }
 
 #[test]
-fn assumptions_split_small_finite_context_variable() {
+fn assumptions_do_not_split_a_multi_value_context_variable() {
     let j = Bitvector32Term::Variable(Variable(87));
     let assumptions = PureFactContext::new()
         .assume_condition(
@@ -3391,74 +3399,8 @@ fn assumptions_split_small_finite_context_variable() {
         )),
     );
 
-    assert!(assumptions.proves(&proposition));
-    assert_checkable_derivation(&assumptions, &proposition);
-}
-
-#[test]
-fn finite_context_derivation_checks_under_a_narrower_range() {
-    let j = Bitvector32Term::Variable(Variable(88));
-    let broad = PureFactContext::new()
-        .assume_condition(
-            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
-            true,
-        )
-        .assume_condition(
-            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
-            true,
-        );
-    let proposition = Proposition::Or(
-        Box::new(Proposition::ConditionIs(
-            ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(0)),
-            true,
-        )),
-        Box::new(Proposition::ConditionIs(
-            ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(1)),
-            true,
-        )),
-    );
-    let derivation = broad
-        .derive_proposition(&proposition)
-        .expect("the broad two-value range should produce a finite proof");
-    let narrow = broad.assume_condition(
-        ConditionTerm::signed_less_than(j, Bitvector32Term::Constant(1)),
-        true,
-    );
-
-    assert!(
-        derivation.check(&narrow),
-        "a proof covering a finite range remains valid when later facts narrow that range"
-    );
-}
-
-#[test]
-fn proposition_derivation_composes_case_split_conjuncts() {
-    let j = Bitvector32Term::Variable(Variable(187));
-    let assumptions = PureFactContext::new()
-        .assume_condition(
-            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
-            true,
-        )
-        .assume_condition(
-            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
-            true,
-        );
-    let finite_choice = Proposition::Or(
-        Box::new(Proposition::ConditionIs(
-            ConditionTerm::equal(j, Bitvector32Term::Constant(0)),
-            true,
-        )),
-        Box::new(Proposition::ConditionIs(
-            ConditionTerm::equal(
-                Bitvector32Term::Variable(Variable(187)),
-                Bitvector32Term::Constant(1),
-            ),
-            true,
-        )),
-    );
-    let proposition = Proposition::And(Box::new(finite_choice.clone()), Box::new(finite_choice));
-
-    assert_checkable_derivation(&assumptions, &proposition);
+    assert!(!assumptions.proves(&proposition));
+    assert!(assumptions.derive_proposition(&proposition).is_none());
 }
 
 #[test]

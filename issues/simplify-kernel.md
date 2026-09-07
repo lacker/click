@@ -195,15 +195,22 @@ change an answer.
 
 ### Search and tiering
 
-1. **The finite context split**, `FINITE_CONTEXT_SPLIT_LIMIT = 8` in
-   `src/kernel/reasoning/order_reasoning.rs`, used by proposition reasoning and
-   its derivation checker. Fired 8 / 840; an earlier census found it deciding
-   0 / 20 goals. A surface planner may emit nested proof `if x == value`
-   branches, or a new explicit finite-case certificate whose checker is linear
-   in the listed cases. The certificate must name only the range evidence and
-   branch proofs: the current `FiniteContextSplit` stores the entire context,
-   which violates relevant-input scaling.
-2. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
+Finite context splitting is complete. A 2026-09-07 census found no successful
+use in the examples and 156 successful mdtest invocations: 134 singleton
+ranges, 18 two-value ranges, and 4 three-value ranges. Disabling the rule
+changed only 5 of 789 mdtests. An exact singleton rule recovered four; the
+only genuine multi-value dependency was `local_array_loop_frame`, where direct
+symbolic element-index extraction had failed to feed the existing array-bound
+checks. Fixing that structural path recovered the last fixture without a case
+split. None of the observed two-value splits was necessary.
+
+`FiniteContextSplit` and `FINITE_CONTEXT_SPLIT_LIMIT` are therefore deleted,
+with no general surface case planner. The retained `SingletonSubstitution`
+proof-object node is not a split: it names exactly the two indexed order facts
+that force `x == constant` and the proof of the substituted proposition. It
+does not retain, clone, or scan the ambient context.
+
+1. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
    `ALIAS_GUARD_REFUTATION_ACTIVE`, and `DERIVATION_WALK_ACTIVE`. These suppress
@@ -266,8 +273,10 @@ comparison now use only that narrower predicate for distinctness.
    `issues/arithmetic.md`.
 4. **Complete:** move upper-bound split selection to a surface planner that
    emits checked proof branches; delete the kernel rule and depth limit.
-5. Move finite context splitting to explicit surface branches/certificates and
-   remove the whole-context derivation payload.
+5. **Complete:** delete general finite context splitting and its numeric cap.
+   Singleton ranges now use an exact checked substitution naming two indexed
+   bound facts; the sole multi-value dependency was replaced by direct symbolic
+   array-index bounds reasoning, so no surface case planner was needed.
 6. **Complete:** retain finite typed load-equality evidence, delete the global
    framed-load prover, prevent arbitrary term-pair recursion, and remove the
    load-equality depth limit.
@@ -341,9 +350,11 @@ the bound can change what the checker accepts.
   numeric depth cut.
 - Every structural walk is complete over its named input, cycle-safe where
   necessary, and covered by a deterministic multi-size scaling regression.
-- The finite context split and upper-bound split are surface planning whose
-  selected cases are checked explicitly, or are deleted. No checked operation
-  clones or scans the complete context merely to validate the split.
+- General finite context splitting and its numeric cap are deleted. Singleton
+  substitution retains only its two indexed bound facts and child proof, and
+  symbolic array access uses direct endpoint checks. The upper-bound split is
+  surface planning with explicitly checked branches. No checked operation
+  clones or scans the complete context merely to validate a split.
 - Global load equality is decided from typed evidence retained by the proof
   object. Its migration covers fact matching, transport, contract
   certification, loops, resources, and other kernel consumers. Any

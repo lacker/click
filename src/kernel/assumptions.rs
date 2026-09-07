@@ -2607,39 +2607,23 @@ impl PropositionDerivation {
                     && derivations_match_propositions(instances, &expected)
                     && instances.iter().all(|proof| proof.check(available))
             }
-            PropositionDerivationRule::FiniteContextSplit {
+            PropositionDerivationRule::SingletonSubstitution {
                 variable,
-                lower,
-                upper,
-                premises,
-                instances,
+                value,
+                equality,
+                body,
             } => {
-                if !available.includes(premises) {
-                    return false;
-                }
-                let Some(range) = premises.finite_context_range(*variable) else {
-                    return false;
-                };
-                if range.lower < *lower || range.upper > *upper {
-                    return false;
-                }
-                let Ok(width) = usize::try_from(upper - lower + 1) else {
-                    return false;
-                };
-                if width > FINITE_CONTEXT_SPLIT_LIMIT {
-                    return false;
-                }
-                let expected = (*lower..=*upper)
-                    .map(|value| {
-                        substitute_bitvector_variable_in_proposition(
-                            &self.conclusion,
-                            *variable,
-                            &signed_i64_bitvector_constant(value),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                derivations_match_propositions(instances, &expected)
-                    && instances.iter().all(|proof| proof.check(available))
+                let variable_term = Bitvector32Term::Variable(*variable);
+                let constant = signed_i64_bitvector_constant(*value);
+                let expected = substitute_bitvector_variable_in_proposition(
+                    &self.conclusion,
+                    *variable,
+                    &constant,
+                );
+                expected != self.conclusion
+                    && body.conclusion == expected
+                    && equality.checks(&variable_term, &constant, available)
+                    && body.check(available)
             }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 if !available.prop_facts.contains(disjunction) {

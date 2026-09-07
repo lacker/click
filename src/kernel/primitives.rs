@@ -3274,6 +3274,7 @@ pub(super) struct IndexedSignedOrderBoundEvidence {
     pub(in crate::kernel) other: Bitvector32Term,
     pub(in crate::kernel) strict: bool,
     pub(in crate::kernel) forward: bool,
+    pub(in crate::kernel) source: Box<Proposition>,
 }
 
 /// Evidence that two load variables name one cell because their
@@ -3349,12 +3350,13 @@ pub(super) enum PropositionDerivationRule {
     FiniteForAll {
         instances: Vec<PropositionDerivation>,
     },
-    FiniteContextSplit {
+    /// Substitute a variable pinned to one signed value by two exact order
+    /// bounds, then check the proof of the resulting proposition.
+    SingletonSubstitution {
         variable: Variable,
-        lower: i64,
-        upper: i64,
-        premises: PureFactContext,
-        instances: Vec<PropositionDerivation>,
+        value: i64,
+        equality: DirectBitvectorEqualityEvidence,
+        body: Box<PropositionDerivation>,
     },
     DisjunctionCases {
         disjunction: Proposition,

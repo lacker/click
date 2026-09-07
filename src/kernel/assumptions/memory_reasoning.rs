@@ -997,6 +997,12 @@ impl PureFactContext {
         if pointer.offset == base.offset {
             return Some(Bitvector32Term::Constant(0));
         }
+        // A zero-offset object base leaves the pointer's scaled offset as
+        // the exact element index. Preserve that symbolic index so the
+        // ordinary endpoint checks can certify an in-bounds access directly.
+        if base.offset == PointerOffsetTerm::Constant(0) {
+            return element_index_from_offset(&pointer.offset, byte_width);
+        }
         let offsets_match_for_resolution = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             left == right
                 || crate::kernel::reasoning::pointer_offsets_proven_equal_for_memory_resolution(

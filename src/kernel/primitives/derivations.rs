@@ -660,15 +660,9 @@ impl PropositionDerivation {
                     instance.collect_context_premises(premises);
                 }
             }
-            PropositionDerivationRule::FiniteContextSplit {
-                premises: range_premises,
-                instances,
-                ..
-            } => {
-                premises.extend(range_premises.pure_facts());
-                for instance in instances {
-                    instance.collect_context_premises(premises);
-                }
+            PropositionDerivationRule::SingletonSubstitution { equality, body, .. } => {
+                equality.collect_context_premises(premises);
+                body.collect_context_premises(premises);
             }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 premises.insert(disjunction.clone());
@@ -846,7 +840,7 @@ impl PointerOffsetCongruenceEvidence {
 }
 
 impl DirectBitvectorEqualityEvidence {
-    fn checks(
+    pub(in crate::kernel) fn checks(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -880,6 +874,29 @@ impl DirectBitvectorEqualityEvidence {
                         } => {
                             let bound =
                                 |evidence: &IndexedSignedOrderBoundEvidence, lower_bound: bool| {
+                                    let normalized = if evidence.forward {
+                                        (
+                                            evidence.endpoint.clone(),
+                                            evidence.other.clone(),
+                                            evidence.strict,
+                                        )
+                                    } else {
+                                        (
+                                            evidence.other.clone(),
+                                            evidence.endpoint.clone(),
+                                            evidence.strict,
+                                        )
+                                    };
+                                    let source_matches = match evidence.source.as_ref() {
+                                        Proposition::ConditionIs(condition, value) => {
+                                            crate::kernel::reasoning::condition_as_order_fact(
+                                                condition, *value,
+                                            ) == Some(normalized)
+                                                && assumptions
+                                                    .contains_assumed_exact(&evidence.source)
+                                        }
+                                        _ => false,
+                                    };
                                     let recorded =
                                         assumptions.signed_order_bound_entries(term).any(|entry| {
                                             entry
@@ -890,7 +907,10 @@ impl DirectBitvectorEqualityEvidence {
                                                     evidence.forward,
                                                 )
                                         });
-                                    if !recorded || lower_bound == evidence.forward {
+                                    if !source_matches
+                                        || !recorded
+                                        || lower_bound == evidence.forward
+                                    {
                                         return None;
                                     }
                                     let bound = signed_bitvector_constant(&evidence.other)?;
@@ -942,6 +962,33 @@ impl DirectBitvectorEqualityEvidence {
                     && evidence.not_greater_than == not_greater_than
                     && assumptions.contains_assumed_exact(&evidence.greater_equal)
                     && assumptions.contains_assumed_exact(&evidence.not_greater_than)
+            }
+        }
+    }
+
+    fn collect_context_premises(&self, premises: &mut BTreeSet<Proposition>) {
+        let collect_signed = |evidence: &SignedConstantEvidence,
+                              premises: &mut BTreeSet<Proposition>| {
+            if let SignedConstantEvidence::SingletonBounds { lower, upper, .. } = evidence {
+                premises.insert(lower.source.as_ref().clone());
+                premises.insert(upper.source.as_ref().clone());
+            }
+        };
+        match self {
+            Self::AdditiveCancellation { equality, .. } => {
+                equality.collect_context_premises(premises)
+            }
+            Self::EqualSignedConstants { left, right, .. } => {
+                collect_signed(left, premises);
+                collect_signed(right, premises);
+            }
+            Self::LeAndNotLt(evidence) => {
+                premises.insert(evidence.less_equal.clone());
+                premises.insert(evidence.not_less_than.clone());
+            }
+            Self::GeAndNotGt(evidence) => {
+                premises.insert(evidence.greater_equal.clone());
+                premises.insert(evidence.not_greater_than.clone());
             }
         }
     }
