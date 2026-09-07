@@ -1529,6 +1529,28 @@ impl CMemory {
                 })
     }
 
+    /// Drops the zeroed reading of any allocation a write set can reach.
+    ///
+    /// "Reads as zero where unwritten" is a claim about an allocation's
+    /// contents, so a write the caller cannot see invalidates it exactly as
+    /// it invalidates a stored cell. The blanket status is dropped for the
+    /// whole allocation rather than narrowed to a prefix: the write set bounds
+    /// where a callee or loop body may store, not where it did.
+    fn forget_zeroed_allocations_written_by(&mut self, mutable_ranges: &[CMemoryRange]) {
+        if mutable_ranges.is_empty() {
+            return;
+        }
+        let written = |base: &Pointer| {
+            mutable_ranges
+                .iter()
+                .any(|range| heap_allocation_may_contain_pointer(base, range.base()))
+        };
+        let heap = std::sync::Arc::make_mut(&mut self.heap);
+        heap.zeroed_allocations.retain(|base| !written(base));
+        heap.zeroed_prefix_allocations
+            .retain(|base, _| !written(base));
+    }
+
     pub(in crate::kernel) fn is_zeroed_heap_address(
         &self,
         pointer: &Pointer,
@@ -1990,6 +2012,7 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
+        self.forget_zeroed_allocations_written_by(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
             CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges)),

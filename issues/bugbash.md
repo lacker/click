@@ -802,6 +802,11 @@ The second invariant is not inductive: `x` reaches `n >= 5` while
 
 ## 10. The `calloc` zeroed flag survives a callee's writes
 
+**Fixed** in `End a zeroed reading when a call may write the allocation`;
+regressions `mdtests/calloc_zeroed_reading_survives_call_rejected.md` and
+`mdtests/calloc_zeroed_reading_after_calls.md`. The loop-havoc variant noted
+in the acceptance criteria is covered by the same helper.
+
 **Severity: critical.** Call havoc clears cells but not the allocation's
 zeroed status, so a caller reads 0 from memory the callee overwrote.
 
