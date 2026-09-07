@@ -1338,11 +1338,14 @@ fn function_refines_named_contract(
     if contract.exactly_matches(function) {
         return Ok(true);
     }
+    if !contract.has_same_predicate_unfoldings(function) {
+        return Ok(false);
+    }
     let Some(context) = prepare_function_contract_refinement_context(contract, function, budget)
     else {
         return Ok(false);
     };
-    function_refines_named_contract_in_case(&context, &[], false, budget)
+    function_refines_named_contract_in_case(&context, &[], &BTreeSet::new(), false, budget)
 }
 
 pub(super) fn prepare_function_contract_refinement_context(
@@ -1350,7 +1353,7 @@ pub(super) fn prepare_function_contract_refinement_context(
     function: &CFunction,
     budget: &mut ExecutionBudget,
 ) -> Option<CFunctionContractRefinementContext> {
-    if !contract.has_compatible_signature_and_contract_vocabulary(function) {
+    if !contract.has_compatible_signature_and_resource_vocabulary(function) {
         return None;
     }
     let mut argument_values = Vec::with_capacity(function.parameters().len());
@@ -1381,9 +1384,16 @@ pub(super) fn prepare_function_contract_refinement_context(
 pub(super) fn function_refines_named_contract_in_explicit_case(
     context: &CFunctionContractRefinementContext,
     case_assumptions: &[Proposition],
+    unfolded_predicates: &BTreeSet<String>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
-    function_refines_named_contract_in_case(context, case_assumptions, true, budget)
+    function_refines_named_contract_in_case(
+        context,
+        case_assumptions,
+        unfolded_predicates,
+        true,
+        budget,
+    )
 }
 
 pub(super) fn function_contract_refinement_entry_state(
@@ -1399,11 +1409,19 @@ pub(super) fn function_contract_refinement_entry_state(
 fn function_refines_named_contract_in_case(
     context: &CFunctionContractRefinementContext,
     case_assumptions: &[Proposition],
+    unfolded_predicates: &BTreeSet<String>,
     explicit_case: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     let contract = &context.contract;
     let function = &context.function;
+    if !predicate_interfaces_are_explicitly_compatible(
+        contract.template(),
+        function,
+        unfolded_predicates,
+    ) {
+        return Ok(false);
+    }
     let mut propositions = contract
         .template()
         .contract_requires()
@@ -1525,6 +1543,33 @@ fn function_refines_named_contract_in_case(
         budget,
         supported_stateful_memory,
     )
+}
+
+/// Predicate bodies are stored as checked, normalized contract propositions,
+/// while `predicate_unfoldings` retains their opaque surface identities. Equal
+/// unfolding tables need no proof action. Every entry present on only one side
+/// must otherwise have its predicate name explicitly opened by the proof.
+fn predicate_interfaces_are_explicitly_compatible(
+    contract: &CFunction,
+    function: &CFunction,
+    unfolded_predicates: &BTreeSet<String>,
+) -> bool {
+    let contract_unfoldings = contract
+        .predicate_unfoldings()
+        .iter()
+        .collect::<BTreeSet<_>>();
+    let function_unfoldings = function
+        .predicate_unfoldings()
+        .iter()
+        .collect::<BTreeSet<_>>();
+    let permitted = |unfolding: &CPredicateUnfolding| match unfolding.predicate() {
+        SpecProposition::Predicate { name, .. } => unfolded_predicates.contains(name),
+        _ => false,
+    };
+    contract_unfoldings
+        .difference(&function_unfoldings)
+        .chain(function_unfoldings.difference(&contract_unfoldings))
+        .all(|unfolding| permitted(unfolding))
 }
 
 fn evaluate_contract_mutable_ranges(

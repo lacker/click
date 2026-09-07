@@ -1321,7 +1321,7 @@ impl CFunctionContract {
     /// and qualifiers remain part of the signature. Whether a mutable frame
     /// was certified by an explicit effect claim or inferred from resource
     /// ownership is proof metadata, not part of the behavioral interface.
-    pub(crate) fn has_compatible_signature_and_contract_vocabulary(
+    pub(crate) fn has_compatible_signature_and_resource_vocabulary(
         &self,
         function: &CFunction,
     ) -> bool {
@@ -1343,7 +1343,12 @@ impl CFunctionContract {
                 })
             && self.function.composite_resource_definitions
                 == function.composite_resource_definitions
-            && self.function.predicate_unfoldings == function.predicate_unfoldings
+    }
+
+    /// Opaque predicate identities may be compared definitionally only when
+    /// an explicit refinement proof names the definitions it unfolds.
+    pub(crate) fn has_same_predicate_unfoldings(&self, function: &CFunction) -> bool {
+        self.function.predicate_unfoldings == function.predicate_unfoldings
     }
 }
 

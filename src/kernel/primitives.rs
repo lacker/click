@@ -3142,12 +3142,18 @@ pub struct CFunctionContractRefinementContext {
 /// The explicit logical structure of a contract-refinement proof.
 ///
 /// `If` is excluded-middle elimination over a condition written in the proof;
-/// both children are mandatory. `Simp` asks the kernel to check the local
-/// structural and proposition implications under the accumulated branch
-/// assumptions. There is no implicit guard enumeration.
+/// both children are mandatory. `UnfoldPredicate` explicitly authorizes the
+/// checked definition of every occurrence of one named predicate in the two
+/// compared interfaces. `Simp` asks the kernel to check the local structural
+/// and proposition implications under the accumulated branch assumptions.
+/// There is no implicit predicate search or guard enumeration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CFunctionContractRefinementProof {
     Simp,
+    UnfoldPredicate {
+        name: String,
+        proof: Box<CFunctionContractRefinementProof>,
+    },
     If {
         condition: Proposition,
         then_proof: Box<CFunctionContractRefinementProof>,

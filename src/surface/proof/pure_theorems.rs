@@ -1587,6 +1587,24 @@ fn verify_contract_refinement_theorem(
             [ProofTactic::Simp | ProofTactic::Normalize] => {
                 Ok(CFunctionContractRefinementProof::Simp)
             }
+            [ProofTactic::UnfoldPredicate(name), remainder @ ..] if !remainder.is_empty() => {
+                if predicate_environment.get(name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}`: unknown predicate `{name}` in contract-refinement proof"
+                    )));
+                }
+                Ok(CFunctionContractRefinementProof::UnfoldPredicate {
+                    name: name.clone(),
+                    proof: Box::new(lower_proof(
+                        remainder,
+                        claim_label,
+                        values,
+                        memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )?),
+                })
+            }
             [ProofTactic::If(proof_if)] => {
                 let condition = lower_pure_theorem_proposition(
                     claim_label,
@@ -1625,7 +1643,7 @@ fn verify_contract_refinement_theorem(
                 })
             }
             _ => Err(ClickError::new(format!(
-                "`{claim_label}`: after `unfold`, contract refinement currently supports explicit `if` cases with `simp();` leaves"
+                "`{claim_label}`: after opening the contract, refinement supports explicit predicate `unfold`, `if` cases, and `simp();` leaves"
             ))),
         }
     }

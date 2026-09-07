@@ -4599,13 +4599,42 @@ pub fn prove_c_function_contract_refinement(
         context: &CFunctionContractRefinementContext,
         proof: &CFunctionContractRefinementProof,
         assumptions: &mut Vec<Proposition>,
+        unfolded_predicates: &mut BTreeSet<String>,
     ) -> bool {
         match proof {
             CFunctionContractRefinementProof::Simp => {
                 let mut budget = ExecutionBudget::default();
                 budget.next_kernel_variable = context.next_kernel_variable;
-                function_refines_named_contract_in_explicit_case(context, assumptions, &mut budget)
-                    .unwrap_or(false)
+                function_refines_named_contract_in_explicit_case(
+                    context,
+                    assumptions,
+                    unfolded_predicates,
+                    &mut budget,
+                )
+                .unwrap_or(false)
+            }
+            CFunctionContractRefinementProof::UnfoldPredicate { name, proof } => {
+                let registered = context
+                    .contract
+                    .template()
+                    .predicate_unfoldings()
+                    .iter()
+                    .chain(context.function.predicate_unfoldings())
+                    .any(|unfolding| {
+                        matches!(
+                            unfolding.predicate(),
+                            SpecProposition::Predicate {
+                                name: predicate_name,
+                                ..
+                            } if predicate_name == name
+                        )
+                    });
+                if !registered || !unfolded_predicates.insert(name.clone()) {
+                    return false;
+                }
+                let holds = check(context, proof, assumptions, unfolded_predicates);
+                unfolded_predicates.remove(name);
+                holds
             }
             CFunctionContractRefinementProof::If {
                 condition,
@@ -4613,20 +4642,20 @@ pub fn prove_c_function_contract_refinement(
                 else_proof,
             } => {
                 assumptions.push(condition.clone());
-                let then_holds = check(context, then_proof, assumptions);
+                let then_holds = check(context, then_proof, assumptions, unfolded_predicates);
                 assumptions.pop();
                 if !then_holds {
                     return false;
                 }
                 assumptions.push(Proposition::Not(Box::new(condition.clone())));
-                let else_holds = check(context, else_proof, assumptions);
+                let else_holds = check(context, else_proof, assumptions, unfolded_predicates);
                 assumptions.pop();
                 else_holds
             }
         }
     }
 
-    if !check(context, proof, &mut Vec::new()) {
+    if !check(context, proof, &mut Vec::new(), &mut BTreeSet::new()) {
         return None;
     }
     let theorem = match &context.source_contract {

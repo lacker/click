@@ -79,6 +79,12 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   recombine with the concrete output to supply the named guarantee. The
   verifier treats each quantity as one algebraic resource fact and never
   enumerates its units.
+- An explicit concrete or abstract refinement theorem may use the ordinary
+  `unfold(Predicate)` tactic after opening its contract or contracts. The
+  checker then compares the registered predicate body over the same symbolic
+  entry and post-call memories as scalar refinement. Every differing opaque
+  predicate identity must be named; direct pointer formation remains opaque,
+  and an unrelated unfold grants no authority.
 
 The remaining semantic step is refinement for broader state-dependent
 propositions at concrete-pointer formation.
@@ -86,7 +92,7 @@ Guarded effects participate in footprint containment, but stateful
 postconditions with conditional footprints require an explicit closed theorem
 and written case split; automatic concrete-pointer formation remains limited
 to an unguarded named footprint. Stateful sequence, algebraic,
-resource-predicate, and explicit-memory-snapshot propositions are not yet part
+resource-relation, and explicit-memory-snapshot propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.
 
