@@ -3938,6 +3938,8 @@ impl Parser {
         field_name: &str,
     ) -> Result<ContractSegment, ClickError> {
         let Some(field) = self.resolve_field_metadata(&base, field_name)? else {
+            // A base whose layout this parse cannot name, such as a loaded
+            // pointer, keeps its field name for later lowering to resolve.
             return Ok(ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
@@ -4089,7 +4091,7 @@ impl Parser {
         base: &CExpression,
         field_name: &str,
     ) -> Result<Option<ResolvedField>, ClickError> {
-        let CExpression::Variable(base_name) = base else {
+        let Some(base_name) = named_place_base(base) else {
             return Ok(None);
         };
         let Some(struct_name) = self
@@ -5513,6 +5515,22 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
             ensure,
             proof,
         }],
+    }
+}
+
+/// Names the object a contract segment's base refers to.
+///
+/// A segment may spell its base directly (`object.field`) or by address
+/// (`&object.field`); both name the same object, so field resolution has to
+/// see through the address-of. Anything else is not a named place.
+fn named_place_base(expression: &CExpression) -> Option<&String> {
+    match expression {
+        CExpression::Variable(name) => Some(name),
+        CExpression::AddressOf(inner) => match inner.as_ref() {
+            CExpression::Variable(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

@@ -1479,9 +1479,21 @@ different field.
 **Violated invariant.** A field place in an effect clause denotes that field's
 bytes, at its ABI offset.
 
-**Mechanism.** Address-of field footprint lowering for aggregate globals drops
-the field offset (`src/surface/lowering/annotations.rs`, the `AddressOf` path
-for global objects around `:2368-2380`).
+**Fixed** in `Resolve a field footprint through its address-of base`;
+regressions `mdtests/static_struct_field_footprint.md` and
+`mdtests/static_struct_field_footprint_rejected.md`.
+
+**Mechanism.** Field resolution in the contract-segment parser
+(`resolve_field_metadata`, `src/surface/parser.rs`) accepted only a bare
+variable as the base, so `&shared.second` (whose base is `AddressOf(shared)`)
+fell through to a fallback segment that keeps the base with no offset. The
+same clause without the `&` resolved correctly.
+
+One residual risk is left open: that fallback still yields an offset-free
+segment for a base whose layout the parse cannot name, such as a loaded
+pointer (`load_int32_pointer(o)->value`). Later lowering resolves those, and
+`mdtests/c_chained_field_access.md` covers the shape, but the parser cannot
+tell an unresolvable base from an unknown field.
 
 **Regression** (`mdtests/static_field_footprint_rejected.md`):
 
