@@ -23,6 +23,16 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_cases.left_tactics, names);
                 collect_applied_theorems(&proof_cases.right_tactics, names);
             }
+            ProofTactic::StructuralInduct {
+                hypothesis, arms, ..
+            } => {
+                for arm in arms {
+                    let mut arm_names = BTreeSet::new();
+                    collect_applied_theorems(&arm.tactics, &mut arm_names);
+                    arm_names.remove(hypothesis);
+                    names.extend(arm_names);
+                }
+            }
             ProofTactic::Branch(proof_branch) => {
                 collect_applied_theorems(&proof_branch.then_tactics, names);
                 collect_applied_theorems(&proof_branch.else_tactics, names);

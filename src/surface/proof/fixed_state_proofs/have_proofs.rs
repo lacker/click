@@ -154,7 +154,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_alge
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,

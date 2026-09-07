@@ -1,4 +1,6 @@
-use super::pure_theorems::{PureInductionSetup, PureTheoremContext};
+use super::pure_theorems::{
+    PureInductionSetup, PureStructuralInductionBranchSetup, PureTheoremContext,
+};
 use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedBranchSplit, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError,
@@ -608,6 +610,9 @@ pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
             script_contains_linear_search(&proof_cases.left_tactics)
                 || script_contains_linear_search(&proof_cases.right_tactics)
         }
+        ProofTactic::StructuralInduct { arms, .. } => arms
+            .iter()
+            .any(|arm| script_contains_linear_search(&arm.tactics)),
         _ => false,
     })
 }

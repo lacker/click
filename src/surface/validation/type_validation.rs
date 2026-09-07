@@ -453,6 +453,11 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
+            ProofTactic::StructuralInduct { arms, .. } => {
+                for arm in arms {
+                    validate_pure_theorem_tactics(theorem_name, &arm.tactics)?;
+                }
+            }
             ProofTactic::If(proof_if) => {
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
@@ -513,6 +518,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::FoldResource(_) => "fold",
         ProofTactic::ConstructResource(_) => "construct",
         ProofTactic::Induct { .. } => "induct",
+        ProofTactic::StructuralInduct { .. } => "induct",
         ProofTactic::ApplyInduction { .. } => "apply",
         ProofTactic::ApplyInductionUsing { .. } => "apply",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",

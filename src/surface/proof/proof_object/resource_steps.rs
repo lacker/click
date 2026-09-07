@@ -14,6 +14,11 @@ impl<'a> Proof<'a> {
                     application,
                     context.theorem_context.values.clone(),
                     context.theorem_context.array_refs.clone(),
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| setup.algebraic_values.clone())
+                        .unwrap_or_default(),
                     &state,
                     &state,
                     None,
@@ -32,6 +37,7 @@ impl<'a> Proof<'a> {
                     application,
                     values,
                     array_refs,
+                    BTreeMap::new(),
                     context.pre_state,
                     context.state,
                     context.result,
@@ -53,6 +59,7 @@ impl<'a> Proof<'a> {
                     application,
                     values,
                     array_refs,
+                    BTreeMap::new(),
                     view.pre_state,
                     view.state,
                     view.result,
@@ -80,6 +87,7 @@ impl<'a> Proof<'a> {
                     application,
                     values,
                     array_refs,
+                    BTreeMap::new(),
                     pre_state,
                     &execution.core.state,
                     None,
@@ -97,6 +105,7 @@ impl<'a> Proof<'a> {
         application: &ClickFunctionApplication,
         values: BTreeMap<String, CValue>,
         array_refs: ClickArrayRefs,
+        algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
         pre_state: &CState,
         state: &CState,
         result: Option<&CValue>,
@@ -149,25 +158,27 @@ impl<'a> Proof<'a> {
             operator: ComparisonOperator::Equal,
             right: checked_body,
         };
-        let equality = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
-            &checked_equality,
-            self.facts().assumptions(),
-            &values,
-            &array_refs,
-            pre_state,
-            state,
-            result,
-            recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
-            &BTreeSet::from([application.name.clone()]),
-        )
-        .map_err(|message| {
-            self.step_error(format!(
-                "could not lower defining equation for `{}`: {message}",
-                application.name
-            ))
-        })?;
+        let equality =
+            lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+                &checked_equality,
+                self.facts().assumptions(),
+                &values,
+                &array_refs,
+                &algebraic_values,
+                pre_state,
+                state,
+                result,
+                recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+                &BTreeSet::from([application.name.clone()]),
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "could not lower defining equation for `{}`: {message}",
+                    application.name
+                ))
+            })?;
 
         let mut facts = self.facts().clone();
         let added_facts = (!facts.contains_top_level(&equality))
@@ -214,11 +225,12 @@ impl<'a> Proof<'a> {
                         &checked_surface,
                         &mut opaque_calls,
                     );
-                    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
                         &checked_surface,
                         facts.assumptions(),
                         &values,
                         &array_refs,
+                        &algebraic_values,
                         pre_state,
                         state,
                         result,

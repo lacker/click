@@ -218,14 +218,16 @@ terms; a match introduces constructor cases only when its definition is used
 by a proof. This is specification elaboration, not execution of Click code or
 of a logical value.
 
-Algebraic quantifiers, resource arguments, and structural induction remain
-tracked in the algebraic data types issue. A recursive pure function may name
-an algebraic parameter in `decreases` and recurse on algebraic fields introduced
-by exhaustive matches of that parameter or an already-smaller field. Such calls
-stay symbolic until explicitly unfolded. Recursive datatype declarations do
-not by themselves generate induction hypotheses. Reusing one constructor refinement
-across repeated matches is tracked separately in the algebraic match
-path-correlation issue.
+Algebraic quantifiers and resource arguments remain tracked in the algebraic
+data types issue. A recursive pure function may name an algebraic parameter in
+`decreases` and recurse on algebraic fields introduced by exhaustive matches
+of that parameter or an already-smaller field. Such calls stay symbolic until
+explicitly unfolded. A pure theorem may use constructor-branching
+`induct(value) as ih { Type::Variant(fields) => { ... } ... }`; it requires one
+arm per constructor and permits `ih(field)` for immediate fields of the same
+recursive datatype. Mutual induction across distinct datatype families is not
+yet generated. Reusing one constructor refinement across repeated matches is
+tracked separately in the algebraic match path-correlation issue.
 
 ## Specification sequences
 

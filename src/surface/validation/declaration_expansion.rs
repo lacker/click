@@ -474,6 +474,31 @@ fn expand_declared_resource_tactic(
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::StructuralInduct {
+            parameter,
+            hypothesis,
+            arms,
+        } => Ok(ProofTactic::StructuralInduct {
+            parameter,
+            hypothesis,
+            arms: arms
+                .into_iter()
+                .map(|arm| {
+                    Ok(ProofInductionArm {
+                        type_name: arm.type_name,
+                        variant: arm.variant,
+                        bindings: arm.bindings,
+                        tactics: arm
+                            .tactics
+                            .into_iter()
+                            .map(|tactic| {
+                                expand_declared_resource_tactic(tactic, resource_definitions)
+                            })
+                            .collect::<Result<Vec<_>, ClickError>>()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?,
+        }),
         ProofTactic::Branch(proof_branch) => Ok(ProofTactic::Branch(ProofBranch {
             ensuring: proof_branch
                 .ensuring

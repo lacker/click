@@ -4,7 +4,9 @@
 //! lookup. They are intentionally separate from the persistent checked state
 //! owned by the proof object.
 
-use super::pure_theorems::{PureInductionSetup, PureTheoremContext};
+use super::pure_theorems::{
+    PureInductionSetup, PureStructuralInductionBranchSetup, PureTheoremContext,
+};
 use super::*;
 use std::sync::Arc;
 
@@ -21,6 +23,8 @@ pub(in crate::surface::proof) struct PureProofContext<'a> {
     pub(in crate::surface::proof) click_function_environment: &'a ClickFunctionEnvironment,
     pub(in crate::surface::proof) theorem_environment: &'a TheoremEnvironment,
     pub(in crate::surface::proof) induction_setup: Option<PureInductionSetup>,
+    pub(in crate::surface::proof) structural_induction_setup:
+        Option<PureStructuralInductionBranchSetup>,
 }
 
 pub(in crate::surface::proof) struct FixedStateProofContext<'a> {

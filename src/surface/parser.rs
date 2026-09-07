@@ -2977,6 +2977,70 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 self.expect_ident_spelling("as")?;
                 let hypothesis = self.expect_ident("induction hypothesis name")?;
+                if self.peek() == Some(&Token::LBrace) {
+                    self.position += 1;
+                    let mut arms = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        let type_name = self.expect_ident("induction pattern datatype")?;
+                        self.expect(Token::ColonColon)?;
+                        let variant = self.expect_ident("induction pattern variant")?;
+                        let mut bindings = Vec::new();
+                        if self.peek() == Some(&Token::LParen) {
+                            self.position += 1;
+                            if self.peek() != Some(&Token::RParen) {
+                                loop {
+                                    bindings.push(self.expect_ident("induction pattern binding")?);
+                                    match self.peek() {
+                                        Some(Token::Comma) => self.position += 1,
+                                        Some(Token::RParen) => break,
+                                        Some(token) => {
+                                            return Err(self.error(format!(
+                                                "expected `,` or `)` after induction binding, got {}",
+                                                token.describe()
+                                            )));
+                                        }
+                                        None => {
+                                            return Err(
+                                                self.error("expected `)` after induction bindings")
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            self.expect(Token::RParen)?;
+                        }
+                        self.expect(Token::FatArrow)?;
+                        let newly_bound = bindings
+                            .iter()
+                            .filter(|binding| {
+                                self.current_contract_bindings.insert((*binding).clone())
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let tactics = self.parse_possibly_empty_tactic_block();
+                        for binding in newly_bound {
+                            self.current_contract_bindings.remove(&binding);
+                        }
+                        arms.push(ProofInductionArm {
+                            type_name,
+                            variant,
+                            bindings,
+                            tactics: tactics?,
+                        });
+                        if self.peek() == Some(&Token::Comma) {
+                            self.position += 1;
+                        }
+                    }
+                    self.expect(Token::RBrace)?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::StructuralInduct {
+                        parameter,
+                        hypothesis,
+                        arms,
+                    });
+                }
                 ProofTactic::Induct {
                     parameter,
                     hypothesis,

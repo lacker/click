@@ -1,6 +1,8 @@
 //! Contextual Surface Click lowering for checked proof operations.
 
-use super::pure_theorems::lower_pure_theorem_proposition;
+use super::pure_theorems::{
+    lower_pure_theorem_proposition, lower_pure_theorem_proposition_with_algebraic_values,
+};
 use super::*;
 
 impl<'a> Proof<'a> {
@@ -18,11 +20,16 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_pure_theorem_proposition(
+                lower_pure_theorem_proposition_with_algebraic_values(
                     context.claim_label,
                     surface,
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&BTreeMap::new()),
                     &context.theorem_context.memory,
                     context.predicate_environment,
                     context.click_function_environment,

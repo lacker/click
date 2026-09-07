@@ -182,11 +182,33 @@ named induction parameter. This is strong induction, so calls such as
 nonnegative and smaller. The local hypothesis is not a global theorem and is
 not available in C execution proofs.
 
-Structural induction over an algebraic theorem parameter still needs a
-proof-level constructor case operation. Expression-level `match` remains a
-symbolic pure expression and intentionally does not split a proof or introduce
-field names. The datatype issue tracks that proof-language design separately
-from the implemented structural termination check.
+For a recursive algebraic parameter, constructor-branching `induct` combines
+exhaustive case analysis with structural induction:
+
+<!-- verified-example: mdtests/algebraic_structural_induction.md -->
+```click
+induct(xs) as ih {
+    List::Nil => {
+        // base case
+    }
+    List::Cons(head, tail) => {
+        apply(ih(tail));
+        // inductive case
+    }
+}
+```
+
+Every constructor must appear exactly once with its exact field arity. Pattern
+bindings exist only inside their arm. The local hypothesis may be instantiated
+at each immediate field of the same recursive datatype; a binary-tree node
+therefore supplies hypotheses for both children. The theorem's other
+parameters stay fixed, and its requirements are substituted and checked at
+the chosen child just as for integer induction. Mutual induction across
+different datatype families is not yet generated.
+
+Expression-level `match` remains symbolic and does not itself split a proof or
+introduce proof-scope names. Only the explicit constructor-branching induction
+form performs proof case analysis.
 
 `unfold(function(args))` explicitly exposes one symbolic defining equation.
 A recursive call produced by that layer stays opaque. Neither `simp` nor

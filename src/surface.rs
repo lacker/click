@@ -2099,6 +2099,11 @@ pub enum ProofTactic {
         parameter: String,
         hypothesis: String,
     },
+    StructuralInduct {
+        parameter: String,
+        hypothesis: String,
+        arms: Vec<ProofInductionArm>,
+    },
     ApplyInduction {
         hypothesis: String,
         argument: ContractExpression,
@@ -2202,6 +2207,7 @@ pub enum ControlTactic {
     Open,
     If,
     Cases,
+    StructuralInduct,
     Branch,
     Loop,
 }
@@ -2283,6 +2289,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         id: "induct",
         syntax: "induct(n) as ih",
         class: "simple",
+    },
+    PublicTacticForm {
+        id: "structural-induct",
+        syntax: "induct(xs) as ih { Type::Variant(fields)",
+        class: "control",
     },
     PublicTacticForm {
         id: "apply-induction",
@@ -2470,6 +2481,11 @@ pub enum ProofStep {
         parameter: String,
         hypothesis: String,
     },
+    StructuralInduct {
+        parameter: String,
+        hypothesis: String,
+        arms: Vec<CertificateInductionArm>,
+    },
     ApplyInduction {
         hypothesis: String,
         argument: ContractExpression,
@@ -2563,6 +2579,7 @@ pub enum CertificatePathSegment {
     ElseBranch,
     LeftCase,
     RightCase,
+    InductionArm(usize),
     LoopInitialize,
     LoopPreserve,
     LoopItem(usize),
@@ -2630,6 +2647,29 @@ impl ProofStep {
             } => Self::Induct {
                 parameter: parameter.clone(),
                 hypothesis: hypothesis.clone(),
+            },
+            ProofTactic::StructuralInduct {
+                parameter,
+                hypothesis,
+                arms,
+            } => Self::StructuralInduct {
+                parameter: parameter.clone(),
+                hypothesis: hypothesis.clone(),
+                arms: arms
+                    .iter()
+                    .map(|arm| CertificateInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        proof: Box::new(ProofCertificate {
+                            steps: arm
+                                .tactics
+                                .iter()
+                                .map(Self::from_validated_tactic)
+                                .collect(),
+                        }),
+                    })
+                    .collect(),
             },
             ProofTactic::ApplyInduction { .. } => {
                 unreachable!("bare induction application is smart")
@@ -2795,6 +2835,23 @@ impl ProofStep {
             } => ProofTactic::Induct {
                 parameter: parameter.clone(),
                 hypothesis: hypothesis.clone(),
+            },
+            Self::StructuralInduct {
+                parameter,
+                hypothesis,
+                arms,
+            } => ProofTactic::StructuralInduct {
+                parameter: parameter.clone(),
+                hypothesis: hypothesis.clone(),
+                arms: arms
+                    .iter()
+                    .map(|arm| ProofInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        tactics: arm.proof.to_proof_tactics(),
+                    })
+                    .collect(),
             },
             Self::ApplyInduction {
                 hypothesis,
@@ -2987,6 +3044,21 @@ fn validate_certificate_tactics(
                     right_result
                 }
             }
+            TacticClass::Control(ControlTactic::StructuralInduct) => {
+                let ProofTactic::StructuralInduct { arms, .. } = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                let mut result = Ok(());
+                for (arm_index, arm) in arms.iter().enumerate() {
+                    path.push(CertificatePathSegment::InductionArm(arm_index));
+                    result = validate_certificate_tactics(&arm.tactics, path);
+                    path.pop();
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                result
+            }
             TacticClass::Control(ControlTactic::Branch) => {
                 let ProofTactic::Branch(proof_branch) = tactic else {
                     unreachable!("tactic class and variant must agree")
@@ -3078,6 +3150,7 @@ impl ProofTactic {
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
             Self::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
+            Self::StructuralInduct { .. } => TacticClass::Control(ControlTactic::StructuralInduct),
             Self::ApplyInduction { .. } => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
             Self::ApplyInductionUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
             Self::ApplyTheorem(_) => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
@@ -3146,6 +3219,22 @@ pub struct ProofIf {
     condition: ClickProposition,
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofInductionArm {
+    type_name: String,
+    variant: String,
+    bindings: Vec<String>,
+    tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertificateInductionArm {
+    type_name: String,
+    variant: String,
+    bindings: Vec<String>,
+    proof: Box<ProofCertificate>,
 }
 
 /// Explicit elimination of a disjunctive fact: proof checking requires the written
@@ -3945,6 +4034,13 @@ impl ProofTactic {
                     tactic.collect_termination_loop_clauses(clauses);
                 }
             }
+            Self::StructuralInduct { arms, .. } => {
+                for arm in arms {
+                    for tactic in &arm.tactics {
+                        tactic.collect_termination_loop_clauses(clauses);
+                    }
+                }
+            }
             Self::Branch(branch) => {
                 for tactic in branch.then_tactics.iter().chain(&branch.else_tactics) {
                     tactic.collect_termination_loop_clauses(clauses);
@@ -3980,6 +4076,11 @@ fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>)
             ProofTactic::If(proof_if) => {
                 collect_unfold_tactic_names(&proof_if.then_tactics, names);
                 collect_unfold_tactic_names(&proof_if.else_tactics, names);
+            }
+            ProofTactic::StructuralInduct { arms, .. } => {
+                for arm in arms {
+                    collect_unfold_tactic_names(&arm.tactics, names);
+                }
             }
             ProofTactic::Branch(branch) => {
                 collect_unfold_tactic_names(&branch.then_tactics, names);

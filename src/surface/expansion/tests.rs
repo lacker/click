@@ -19,6 +19,53 @@ fn block_tactic_optional_semicolon_belongs_to_the_tactic() {
     assert_eq!(tokens[ranges[1].end - 1].text, ";");
 }
 
+#[test]
+fn inventories_and_expands_smart_tactics_inside_structural_induction() {
+    let click_source = r#"
+spec enum List<T> {
+    Nil,
+    Cons(T, List<T>),
+}
+
+theorem reflexive(xs: List<int32>) {
+    ensures xs == xs by {
+        induct(xs) as ih {
+            List::Nil => {
+                simp();
+            }
+            List::Cons(head, tail) => {
+                simp();
+            }
+        }
+    }
+}
+"#;
+    let sites = c0_smart_tactic_source_sites(click_source, &[])
+        .expect("structural induction sites should be indexed");
+    assert_eq!(
+        sites,
+        vec![
+            SmartTacticSourceSite {
+                claim_label: "reflexive.ensures_0".to_string(),
+                source_index: 1,
+                tactic_name: "simp".to_string(),
+            },
+            SmartTacticSourceSite {
+                claim_label: "reflexive.ensures_0".to_string(),
+                source_index: 2,
+                tactic_name: "simp".to_string(),
+            },
+        ]
+    );
+    let position = c0_tactic_source_position(click_source, &[], "reflexive.ensures_0", 1)
+        .expect("the first induction arm should have a source position");
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("a smart tactic in an induction arm should expand");
+    assert!(expanded.contains("List::Nil => {\n                normalize();"));
+    assert!(expanded.contains("List::Cons(head, tail) => {\n                normalize();"));
+    verify_c0_sources(&expanded, &[]).expect("the expanded structural proof should re-verify");
+}
+
 fn expand_top_level_tactic_for_test(
     click_source: &str,
     c_sources: &[(&str, &str)],

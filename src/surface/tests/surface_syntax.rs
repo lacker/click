@@ -322,6 +322,64 @@ fn parses_and_prints_pure_induction_tactics() {
 }
 
 #[test]
+fn parses_and_prints_structural_induction_arms() {
+    let source = r#"
+        spec enum List<T> {
+            Nil,
+            Cons(T, List<T>),
+        }
+
+        theorem induction_shape(xs: List<int32>) {
+            ensures xs == xs by {
+                induct(xs) as ih {
+                    List::Nil => {
+                        assumption();
+                    }
+                    List::Cons(head, tail) => {
+                        apply(ih(tail));
+                        assumption();
+                    }
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("structural induction proof should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let ProofTactic::StructuralInduct {
+        parameter,
+        hypothesis,
+        arms,
+    } = &tactics[0]
+    else {
+        panic!("expected constructor-branching induction");
+    };
+    assert_eq!(parameter, "xs");
+    assert_eq!(hypothesis, "ih");
+    assert_eq!(arms.len(), 2);
+    assert_eq!(arms[0].type_name, "List");
+    assert_eq!(arms[0].variant, "Nil");
+    assert!(arms[0].bindings.is_empty());
+    assert_eq!(arms[1].bindings, ["head", "tail"]);
+    assert!(matches!(
+        arms[1].tactics[0],
+        ProofTactic::ApplyTheorem(ref application)
+            if application.name == "ih" && application.arguments.len() == 1
+    ));
+
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    let reparsed = parse(&format!(
+        "spec enum List<T> {{ Nil, Cons(T, List<T>), }} theorem induction_shape(xs: List<int32>) {{ ensures xs == xs by {{ {printed} }} }}"
+    ))
+    .expect("printed structural induction should reparse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        file.theorem_definitions()[0].ensures()[0].proof()
+    );
+}
+
+#[test]
 fn parses_and_prints_pure_function_unfold() {
     let source = r#"
         function clamp(n: int32) -> int32 {

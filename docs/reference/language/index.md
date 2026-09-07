@@ -995,13 +995,28 @@ depth. This total value semantics is intentionally different from
 partial-correctness C recursion.
 
 General properties of symbolic recursive calls use theorem-level
-`induct(parameter) as hypothesis`. Induction is explicit and strong: applying
-the local hypothesis checks a nonnegative strictly smaller argument and the
-theorem's substituted requirements. `simp` does not invent induction, and a
-pure function's `decreases` clause remains definition-totality evidence rather
-than a theorem about the result. This theorem rule currently accepts only
-`int32`; algebraic structural induction awaits proof-level constructor case
-elimination.
+`induct(parameter) as hypothesis`. For `int32`, induction is explicit and
+strong: applying the local hypothesis checks a nonnegative strictly smaller
+argument and the theorem's substituted requirements. For a recursive
+algebraic parameter, `induct` takes an exhaustive constructor-arm block and
+makes the same theorem available at each immediate recursive field:
+
+<!-- verified-example: mdtests/algebraic_structural_induction.md -->
+```click
+induct(xs) as ih {
+    List::Nil => { /* base case */ }
+    List::Cons(head, tail) => {
+        apply(ih(tail));
+        /* inductive case */
+    }
+}
+```
+
+Constructor arities and exhaustiveness are checked, arm bindings are lexical,
+and multiple recursive fields each receive an induction-hypothesis instance.
+Mutual induction across different datatype families is not yet generated.
+`simp` does not invent induction, and a pure function's `decreases` clause
+remains definition-totality evidence rather than a theorem about the result.
 
 Function contracts may also use contract-level `let` bindings:
 

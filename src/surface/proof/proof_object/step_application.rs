@@ -1286,6 +1286,15 @@ impl<'a> Proof<'a> {
         let ProofContext::Pure(context) = self.context.as_ref() else {
             return Err(self.step_error("induction application requires a pure theorem proof"));
         };
+        if let Some(setup) = context.structural_induction_setup.as_ref() {
+            return self.apply_structural_induction_hypothesis(
+                context,
+                setup,
+                hypothesis,
+                argument,
+                surface_premises,
+            );
+        }
         let Some(setup) = context.induction_setup.as_ref() else {
             return Err(self.step_error("induction hypothesis is not active"));
         };
@@ -1361,6 +1370,76 @@ impl<'a> Proof<'a> {
                 }
                 _ => unreachable!("kernel returned an unrelated induction error"),
             })
+    }
+
+    fn apply_structural_induction_hypothesis(
+        &self,
+        _context: &PureProofContext<'_>,
+        setup: &PureStructuralInductionBranchSetup,
+        hypothesis: &str,
+        argument: &ContractExpression,
+        surface_premises: &[ClickProposition],
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        if hypothesis != setup.hypothesis {
+            return Err(self.step_error(format!("unknown induction hypothesis `{hypothesis}`")));
+        }
+        let Some(application) = setup
+            .applications
+            .iter()
+            .find(|candidate| candidate.argument == *argument)
+        else {
+            return Err(self.step_error(
+                "structural induction hypothesis expects an immediate recursive field",
+            ));
+        };
+        if surface_premises != application.surface_premises {
+            return Err(self.step_error(
+                "structural induction application changed its exact requirement premises",
+            ));
+        }
+        let explicit_premises = surface_premises
+            .iter()
+            .map(|premise| self.lower_surface_proposition(premise, "induction premise"))
+            .collect::<Result<Vec<_>, _>>()?;
+        if explicit_premises != application.kernel_premises {
+            return Err(self.step_error(
+                "structural induction application lowered different requirement premises",
+            ));
+        }
+        if !self.facts().contains(&application.implication) {
+            return Err(self.step_error("structural induction hypothesis is not active"));
+        }
+        if let Some(missing) = explicit_premises
+            .iter()
+            .find(|premise| !self.facts().available_across_effects(premise, &[]))
+        {
+            return Err(self.step_error(format!(
+                "induction premise is not exactly available: {missing:?}"
+            )));
+        }
+        if !self.facts().contains(&application.conclusion)
+            && !self
+                .facts()
+                .contains_discharged_implication_consequent(&application.conclusion)
+        {
+            return Err(self.step_error("kernel rejected structural induction application"));
+        }
+        let added = (!self.facts().contains_top_level(&application.conclusion))
+            .then(|| application.conclusion.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut facts = self.facts().clone();
+        for fact in &added {
+            facts = facts.with_kernel_checked_fact(fact.clone());
+        }
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        Ok(self.checked_fact_transition(
+            self.state().locals().clone(),
+            facts,
+            complete,
+            added.clone(),
+            added,
+        ))
     }
 
     // Preserve the rule/dispatcher frame boundary described above.

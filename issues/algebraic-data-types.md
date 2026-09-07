@@ -82,7 +82,13 @@ unchanged.
   multiple recursive fields, and mutually recursive datatype/function groups
   are checked; recursion on the original value or a field of an unrelated
   value is rejected. Calls remain symbolic and explicit `unfold` exposes only
-  one defining equation.
+  one defining equation; and
+- explicit structural induction for recursive algebraic theorem parameters.
+  The control tactic checks exhaustive constructor arms, scopes typed field
+  bindings to each arm, and supplies the theorem at every immediate recursive
+  field of the same datatype. Lists and binary trees are covered, including
+  constructors with multiple recursive children; induction across a mutually
+  recursive group remains open.
 
 These forms are currently backed by a dedicated internal sequence term. They
 must remain supported while their public semantics migrate to `List<T>`:
@@ -90,15 +96,13 @@ must remain supported while their public semantics migrate to `List<T>`:
 `List::Cons`, `++` calls list append, and `in` calls list membership. They must
 not remain a second, privileged logical collection universe.
 
-Still open are algebraic quantifiers, resource arguments, structural induction,
-the library-defined `List<T>`, recursive-resource use, and symbolic
+Still open are algebraic quantifiers, resource arguments, mutual structural
+induction, the library-defined `List<T>`, recursive-resource use, and symbolic
 typed-memory-range projection. All pure calls remain logical applications
 during lowering; an explicit checked `unfold` step exposes one defining
-equation. Generated structural induction principles remain to be added as
-checked datatype rules. That work also needs a proof-level constructor case
-operation: expression-level `match` is deliberately symbolic, so it neither
-splits a proof nor introduces arm field names such as the `tail` needed to
-apply an induction hypothesis.
+equation. Expression-level `match` is deliberately symbolic, so it neither
+splits a proof nor introduces proof-scope field names; the explicit structural
+`induct` control tactic performs that proof operation.
 
 ## Violated invariant
 

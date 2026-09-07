@@ -1,4 +1,7 @@
 use super::*;
+use crate::kernel::AlgebraicValueType;
+
+const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;
 
 pub(in crate::surface) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
@@ -44,6 +47,22 @@ pub(super) struct PureInductionSetup {
     pub(super) hypothesis: String,
     pub(super) surface_requires: Vec<ClickProposition>,
     pub(super) surface_goal: ClickProposition,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PureStructuralInductionApplication {
+    pub(super) argument: ContractExpression,
+    pub(super) surface_premises: Vec<ClickProposition>,
+    pub(super) kernel_premises: Vec<Proposition>,
+    pub(super) implication: Proposition,
+    pub(super) conclusion: Proposition,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PureStructuralInductionBranchSetup {
+    pub(super) hypothesis: String,
+    pub(super) applications: Vec<PureStructuralInductionApplication>,
+    pub(super) algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
 }
 
 pub(super) fn pure_induction_hypothesis(
@@ -224,6 +243,488 @@ fn prepare_pure_induction_tactics(
             surface_goal: goal.clone(),
         }),
     ))
+}
+
+fn click_type_from_algebraic_value_type(
+    value_type: &AlgebraicValueType,
+) -> Result<ClickType, ClickError> {
+    Ok(match value_type {
+        AlgebraicValueType::C(c_type) => ClickType::C(match c_type {
+            CType::Void => C0Type::Void,
+            CType::VoidPointer => C0Type::VoidPointer,
+            CType::Int16 => C0Type::Int16,
+            CType::Int32 => C0Type::Int32,
+            CType::UInt8 => C0Type::UInt8,
+            CType::UInt16 => C0Type::UInt16,
+            CType::UInt32 => C0Type::UInt32,
+            CType::Int64 => C0Type::Int64,
+            CType::UInt64 => C0Type::UInt64,
+            CType::Float32 => C0Type::Float32,
+            CType::Float64 => C0Type::Float64,
+            CType::Int16Pointer => C0Type::Int16Pointer,
+            CType::UInt16Pointer => C0Type::UInt16Pointer,
+            CType::Int32Pointer => C0Type::Int32Pointer,
+            CType::UInt8Pointer => C0Type::UInt8Pointer,
+            CType::UInt32Pointer => C0Type::UInt32Pointer,
+            CType::Int64Pointer => C0Type::Int64Pointer,
+            CType::UInt64Pointer => C0Type::UInt64Pointer,
+            CType::Float32Pointer => C0Type::Float32Pointer,
+            CType::Float64Pointer => C0Type::Float64Pointer,
+            CType::Int16PointerPointer => C0Type::Int16PointerPointer,
+            CType::UInt16PointerPointer => C0Type::UInt16PointerPointer,
+            CType::Int32PointerPointer => C0Type::Int32PointerPointer,
+            CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
+            CType::UInt32PointerPointer => C0Type::UInt32PointerPointer,
+            CType::Int64PointerPointer => C0Type::Int64PointerPointer,
+            CType::UInt64PointerPointer => C0Type::UInt64PointerPointer,
+            CType::Float32PointerPointer => C0Type::Float32PointerPointer,
+            CType::Float64PointerPointer => C0Type::Float64PointerPointer,
+            CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
+            CType::Int16Array(length) => C0Type::Int16Array(*length),
+            CType::UInt16Array(length) => C0Type::UInt16Array(*length),
+            CType::Int32Array(length) => C0Type::Int32Array(*length),
+            CType::UInt8Array(length) => C0Type::UInt8Array(*length),
+            CType::UInt32Array(length) => C0Type::UInt32Array(*length),
+            CType::Int64Array(length) => C0Type::Int64Array(*length),
+            CType::UInt64Array(length) => C0Type::UInt64Array(*length),
+            CType::Float32Array(length) => C0Type::Float32Array(*length),
+            CType::Float64Array(length) => C0Type::Float64Array(*length),
+        }),
+        AlgebraicValueType::Algebraic { name, arguments } => {
+            ClickType::Algebraic(AlgebraicTypeApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(click_type_from_algebraic_value_type)
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
+    })
+}
+
+fn prepare_structural_induction_arm_tactics(
+    tactics: &[ProofTactic],
+    setup: &PureStructuralInductionBranchSetup,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    tactics
+        .iter()
+        .map(|tactic| match tactic {
+            ProofTactic::ApplyTheorem(application) if application.name == setup.hypothesis => {
+                let [argument] = application.arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "induction hypothesis `{}` expects one argument",
+                        setup.hypothesis
+                    )));
+                };
+                let Some(selected) = setup
+                    .applications
+                    .iter()
+                    .find(|candidate| candidate.argument == *argument)
+                else {
+                    return Err(ClickError::new(
+                        "structural induction hypothesis expects an immediate recursive field",
+                    ));
+                };
+                Ok(ProofTactic::ApplyInductionUsing {
+                    hypothesis: setup.hypothesis.clone(),
+                    argument: argument.clone(),
+                    premises: selected.surface_premises.clone(),
+                })
+            }
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } if application.name == setup.hypothesis => {
+                let [argument] = application.arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "induction hypothesis `{}` expects one argument",
+                        setup.hypothesis
+                    )));
+                };
+                Ok(ProofTactic::ApplyInductionUsing {
+                    hypothesis: setup.hypothesis.clone(),
+                    argument: argument.clone(),
+                    premises: premises.clone(),
+                })
+            }
+            ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
+                condition: proof_if.condition.clone(),
+                then_tactics: prepare_structural_induction_arm_tactics(
+                    &proof_if.then_tactics,
+                    setup,
+                )?,
+                else_tactics: prepare_structural_induction_arm_tactics(
+                    &proof_if.else_tactics,
+                    setup,
+                )?,
+            })),
+            ProofTactic::Cases(proof_cases) => Ok(ProofTactic::Cases(ProofCases {
+                disjunction: proof_cases.disjunction.clone(),
+                left_tactics: prepare_structural_induction_arm_tactics(
+                    &proof_cases.left_tactics,
+                    setup,
+                )?,
+                right_tactics: prepare_structural_induction_arm_tactics(
+                    &proof_cases.right_tactics,
+                    setup,
+                )?,
+            })),
+            ProofTactic::StructuralInduct { .. } | ProofTactic::Induct { .. } => Err(
+                ClickError::new("nested induction is not supported in a structural induction arm"),
+            ),
+            ProofTactic::ApplyInduction { .. } | ProofTactic::ApplyInductionUsing { .. } => Err(
+                ClickError::new("internal induction-application syntax is not accepted directly"),
+            ),
+            tactic => Ok(tactic.clone()),
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_pure_structural_induction(
+    theorem: &TheoremDefinition,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    surface_goal: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    tactics: &[ProofTactic],
+) -> Result<ProofCertificate, ClickError> {
+    let [
+        ProofTactic::StructuralInduct {
+            parameter,
+            hypothesis,
+            arms,
+        },
+    ] = tactics
+    else {
+        return Err(ClickError::new(
+            "structural `induct` must be the only top-level tactic in a pure theorem proof",
+        ));
+    };
+    let Some((parameter_index, parameter_definition)) = theorem
+        .parameters()
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| candidate.name() == parameter)
+    else {
+        return Err(ClickError::new(format!(
+            "`induct({parameter})` requires a theorem parameter with that name"
+        )));
+    };
+    let ClickType::Algebraic(parameter_type) = parameter_definition.click_type() else {
+        return Err(ClickError::new(format!(
+            "constructor-branching `induct({parameter})` requires an algebraic theorem parameter"
+        )));
+    };
+    let parameter_expression = ContractExpression::AlgebraicVariable {
+        name: parameter.clone(),
+        algebraic_type: parameter_type.clone(),
+        binder_index: parameter_index,
+    };
+    let state = CState::new().with_memory(context.memory.clone());
+    let parameter_value = capture_fixed_state_algebraic_expression(
+        &parameter_expression,
+        &PureFactContext::new(),
+        &context.values,
+        &context.array_refs,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    let root_value_type = AlgebraicValueType::Algebraic {
+        name: parameter_value.algebraic_type.name.clone(),
+        arguments: parameter_value.algebraic_type.arguments.clone(),
+    };
+    let theorem_parameter_names = theorem
+        .parameters()
+        .iter()
+        .map(|parameter| parameter.name())
+        .collect::<BTreeSet<_>>();
+    let mut seen_variants = BTreeSet::new();
+    let mut checked_arms = Vec::new();
+    for (arm_index, arm) in arms.iter().enumerate() {
+        if arm.type_name != parameter_value.algebraic_type.name {
+            return Err(ClickError::new(format!(
+                "structural induction pattern `{}::{}` does not match parameter type `{}`",
+                arm.type_name, arm.variant, parameter_value.algebraic_type.name
+            )));
+        }
+        if !seen_variants.insert(arm.variant.as_str()) {
+            return Err(ClickError::new(format!(
+                "duplicate structural induction arm `{}::{}`",
+                arm.type_name, arm.variant
+            )));
+        }
+        let Some(variant) = parameter_value
+            .algebraic_type
+            .variants
+            .iter()
+            .find(|candidate| candidate.name == arm.variant)
+        else {
+            return Err(ClickError::new(format!(
+                "unknown structural induction variant `{}::{}`",
+                arm.type_name, arm.variant
+            )));
+        };
+        if arm.bindings.len() != variant.fields.len() {
+            return Err(ClickError::new(format!(
+                "pattern `{}::{}` expects {} binding(s), got {}",
+                arm.type_name,
+                arm.variant,
+                variant.fields.len(),
+                arm.bindings.len()
+            )));
+        }
+        let mut distinct_bindings = BTreeSet::new();
+        for binding in &arm.bindings {
+            if !distinct_bindings.insert(binding.as_str()) {
+                return Err(ClickError::new(format!(
+                    "pattern `{}::{}` repeats binding `{binding}`",
+                    arm.type_name, arm.variant
+                )));
+            }
+            if theorem_parameter_names.contains(binding.as_str()) || binding == hypothesis {
+                return Err(ClickError::new(format!(
+                    "structural induction binding `{binding}` conflicts with a theorem parameter or the induction hypothesis"
+                )));
+            }
+        }
+
+        let mut branch_context = context.clone();
+        let mut branch_algebraic_values = BTreeMap::new();
+        let mut constructor_arguments = Vec::new();
+        for (field_index, (binding, field_type)) in
+            arm.bindings.iter().zip(&variant.fields).enumerate()
+        {
+            let binding_expression = ContractExpression::Binding(binding.clone());
+            constructor_arguments.push(binding_expression.clone());
+            match field_type {
+                AlgebraicValueType::C(c_type) => {
+                    if matches!(
+                        c_type,
+                        CType::Void
+                            | CType::Int16Array(_)
+                            | CType::UInt16Array(_)
+                            | CType::Int32Array(_)
+                            | CType::UInt8Array(_)
+                            | CType::UInt32Array(_)
+                            | CType::Int64Array(_)
+                            | CType::UInt64Array(_)
+                            | CType::Float32Array(_)
+                            | CType::Float64Array(_)
+                    ) {
+                        return Err(ClickError::new(
+                            "structural induction does not support void or array-valued constructor fields",
+                        ));
+                    }
+                    let variable = Variable(
+                        STRUCTURAL_INDUCTION_VARIABLE_BASE
+                            + (arm_index as u64) * 65_536
+                            + field_index as u64,
+                    );
+                    branch_context.values.insert(
+                        binding.clone(),
+                        crate::kernel::symbolic_call_result(*c_type, variable),
+                    );
+                }
+                algebraic @ AlgebraicValueType::Algebraic { .. } => {
+                    let ClickType::Algebraic(algebraic_type) =
+                        click_type_from_algebraic_value_type(algebraic)?
+                    else {
+                        unreachable!("algebraic field conversion preserves its family")
+                    };
+                    let symbolic = ContractExpression::AlgebraicVariable {
+                        name: binding.clone(),
+                        algebraic_type,
+                        binder_index: theorem.parameters().len()
+                            + 1
+                            + arm_index * 256
+                            + field_index,
+                    };
+                    let captured = capture_fixed_state_algebraic_expression(
+                        &symbolic,
+                        &PureFactContext::new(),
+                        &branch_context.values,
+                        &branch_context.array_refs,
+                        &state,
+                        &state,
+                        None,
+                        &RecordedSnapshots::new(),
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+                    branch_algebraic_values.insert(binding.clone(), captured);
+                }
+            }
+        }
+        let constructor = ContractExpression::AlgebraicConstructor {
+            algebraic_type: parameter_type.clone(),
+            variant: arm.variant.clone(),
+            arguments: constructor_arguments,
+        };
+        let case_substitution = BTreeMap::from([(parameter.clone(), constructor)]);
+        let branch_surface_goal = substitute_click_proposition(surface_goal, &case_substitution)
+            .map_err(ClickError::new)?;
+        let branch_goal = lower_pure_theorem_proposition_with_algebraic_values(
+            claim_label,
+            &branch_surface_goal,
+            &branch_context.values,
+            &branch_context.array_refs,
+            &branch_algebraic_values,
+            &branch_context.memory,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(ClickError::new)?;
+        let mut branch_surface_requires = Vec::new();
+        let mut branch_requires = Vec::new();
+        for requirement in theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition)
+        {
+            let surface = substitute_click_proposition(requirement, &case_substitution)
+                .map_err(ClickError::new)?;
+            let kernel = lower_pure_theorem_proposition_with_algebraic_values(
+                claim_label,
+                &surface,
+                &branch_context.values,
+                &branch_context.array_refs,
+                &branch_algebraic_values,
+                &branch_context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(ClickError::new)?;
+            branch_surface_requires.push(surface);
+            branch_requires.push(kernel);
+        }
+        let mut applications = Vec::new();
+        for (binding, field_type) in arm.bindings.iter().zip(&variant.fields) {
+            if field_type != &root_value_type {
+                continue;
+            }
+            let argument = ContractExpression::Binding(binding.clone());
+            let child_substitution = BTreeMap::from([(parameter.clone(), argument.clone())]);
+            let mut surface_premises = Vec::new();
+            let mut kernel_premises = Vec::new();
+            for requirement in theorem
+                .requires()
+                .iter()
+                .filter_map(Requirement::proposition)
+            {
+                let surface = substitute_click_proposition(requirement, &child_substitution)
+                    .map_err(ClickError::new)?;
+                let kernel = lower_pure_theorem_proposition_with_algebraic_values(
+                    claim_label,
+                    &surface,
+                    &branch_context.values,
+                    &branch_context.array_refs,
+                    &branch_algebraic_values,
+                    &branch_context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(ClickError::new)?;
+                surface_premises.push(surface);
+                kernel_premises.push(kernel);
+            }
+            let child_surface_goal =
+                substitute_click_proposition(surface_goal, &child_substitution)
+                    .map_err(ClickError::new)?;
+            let conclusion = lower_pure_theorem_proposition_with_algebraic_values(
+                claim_label,
+                &child_surface_goal,
+                &branch_context.values,
+                &branch_context.array_refs,
+                &branch_algebraic_values,
+                &branch_context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(ClickError::new)?;
+            let implication = kernel_premises
+                .iter()
+                .rev()
+                .fold(conclusion.clone(), |body, premise| {
+                    Proposition::Implies(Box::new(premise.clone()), Box::new(body))
+                });
+            branch_requires.push(implication.clone());
+            applications.push(PureStructuralInductionApplication {
+                argument,
+                surface_premises,
+                kernel_premises,
+                implication,
+                conclusion,
+            });
+        }
+        branch_context.requires = branch_requires.clone();
+        branch_context.surface_requirements = SurfacePropositionMap::default();
+        for (surface, kernel) in branch_surface_requires.iter().zip(&branch_requires) {
+            branch_context
+                .surface_requirements
+                .record_lowering(surface, kernel)?;
+        }
+        let branch_setup = PureStructuralInductionBranchSetup {
+            hypothesis: hypothesis.clone(),
+            applications,
+            algebraic_values: branch_algebraic_values,
+        };
+        let prepared = prepare_structural_induction_arm_tactics(&arm.tactics, &branch_setup)?;
+        let root = Proof::for_pure_surface_goal_with_structural_induction(
+            claim_label,
+            &branch_requires,
+            branch_goal,
+            branch_surface_goal,
+            &branch_context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            branch_setup,
+        );
+        let Some(proof) = root.try_authoritative_linear_script(&prepared)? else {
+            return Err(ClickError::new(format!(
+                "structural induction arm `{}::{}` did not close its goal",
+                arm.type_name, arm.variant
+            )));
+        };
+        checked_arms.push(ProofInductionArm {
+            type_name: arm.type_name.clone(),
+            variant: arm.variant.clone(),
+            bindings: arm.bindings.clone(),
+            tactics: proof.completed_certificate()?.to_proof_tactics(),
+        });
+    }
+    let missing = parameter_value
+        .algebraic_type
+        .variants
+        .iter()
+        .filter(|variant| !seen_variants.contains(variant.name.as_str()))
+        .map(|variant| variant.name.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(ClickError::new(format!(
+            "structural induction is missing arm(s): {}",
+            missing.join(", ")
+        )));
+    }
+    ProofCertificate::from_proof_tactics(&[ProofTactic::StructuralInduct {
+        parameter: parameter.clone(),
+        hypothesis: hypothesis.clone(),
+        arms: checked_arms,
+    }])
+    .map_err(|error| {
+        ClickError::new(format!(
+            "structural induction for `{claim_label}` produced an invalid certificate: {error:?}"
+        ))
+    })
 }
 
 pub(super) fn pure_theorem_context(
@@ -706,46 +1207,60 @@ fn verify_theorem_ensure(
                     "`{claim_label}` has an empty explicit proof script"
                 )));
             }
-            let (tactics, induction_setup) =
-                prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
-            checked_certificate = if induction_setup.is_none() {
-                check_pure_script_with_proof(
+            if matches!(tactics.first(), Some(ProofTactic::StructuralInduct { .. })) {
+                checked_certificate = Some(check_pure_structural_induction(
+                    theorem,
                     claim_label,
                     context,
                     surface_goal,
-                    &goal,
-                    &tactics,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
-                )?
+                    tactics,
+                )?);
+                (ProofKind::TacticScript, None, None)
             } else {
-                None
-            };
-            if checked_certificate.is_some() {
-                (ProofKind::TacticScript, None, induction_setup)
-            } else {
-                // Keep the old walk only as a diagnostic fallback for
-                // rejected source shapes. Its success is ignored, and its
-                // failure is consulted only if the checked gateway also
-                // rejects the generated certificate.
-                let legacy_result = prove_pure_theorem_script(
-                    claim_label,
-                    &context.requires,
-                    &goal,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    context,
-                    &tactics,
-                    induction_setup.as_ref(),
-                );
-                if induction_setup.is_some() {
-                    legacy_induction_diagnostic = legacy_result.err();
+                let (tactics, induction_setup) =
+                    prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
+                checked_certificate = if induction_setup.is_none() {
+                    check_pure_script_with_proof(
+                        claim_label,
+                        context,
+                        surface_goal,
+                        &goal,
+                        &tactics,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                    )?
                 } else {
-                    legacy_result?;
+                    None
+                };
+                if checked_certificate.is_some() {
+                    (ProofKind::TacticScript, None, induction_setup)
+                } else {
+                    // Keep the old walk only as a diagnostic fallback for
+                    // rejected source shapes. Its success is ignored, and its
+                    // failure is consulted only if the checked gateway also
+                    // rejects the generated certificate.
+                    let legacy_result = prove_pure_theorem_script(
+                        claim_label,
+                        &context.requires,
+                        &goal,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                        context,
+                        &tactics,
+                        induction_setup.as_ref(),
+                    );
+                    if induction_setup.is_some() {
+                        legacy_induction_diagnostic = legacy_result.err();
+                    } else {
+                        legacy_result?;
+                    }
+                    (ProofKind::TacticScript, Some(tactics), induction_setup)
                 }
-                (ProofKind::TacticScript, Some(tactics), induction_setup)
             }
         }
     };
@@ -2558,6 +3073,34 @@ pub(super) fn lower_pure_theorem_proposition(
         click_function_environment,
         &BTreeSet::new(),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let state = CState::new().with_memory(memory.clone());
+    lower_fixed_state_proposition_through_kernel_with_algebraic_values(
+        proposition,
+        &PureFactContext::new(),
+        values,
+        array_refs,
+        algebraic_values,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
 
 /// A pure theorem's proposition lowered at its parameter state by the

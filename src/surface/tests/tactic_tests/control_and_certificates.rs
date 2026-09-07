@@ -901,6 +901,35 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_tactics() {
 }
 
 #[test]
+fn tactic_certificate_checks_structural_induction_arms() {
+    let tactics = [ProofTactic::StructuralInduct {
+        parameter: "xs".to_string(),
+        hypothesis: "ih".to_string(),
+        arms: vec![ProofInductionArm {
+            type_name: "List".to_string(),
+            variant: "Nil".to_string(),
+            bindings: Vec::new(),
+            tactics: vec![ProofTactic::Simp],
+        }],
+    }];
+
+    let error = ProofCertificate::from_proof_tactics(&tactics)
+        .expect_err("smart tactics cannot be hidden in an induction arm");
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
+    );
+    assert_eq!(
+        error.path(),
+        &[
+            CertificatePathSegment::Tactic(0),
+            CertificatePathSegment::InductionArm(0),
+            CertificatePathSegment::Tactic(0),
+        ]
+    );
+}
+
+#[test]
 fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
     let tactics = [ProofTactic::Have(ProofHave {
         proposition: ClickProposition::Comparison {

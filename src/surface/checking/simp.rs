@@ -221,6 +221,7 @@ fn equality_is_vacuous(equality: &Proposition) -> bool {
         return true;
     }
     match equality {
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => left == right,
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
             left == right
         }
@@ -387,6 +388,98 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 AlgebraicValue::Algebraic(rewrite_algebraic(value, rewrite_term, rewrite_pointer))
             }
         }
+    }
+
+    fn rewrite_algebraic_by_exact_equality(
+        term: &AlgebraicTerm,
+        from: &AlgebraicTerm,
+        to: &AlgebraicTerm,
+    ) -> AlgebraicTerm {
+        if term == from {
+            return to.clone();
+        }
+        let node = match &term.node {
+            AlgebraicTermNode::Variable(variable) => AlgebraicTermNode::Variable(*variable),
+            AlgebraicTermNode::Constructor { variant, fields } => AlgebraicTermNode::Constructor {
+                variant: variant.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| match field {
+                        AlgebraicValue::C(value) => AlgebraicValue::C(value.clone()),
+                        AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
+                            rewrite_algebraic_by_exact_equality(value, from, to),
+                        ),
+                    })
+                    .collect(),
+            },
+            AlgebraicTermNode::Match { scrutinee, arms } => AlgebraicTermNode::Match {
+                scrutinee: Box::new(rewrite_algebraic_by_exact_equality(scrutinee, from, to)),
+                arms: arms
+                    .iter()
+                    .map(|arm| AlgebraicResultMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm
+                            .bindings
+                            .iter()
+                            .map(|binding| match binding {
+                                AlgebraicValue::C(value) => AlgebraicValue::C(value.clone()),
+                                AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
+                                    rewrite_algebraic_by_exact_equality(value, from, to),
+                                ),
+                            })
+                            .collect(),
+                        body: rewrite_algebraic_by_exact_equality(&arm.body, from, to),
+                    })
+                    .collect(),
+            },
+            AlgebraicTermNode::PureFunctionApplication { name, arguments } => {
+                AlgebraicTermNode::PureFunctionApplication {
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            PureFunctionArgument::Algebraic(value) => {
+                                PureFunctionArgument::Algebraic(
+                                    rewrite_algebraic_by_exact_equality(value, from, to),
+                                )
+                            }
+                            _ => argument.clone(),
+                        })
+                        .collect(),
+                }
+            }
+        };
+        AlgebraicTerm {
+            algebraic_type: term.algebraic_type.clone(),
+            node,
+        }
+    }
+
+    if let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = equality {
+        let reverse = Proposition::Equal(
+            Term::Algebraic(right.clone()),
+            Term::Algebraic(left.clone()),
+        );
+        if !is_available(equality) && !is_available(&reverse) {
+            return Err(
+                "`rewrite` requires its equality to be an exact available fact".to_string(),
+            );
+        }
+        let rewritten = match goal {
+            Proposition::Equal(Term::Algebraic(goal_left), Term::Algebraic(goal_right)) => {
+                Proposition::Equal(
+                    Term::Algebraic(rewrite_algebraic_by_exact_equality(goal_left, left, right)),
+                    Term::Algebraic(rewrite_algebraic_by_exact_equality(goal_right, left, right)),
+                )
+            }
+            _ => {
+                return Err("`rewrite` algebraic equality does not occur in this goal".to_string());
+            }
+        };
+        if &rewritten == goal {
+            return Err("`rewrite` equality does not occur in the current goal".to_string());
+        }
+        return Ok(rewritten);
     }
 
     if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality
@@ -1471,6 +1564,12 @@ pub(in crate::surface) fn plan_explicit_equality_rewrites_from(
                 Proposition::ConditionIs(
                     ConditionTerm::PointerOffsetEqual(right.clone(), left.clone()),
                     true,
+                )
+            }
+            Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
+                Proposition::Equal(
+                    Term::Algebraic(right.clone()),
+                    Term::Algebraic(left.clone()),
                 )
             }
             _ => return None,

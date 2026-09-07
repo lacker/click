@@ -1388,6 +1388,9 @@ path = "reference/tactics/index.md#effects-resources-and-snapshots"
 id = "tactic-form.induct"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
+id = "tactic-form.structural-induct"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
 id = "tactic-form.apply-induction"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
