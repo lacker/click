@@ -1213,6 +1213,13 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        let proof_facts = self.facts();
+        execution
+            .core
+            .register_current_call_views(proof_facts.assumptions());
+        let checked_call_events = execution.core.checked_call_events();
+        let _checked_call_event_scope =
+            crate::kernel::CheckedCallEventScope::start_registering_views(&checked_call_events);
         let pre_state = context
             .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();

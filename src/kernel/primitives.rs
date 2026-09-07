@@ -3512,6 +3512,7 @@ pub struct CFunctionContractExecution {
     /// Why no supplied checked artifact could be reused when certification
     /// produced no paths. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
+    pub(super) checked_call_events: super::proof::CheckedCallEvents,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -3532,6 +3533,7 @@ pub struct CCheckedFunctionExecution {
     /// Original contract caller state when a kernel-checked proof entered C
     /// execution through a definitionally equal resource representation.
     pub(super) entry_representation_origin: Option<CState>,
+    pub(super) checked_call_events: super::proof::CheckedCallEvents,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3545,6 +3547,7 @@ impl CFunctionContractExecution {
         Self {
             cases: Vec::new(),
             reuse_diagnostic: None,
+            checked_call_events: Default::default(),
         }
     }
 

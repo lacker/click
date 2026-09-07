@@ -2478,6 +2478,7 @@ pub fn prove_checked_c_function_execution_with_environment(
         mode,
         execution,
         entry_representation_origin: None,
+        checked_call_events: Default::default(),
     }
 }
 
@@ -2645,7 +2646,9 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
     use crate::kernel::proof::CheckedExecutionEvent;
 
     events.iter().find_map(|event| match event {
-        CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => None,
+        CheckedExecutionEvent::ProofCase(_)
+        | CheckedExecutionEvent::Context(_)
+        | CheckedExecutionEvent::Call(_) => None,
         CheckedExecutionEvent::ResourceObservation(observation) => Some(observation.before_state()),
         CheckedExecutionEvent::ResourceRewrite(rewrite) => Some(rewrite.before_state()),
         CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
@@ -2700,6 +2703,7 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
                     }
                 }
                 CheckedExecutionEvent::Statement(_)
+                | CheckedExecutionEvent::Call(_)
                 | CheckedExecutionEvent::Condition(_)
                 | CheckedExecutionEvent::Context(_)
                 | CheckedExecutionEvent::ResourceObservation(_)
@@ -3794,9 +3798,14 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         }
         cases.push(alternatives);
     }
+    let mut checked_call_events = crate::kernel::proof::CheckedCallEvents::default();
+    for artifact in checked_artifacts {
+        checked_call_events.extend(&artifact.checked_call_events);
+    }
     CFunctionContractExecution {
         cases,
         reuse_diagnostic,
+        checked_call_events,
     }
 }
 

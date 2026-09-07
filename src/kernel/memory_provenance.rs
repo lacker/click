@@ -1325,14 +1325,77 @@ enum CheckedLoadEqualityEvidence {
     Canonical,
     /// Both loads resolve to one cell by the execution-recorded memory DAG.
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
+    /// Both DAG walks stop at registered result views of one opaque call
+    /// occurrence owned by the current execution proof.
+    SameCheckedCallEvent(CheckedCallLoadEqualityEvidence),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CheckedCallLoadEqualityEvidence {
+    event: crate::kernel::proof::CheckedCallEvent,
+    pointer: Pointer,
+    left: MemoryDagCell,
+    right: MemoryDagCell,
+}
+
+#[derive(Default)]
+struct CheckedLoadEqualityCaptureFrame {
+    equalities: Vec<CheckedLoadEquality>,
+    call_events: crate::kernel::proof::CheckedCallEvents,
+}
+
+struct CheckedCallEventScopeFrame {
+    events: crate::kernel::proof::CheckedCallEvents,
+    allow_view_registration: bool,
 }
 
 thread_local! {
     /// Scoped sinks owned by checked consumers. Nested consumers retain only
     /// the equalities they themselves ask for; an outer sink resumes after
     /// the inner consumer finishes.
-    static CHECKED_LOAD_EQUALITY_CAPTURES: std::cell::RefCell<Vec<Vec<CheckedLoadEquality>>> =
+    static CHECKED_LOAD_EQUALITY_CAPTURES: std::cell::RefCell<Vec<CheckedLoadEqualityCaptureFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static CHECKED_CALL_EVENT_SCOPES: std::cell::RefCell<Vec<CheckedCallEventScopeFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(crate) struct CheckedCallEventScope {
+    active: bool,
+}
+
+impl CheckedCallEventScope {
+    pub(crate) fn start(call_events: &crate::kernel::proof::CheckedCallEvents) -> Self {
+        Self::start_with_registration(call_events, false)
+    }
+
+    pub(crate) fn start_registering_views(
+        call_events: &crate::kernel::proof::CheckedCallEvents,
+    ) -> Self {
+        Self::start_with_registration(call_events, true)
+    }
+
+    fn start_with_registration(
+        call_events: &crate::kernel::proof::CheckedCallEvents,
+        allow_view_registration: bool,
+    ) -> Self {
+        CHECKED_CALL_EVENT_SCOPES.with(|scopes| {
+            scopes.borrow_mut().push(CheckedCallEventScopeFrame {
+                events: call_events.clone(),
+                allow_view_registration,
+            })
+        });
+        Self { active: true }
+    }
+}
+
+impl Drop for CheckedCallEventScope {
+    fn drop(&mut self) {
+        if self.active {
+            CHECKED_CALL_EVENT_SCOPES.with(|scopes| {
+                scopes.borrow_mut().pop();
+            });
+        }
+    }
 }
 
 /// Captures the load equalities consumed while constructing one checked
@@ -1342,9 +1405,19 @@ pub(crate) struct CheckedLoadEqualityCapture {
 }
 
 impl CheckedLoadEqualityCapture {
+    #[cfg(test)]
     pub(crate) fn start() -> Self {
+        Self::start_with_call_events(&crate::kernel::proof::CheckedCallEvents::default())
+    }
+
+    pub(crate) fn start_with_call_events(
+        call_events: &crate::kernel::proof::CheckedCallEvents,
+    ) -> Self {
         CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
-            captures.borrow_mut().push(Vec::new());
+            captures.borrow_mut().push(CheckedLoadEqualityCaptureFrame {
+                equalities: Vec::new(),
+                call_events: call_events.clone(),
+            });
         });
         Self { active: true }
     }
@@ -1355,6 +1428,7 @@ impl CheckedLoadEqualityCapture {
                 .borrow_mut()
                 .pop()
                 .expect("a checked load-equality capture is active")
+                .equalities
         });
         self.active = false;
         captured
@@ -1374,9 +1448,123 @@ impl Drop for CheckedLoadEqualityCapture {
 fn retain_checked_load_equality(equality: CheckedLoadEquality) {
     CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
         if let Some(active) = captures.borrow_mut().last_mut() {
-            active.push(equality);
+            active.equalities.push(equality);
         }
     });
+}
+
+fn active_checked_call_events() -> crate::kernel::proof::CheckedCallEvents {
+    let captured = CHECKED_LOAD_EQUALITY_CAPTURES.with(|captures| {
+        captures
+            .borrow()
+            .last()
+            .map(|frame| frame.call_events.clone())
+            .unwrap_or_default()
+    });
+    if !captured.is_empty() {
+        return captured;
+    }
+    CHECKED_CALL_EVENT_SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .last()
+            .map(|scope| scope.events.clone())
+            .unwrap_or_default()
+    })
+}
+
+fn active_scope_allows_call_view_registration() -> bool {
+    CHECKED_CALL_EVENT_SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .last()
+            .is_some_and(|scope| scope.allow_view_registration)
+    })
+}
+
+fn checked_call_load_equality_evidence(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<CheckedCallLoadEqualityEvidence> {
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (left, right)
+    else {
+        return None;
+    };
+    if left_pointer != right_pointer {
+        return None;
+    }
+    let left = memory_dag_cell_source(left_memory, left_pointer, assumptions, true)?;
+    let right = memory_dag_cell_source(right_memory, right_pointer, assumptions, true)?;
+    if !left.has_only_typed_hops()
+        || !right.has_only_typed_hops()
+        || !matches!(
+            left.node().derivation().as_deref(),
+            Some(CMemoryDerivation::CallHavoc { .. })
+        )
+        || !matches!(
+            right.node().derivation().as_deref(),
+            Some(CMemoryDerivation::CallHavoc { .. })
+        )
+    {
+        return None;
+    }
+    let events = active_checked_call_events();
+    if active_scope_allows_call_view_registration() {
+        let left_derivation = left.node().derivation();
+        let right_derivation = right.node().derivation();
+        let shapes_match = matches!(
+            (left_derivation.as_deref(), right_derivation.as_deref()),
+            (
+                Some(CMemoryDerivation::CallHavoc {
+                    variable: left_variable,
+                    mutable_ranges: left_ranges,
+                    ..
+                }),
+                Some(CMemoryDerivation::CallHavoc {
+                    variable: right_variable,
+                    mutable_ranges: right_ranges,
+                    ..
+                })
+            ) if left_variable == right_variable && left_ranges == right_ranges
+        );
+        if shapes_match {
+            for event in events.events_for_view(left.node()) {
+                if !events.contains_view(&event, right.node()) {
+                    events.register_view(&event, right.node().clone());
+                }
+            }
+            for event in events.events_for_view(right.node()) {
+                if !events.contains_view(&event, left.node()) {
+                    events.register_view(&event, left.node().clone());
+                }
+            }
+        }
+    }
+    events
+        .events_for_view(left.node())
+        .into_iter()
+        .find(|event| events.contains_view(event, right.node()))
+        .map(|event| CheckedCallLoadEqualityEvidence {
+            event,
+            pointer: left_pointer.as_ref().clone(),
+            left,
+            right,
+        })
+}
+
+#[cfg(test)]
+pub(super) fn checked_call_event_load_equality_for_test(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    with_extended_dag_bridging(|| {
+        checked_call_load_equality_evidence(left, right, assumptions).is_some()
+    })
 }
 
 impl CheckedLoadEquality {
@@ -1401,9 +1589,19 @@ impl CheckedLoadEquality {
                     typed_canonical_projection_load_equality_evidence(left, right, assumptions)
                 })
         });
+        let call_evidence = dag_evidence
+            .is_none()
+            .then(|| {
+                with_extended_dag_bridging(|| {
+                    checked_call_load_equality_evidence(left, right, assumptions)
+                })
+            })
+            .flatten();
         EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
         let evidence = if let Some(evidence) = dag_evidence {
             CheckedLoadEqualityEvidence::MemoryDag(evidence)
+        } else if let Some(evidence) = call_evidence {
+            CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence)
         } else if crate::kernel::eval::canonical_term(left)
             == crate::kernel::eval::canonical_term(right)
         {
@@ -1418,7 +1616,19 @@ impl CheckedLoadEquality {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn checks(&self, assumptions: &PureFactContext) -> bool {
+        self.checks_with_call_events(
+            assumptions,
+            &crate::kernel::proof::CheckedCallEvents::default(),
+        )
+    }
+
+    pub(crate) fn checks_with_call_events(
+        &self,
+        assumptions: &PureFactContext,
+        call_events: &crate::kernel::proof::CheckedCallEvents,
+    ) -> bool {
         match &self.evidence {
             CheckedLoadEqualityEvidence::Canonical => {
                 crate::kernel::eval::canonical_term(&self.left)
@@ -1431,6 +1641,34 @@ impl CheckedLoadEquality {
                 ),
                 assumptions,
             ),
+            CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence) => {
+                let (
+                    Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+                    Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+                ) = (&self.left, &self.right)
+                else {
+                    return false;
+                };
+                left_pointer == right_pointer
+                    && left_pointer.as_ref() == &evidence.pointer
+                    && call_events.contains(&evidence.event)
+                    && call_events.contains_view(&evidence.event, evidence.left.node())
+                    && call_events.contains_view(&evidence.event, evidence.right.node())
+                    && matches!(
+                        evidence.left.node().derivation().as_deref(),
+                        Some(CMemoryDerivation::CallHavoc { .. })
+                    )
+                    && matches!(
+                        evidence.right.node().derivation().as_deref(),
+                        Some(CMemoryDerivation::CallHavoc { .. })
+                    )
+                    && evidence
+                        .left
+                        .checks_walk_from(left_memory, left_pointer, assumptions)
+                    && evidence
+                        .right
+                        .checks_walk_from(right_memory, right_pointer, assumptions)
+            }
         }
     }
 
@@ -1438,8 +1676,31 @@ impl CheckedLoadEquality {
     pub(super) fn memory_dag_evidence_for_test(&self) -> Option<&AtomicMemoryLoadEqualityEvidence> {
         match &self.evidence {
             CheckedLoadEqualityEvidence::MemoryDag(evidence) => Some(evidence),
-            CheckedLoadEqualityEvidence::Canonical => None,
+            CheckedLoadEqualityEvidence::Canonical
+            | CheckedLoadEqualityEvidence::SameCheckedCallEvent(_) => None,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_same_checked_call_event_for_test(&self) -> bool {
+        matches!(
+            self.evidence,
+            CheckedLoadEqualityEvidence::SameCheckedCallEvent(_)
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn checks_retargeted_for_test(
+        &self,
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        assumptions: &PureFactContext,
+        call_events: &crate::kernel::proof::CheckedCallEvents,
+    ) -> bool {
+        let mut retargeted = self.clone();
+        retargeted.left = left;
+        retargeted.right = right;
+        retargeted.checks_with_call_events(assumptions, call_events)
     }
 }
 
@@ -4959,7 +5220,6 @@ fn transport_framed_atomic_bitvector(
                             Box::new(transported_pointer.clone()),
                         );
                         checked_atomic_load_equality(&left, &right, assumptions)
-                            || c_memory_load_is_unchanged(memory, after, pointer, assumptions)
                     }
                 })
             {

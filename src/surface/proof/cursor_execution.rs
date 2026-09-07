@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::CheckedCallEventScope;
 use crate::kernel::abstract_c_state_for_interface_join_across;
 use std::sync::Arc;
 
@@ -370,6 +371,9 @@ pub(super) fn execute_branch_step_from_frontier_position(
     let arguments = proof_context.arguments;
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
+
+    let checked_call_events = execution.core.checked_call_events();
+    let _checked_call_event_scope = CheckedCallEventScope::start(&checked_call_events);
 
     let state: &mut CState = &mut execution.core.state;
 
@@ -1523,6 +1527,9 @@ fn execute_step_from_frontier_position_selecting_path(
     let function_environment = proof_context.function_environment;
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
+
+    let checked_call_events = execution.core.checked_call_events();
+    let _checked_call_event_scope = CheckedCallEventScope::start(&checked_call_events);
 
     let state: &mut CState = &mut execution.core.state;
 
