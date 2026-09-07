@@ -72,9 +72,16 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   refinement judgment used for concrete targets. Applying the theorem
   transports the contract fact for that exact symbolic pointer; certification
   considers only explicitly applied theorem authorities.
+- Symbolic nonnegative quantities of owned abstract tokens and nonrecursive
+  folded composites participate in the same inferred-frame judgment. A named
+  quantity may supply a smaller concrete requirement when the named
+  preconditions prove containment; the symbolic remainder is framed and must
+  recombine with the concrete output to supply the named guarantee. The
+  verifier treats each quantity as one algebraic resource fact and never
+  enumerates its units.
 
-The remaining semantic step is refinement for explicitly quantified resources
-and broader state-dependent propositions at concrete-pointer formation.
+The remaining semantic step is refinement for broader state-dependent
+propositions at concrete-pointer formation.
 Guarded effects participate in footprint containment, but stateful
 postconditions with conditional footprints require an explicit closed theorem
 and written case split; automatic concrete-pointer formation remains limited

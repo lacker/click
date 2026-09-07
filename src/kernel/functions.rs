@@ -1751,13 +1751,11 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
     resources.facts().iter().all(|resource| {
         matches!(
             resource,
-            CResourceFact::Own(
-                CResource::Memory(_)
-                    | CResource::Composite { .. }
-                    | CResource::Token { .. },
-                quantity,
-            )
+            CResourceFact::Own(CResource::Memory(_), quantity)
                 if quantity.as_const() == Some(1)
+        ) || matches!(
+            resource,
+            CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
         ) || matches!(
             resource,
             CResourceFact::View(
@@ -1765,6 +1763,25 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
             )
         )
     })
+}
+
+fn resource_spec_supports_framed_refinement(resource: &CResourceSpec) -> bool {
+    match resource {
+        CResourceSpec::OwnMemory(_)
+        | CResourceSpec::ViewMemory(_)
+        | CResourceSpec::Composite { .. }
+        | CResourceSpec::Token { .. } => true,
+        CResourceSpec::Quantified { resource, .. } => matches!(
+            resource.as_ref(),
+            CResourceSpec::Composite {
+                access: CResourceAccessMode::Own,
+                ..
+            } | CResourceSpec::Token {
+                access: CResourceAccessMode::Own,
+                ..
+            }
+        ),
+    }
 }
 
 fn evaluate_refinement_resource_context(
@@ -1785,9 +1802,9 @@ fn evaluate_refinement_resource_context(
 /// preserving everything the concrete transition only borrows or does not
 /// need as a frame. Then requires `concrete_ensures * frame` to provide the
 /// named ensures. The resource context's indexed algebras perform ownership
-/// splitting, range containment, exact token and folded-composite identity,
-/// and scoped borrowing; no project functions, composite definitions, or
-/// unrelated proof state are inspected.
+/// splitting, symbolic exact-resource quantity arithmetic, range containment,
+/// exact token and folded-composite identity, and scoped borrowing; no project
+/// functions, composite definitions, or unrelated proof state are inspected.
 #[allow(clippy::too_many_arguments)]
 fn framed_resource_transition_refines(
     contract: &CFunction,
@@ -1805,15 +1822,7 @@ fn framed_resource_transition_refines(
         .chain(contract.resource_ensures())
         .chain(function.resource_requires())
         .chain(function.resource_ensures())
-        .all(|resource| {
-            matches!(
-                resource,
-                CResourceSpec::OwnMemory(_)
-                    | CResourceSpec::ViewMemory(_)
-                    | CResourceSpec::Composite { .. }
-                    | CResourceSpec::Token { .. }
-            )
-        })
+        .all(resource_spec_supports_framed_refinement)
     {
         return Ok(false);
     }
