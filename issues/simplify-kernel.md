@@ -85,23 +85,25 @@ resource rewrites and observations retain and recheck any checked equality
 they consume, and contract materialization retains its typed witnesses on the
 function-claim proof object. `StoreExplicitRange` hops now retain either their
 exact separation proposition or the owning resource composition, indexed
-range pair, and orientation. One direct framed-transport consumer remains. A
-2026-09-05 census found nine dynamic legacy-only checks. Canonicalization now
-retains exact load-projection triples, and indexed stores retain named
-signed-order paths for common-base inequality; a fresh complete census reduced
-the residual to three checks. The two `copy3` checks are now migrated through
-reusable pointer-in-range evidence. It preserves cheap assumption-free
-structural membership, while its symbolic form retains the structural element
-index and exact signed bounds, including the `k < i + 1`, `i < 3` successor
-case.
+range pair, and orientation. At that point one direct framed-transport
+consumer remained. A 2026-09-05 census found nine dynamic legacy-only checks.
+Canonicalization now retains exact load-projection triples, and indexed stores
+retain named signed-order paths for common-base inequality; a fresh complete
+census reduced the residual to three checks. The two `copy3` checks were then
+migrated through reusable pointer-in-range evidence. It preserves cheap
+assumption-free structural membership, while its symbolic form retains the
+structural element index and exact signed bounds, including the `k < i + 1`,
+`i < 3` successor case.
 
-The only observed endpoint fallback left is a pair of matching checked
-call-havoc transitions, but no proof-object event currently authorizes
-treating their reproducible numeric havoc identity as one call. The fixtures
-therefore do not require a general arbitrary snapshot-delta object. The next
-endpoint decision is the ownership identity of a checked call event. The
-depth-bounded congruence search for registered loads whose addresses
-themselves contain registered loads also remains.
+The checked-call event slice is complete, and the direct framed-transport
+fallback has been deleted. A residual-recursion census now shows that the
+positive dependent load-equality obligation is much smaller than the earlier
+negative search frontier suggested: only 30 successful roots across both
+fixture harnesses need one nested exact fact-transport step, and no successful
+root reaches the depth refusal. All 686,737 depth refusals occur below failed
+roots. The last separate global-prover caller is tagged-pointer
+`recorded_uint64_equals`; all 18 observed positives there are
+assumption-free direct snapshot matches.
 
 The first two ordered changes are complete. This issue now states the
 operational boundary and corrected inventory, and the unused general pointer
@@ -193,23 +195,20 @@ change an answer.
    branch proofs: the current `FiniteContextSplit` stores the entire context,
    which violates relevant-input scaling.
 2. **Global and dependent load equality**,
-   `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. The fallback from
-   `memory_loads_proven_equal` has been removed, but framed atomic transport
-   still falls back to the global prover for one residual framed transport.
-   Its `StoreExplicitRange` hop, canonical-load projections, and common-base
-   signed-order store hops and separated-range pointer memberships are now
-   typed. The current fixture census finds only one matching call-havoc sibling
-   case. The remaining depth guard hit
-   345,653 / 315,061 times in the original depth census. The later
-   deciding-route census found that the fallback itself answered only 31 /
-   1,628 example calls and 27 / 1,347 mdtest calls. This is owned by
-   `issues/load-equality-prover-in-kernel.md`. Its migration must cover that
-   call-transition evidence plus dependent registered-load addresses. An
-   exact-query guard terminates but branches into
-   60,000–120,000 distinct subqueries in the
-   owned-string regression, so the replacement must retain typed
-   congruence/equality-path evidence rather than substitute another recursion
-   tier.
+   `MEMORY_LOAD_EQUALITY_DEPTH_LIMIT = 2`. Framed atomic transport is fully
+   migrated, including checked-call event identity, and no longer calls the
+   global prover. The fresh residual census observed 103,504 top-level and
+   221,427 depth-one requests plus 686,737 depth refusals. Only 30 successful
+   roots needed a nested positive, always one exact fact-transport step; no
+   successful root encountered a refusal. The explosive dependent-address
+   population is therefore failed ambient search, not evidence that a general
+   recursive congruence object is required. Retain the selected finite two-hop
+   paths, prevent arbitrary term-pair matching from launching recursion, and
+   delete the limit. Separately, `recorded_uint64_equals` is the final
+   production caller of the old global prover; its 18 observed positives are
+   all direct `memories_match_for_pointer_load` decisions, so that caller can
+   be narrowed before the prover is deleted. This work is owned by
+   `issues/load-equality-prover-in-kernel.md`.
 3. **Coarse reentrancy tiers**: `bounded_snapshot_comparison_active` around
    snapshot aliasing, `inside_condition_decision` around condition decisions,
    `ENDPOINT_BRIDGE_ACTIVE`, `LOAD_EQUALITY_RESOLUTION_ACTIVE`,
