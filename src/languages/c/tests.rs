@@ -1501,6 +1501,46 @@ fn c0_accepts_incomplete_outer_dimension_extern_scalar_arrays() {
 }
 
 #[test]
+fn c0_accepts_incomplete_outer_dimension_tentative_scalar_arrays() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 values[][3];
+
+        int32 read() {
+            return values[1][2];
+        }
+        "#,
+        "incomplete-tentative-multidimensional.c",
+    )
+    .expect("an incomplete outer dimension should parse as a tentative definition");
+
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "read")
+        .unwrap();
+    let values = &function.global_arrays()["values"];
+    assert!(values.is_incomplete());
+    assert!(values.is_tentative());
+    assert!(!values.is_defined());
+    assert_eq!(values.shape(), None);
+    assert_eq!(values.incomplete_shape(), Some(&[3][..]));
+}
+
+#[test]
+fn c0_rejects_incomplete_multidimensional_static_arrays() {
+    let error =
+        syntax::parse_functions("static int32 values[][3]; int32 read() { return values[1][2]; }")
+            .expect_err("file-scope static multidimensional arrays need a complete shape");
+    assert!(
+        error
+            .message()
+            .contains("incomplete multidimensional file-scope static arrays"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_accepts_incomplete_tentative_scalar_array_declarations() {
     let functions = syntax::parse_functions_for_source(
         r#"
@@ -1586,6 +1626,7 @@ fn c0_rejects_unsupported_inferred_file_scope_array_forms() {
     for source in [
         "int32 values[] = {}; int32 read() { return values[0]; }",
         "int32 values[] = {[1] = 2}; int32 read() { return values[0]; }",
+        "int32 values[][3] = {{1, 2, 3}}; int32 read() { return values[0][0]; }",
         "extern int32 values[] = {1}; int32 read() { return values[0]; }",
         "struct state { int32 value; }; struct state values[] = {{1}}; int32 read() { return values[0].value; }",
     ] {

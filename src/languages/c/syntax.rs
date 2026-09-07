@@ -6007,15 +6007,15 @@ impl Parser {
             let mut incomplete_tentative = false;
             let array_length = match parsed_array_length {
                 Some(GlobalArrayLength::Incomplete(incomplete_shape)) if !is_extern => {
-                    if !incomplete_shape.is_empty() {
-                        return Err(self.error_here(
-                            "incomplete multidimensional file-scope arrays are not supported yet",
-                        ));
-                    }
                     if self.peek() != Some(&Token::Equal) {
+                        if !incomplete_shape.is_empty() && is_file_static {
+                            return Err(self.error_here(
+                                "incomplete multidimensional file-scope static arrays are not supported yet",
+                            ));
+                        }
                         incomplete_tentative = true;
                         Some(GlobalArrayLength::Incomplete(incomplete_shape))
-                    } else {
+                    } else if incomplete_shape.is_empty() {
                         self.position += 1;
                         let initializer = self
                             .parse_inferred_global_array_initializer(&name, parsed_type.c_type)?;
@@ -6031,6 +6031,10 @@ impl Parser {
                         }
                         inferred_initializer = Some(initializer);
                         Some(GlobalArrayLength::Complete(vec![length]))
+                    } else {
+                        return Err(self.error_here(
+                            "incomplete multidimensional file-scope arrays with initializers are not supported yet",
+                        ));
                     }
                 }
                 other => other,

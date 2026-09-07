@@ -133,6 +133,13 @@ covers incompatible shapes with the same flattened element count.
 incomplete outer dimensions in external declarations, and
 `mdtests/file_scope_incomplete_multidimensional_extern_array_link_errors.md`
 covers incompatible retained inner dimensions during linking.
+`mdtests/file_scope_incomplete_multidimensional_tentative_arrays.md` covers
+external-linkage tentative definitions with an omitted outer dimension, while
+`mdtests/file_scope_incomplete_multidimensional_tentative_array_link_errors.md`,
+`mdtests/file_scope_incomplete_multidimensional_tentative_array_shape_errors.md`,
+and `mdtests/file_scope_incomplete_multidimensional_tentative_array_definition_errors.md`
+cover unresolved declarations, incompatible retained inner dimensions, and
+duplicate complete definitions.
 `mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
 bounds remaining rejected during cross-translation-unit linking.
 `mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
@@ -203,7 +210,9 @@ propagation, and indirect-write rejection.
   aggregate definitions, inferred initializer bounds for aggregate arrays,
   empty or designated scalar-array initializers, and unresolved incomplete
   tentative definitions remain rejected. External multidimensional declarations
-  may omit only the outer dimension while retaining complete inner dimensions.
+  and external-linkage tentative definitions may omit only the outer dimension
+  while retaining complete inner dimensions; the latter resolve against one
+  complete fixed-size definition during bundle linking.
   Fixed multidimensional definitions require nested positional initializer
   groups, retain their declared row-major shape, and reject shape-mismatched
   cross-file declarations. File-scope
@@ -237,7 +246,7 @@ propagation, and indirect-write rejection.
   fields use the same ABI offsets and effect checks. String literals remain
   read-only through copied pointers; automatic/local aggregate designators,
   non-literal designators, const-qualified automatic aggregate locals,
-  incomplete multidimensional definitions, unresolved incomplete tentative definitions, dynamic or
+  incomplete multidimensional definitions with initializers, unresolved incomplete tentative definitions, dynamic or
   non-literal initialization, and wider literal forms remain open. Scalar
   array bounds may be inferred from non-empty positional initializers; static
   address initializers are revalidated after external globals are linked,
