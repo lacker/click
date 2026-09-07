@@ -1234,7 +1234,7 @@ impl ExecutionBudget {
     /// length limit. Propagating the same paths through another wrapper does
     /// not spend the capacity again.
     pub(in crate::kernel) fn check_path_width(&self, produced_paths: usize) -> ExecutionResult<()> {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return Err(ExecutionLimit::Deadline);
         }
         if self.paths < produced_paths {
@@ -1490,7 +1490,7 @@ pub(in crate::kernel) fn consume_budget(
     remaining: &mut usize,
     limit: ExecutionLimit,
 ) -> ExecutionResult<()> {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return Err(ExecutionLimit::Deadline);
     }
     if *remaining == 0 {

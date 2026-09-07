@@ -2842,14 +2842,14 @@ fn c_memory_load_is_directly_unchanged(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
     if memories_directly_match_for_pointer_load(before, after, pointer, assumptions) {
         return true;
     }
     assumptions.prop_facts.iter().any(|proposition| {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         match proposition {
@@ -4683,7 +4683,7 @@ fn transport_framed_atomic_condition(
     after: &CMemory,
     assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<ConditionTerm> {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return None;
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -4822,7 +4822,7 @@ fn transport_framed_atomic_pointer_offset(
     after: &CMemory,
     assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<PointerOffsetTerm> {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return None;
     }
     Some(match offset {
@@ -4852,7 +4852,7 @@ fn transport_framed_atomic_bitvector(
     after: &CMemory,
     assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<Bitvector32Term> {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return None;
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -5225,15 +5225,15 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
     right: &PointerOffsetTerm,
     assumptions: &PureFactContext,
 ) -> bool {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
     let left = normalize_exact_memory_loads_in_pointer_offset(left, assumptions);
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
     let right = normalize_exact_memory_loads_in_pointer_offset(right, assumptions);
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
     left == right
@@ -5259,7 +5259,7 @@ pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
         match task {
             Task::Visit(offset) => {
                 crate::instrumentation::record_deterministic_work(1);
-                if crate::instrumentation::deadline_exceeded() {
+                if crate::kernel::assumptions::reasoning_interrupted() {
                     results.push(offset);
                     continue;
                 }
@@ -5461,7 +5461,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
         match task {
             ExactLoadNormalizationTask::Visit(term) => {
                 crate::instrumentation::record_deterministic_work(1);
-                if crate::instrumentation::deadline_exceeded() {
+                if crate::kernel::assumptions::reasoning_interrupted() {
                     results.push(term);
                     continue;
                 }

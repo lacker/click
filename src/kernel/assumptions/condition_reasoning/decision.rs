@@ -211,8 +211,8 @@ impl PureFactContext {
     ///
     /// A `Some` answer is evidence found in the facts and stays valid no
     /// matter how the search was pruned. A `None` computed under an ambient
-    /// truncation (fuel, depth guards, cycle cuts — see
-    /// [`note_search_truncation`]) is path-dependent and is not cached.
+    /// interruption (verification limits or exact cycle cuts — see
+    /// [`note_incomplete_reasoning`]) is path-dependent and is not cached.
     pub(crate) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         let result = self.decide_unrecorded(condition);
         if let Some(value) = result {
@@ -257,9 +257,9 @@ impl PureFactContext {
         condition: &ConditionTerm,
     ) -> Option<bool> {
         let _decision_guard = ConditionDecisionGuard::enter(condition)?;
-        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let result = self.decide_inner(condition);
-        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
+        if result.is_some() || INCOMPLETE_REASONING_EPOCH.with(Cell::get) == epoch_before {
             DECIDE_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= DECIDE_MEMO_LIMIT {
@@ -1385,9 +1385,9 @@ impl PureFactContext {
         {
             return hit;
         }
-        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let result = self.signed_constant_after_equality_normalization_unmemoized(term);
-        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
+        if result.is_some() || INCOMPLETE_REASONING_EPOCH.with(Cell::get) == epoch_before {
             CONSTANT_NORMALIZATION_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= DECIDE_MEMO_LIMIT {

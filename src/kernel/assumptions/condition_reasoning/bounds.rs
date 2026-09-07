@@ -26,13 +26,13 @@ impl PureFactContext {
         if let Some(hit) = ORDER_FACTS_MEMO.with(|memo| memo.borrow().get(&memo_id).cloned()) {
             // One checkpoint keeps a run of memo hits responsive to the
             // cooperative deadline without rescanning the fact set.
-            crate::instrumentation::deadline_exceeded();
+            crate::kernel::assumptions::reasoning_interrupted();
             return hit;
         }
         let mut facts = Vec::new();
         let mut complete = true;
         for (condition, value) in self.condition_facts.iter() {
-            if crate::instrumentation::deadline_exceeded() {
+            if crate::kernel::assumptions::reasoning_interrupted() {
                 complete = false;
                 break;
             }

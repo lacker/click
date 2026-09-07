@@ -186,7 +186,7 @@ impl PureFactContext {
     }
 
     pub fn proves(&self, proposition: &Proposition) -> bool {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         // One id resolution up front so every decision this proof attempt
@@ -1158,7 +1158,7 @@ impl PureFactContext {
         }) {
             return (result, premises_id);
         }
-        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let memory_evidence = match proposition {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
                 crate::kernel::api::atomic_memory_load_equality_evidence(left, right, self)
@@ -1741,7 +1741,7 @@ impl PureFactContext {
                 };
                 proved.then_some(AtomicPropositionDerivationEvidence::Legacy)
             });
-        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
+        if result.is_some() || INCOMPLETE_REASONING_EPOCH.with(Cell::get) == epoch_before {
             ATOMIC_DERIVATION_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= ASSUMPTIONS_MEMO_ID_LIMIT {
@@ -3581,8 +3581,8 @@ impl PureFactContext {
     /// decision, and the same term pairs recur across those scans, so the
     /// search is worth caching. The discipline is [`Self::decide`]'s: a
     /// `true` is evidence found in the facts and is always cacheable, while a
-    /// `false` computed under an ambient truncation (memory-resolution fuel,
-    /// the memory-load depth guard) is path-dependent and is not. Memoized
+    /// `false` computed after an exact cycle cut or an observed verification
+    /// limit is incomplete and is not. Memoized
     /// only under an enclosing id scope, so no call pays a fact-set hash.
     pub(in crate::kernel) fn bitvector_terms_equal_for_transport(
         &self,
@@ -3600,10 +3600,10 @@ impl PureFactContext {
         {
             return hit;
         }
-        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let result = self.bitvector_terms_equal_for_transport_uncached(left, right);
         if let Some(memo_key) = memo_key
-            && (result || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
+            && (result || INCOMPLETE_REASONING_EPOCH.with(Cell::get) == epoch_before)
         {
             TRANSPORT_EQUAL_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
@@ -3929,7 +3929,7 @@ impl PureFactContext {
         }) {
             return false;
         }
-        let truncations_before = search_truncations();
+        let epoch_before = incomplete_reasoning_epoch();
         let result = self.is_inconsistent_unmemoized();
         if result {
             CONTEXT_INCONSISTENCY_POSITIVE_MEMO.with(|memo| {
@@ -3939,8 +3939,8 @@ impl PureFactContext {
                 }
                 memo.insert((assumptions_id, bridging));
             });
-        } else if !crate::instrumentation::deadline_exceeded()
-            && search_truncations() == truncations_before
+        } else if !crate::kernel::assumptions::reasoning_interrupted()
+            && incomplete_reasoning_epoch() == epoch_before
         {
             CONTEXT_INCONSISTENCY_NEGATIVE_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();

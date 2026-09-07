@@ -561,7 +561,7 @@ fn condition_fact_mentions_load_of(
         | ConditionTerm::Variable(_) => {}
     }
     loads.iter().any(|(load_memory, pointer)| {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         crate::kernel::reasoning::memory_range_still_available(load_memory, memory, pointer)
@@ -601,7 +601,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
     memory: &CMemory,
     base: &Pointer,
 ) -> bool {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
     fn collect_shallow_term_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
@@ -746,7 +746,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
     exact_binder_candidates
         .chain(renamed_binder_candidates)
         .any(|fact| {
-            if crate::instrumentation::deadline_exceeded() {
+            if crate::kernel::assumptions::reasoning_interrupted() {
                 return false;
             }
             let Proposition::ForAll {
@@ -767,7 +767,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                         .filter(|target| target != fact_var),
                 )
                 .any(|target_var| {
-                    if crate::instrumentation::deadline_exceeded() {
+                    if crate::kernel::assumptions::reasoning_interrupted() {
                         return false;
                     }
                     let Some(instantiated) = substitute_quantified_body_capture_free(
@@ -780,7 +780,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                     };
                     let (premises, conclusion) = implication_parts(&instantiated);
                     let premises_hold = premises.iter().all(|premise| {
-                        !crate::instrumentation::deadline_exceeded()
+                        !crate::kernel::assumptions::reasoning_interrupted()
                             && matches!(premise, Proposition::ConditionIs(_, _))
                             && certification_proves_proposition(assumptions, premise)
                     });
@@ -827,7 +827,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
     base: &Pointer,
     bytes: &Bitvector32Term,
 ) -> bool {
-    if crate::instrumentation::deadline_exceeded() {
+    if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
 
@@ -1013,7 +1013,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
     };
 
     assumptions.prop_facts.iter().any(|fact| {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         let Proposition::ForAll {

@@ -28,7 +28,7 @@ impl ResourceCompositionQueryGuard {
         let entered = COMPOSITION_QUERIES_IN_PROGRESS
             .with(|queries| queries.borrow_mut().insert(query.clone()));
         if !entered {
-            crate::kernel::assumptions::note_search_truncation();
+            crate::kernel::assumptions::note_incomplete_reasoning();
         }
         // `then`, not `then_some`: a guard built eagerly and discarded on
         // the cycle path would run `drop` and unregister the outer query.

@@ -678,7 +678,7 @@ impl PureFactContext {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         let order_facts = self.condition_order_facts();
@@ -708,7 +708,7 @@ impl PureFactContext {
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
-            if crate::instrumentation::deadline_exceeded() {
+            if crate::kernel::assumptions::reasoning_interrupted() {
                 return false;
             }
             if !seen.insert((current.clone(), strict_so_far)) {
@@ -730,7 +730,7 @@ impl PureFactContext {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in order_facts.iter() {
-                if crate::instrumentation::deadline_exceeded() {
+                if crate::kernel::assumptions::reasoning_interrupted() {
                     return false;
                 }
                 let constant_connection = signed_bitvector_constant(&current)
@@ -748,7 +748,7 @@ impl PureFactContext {
                 }
             }
             for (condition, value) in self.condition_facts.iter() {
-                if crate::instrumentation::deadline_exceeded() {
+                if crate::kernel::assumptions::reasoning_interrupted() {
                     return false;
                 }
                 let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
@@ -797,7 +797,7 @@ impl PureFactContext {
         condition: &ConditionTerm,
         value: bool,
     ) -> bool {
-        if crate::instrumentation::deadline_exceeded() {
+        if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
         condition_as_order_fact(condition, value).is_some_and(|(left, right, strict)| {

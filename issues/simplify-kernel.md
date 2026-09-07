@@ -208,22 +208,39 @@ these dispositions:
 
 ### Incomplete-answer and authority audit
 
-1. **`search_truncations` and negative-memo gating**. The counter currently
-   records exact condition-, simp-fact-, memory-resolution-, and resource-composition
-   cycle cuts plus two deadline wrappers. The 2026-09-07 fixture census saw
-   916 / 1,788 exact repeated-condition cuts and zero resolution-cycle,
-   resource-cycle, or deadline events. `SimpFactReasoningGuard` had another
-   exact repeated-query return that was not recorded by the epoch; it fired
-   zero times in both fixture corpora. The guard now records every refused
-   exact query in the epoch, so enclosing negative memos cannot retain the
-   path-dependent miss. Rename the counter to `incomplete_reasoning_epoch`.
-   Delete the mechanism only when incomplete nested answers cannot reach a
-   memo boundary.
-2. **Deadline checks**, currently 31 `deadline_exceeded` sites under
-   `src/kernel/`. Deadlines are separate from deterministic tactic budgets, but
-   they are not harmless if a helper's `false`/`None` is observed as an ordinary
-   proof miss. Audit propagation so expiry becomes a distinct verification
-   abort and no negative result produced after expiry is memoized.
+1. **Complete: `incomplete_reasoning_epoch` and negative-memo gating**.
+   The renamed epoch records exact condition-, simp-fact-, memory-resolution-,
+   and resource-composition cycles, plus every observed kernel verification
+   limit. It is monotonic thread-local invalidation state, not a work budget.
+   Decision, constant-normalization, atomic-derivation, transport-equality,
+   context-inconsistency, and resolution memos compare epochs around queries.
+   Positive evidence remains reusable. Delete the mechanism only when
+   incomplete nested answers cannot reach a memo boundary.
+2. **Complete: kernel deadline checkpoint audit (2026-09-07)**. All 31 former
+   raw checkpoint sites now route through `reasoning_interrupted`, which calls
+   instrumentation exactly once and advances the epoch on interruption. This
+   preserves deterministic checkpoint costs and covers tactic work exhaustion
+   as well as wall-clock limits. The audited families are:
+
+   - Execution budgets (2): return `ExecutionLimit::Deadline` directly.
+   - Assumption reasoning (11, including the simp wrapper): proposition and
+     region checks, order traversal/collection, and inconsistency caching.
+     Interrupted order collections remain uncached.
+   - Memory resolution (1 wrapper): protects enclosing negative query memos.
+   - Memory provenance (10): frame transport and effect equality return misses;
+     exact-load normalization retains an unnormalized remainder on expiry.
+     Both now invalidate enclosing negative answers.
+   - Contract certification (7): loadability witnesses return conservative
+     misses, now recorded as incomplete.
+
+   Internal boolean/optional helpers retain their existing signatures. At the
+   verification boundary, execution limits, `check_verification_deadline`, and
+   `ClickError::new` report the limit context before an ordinary semantic miss
+   can escape. Existing regressions cover wall-clock and work-budget error
+   precedence; a resolution-memo regression expires a nested proposition check,
+   exits the deadline scope, and confirms the same query can subsequently prove
+   and cache its positive answer. This audit covers the existing checkpoint
+   sites, not the responsiveness of every checkpoint-free structural walk.
 3. **Authoritative callers of the general proposition prover**. Removing the
    two split rules does not by itself establish "the kernel does not search."
    `verify_lowered_invariant_path` in `src/kernel/loops.rs` calls
@@ -272,12 +289,12 @@ comparison now use only that narrower predicate for distinctness.
 6. **Complete:** retain finite typed load-equality evidence, delete the global
    framed-load prover, prevent arbitrary term-pair recursion, and remove the
    load-equality depth limit.
-7. **Partially complete:** the dead atomic load-equality fallback and boolean
+7. **Complete:** the dead atomic load-equality fallback and boolean
    flag are deleted; the alias-refutation rule remains without its unobserved
    broad boolean tier; and `SimpFactReasoningGuard` cycles advance the epoch so
-   they cannot poison enclosing negative memos. Rename `search_truncations` to
-   describe incomplete reasoning, and audit the 31 deadline sites for distinct
-   error propagation. `inside_condition_decision` is memo-scope policy, not an
+   they cannot poison enclosing negative memos. The epoch is renamed and all
+   31 deadline checkpoints record incomplete reasoning, with outer limit-error
+   propagation audited above. `inside_condition_decision` is memo-scope policy, not an
    answer-suppressing tier.
 8. Finish the authoritative general-prover caller audit, or narrow the stated
    invariant with an explicit rationale for any retained kernel planner. The

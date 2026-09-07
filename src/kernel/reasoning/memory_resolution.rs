@@ -38,7 +38,7 @@ impl ResolutionQueryGuard {
         let entered = RESOLUTION_QUERIES_IN_PROGRESS
             .with(|queries| queries.borrow_mut().insert(query.clone()));
         if !entered {
-            crate::kernel::assumptions::note_search_truncation();
+            crate::kernel::assumptions::note_incomplete_reasoning();
         }
         // `then`, not `then_some`: a guard built eagerly and discarded on
         // the cycle path would run `drop` and unregister the outer query.
@@ -84,11 +84,7 @@ fn resolution_query_guard_refuses_reentry_and_keeps_the_outer_query() {
 /// Whether the verification deadline has passed, noted as a truncation so
 /// the memo does not cache the answer the deadline cut short.
 pub(in crate::kernel) fn resolution_interrupted() -> bool {
-    if crate::instrumentation::deadline_exceeded() {
-        crate::kernel::assumptions::note_search_truncation();
-        return true;
-    }
-    false
+    crate::kernel::assumptions::reasoning_interrupted()
 }
 
 /// One top-level memory-resolution equality query, keyed by fact-set content
@@ -207,11 +203,10 @@ pub(in crate::kernel) fn canonical_load_projection_recorded(
 
 /// The memo identity for one top-level resolution query, or `None` when the
 /// query must run unmemoized. Unmemoized cases are the ones whose answers
-/// are ambient-state-dependent: a nested arm shares the caller's fuel, a
-/// nested memory-DAG cell lookup sees the depth cutoff, and explicit
-/// certificate validation crosses extra DAG edges. In-progress condition
-/// decisions need no guard here: every decision cycle cut and in-decision
-/// weakening records a search truncation, which already blocks negative
+/// are ambient-state-dependent: a nested memory-DAG cell lookup sees an
+/// active lookup, and explicit proof validation crosses extra DAG edges.
+/// In-progress condition decisions need no guard here: every decision cycle
+/// cut records incomplete reasoning, which already blocks negative
 /// caching, and a positive answer is found evidence that remains valid
 /// outside the weakened context.
 fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)> {
@@ -232,8 +227,8 @@ fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)
 /// evidence and stays valid however the search was pruned, so it is cached
 /// unconditionally. A `false` is only the absence of a connection: it is
 /// cached per memory-DAG derivation generation (new faithful edges can turn
-/// it true) and never when the search was truncated by ambient fuel or depth
-/// guards, exactly like the `decide` memo.
+/// it true) and never after an exact cycle cut or an observed verification
+/// limit, exactly like the `decide` memo.
 fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce() -> bool) -> bool {
     let Some(key) = key else {
         return run();
@@ -247,7 +242,7 @@ fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce()
     {
         return false;
     }
-    let truncations_before = crate::kernel::assumptions::search_truncations();
+    let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
     let result = run();
     if result {
         RESOLUTION_QUERY_POSITIVE_MEMO.with(|memo| {
@@ -257,7 +252,7 @@ fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce()
             }
             memo.insert(key);
         });
-    } else if crate::kernel::assumptions::search_truncations() == truncations_before {
+    } else if crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before {
         RESOLUTION_QUERY_NEGATIVE_MEMO.with(|memo| {
             let mut memo = memo.borrow_mut();
             if memo.len() >= RESOLUTION_QUERY_MEMO_LIMIT {
@@ -267,6 +262,34 @@ fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce()
         });
     }
     result
+}
+
+#[cfg(test)]
+#[test]
+fn expired_nested_reasoning_does_not_poison_resolution_memo() {
+    clear_memory_resolution_memos();
+    let key = ResolutionQueryKey::BitvectorEqual(
+        7_490_001,
+        false,
+        Bitvector32Term::Variable(Variable(7_490_002)),
+        Bitvector32Term::Constant(1),
+    );
+    // Expiry occurs inside the memo boundary, including at a helper which
+    // formerly called the raw deadline checkpoint without recording a cut.
+    assert!(!memoized_resolution_query(Some(key.clone()), || {
+        crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+            let assumptions = PureFactContext::new();
+            assumptions.proves(&Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            ))
+        })
+    }));
+    assert!(memoized_resolution_query(Some(key.clone()), || true));
+    assert!(memoized_resolution_query(Some(key), || panic!(
+        "positive result should be cached"
+    )));
+    clear_memory_resolution_memos();
 }
 
 /// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.

@@ -433,7 +433,7 @@ pub(super) fn inside_condition_decision() -> bool {
 }
 
 thread_local! {
-    static SEARCH_TRUNCATIONS: Cell<u64> = const { Cell::new(0) };
+    static INCOMPLETE_REASONING_EPOCH: Cell<u64> = const { Cell::new(0) };
     static DECIDE_MEMO: RefCell<std::collections::HashMap<(u64, ConditionTerm), Option<bool>>> =
         RefCell::new(std::collections::HashMap::new());
     static ASSUMPTIONS_MEMO_IDS: RefCell<std::collections::HashMap<PureFactContext, u64>> =
@@ -616,20 +616,29 @@ fn apply_attempt_salt(id: u64) -> u64 {
     }
 }
 
-/// Records that a reasoning search was cut short by ambient thread-local
-/// state (a fuel budget, a recursion-depth guard, or an in-progress-decision
-/// cycle cut) rather than by the query itself. `decide` results computed
-/// under such a cut are path-dependent, so the decision memo must not cache
-/// a `None` whose search was truncated.
-pub(super) fn note_search_truncation() {
-    SEARCH_TRUNCATIONS.with(|count| count.set(count.get() + 1));
+/// Records an exact-query cycle cut or an observed verification limit.
+/// Enclosing memo layers compare epochs to avoid retaining negative answers
+/// produced by incomplete reasoning. Positive evidence remains valid.
+pub(super) fn note_incomplete_reasoning() {
+    INCOMPLETE_REASONING_EPOCH.with(|count| count.set(count.get() + 1));
 }
 
-/// The running count of ambient search truncations on this thread. Memo
-/// layers compare the count around a query to tell a pure negative answer
-/// (cacheable) from one whose search was cut short (path-dependent).
-pub(super) fn search_truncations() -> u64 {
-    SEARCH_TRUNCATIONS.with(Cell::get)
+/// Monotonic, thread-local epoch shared by all incomplete reasoning paths.
+/// This is not a work budget and never limits a query.
+pub(super) fn incomplete_reasoning_epoch() -> u64 {
+    INCOMPLETE_REASONING_EPOCH.with(Cell::get)
+}
+
+/// Kernel checkpoint: retain the limit signal for enclosing negative memos.
+/// The instrumentation checkpoint also checks deterministic tactic work and
+/// retains diagnostics for the outer verification error boundary. Call it
+/// exactly once so this wrapper does not change checkpoint work accounting.
+pub(super) fn reasoning_interrupted() -> bool {
+    let interrupted = crate::instrumentation::deadline_exceeded();
+    if interrupted {
+        note_incomplete_reasoning();
+    }
+    interrupted
 }
 
 /// Whether the verification deadline has passed, noted as a truncation so
@@ -639,11 +648,7 @@ pub(super) fn search_truncations() -> u64 {
 /// its premise selection is bounded by the candidate facts, so its work is
 /// bounded by the goal and the facts the goal names.
 fn simp_reasoning_interrupted() -> bool {
-    if crate::instrumentation::deadline_exceeded() {
-        note_search_truncation();
-        return true;
-    }
-    false
+    reasoning_interrupted()
 }
 
 /// Marks a condition whose fact-based simp proof is in progress. Proving a
@@ -664,7 +669,7 @@ impl SimpFactReasoningGuard {
         if !entered {
             // Refusing the repeated query makes any enclosing negative
             // answer path-dependent, so it must not populate a memo.
-            note_search_truncation();
+            note_incomplete_reasoning();
             return None;
         }
         Some(Self { key })
@@ -693,15 +698,15 @@ fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
         Bitvector32Term::Variable(Variable(7_400_001)),
         Bitvector32Term::Constant(2),
     );
-    let truncations_before = search_truncations();
+    let epoch_before = incomplete_reasoning_epoch();
     let outer = SimpFactReasoningGuard::enter(&first, true).expect("the first proof registers");
     assert!(
         SimpFactReasoningGuard::enter(&first, true).is_none(),
         "re-entering the condition is a cycle"
     );
     assert_eq!(
-        search_truncations(),
-        truncations_before + 1,
+        incomplete_reasoning_epoch(),
+        epoch_before + 1,
         "the cycle makes an enclosing negative answer unsafe to memoize"
     );
     let nested = SimpFactReasoningGuard::enter(&second, true);
@@ -716,8 +721,8 @@ fn simp_fact_reasoning_guard_refuses_reentry_and_keeps_the_outer_proof() {
         "the refused re-entry left the outer proof registered"
     );
     assert_eq!(
-        search_truncations(),
-        truncations_before + 2,
+        incomplete_reasoning_epoch(),
+        epoch_before + 2,
         "each refused query advances the incompleteness epoch"
     );
     drop(outer);
@@ -737,7 +742,7 @@ impl ConditionDecisionGuard {
         CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| {
             let mut in_progress = in_progress.borrow_mut();
             if !in_progress.insert(condition.clone()) {
-                note_search_truncation();
+                note_incomplete_reasoning();
                 return None;
             }
             Some(Self {
