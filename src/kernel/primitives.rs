@@ -3122,15 +3122,18 @@ pub struct CVerifiedPureTheorem {
 
 /// A local, symbolic contract-refinement problem opened by a pure theorem.
 ///
-/// Construction is kernel-owned: the target must already have a verified or
-/// explicitly external rule, and the named contract and concrete function are
-/// instantiated with the same fresh arguments.  The surface proof may inspect
-/// the argument bindings and entry state only to lower explicit logical case
-/// splits; it cannot manufacture a refinement authority.
+/// Construction is kernel-owned. The refining interface is either a verified
+/// or explicitly external concrete function, or another exact named contract
+/// fact for the same symbolic pointer. Both interfaces are instantiated with
+/// the same fresh arguments. The surface proof may inspect the argument
+/// bindings and entry state only to lower explicit logical case splits; it
+/// cannot manufacture a refinement authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionContractRefinementContext {
     pub(super) contract: CFunctionContract,
     pub(super) function: CFunction,
+    pub(super) pointer: CPointerValue,
+    pub(super) source_contract: Option<CFunctionContract>,
     pub(super) argument_values: Vec<CValue>,
     pub(super) result_variable: Variable,
     pub(super) next_kernel_variable: u64,

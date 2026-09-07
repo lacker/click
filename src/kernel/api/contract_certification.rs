@@ -2731,6 +2731,60 @@ pub(super) fn certification_proves_proposition(
     false
 }
 
+/// Instantiates an explicitly selected pure theorem whose one pointer binder
+/// relates named contract predicates.
+///
+/// The caller supplies only authorities for theorem names that the surface
+/// proof actually applied. Work is therefore proportional to that explicit
+/// certificate input, not to ambient facts or project-wide contracts.
+pub(super) fn certification_proves_predicate_from_verified_pure_implications(
+    assumptions: &PureFactContext,
+    verified_facts: &[Proposition],
+    target: &Proposition,
+) -> bool {
+    let Proposition::Predicate {
+        arguments: target_arguments,
+        ..
+    } = target
+    else {
+        return false;
+    };
+    let Some(target_pointer) = target_arguments.iter().find_map(|argument| match argument {
+        Term::CValue(CValue::Pointer(pointer)) if pointer.pointer().block.is_function() => {
+            Some(pointer)
+        }
+        _ => None,
+    }) else {
+        return false;
+    };
+    verified_facts.iter().any(|fact| {
+        let Proposition::ForAll {
+            var,
+            sort: Sort::CPointer(pointer_type),
+            body,
+            ..
+        } = fact
+        else {
+            return false;
+        };
+        if pointer_type != &target_pointer.c_type() {
+            return false;
+        }
+        let instantiated =
+            substitute_pointer_variable_in_proposition(body, *var, target_pointer.pointer());
+        let mut conclusion = &instantiated;
+        let mut premises = Vec::new();
+        while let Proposition::Implies(premise, rest) = conclusion {
+            premises.push(premise.as_ref());
+            conclusion = rest;
+        }
+        conclusion == target
+            && premises
+                .into_iter()
+                .all(|premise| certification_proves_proposition(assumptions, premise))
+    })
+}
+
 /// Two load variables for one address are equal when the cell is framed
 /// across the effects between the snapshots they were read from: the
 /// bounded, memoized unchanged-load check over recorded derivations and

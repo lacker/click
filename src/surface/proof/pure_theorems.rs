@@ -1400,41 +1400,142 @@ fn verify_contract_refinement_theorem(
     let [argument] = arguments.as_slice() else {
         return Ok(None);
     };
-    let Some(target) = contract_expression_function_address(argument) else {
+    let concrete_target = contract_expression_function_address(argument);
+    let symbolic_binding = match argument {
+        ContractExpression::Binding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => Some(name.as_str()),
+        _ => None,
+    };
+    if concrete_target.is_none() && symbolic_binding.is_none() {
         return Ok(None);
-    };
-    if !theorem.parameters().is_empty() || !theorem.requires().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}`: a contract-refinement theorem currently must be closed and have no `requires` clauses"
-        )));
     }
+    let source_contract = if concrete_target.is_some() {
+        if !theorem.parameters().is_empty() || !theorem.requires().is_empty() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: refinement of a concrete function must be closed and have no `requires` clauses"
+            )));
+        }
+        None
+    } else {
+        let binding = symbolic_binding.expect("non-concrete refinement has a symbolic binding");
+        let [parameter] = theorem.parameters() else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: abstract contract refinement requires exactly one function-pointer theorem parameter"
+            )));
+        };
+        if parameter.name() != binding || !matches!(parameter.c_type(), C0Type::FunctionPointer(_))
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: `{binding}` must be the theorem's function-pointer parameter"
+            )));
+        }
+        let [requirement] = theorem.requires() else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: abstract contract refinement requires exactly one source-contract fact"
+            )));
+        };
+        let Some(ClickProposition::PredicateCall {
+            name: source_name,
+            arguments: source_arguments,
+        }) = requirement.proposition()
+        else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: abstract contract refinement requires a source-contract proposition"
+            )));
+        };
+        let [source_argument] = source_arguments.as_slice() else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: source contract `{source_name}` expects the symbolic callback argument"
+            )));
+        };
+        if source_argument != argument {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: source and target contracts must describe the same symbolic callback `{binding}`"
+            )));
+        }
+        let source_definition = predicate_environment
+            .contract_definition(source_name)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}`: `{source_name}` is not a named function contract"
+                ))
+            })?;
+        Some((source_name.as_str(), source_definition))
+    };
     let SourceProof::Script(tactics) = ensure_clause.proof() else {
+        let subject = concrete_target
+            .map(|target| format!("&{target}"))
+            .or_else(|| symbolic_binding.map(str::to_string))
+            .expect("a refinement theorem has a recognized subject");
         return Err(ClickError::new(format!(
-            "`{claim_label}`: proving `{name}(&{target})` requires an explicit proof beginning with `unfold({name});`"
+            "`{claim_label}`: proving `{name}({subject})` requires an explicit contract-refinement proof"
         )));
     };
-    let Some((ProofTactic::UnfoldPredicate(unfolded), proof_tactics)) = tactics.split_first()
-    else {
-        return Err(ClickError::new(format!(
-            "`{claim_label}`: contract-refinement proof must begin with `unfold({name});`"
-        )));
+    let proof_tactics = if let Some((source_name, _)) = source_contract {
+        let Some((first_two, remainder)) = tactics.split_at_checked(2) else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: abstract refinement must begin by unfolding `{source_name}` and `{name}`"
+            )));
+        };
+        let unfolded = first_two
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::UnfoldPredicate(unfolded) => Some(unfolded.as_str()),
+                _ => None,
+            })
+            .collect::<Option<BTreeSet<_>>>();
+        let expected = BTreeSet::from([source_name, name.as_str()]);
+        if unfolded.as_ref() != Some(&expected) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: abstract refinement must begin by unfolding `{source_name}` and `{name}`"
+            )));
+        }
+        remainder
+    } else {
+        let Some((ProofTactic::UnfoldPredicate(unfolded), remainder)) = tactics.split_first()
+        else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: contract-refinement proof must begin with `unfold({name});`"
+            )));
+        };
+        if unfolded != name {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: expected `unfold({name});`, got `unfold({unfolded});`"
+            )));
+        }
+        remainder
     };
-    if unfolded != name {
-        return Err(ClickError::new(format!(
-            "`{claim_label}`: expected `unfold({name});`, got `unfold({unfolded});`"
-        )));
-    }
     let function_environment = function_environment.ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}`: contract-refinement theorems require the C function environment"
         ))
     })?;
-    let refinement = c_function_contract_refinement_context(function_environment, name, target)
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}`: `{target}` is not a verified or external function compatible with contract `{name}`"
-            ))
-        })?;
+    let refinement = match (concrete_target, source_contract) {
+        (Some(target), None) => {
+            c_function_contract_refinement_context(function_environment, name, target).ok_or_else(
+                || {
+                    ClickError::new(format!(
+                        "`{claim_label}`: `{target}` is not a verified or external function compatible with contract `{name}`"
+                    ))
+                },
+            )?
+        }
+        (None, Some((source_name, _))) => {
+            let binding = symbolic_binding.expect("abstract refinement has a callback binding");
+            let pointer = context.values.get(binding).ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}`: symbolic callback `{binding}` has no theorem value"
+                ))
+            })?;
+            c_contract_refinement_context(function_environment, name, source_name, pointer)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}`: contract `{source_name}` is not signature-compatible with `{name}`"
+                    ))
+                })?
+        }
+        _ => unreachable!("refinement subject classification is exhaustive"),
+    };
     let argument_values = c_function_contract_refinement_arguments(&refinement);
     let contract_parameters = contract_definition
         .function_block()
@@ -1531,8 +1632,12 @@ fn verify_contract_refinement_theorem(
     })?;
     let kernel_authority = prove_c_function_contract_refinement(&refinement, goal.clone(), &proof)
         .ok_or_else(|| {
+            let subject = concrete_target
+                .map(|target| format!("&{target}"))
+                .or_else(|| symbolic_binding.map(str::to_string))
+                .expect("refinement theorem has a subject");
             ClickError::new(format!(
-                "`{claim_label}`: contract-refinement proof does not establish `{name}(&{target})`"
+                "`{claim_label}`: contract-refinement proof does not establish `{name}({subject})`"
             ))
         })?;
     fn certificate_tactics(tactics: &[ProofTactic]) -> Vec<ProofTactic> {
@@ -1561,7 +1666,7 @@ fn verify_contract_refinement_theorem(
         ensure_clause: ensure_clause.clone(),
         proof_kind: ProofKind::TacticScript,
         proof: Some(certificate),
-        requires: Vec::new(),
+        requires: context.requires.clone(),
         conclusion: goal,
         kernel_authority: Some(kernel_authority),
     }))

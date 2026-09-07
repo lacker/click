@@ -825,7 +825,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &click_function_environment,
             Some(&function_environment),
         )?;
-        // Verified pure theorems over scalar parameters become closed
+        // Verified pure theorems over supported kernel binders become closed
         // universally-quantified facts, so kernel contract certification can
         // discharge obligations the surface proof established by `apply`.
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
@@ -837,7 +837,12 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     .theorem_definition
                     .parameters()
                     .iter()
-                    .all(|parameter| parameter.click_type() == &ClickType::C(C0Type::Int32))
+                    .all(|parameter| {
+                        matches!(
+                            parameter.click_type(),
+                            ClickType::C(C0Type::Int32 | C0Type::FunctionPointer(_))
+                        )
+                    })
         }) {
             let implication = theorem.requires.iter().rev().fold(
                 theorem.conclusion.clone(),
@@ -851,10 +856,19 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 .iter()
                 .enumerate()
                 .rev()
-                .fold(implication, |body, (index, _)| Proposition::ForAll {
-                    var: crate::kernel::Variable(index as u64),
-                    sort: crate::kernel::Sort::CInt32,
-                    body: Box::new(body),
+                .fold(implication, |body, (index, parameter)| {
+                    let sort = match parameter.c_type() {
+                        C0Type::Int32 => crate::kernel::Sort::CInt32,
+                        C0Type::FunctionPointer(_) => {
+                            crate::kernel::Sort::CPointer(parameter.c_type().to_kernel_type())
+                        }
+                        _ => unreachable!("the theorem binder filter admits only supported types"),
+                    };
+                    Proposition::ForAll {
+                        var: crate::kernel::Variable(index as u64),
+                        sort,
+                        body: Box::new(body),
+                    }
                 });
             theorem_certification_facts
                 .entry(theorem.theorem_definition.name().to_string())
@@ -1099,6 +1113,10 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 &format!("{}.contract certification", function_block.signature.name()),
             )?;
         let mut certification_theorems = BTreeSet::new();
+        // The checked C transition certificate does not retain pure
+        // theorem-application bookkeeping. Select those authorities from the
+        // exact source proofs as well as any retained checked tactics.
+        collect_function_theorem_dependencies(&function_block, &mut certification_theorems);
         for verified in &function_verified {
             if let Some(tactics) = &verified.proof_tactics {
                 collect_applied_theorems(tactics, &mut certification_theorems);

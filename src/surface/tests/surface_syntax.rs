@@ -266,6 +266,29 @@ fn parses_pure_theorem_definition() {
 }
 
 #[test]
+fn parses_c_function_pointer_type_in_pure_theorem_parameter() {
+    let source = r#"
+            theorem callback_identity(
+                callback: int32 (*)(int32, struct item*)
+            ) {
+                ensures callback == callback by simp;
+            }
+        "#;
+
+    let file = parse(source).expect("function-pointer theorem parameter should parse");
+    let parameter = &file.theorem_definitions()[0].parameters()[0];
+    assert!(matches!(parameter.c_type(), C0Type::FunctionPointer(_)));
+    let signature = parameter
+        .function_pointer_signature()
+        .expect("the parameter should retain its nominal signature");
+    assert_eq!(signature.return_type(), C0Type::Int32);
+    assert_eq!(signature.parameters().len(), 2);
+    assert_eq!(signature.parameters()[0].c_type(), C0Type::Int32);
+    assert_eq!(signature.parameters()[1].c_type(), C0Type::Int32Pointer);
+    assert_eq!(signature.parameters()[1].struct_name(), Some("item"));
+}
+
+#[test]
 fn parses_and_prints_pure_induction_tactics() {
     let source = r#"
         theorem induction_shape(n: int32) {

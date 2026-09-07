@@ -3344,8 +3344,16 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                     "derived forall context-free check",
                                     || certification_proves_context_free_forall(fact),
                                 ));
+                        let theorem_predicate_certified = !resource_certified
+                            && !context_free_certified
+                            && certification_proves_predicate_from_verified_pure_implications(
+                                &derived_assumptions,
+                                &pure_theorem_facts,
+                                fact,
+                            );
                         let proposition_certified = !resource_certified
                             && !context_free_certified
+                            && !theorem_predicate_certified
                             && crate::instrumentation::measure_operation(
                                 function.name(),
                                 "contract certification",
@@ -3356,7 +3364,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             crate::instrumentation::measure_operation(
                                 function.name(),
                                 "contract certification",
-                                if proposition_certified {
+                                if context_free_certified
+                                    || theorem_predicate_certified
+                                    || proposition_certified
+                                {
                                     "derived proposition result: proved"
                                 } else {
                                     "derived proposition result: unproved"
@@ -3364,7 +3375,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                 || (),
                             );
                         }
-                        if resource_certified || context_free_certified || proposition_certified {
+                        if resource_certified
+                            || context_free_certified
+                            || theorem_predicate_certified
+                            || proposition_certified
+                        {
                             derived_assumptions = crate::instrumentation::measure_operation(
                                 function.name(),
                                 "contract certification",
@@ -3384,6 +3399,14 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             let mut entry_resources = entry_state.resources().clone();
             for fact in &derived_entry_facts {
                 if assumptions.proves_exact(fact) {
+                    assumptions = assumptions.assume_proposition(fact.clone());
+                    continue;
+                }
+                if certification_proves_predicate_from_verified_pure_implications(
+                    &assumptions,
+                    &pure_theorem_facts,
+                    fact,
+                ) {
                     assumptions = assumptions.assume_proposition(fact.clone());
                     continue;
                 }
@@ -4494,6 +4517,41 @@ pub fn c_function_contract_refinement_context(
     )
 }
 
+/// Opens one named contract as an implementation of another for the same
+/// exact symbolic function-pointer value.
+///
+/// Both contract names are exact environment lookups. The source fact remains
+/// an explicit premise of the theorem authority issued after refinement; this
+/// operation does not infer contracts from a signature or inspect project
+/// functions.
+pub fn c_contract_refinement_context(
+    environment: &CExecutionEnvironment,
+    target_contract_name: &str,
+    source_contract_name: &str,
+    pointer: &CValue,
+) -> Option<CFunctionContractRefinementContext> {
+    let target = environment.get_function_contract(target_contract_name)?;
+    let source = environment.get_function_contract(source_contract_name)?;
+    let CValue::Pointer(pointer) = pointer else {
+        return None;
+    };
+    if pointer.c_type() != target.function_pointer_type()
+        || pointer.c_type() != source.function_pointer_type()
+        || !matches!(pointer.pointer().block, PointerBlock::FunctionSymbolic(_))
+        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+    {
+        return None;
+    }
+    let mut context = prepare_function_contract_refinement_context(
+        target,
+        source.template(),
+        &mut ExecutionBudget::default(),
+    )?;
+    context.pointer = pointer.clone();
+    context.source_contract = Some(source.clone());
+    Some(context)
+}
+
 /// Returns the shared arbitrary argument values introduced by a refinement
 /// theorem's `unfold(Contract)` step.
 pub fn c_function_contract_refinement_arguments(
@@ -4523,12 +4581,15 @@ pub fn prove_c_function_contract_refinement(
     let Proposition::Predicate { name, arguments } = &conclusion else {
         return None;
     };
-    let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice() else {
+    let [
+        state @ Term::CState(_),
+        Term::CValue(CValue::Pointer(pointer)),
+    ] = arguments.as_slice()
+    else {
         return None;
     };
     if name != &context.contract.predicate_name()
-        || pointer.pointer().block != PointerBlock::Function(context.function.name().to_string())
-        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+        || pointer != &context.pointer
         || pointer.c_type() != context.contract.function_pointer_type()
     {
         return None;
@@ -4565,8 +4626,41 @@ pub fn prove_c_function_contract_refinement(
         }
     }
 
-    check(context, proof, &mut Vec::new()).then(|| CVerifiedPureTheorem {
-        theorem: Theorem::new(conclusion),
+    if !check(context, proof, &mut Vec::new()) {
+        return None;
+    }
+    let theorem = match &context.source_contract {
+        None => {
+            if context.pointer.pointer().block
+                != PointerBlock::Function(context.function.name().to_string())
+            {
+                return None;
+            }
+            conclusion
+        }
+        Some(source) => {
+            let PointerBlock::FunctionSymbolic(variable) = &context.pointer.pointer().block else {
+                return None;
+            };
+            let premise = Proposition::Predicate {
+                name: source.predicate_name(),
+                arguments: vec![
+                    state.clone(),
+                    Term::CValue(CValue::Pointer(context.pointer.clone())),
+                ],
+            };
+            Proposition::ForAll {
+                var: *variable,
+                sort: Sort::CPointer(context.pointer.c_type()),
+                body: Box::new(Proposition::Implies(
+                    Box::new(premise),
+                    Box::new(conclusion),
+                )),
+            }
+        }
+    };
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(theorem),
     })
 }
 

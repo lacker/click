@@ -23,12 +23,13 @@ use crate::kernel::{
     ResourceContextValidityError, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
     SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
     Variable, abstract_c_state_for_join, c_checked_function_proposition,
-    c_condition_fact_has_memory, c_condition_fact_memories, c_do_while_preservation_contexts,
-    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
-    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
-    c_function_contract_refinement_entry_state, c_function_entry_state,
-    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
-    c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
+    c_condition_fact_has_memory, c_condition_fact_memories, c_contract_refinement_context,
+    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
+    c_function_contract_entry_state, c_function_contract_refinement_arguments,
+    c_function_contract_refinement_context, c_function_contract_refinement_entry_state,
+    c_function_entry_state, c_function_execution_candidates_from_outcomes,
+    c_function_outcome_from_statement_outcome, c_function_specification,
+    c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
@@ -3887,7 +3888,7 @@ fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
     parameter
         .click_type()
         .c_type()
-        .is_some_and(C0Type::is_pointer)
+        .is_some_and(|c_type| click_array_element_type(c_type).is_some())
 }
 
 fn click_array_element_type(c_type: C0Type) -> Option<CType> {

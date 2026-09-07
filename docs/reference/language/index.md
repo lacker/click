@@ -259,7 +259,10 @@ theorem increment_preserves_positive(x: int32) {
 ```
 
 Like every Click-native declaration, theorem parameters use `name: type`
-spelling. A theorem body uses the same contract-block shape as C function
+spelling. A symbolic callback uses a nameless C function-pointer declarator
+as its type, for example `step: void (*)(int32*)`; the bound value remains an
+ordinary function pointer, and behavioral knowledge remains an explicit
+`Contract(step)` proposition. A theorem body uses the same contract-block shape as C function
 specs: immutable `let` bindings,
 proposition `requires` clauses, and proposition `ensures` clauses with proof
 clauses. A theorem-only `.click` file does not need a `verifying "file.c";`

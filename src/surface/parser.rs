@@ -823,7 +823,25 @@ impl Parser {
             self.expect(Token::Colon)?;
             let (click_type, parsed_c_type) = self.parse_click_type()?;
             let parsed_parameter = if let Some(parsed_type) = parsed_c_type {
-                self.parse_parameter_array_suffix(name, parsed_type)?
+                if self.peek() == Some(&Token::LParen) {
+                    let (c_type, function_pointer_signature) =
+                        self.parse_abstract_function_pointer_type(parsed_type)?;
+                    ParsedParameter {
+                        parameter: FunctionParameter {
+                            click_type: ClickType::C(c_type),
+                            name,
+                            struct_name: None,
+                            function_pointer_signature: Some(function_pointer_signature),
+                            constant: false,
+                            pointee_constant: false,
+                        },
+                        struct_name: None,
+                        declared_bytes: None,
+                        struct_array: false,
+                    }
+                } else {
+                    self.parse_parameter_array_suffix(name, parsed_type)?
+                }
             } else {
                 ParsedParameter {
                     parameter: FunctionParameter {
@@ -1736,6 +1754,32 @@ impl Parser {
         self.expect(Token::Star)?;
         let name = self.expect_ident("function-pointer parameter name")?;
         self.expect(Token::RParen)?;
+        let (c_type, function_pointer_signature) =
+            self.parse_function_pointer_signature_tail(return_type)?;
+        Ok((name, c_type, function_pointer_signature))
+    }
+
+    /// Parses the nameless C declarator used as a Click-native binder type:
+    /// `callback: int32 (*)(int32, int32)`.
+    fn parse_abstract_function_pointer_type(
+        &mut self,
+        return_type: ParsedType,
+    ) -> Result<(C0Type, syntax::C0FunctionPointerSignature), ClickError> {
+        if return_type.struct_name.is_some() && !return_type.struct_pointer {
+            return Err(self.error(
+                "function-pointer return values must use modeled scalars or struct pointers",
+            ));
+        }
+        self.expect(Token::LParen)?;
+        self.expect(Token::Star)?;
+        self.expect(Token::RParen)?;
+        self.parse_function_pointer_signature_tail(return_type)
+    }
+
+    fn parse_function_pointer_signature_tail(
+        &mut self,
+        return_type: ParsedType,
+    ) -> Result<(C0Type, syntax::C0FunctionPointerSignature), ClickError> {
         self.expect(Token::LParen)?;
         let mut parameters = Vec::new();
         if self.peek() != Some(&Token::RParen) {
@@ -1795,7 +1839,6 @@ impl Parser {
             parameters,
         );
         Ok((
-            name,
             C0Type::FunctionPointer(signature),
             function_pointer_signature,
         ))

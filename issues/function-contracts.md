@@ -65,6 +65,13 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   it does not enumerate guards or scan project functions. The resulting
   theorem can be applied to introduce the reusable contract fact at a
   higher-order call site.
+- A pure theorem may bind a symbolic callback with a nameless C
+  function-pointer type such as `step: void (*)(int32*)`, require one named
+  contract for it, and ensure another. Unfolding both contracts runs the same
+  precondition, postcondition, resource-frame, and mutable-footprint
+  refinement judgment used for concrete targets. Applying the theorem
+  transports the contract fact for that exact symbolic pointer; certification
+  considers only explicitly applied theorem authorities.
 
 The remaining semantic step is refinement for explicitly quantified resources
 and broader state-dependent propositions at concrete-pointer formation.

@@ -1364,6 +1364,14 @@ pub(super) fn prepare_function_contract_refinement_context(
     Some(CFunctionContractRefinementContext {
         contract: contract.clone(),
         function: function.clone(),
+        pointer: CPointerValue::new(
+            Pointer {
+                block: PointerBlock::Function(function.name().to_string()),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            contract.function_pointer_type(),
+        ),
+        source_contract: None,
         argument_values,
         result_variable,
         next_kernel_variable: budget.next_kernel_variable,
