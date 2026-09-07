@@ -85,7 +85,7 @@ fn contract_substitution_renames_colliding_range_fold_and_let_binders() {
     };
     let let_expression = ContractExpression::Let {
         name: "i".to_string(),
-        c_type: Some(C0Type::Int32),
+        click_type: Some(ClickType::C(C0Type::Int32)),
         value: Box::new(current_int(0)),
         body: Box::new(ContractExpression::Add(
             Box::new(current_var("argument")),

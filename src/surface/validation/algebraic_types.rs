@@ -820,11 +820,11 @@ fn validate_algebraic_expression(
         }
         ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value,
             body,
         } => {
-            validate_algebraic_expression(
+            let value_type = validate_algebraic_expression(
                 value,
                 variables,
                 click_functions,
@@ -832,19 +832,43 @@ fn validate_algebraic_expression(
                 definitions,
                 context,
             )?;
-            let mut body_variables = variables.clone();
-            if let Some(c_type) = c_type {
-                body_variables.insert(name.clone(), *c_type);
+            match (click_type, &value_type) {
+                (Some(ClickType::Algebraic(expected)), Some(actual)) if expected == actual => {}
+                (Some(ClickType::Algebraic(expected)), Some(actual)) => {
+                    return Err(ClickError::new(format!(
+                        "let binding `{name}` expects {}, got {} in {context}",
+                        describe_click_type(&ClickType::Algebraic(expected.clone())),
+                        describe_click_type(&ClickType::Algebraic(actual.clone()))
+                    )));
+                }
+                (Some(ClickType::Algebraic(expected)), None) => {
+                    return Err(ClickError::new(format!(
+                        "let binding `{name}` expects {}, got a C value in {context}",
+                        describe_click_type(&ClickType::Algebraic(expected.clone()))
+                    )));
+                }
+                (Some(ClickType::C(expected)), Some(actual)) => {
+                    return Err(ClickError::new(format!(
+                        "let binding `{name}` expects {}, got {} in {context}",
+                        describe_c0_type(*expected),
+                        describe_click_type(&ClickType::Algebraic(actual.clone()))
+                    )));
+                }
+                _ => {}
             }
-            validate_algebraic_expression(
+            let substituted = substitute_contract_expression(
                 body,
-                &body_variables,
+                &BTreeMap::from([(name.clone(), value.as_ref().clone())]),
+            )
+            .map_err(ClickError::new)?;
+            validate_algebraic_expression(
+                &substituted,
+                variables,
                 click_functions,
                 predicates,
                 definitions,
                 context,
-            )?;
-            Ok(None)
+            )
         }
         ContractExpression::Call { name, arguments } => {
             let function = click_functions.get(name);
@@ -895,6 +919,7 @@ fn validate_algebraic_expression(
         }
         ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
+        | ContractExpression::Binding(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceCount(_)
         | ContractExpression::ResourceWildcard => Ok(None),

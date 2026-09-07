@@ -1323,13 +1323,13 @@ fn function_contract_requirement_is_proven(
 }
 
 /// Proves behavioral callback refinement. Exact matching remains the fast
-/// path. The semantic path keeps resource transfers exact, checks effect
-/// containment, instantiates both interfaces with the same symbolic
-/// arguments, then checks preconditions contravariantly and postconditions
-/// covariantly. Concrete mutable ranges may be narrower than the named
-/// contract's upper bound. Stateful refinement is deliberately limited to
-/// memory propositions backed by a nonempty resource transition and
-/// unguarded named mutable footprint.
+/// path. The semantic path checks framed owned-memory resource transitions
+/// and effect containment, instantiates both interfaces with the same
+/// symbolic arguments, then checks preconditions contravariantly and
+/// postconditions covariantly. Concrete resource needs and mutable ranges may
+/// be narrower than the named contract's upper bounds. Stateful refinement is
+/// deliberately limited to memory propositions backed by a nonempty resource
+/// transition and unguarded named mutable footprint.
 fn function_refines_named_contract(
     contract: &CFunctionContract,
     function: &CFunction,
@@ -1419,7 +1419,7 @@ fn function_refines_named_contract(
         set_function_result(&mut contract_post, contract.template(), result.clone());
         set_function_result(&mut function_post, function, result);
     }
-    if !exact_resource_interfaces_and_compatible_effects(
+    if !compatible_resource_and_effect_interfaces(
         contract.template(),
         function,
         &contract_entry,
@@ -1480,7 +1480,75 @@ fn evaluate_contract_mutable_ranges(
     Ok(Some(ranges))
 }
 
-fn exact_resource_interfaces_and_compatible_effects(
+fn compatible_resource_and_effect_interfaces(
+    contract: &CFunction,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    contract_post: &CState,
+    function_post: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if !resource_transition_is_compatible(
+        contract,
+        function,
+        contract_entry,
+        function_entry,
+        contract_post,
+        function_post,
+        assumptions,
+        budget,
+    )? {
+        return Ok(false);
+    }
+    mutable_footprint_is_compatible(
+        contract,
+        function,
+        contract_entry,
+        function_entry,
+        assumptions,
+        budget,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resource_transition_is_compatible(
+    contract: &CFunction,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    contract_post: &CState,
+    function_post: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if exact_resource_interfaces_match(
+        contract,
+        function,
+        contract_entry,
+        function_entry,
+        contract_post,
+        function_post,
+        assumptions,
+        budget,
+    )? {
+        return Ok(true);
+    }
+    framed_owned_memory_transition_refines(
+        contract,
+        function,
+        contract_entry,
+        function_entry,
+        contract_post,
+        function_post,
+        assumptions,
+        budget,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exact_resource_interfaces_match(
     contract: &CFunction,
     function: &CFunction,
     contract_entry: &CState,
@@ -1549,14 +1617,126 @@ fn exact_resource_interfaces_and_compatible_effects(
             return Ok(false);
         }
     }
-    mutable_footprint_is_compatible(
-        contract,
-        function,
+    Ok(true)
+}
+
+fn context_contains_only_owned_memory(resources: &ResourceContext) -> bool {
+    resources.facts().iter().all(|resource| {
+        matches!(
+            resource,
+            CResourceFact::Own(CResource::Memory(_), quantity)
+                if quantity.as_const() == Some(1)
+        )
+    })
+}
+
+fn evaluate_refinement_resource_context(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<ResourceContext>> {
+    Ok(
+        match evaluate_function_resource_context(state, resources, assumptions, budget)? {
+            Ok(resources) => Some(resources),
+            Err(_) => None,
+        },
+    )
+}
+
+/// Checks `named_requires = concrete_requires * frame` and then requires
+/// `concrete_ensures * frame` to provide `named_ensures`. The resource
+/// context's indexed split/merge algebra performs both range operations; no
+/// project functions or unrelated proof state are inspected.
+#[allow(clippy::too_many_arguments)]
+fn framed_owned_memory_transition_refines(
+    contract: &CFunction,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    contract_post: &CState,
+    function_post: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if !contract
+        .resource_requires()
+        .iter()
+        .chain(contract.resource_ensures())
+        .chain(function.resource_requires())
+        .chain(function.resource_ensures())
+        .all(|resource| matches!(resource, CResourceSpec::OwnMemory(_)))
+    {
+        return Ok(false);
+    }
+    let Some(contract_requires) = evaluate_refinement_resource_context(
         contract_entry,
-        function_entry,
+        contract.resource_requires(),
         assumptions,
         budget,
-    )
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(function_requires) = evaluate_refinement_resource_context(
+        function_entry,
+        function.resource_requires(),
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(function_ensures) = evaluate_refinement_resource_context(
+        function_post,
+        function.resource_ensures(),
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(contract_ensures) = evaluate_refinement_resource_context(
+        contract_post,
+        contract.resource_ensures(),
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(false);
+    };
+    if [
+        &contract_requires,
+        &function_requires,
+        &function_ensures,
+        &contract_ensures,
+    ]
+    .into_iter()
+    .any(|resources| !context_contains_only_owned_memory(resources))
+    {
+        return Ok(false);
+    }
+
+    let Some(frame) = contract_requires
+        .clone()
+        .without_facts(function_requires.facts(), assumptions)
+    else {
+        return Ok(false);
+    };
+    let concrete_output = match frame.try_compose_with_facts_delaying_normalization(
+        function_ensures.facts().iter().cloned(),
+        assumptions,
+    ) {
+        Ok(resources) => resources,
+        Err(_) => return Ok(false),
+    };
+    Ok(resource_context_definitionally_contains(
+        &concrete_output,
+        &contract_ensures,
+        &[],
+        contract_post.memory(),
+        assumptions,
+    ))
 }
 
 fn mutable_footprint_is_compatible(

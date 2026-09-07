@@ -1806,7 +1806,8 @@ pub(in crate::surface) fn termination_measure_name(
     context: &str,
 ) -> Result<String, ClickError> {
     match expression {
-        ContractExpression::CFragment(CExpression::Variable(name))
+        ContractExpression::Binding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name))
         | ContractExpression::CBinding(name) => Ok(name.clone()),
         _ => Err(ClickError::new(format!(
             "{context} must name one int32 C variable; compound ranking expressions are not yet supported"

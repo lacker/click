@@ -388,7 +388,8 @@ pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickArrayRef, String> {
-    if let ContractExpression::CFragment(CExpression::Variable(name))
+    if let ContractExpression::Binding(name)
+    | ContractExpression::CFragment(CExpression::Variable(name))
     | ContractExpression::CBinding(name) = expression
         && let Some(array_ref) = array_refs.get(name)
     {

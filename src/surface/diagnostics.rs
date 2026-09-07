@@ -1084,7 +1084,9 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                     .join(", ")
             )
         }
-        ContractExpression::AlgebraicVariable { name, .. } => name.clone(),
+        ContractExpression::AlgebraicVariable { name, .. } | ContractExpression::Binding(name) => {
+            name.clone()
+        }
         ContractExpression::AlgebraicMatch { scrutinee, arms } => format!(
             "match {} {{ {} }}",
             describe_contract_expression(scrutinee),

@@ -790,12 +790,12 @@ fn expand_declared_resource_expression(
         },
         ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value,
             body,
         } => ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value: Box::new(recurse(*value)?),
             body: Box::new(recurse(*body)?),
         },

@@ -13,17 +13,35 @@ fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
 fn contract_expression_is_algebraic(
     expression: &ContractExpression,
     functions: &ClickFunctionEnvironment,
+    environment: &SpecElaborationContext,
+    lexical_bindings: &mut Vec<(String, bool)>,
 ) -> bool {
     match expression {
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => true,
+        ContractExpression::Binding(name) => lexical_bindings
+            .iter()
+            .rev()
+            .find_map(|(binding, algebraic)| (binding == name).then_some(*algebraic))
+            .unwrap_or_else(|| environment.algebraic_values.contains_key(name)),
         ContractExpression::Old(inner)
         | ContractExpression::At {
             expression: inner, ..
-        } => contract_expression_is_algebraic(inner, functions),
-        ContractExpression::AlgebraicMatch { arms, .. } => arms
-            .first()
-            .is_some_and(|arm| contract_expression_is_algebraic(&arm.body, functions)),
+        } => contract_expression_is_algebraic(inner, functions, environment, lexical_bindings),
+        ContractExpression::AlgebraicMatch { arms, .. } => arms.first().is_some_and(|arm| {
+            contract_expression_is_algebraic(&arm.body, functions, environment, lexical_bindings)
+        }),
+        ContractExpression::Let {
+            name, value, body, ..
+        } => {
+            let value_is_algebraic =
+                contract_expression_is_algebraic(value, functions, environment, lexical_bindings);
+            lexical_bindings.push((name.clone(), value_is_algebraic));
+            let result =
+                contract_expression_is_algebraic(body, functions, environment, lexical_bindings);
+            lexical_bindings.pop();
+            result
+        }
         ContractExpression::Call { name, .. } => functions
             .get(name)
             .is_some_and(|definition| matches!(definition.return_type(), ClickType::Algebraic(_))),
@@ -1139,9 +1157,17 @@ impl AnnotationLowerer<'_> {
                         sequence: self.lower_contract_sequence_to_spec(right, environment)?,
                     });
                 }
-                let has_algebraic =
-                    contract_expression_is_algebraic(left, self.click_function_environment)
-                        || contract_expression_is_algebraic(right, self.click_function_environment);
+                let has_algebraic = contract_expression_is_algebraic(
+                    left,
+                    self.click_function_environment,
+                    environment,
+                    &mut Vec::new(),
+                ) || contract_expression_is_algebraic(
+                    right,
+                    self.click_function_environment,
+                    environment,
+                    &mut Vec::new(),
+                );
                 if has_algebraic {
                     let equal = match operator {
                         ComparisonOperator::Equal => true,
@@ -1571,6 +1597,14 @@ impl AnnotationLowerer<'_> {
                 lowered: expression,
                 ..
             } => self.lower_c_fragment_to_spec(expression, environment),
+            ContractExpression::Binding(name) => {
+                if environment.algebraic_values.contains_key(name) {
+                    return Err(format!(
+                        "algebraic binding `{name}` is not valid in a C-valued expression"
+                    ));
+                }
+                self.lower_c_fragment_to_spec(&CExpression::Variable(name.clone()), environment)
+            }
             ContractExpression::CBinding(name) => {
                 self.lower_c_fragment_to_spec(&CExpression::Variable(name.clone()), environment)
             }
@@ -1778,12 +1812,35 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::Let {
                 name,
-                c_type,
+                click_type,
                 value,
                 body,
             } => {
+                let value_is_algebraic = contract_expression_is_algebraic(
+                    value,
+                    self.click_function_environment,
+                    environment,
+                    &mut Vec::new(),
+                );
+                if value_is_algebraic {
+                    let value = self.lower_contract_algebraic_to_spec(value, environment)?;
+                    if let Some(ClickType::Algebraic(expected)) = click_type
+                        && value.algebraic_type != self.cached_algebraic_kernel_type(expected)?
+                    {
+                        return Err(format!(
+                            "let binding `{name}` has an algebraic value of the wrong type"
+                        ));
+                    }
+                    let mut body_environment = environment.clone();
+                    body_environment
+                        .algebraic_values
+                        .insert(name.clone(), value);
+                    return self.lower_contract_expression_to_spec(body, &body_environment);
+                }
                 let value = self.lower_contract_expression_to_spec(value, environment)?;
-                if let (Some(c_type), SpecExpression::Value(fixed)) = (c_type, &value) {
+                if let (Some(ClickType::C(c_type)), SpecExpression::Value(fixed)) =
+                    (click_type, &value)
+                {
                     if !c_value_matches_click_type(fixed, *c_type) {
                         return Err(format!(
                             "let binding `{name}` evaluated to {fixed:?}, which does not match {c_type:?}"
@@ -1825,6 +1882,11 @@ impl AnnotationLowerer<'_> {
                 }
                 self.symbolic_algebraic_variable(name, algebraic_type, *binder_index)
             }
+            ContractExpression::Binding(name) => environment
+                .algebraic_values
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("`{name}` is not an algebraic binding in this scope")),
             ContractExpression::AlgebraicConstructor {
                 algebraic_type,
                 variant,
@@ -1904,6 +1966,16 @@ impl AnnotationLowerer<'_> {
                         .to_string()
                 })?;
                 self.lower_contract_algebraic_to_spec(expression, &snapshot)
+            }
+            ContractExpression::Let {
+                name, value, body, ..
+            } => {
+                let value = self.lower_contract_algebraic_to_spec(value, environment)?;
+                let mut body_environment = environment.clone();
+                body_environment
+                    .algebraic_values
+                    .insert(name.clone(), value);
+                self.lower_contract_algebraic_to_spec(body, &body_environment)
             }
             ContractExpression::Call { name, arguments } => {
                 self.lower_click_function_call_to_algebraic_spec(name, arguments, environment)
@@ -2488,7 +2560,8 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => self.lower_at_array_ref_to_spec(selector, expression, environment),
-            ContractExpression::CFragment(CExpression::Variable(name)) => {
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => {
                 if let Some(array_ref) = environment.array_refs.get(name) {
                     return Ok(array_ref.clone());
                 }
@@ -2640,7 +2713,8 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> CType {
         match expression {
-            ContractExpression::CFragment(CExpression::Variable(name)) => environment
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => environment
                 .array_refs
                 .get(name)
                 .map(|array_ref| array_ref.element_type)

@@ -573,7 +573,7 @@ fn collect_contract_expression_binding_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } => {}
+        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {}
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_contract_expression_binding_names(argument, names);
@@ -1044,7 +1044,9 @@ fn rewrite_contract_expression_exact(
         (left, right, left_changed || right_changed)
     };
     match expression {
-        ContractExpression::AlgebraicVariable { .. } => (expression.clone(), false),
+        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {
+            (expression.clone(), false)
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -1236,7 +1238,7 @@ fn rewrite_contract_expression_exact(
         }
         ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value,
             body,
         } => {
@@ -1245,7 +1247,7 @@ fn rewrite_contract_expression_exact(
             (
                 ContractExpression::Let {
                     name: name.clone(),
-                    c_type: *c_type,
+                    click_type: click_type.clone(),
                     value: Box::new(value),
                     body: Box::new(body),
                 },
@@ -1656,14 +1658,20 @@ pub(in crate::surface) fn wrap_contract_where_lets_proposition(
         };
         let condition =
             apply_contract_let_expressions_to_proposition(condition.clone(), &bindings[..index])?;
-        let Some(c_type) = binding.c_type else {
+        let Some(click_type) = &binding.click_type else {
             return Err(format!(
                 "`let ... where` `{}` requires an explicit type annotation",
                 binding.name
             ));
         };
+        let ClickType::C(c_type) = click_type else {
+            return Err(format!(
+                "`let ... where` `{}` requires a C type annotation",
+                binding.name
+            ));
+        };
         proposition = ClickProposition::Exists {
-            c_type,
+            c_type: *c_type,
             name: binding.name.clone(),
             body: Box::new(ClickProposition::And(
                 Box::new(condition),
@@ -1702,7 +1710,7 @@ pub(in crate::surface) fn wrap_contract_lets_expression(
         };
         expression = ContractExpression::Let {
             name: binding.name.clone(),
-            c_type: binding.c_type,
+            click_type: binding.click_type.clone(),
             value: Box::new(value.clone()),
             body: Box::new(expression),
         };
@@ -1768,7 +1776,7 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
         ContractExpression::Field { base, .. } => {
             collect_contract_expression_referenced_names(base, names);
         }
-        ContractExpression::CBinding(name) => {
+        ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             names.insert(name.clone());
         }
         ContractExpression::ResourceCount(resource) => {
@@ -1931,6 +1939,10 @@ pub(in crate::surface) fn substitute_contract_expression(
 ) -> Result<ContractExpression, String> {
     match expression {
         ContractExpression::AlgebraicVariable { name, .. } => Ok(substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| expression.clone())),
+        ContractExpression::Binding(name) => Ok(substitutions
             .get(name)
             .cloned()
             .unwrap_or_else(|| expression.clone())),
@@ -2111,7 +2123,7 @@ pub(in crate::surface) fn substitute_contract_expression(
         }
         ContractExpression::Let {
             name,
-            c_type,
+            click_type,
             value,
             body,
         } => {
@@ -2120,7 +2132,7 @@ pub(in crate::surface) fn substitute_contract_expression(
             let (name, body) = prepare_contract_expression_binding_body(name, body, &scoped)?;
             Ok(ContractExpression::Let {
                 name,
-                c_type: *c_type,
+                click_type: click_type.clone(),
                 value: Box::new(substitute_contract_expression(value, substitutions)?),
                 body: Box::new(body),
             })
@@ -2355,7 +2367,9 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
-        ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
+        ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
+            Some(CExpression::Variable(name.clone()))
+        }
         ContractExpression::ResourceCount(_) => None,
         ContractExpression::ResourceWildcard => None,
         ContractExpression::Old(_) => None,
@@ -2438,7 +2452,9 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
-        ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
+        ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
+            Some(CExpression::Variable(name.clone()))
+        }
         ContractExpression::ResourceCount(_) => None,
         ContractExpression::ResourceWildcard => None,
         ContractExpression::Old(_) => None,
