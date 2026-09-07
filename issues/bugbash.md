@@ -460,6 +460,11 @@ state has both `original.first == 4` and `original.first == 5`.
 
 ## 6. A reversed range consume splits ownership into overlapping residues
 
+**Fixed** in `Reject consuming a reversed memory range`; the regression is
+`mdtests/reversed_range_consume_rejected.md`. Kept here until the next
+section split, since the guard audit below is still open.
+
+
 **Severity: critical.** A callee that consumes `p[lo..hi]` with `lo > hi`
 leaves the caller holding two owned ranges that overlap. Distinct owned facts
 are assumed disjoint, so a store through one no longer invalidates a load
