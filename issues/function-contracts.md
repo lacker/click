@@ -49,13 +49,17 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   exact in the resource name and arguments; extra concrete requirements,
   ownership from a named view, and consumption of a token promised back by
   the named contract are rejected.
+- Unit folded-composite transitions also use the inferred-frame rule. Folded
+  composites remain opaque during refinement: names and arguments match
+  exactly, and the check never searches or unfolds definitions to satisfy a
+  concrete child requirement.
 - Distinct field contracts can be packaged in a composite callback-table
   resource, borrowed through verified helpers, and composed in a pipeline
   whose final callback mutates a separately owned resource.
 
-The remaining semantic step is refinement for explicitly quantified tokens,
-composite resources, guarded effects, and broader state-dependent propositions
-at concrete-pointer formation. Stateful sequence, algebraic, resource-predicate,
+The remaining semantic step is refinement for explicitly quantified resources,
+guarded effects, and broader state-dependent propositions at concrete-pointer
+formation. Stateful sequence, algebraic, resource-predicate,
 explicit-memory-snapshot, and guarded-footprint propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.
