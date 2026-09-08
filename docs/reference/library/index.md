@@ -28,6 +28,174 @@ abstract resource allocation(base: int32*, bytes: int32);
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
+## Natural numbers
+
+`Nat` is an ordinary recursive logical datatype: `Zero` and `Succ(Nat)`.
+Its values are mathematical naturals, with no machine-width bound or wrapping.
+Unknown naturals remain symbolic; they are not eagerly built as successor chains.
+Addition is a pure recursive definition with checked induction proofs, not a new
+kernel arithmetic primitive. This slice does not add numeral sugar, ordering,
+or conversions to C integers.
+
+### `Nat`
+
+```click
+spec enum Nat {
+    Zero,
+    Succ(Nat),
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add`
+
+```click
+function nat_add(left: Nat, right: Nat) -> Nat
+    decreases left
+{
+    match left {
+        Nat::Zero => right,
+        Nat::Succ(previous) => Nat::Succ(nat_add(previous, right)),
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_left_identity`
+
+```click
+theorem nat_add_left_identity(n: Nat) {
+    ensures nat_add(Nat::Zero, n) == n by {
+        unfold(nat_add(Nat::Zero, n));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_succ_left`
+
+```click
+theorem nat_add_succ_left(n: Nat, m: Nat) {
+    ensures nat_add(Nat::Succ(n), m) == Nat::Succ(nat_add(n, m)) by {
+        unfold(nat_add(Nat::Succ(n), m));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_right_identity`
+
+```click
+theorem nat_add_right_identity(n: Nat) {
+    ensures nat_add(n, Nat::Zero) == n by {
+        induct(n) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, Nat::Zero));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), Nat::Zero));
+                rewrite(nat_add(previous, Nat::Zero) == previous);
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_succ_right`
+
+```click
+theorem nat_add_succ_right(n: Nat, m: Nat) {
+    ensures nat_add(n, Nat::Succ(m)) == Nat::Succ(nat_add(n, m)) by {
+        induct(n) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, Nat::Succ(m)));
+                unfold(nat_add(Nat::Zero, m));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), Nat::Succ(m)));
+                unfold(nat_add(Nat::Succ(previous), m));
+                rewrite(nat_add(previous, Nat::Succ(m)) == Nat::Succ(nat_add(previous, m)));
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_associative`
+
+```click
+theorem nat_add_associative(a: Nat, b: Nat, c: Nat) {
+    ensures nat_add(nat_add(a, b), c) == nat_add(a, nat_add(b, c)) by {
+        induct(a) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, b));
+                unfold(nat_add(Nat::Zero, nat_add(b, c)));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                apply(nat_add_succ_left(previous, b));
+                rewrite(nat_add(Nat::Succ(previous), b) == Nat::Succ(nat_add(previous, b)));
+                apply(nat_add_succ_left(nat_add(previous, b), c));
+                rewrite(nat_add(Nat::Succ(nat_add(previous, b)), c)
+                    == Nat::Succ(nat_add(nat_add(previous, b), c)));
+                apply(nat_add_succ_left(previous, nat_add(b, c)));
+                rewrite(nat_add(Nat::Succ(previous), nat_add(b, c))
+                    == Nat::Succ(nat_add(previous, nat_add(b, c))));
+                rewrite(nat_add(nat_add(previous, b), c) == nat_add(previous, nat_add(b, c)));
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_add_commutative`
+
+```click
+theorem nat_add_commutative(a: Nat, b: Nat) {
+    ensures nat_add(a, b) == nat_add(b, a) by {
+        induct(a) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, b));
+                apply(nat_add_right_identity(b));
+                rewrite(nat_add(b, Nat::Zero) == b);
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), b));
+                apply(nat_add_succ_right(b, previous));
+                rewrite(nat_add(b, Nat::Succ(previous)) == Nat::Succ(nat_add(b, previous)));
+                rewrite(nat_add(previous, b) == nat_add(b, previous));
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+
 ## Lists
 
 `List<T>` is an immutable logical value, not a C layout or ownership resource.
@@ -75,8 +243,8 @@ function list_contains<T>(xs: List<T>, value: T) -> int32
 ```
 
 Returns `1` for membership and `0` otherwise, using element equality.
-Currently its checked constructor laws support C scalar and pointer elements;
-conditional equality for algebraic-valued elements remains an ADT gap.
+Its checked laws support C scalar, pointer, and algebraic-valued elements,
+including nested lists. Comparisons of unknown algebraic values stay symbolic.
 
 **Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
 
@@ -190,6 +358,137 @@ theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
 ```
 
 **Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_contains_append`
+
+```click
+theorem list_contains_append<T>(xs: List<T>, ys: List<T>, value: T) {
+    ensures list_contains(list_append(xs, ys), value)
+        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_contains(List<T>::Nil, value));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                if head == value {
+                    apply(list_contains_cons(head, list_append(tail, ys), value));
+                    rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
+                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                    apply(list_contains_cons(head, tail, value));
+                    rewrite(list_contains(List<T>::Cons(head, tail), value)
+                        == if head == value { 1 } else { list_contains(tail, value) });
+                    normalize() using { head == value; }
+                } else {
+                    apply(list_contains_cons(head, list_append(tail, ys), value));
+                    rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
+                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                    apply(list_contains_cons(head, tail, value));
+                    rewrite(list_contains(List<T>::Cons(head, tail), value)
+                        == if head == value { 1 } else { list_contains(tail, value) });
+                    rewrite(list_contains(list_append(tail, ys), value)
+                        == if list_contains(tail, value) == 1 { 1 } else { list_contains(ys, value) });
+                    normalize() using { not(head == value); }
+                }
+            }
+        }
+    }
+}
+```
+
+Membership through append, proved by structural induction with explicit
+conditional reduction in each constructor case.
+
+**Verified use:** [`mdtests/stdlib_list_compositionality.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_compositionality.md).
+
+### Natural-valued lengths
+
+`list_length` returns `Nat`, so a length cannot be negative or overflow.
+These laws hold for arbitrary element types, including nested lists.
+
+### `list_length`
+
+```click
+function list_length<T>(xs: List<T>) -> Nat
+    decreases xs
+{
+    match xs {
+        List::Nil => Nat::Zero,
+        List::Cons(head, tail) => Nat::Succ(list_length(tail)),
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list_length.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_length.md).
+
+### `list_length_nil`
+
+```click
+theorem list_length_nil<T>(xs: List<T>) {
+    requires xs == List<T>::Nil;
+    ensures list_length(xs) == Nat::Zero by {
+        rewrite(xs == List<T>::Nil);
+        unfold(list_length(List<T>::Nil));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list_length.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_length.md).
+
+### `list_length_cons`
+
+```click
+theorem list_length_cons<T>(head: T, tail: List<T>) {
+    ensures list_length(List<T>::Cons(head, tail)) == Nat::Succ(list_length(tail)) by {
+        unfold(list_length(List<T>::Cons(head, tail)));
+        normalize();
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list_length.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_length.md).
+
+### `list_length_append`
+
+```click
+theorem list_length_append<T>(xs: List<T>, ys: List<T>) {
+    ensures list_length(list_append(xs, ys)) == nat_add(list_length(xs), list_length(ys)) by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_length(List<T>::Nil));
+                unfold(nat_add(Nat::Zero, list_length(ys)));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                apply(list_length_cons(head, list_append(tail, ys)));
+                rewrite(list_length(List<T>::Cons(head, list_append(tail, ys)))
+                    == Nat::Succ(list_length(list_append(tail, ys))));
+                apply(list_length_cons(head, tail));
+                rewrite(list_length(List<T>::Cons(head, tail)) == Nat::Succ(list_length(tail)));
+                apply(nat_add_succ_left(list_length(tail), list_length(ys)));
+                rewrite(nat_add(Nat::Succ(list_length(tail)), list_length(ys))
+                    == Nat::Succ(nat_add(list_length(tail), list_length(ys))));
+                rewrite(list_length(list_append(tail, ys)) == nat_add(list_length(tail), list_length(ys)));
+                normalize();
+            }
+        }
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_list_length.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_length.md).
+
 
 ## Signed `int32` theorems
 

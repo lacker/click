@@ -1,5 +1,47 @@
 use super::*;
 
+#[test]
+fn rigid_parameters_are_typed_values_not_empty_datatypes() {
+    let ty = AlgebraicType::parameter("T".into());
+    let x = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(0)),
+    };
+    assert!(x.is_well_formed());
+    assert_eq!(ty.value_type(), AlgebraicValueType::Parameter("T".into()));
+    assert_ne!(ty, AlgebraicType::parameter("U".into()));
+    let mut nominal = ty.clone();
+    nominal.rigid = false;
+    assert_ne!(ty, nominal);
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: nominal,
+            node: x.node.clone()
+        }
+        .is_well_formed()
+    );
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: "Fake".into(),
+                fields: vec![]
+            }
+        }
+        .is_well_formed()
+    );
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: ty,
+            node: AlgebraicTermNode::Match {
+                scrutinee: Box::new(x),
+                arms: vec![]
+            }
+        }
+        .is_well_formed()
+    );
+}
+
 fn maybe_int32_type() -> AlgebraicType {
     let arguments = vec![AlgebraicValueType::C(CType::Int32)];
     let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
@@ -18,6 +60,7 @@ fn maybe_int32_type() -> AlgebraicType {
         arguments: arguments.clone(),
     };
     AlgebraicType {
+        rigid: false,
         name: "Maybe".to_string(),
         arguments,
         variants: variants.clone(),
@@ -96,6 +139,90 @@ fn checked_algebraic_constructor_rules_are_sound() {
             .is_none(),
         "constructor rules must reject terms that do not match the retained schema"
     );
+}
+
+#[test]
+fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
+    let ty = maybe_int32_type();
+    let left = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_100)),
+    };
+    let right = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_101)),
+    };
+    let condition = ConditionTerm::AlgebraicEqual(Box::new(left.clone()), Box::new(right.clone()));
+    let equality = Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right));
+    assert_eq!(PureFactContext::new().decide(&condition), None);
+    for expected in [true, false] {
+        let premise = if expected {
+            equality.clone()
+        } else {
+            Proposition::Not(Box::new(equality.clone()))
+        };
+        let facts = PureFactContext::new().assume_proposition(premise.clone());
+        assert_eq!(facts.decide(&condition), Some(expected));
+        let condition_fact = Proposition::ConditionIs(condition.clone(), expected);
+        assert!(
+            crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
+                &premise,
+                &condition_fact
+            )
+        );
+        assert!(
+            crate::kernel::proof::fact_reasoning::condition_polarity_forms(&condition_fact)
+                .contains(&premise)
+        );
+        assert!(
+            !crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
+                &premise,
+                &Proposition::ConditionIs(condition.clone(), !expected)
+            )
+        );
+    }
+    let distinct = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(&ty, "None", vec![])),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    assert_eq!(PureFactContext::new().decide(&distinct), Some(false));
+}
+
+#[test]
+fn algebraic_condition_substitution_visits_scalar_fields() {
+    let ty = maybe_int32_type();
+    let variable = Variable(89_102);
+    let condition = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Variable(variable))],
+        )),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    let mut variables = BTreeSet::new();
+    collect_condition_bitvector_variables(&condition, &mut variables);
+    assert_eq!(variables, BTreeSet::from([variable]));
+    let rewritten = substitute_bitvector_variable_in_condition(
+        &condition,
+        variable,
+        &Bitvector32Term::Constant(0),
+    );
+    assert_eq!(PureFactContext::new().decide(&rewritten), Some(true));
+    let value = Bitvector32Term::If {
+        condition: Box::new(condition),
+        then_term: Box::new(Bitvector32Term::Constant(1)),
+        else_term: Box::new(Bitvector32Term::Constant(0)),
+    };
+    assert!(!crate::kernel::term_is_shallow_structural_cache_key(&value));
 }
 
 #[test]

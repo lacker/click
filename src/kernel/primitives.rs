@@ -240,6 +240,8 @@ impl PointerOffsetTerm {
 pub enum ConditionTerm {
     Constant(bool),
     Variable(Variable),
+    /// Logical equality of immutable algebraic values, not a C comparison.
+    AlgebraicEqual(Box<AlgebraicTerm>, Box<AlgebraicTerm>),
     Bitvector32SignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
@@ -794,6 +796,7 @@ pub struct SpecAlgebraicResultMatchArm {
 /// supplied by surface lowering.
 #[derive(Clone, Debug)]
 pub struct AlgebraicType {
+    pub rigid: bool,
     pub name: String,
     pub arguments: Vec<AlgebraicValueType>,
     pub variants: std::sync::Arc<[AlgebraicVariantType]>,
@@ -802,6 +805,7 @@ pub struct AlgebraicType {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AlgebraicValueType {
+    Parameter(String),
     C(CType),
     Algebraic {
         name: String,
@@ -839,7 +843,7 @@ impl AlgebraicSchemas {
             for (value_type, constructors) in &variants {
                 if constructors.iter().any(|constructor| {
                     constructor.fields.iter().all(|field| match field {
-                        AlgebraicValueType::C(_) => true,
+                        AlgebraicValueType::C(_) | AlgebraicValueType::Parameter(_) => true,
                         AlgebraicValueType::Algebraic { .. } => grounded.contains(field),
                     })
                 }) {
@@ -931,6 +935,77 @@ pub struct AlgebraicResultMatchArm {
 }
 
 impl AlgebraicTerm {
+    /// Visit scalar payload roots without expanding datatype schemas or copying
+    /// terms. Callers decide how far to traverse each scalar expression.
+    pub(crate) fn for_each_bitvector_term(&self, mut visit: impl FnMut(&Bitvector32Term)) {
+        enum Node<'a> {
+            Algebraic(&'a AlgebraicTerm),
+            Value(&'a CValue),
+            Offset(&'a PointerOffsetTerm),
+        }
+        let mut pending = vec![Node::Algebraic(self)];
+        while let Some(node) = pending.pop() {
+            match node {
+                Node::Algebraic(term) => match &term.node {
+                    AlgebraicTermNode::Variable(_) => {}
+                    AlgebraicTermNode::Constructor { fields, .. } => {
+                        for field in fields {
+                            pending.push(match field {
+                                AlgebraicValue::C(v) => Node::Value(v),
+                                AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
+                            });
+                        }
+                    }
+                    AlgebraicTermNode::Match { scrutinee, arms } => {
+                        pending.push(Node::Algebraic(scrutinee));
+                        for arm in arms {
+                            pending.push(Node::Algebraic(&arm.body));
+                            for binding in &arm.bindings {
+                                pending.push(match binding {
+                                    AlgebraicValue::C(v) => Node::Value(v),
+                                    AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
+                                });
+                            }
+                        }
+                    }
+                    AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+                        for argument in arguments {
+                            pending.push(match argument {
+                                PureFunctionArgument::Value(v)
+                                | PureFunctionArgument::ArrayRef { pointer: v, .. } => {
+                                    Node::Value(v)
+                                }
+                                PureFunctionArgument::Algebraic(v) => Node::Algebraic(v),
+                            });
+                        }
+                    }
+                },
+                Node::Value(value) => match value {
+                    CValue::Void => {}
+                    CValue::Pointer(v) => pending.push(Node::Offset(&v.pointer().offset)),
+                    CValue::Int16(v)
+                    | CValue::UInt16(v)
+                    | CValue::UInt8(v)
+                    | CValue::Int32(v)
+                    | CValue::UInt32(v)
+                    | CValue::Int64(v)
+                    | CValue::UInt64(v)
+                    | CValue::Float32(v)
+                    | CValue::Float64(v) => visit(v),
+                },
+                Node::Offset(offset) => match offset {
+                    PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+                    PointerOffsetTerm::Add(a, b) => {
+                        pending.push(Node::Offset(a));
+                        pending.push(Node::Offset(b));
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, .. }
+                    | PointerOffsetTerm::Int64Scaled { value, .. } => visit(value),
+                },
+            }
+        }
+    }
+
     /// Returns a constructor's fields only when the constructor is formed
     /// against this term's resolved datatype schema. Logical variables are
     /// well formed but have no constructor fields.
@@ -964,7 +1039,8 @@ impl AlgebraicTerm {
                 arguments.iter().all(PureFunctionArgument::is_well_formed)
             }
             AlgebraicTermNode::Match { scrutinee, arms } => {
-                scrutinee.is_well_formed()
+                !scrutinee.algebraic_type.rigid
+                    && scrutinee.is_well_formed()
                     && arms.len() == scrutinee.algebraic_type.variants.len()
                     && scrutinee.algebraic_type.variants.iter().all(|variant| {
                         arms.iter()
@@ -994,7 +1070,20 @@ impl AlgebraicTerm {
 }
 
 impl AlgebraicType {
-    pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
+    pub(crate) fn parameter(name: String) -> Self {
+        Self {
+            rigid: true,
+            name,
+            arguments: Vec::new(),
+            variants: Vec::new().into(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(Default::default())),
+        }
+    }
+
+    pub(crate) fn value_type(&self) -> AlgebraicValueType {
+        if self.rigid {
+            return AlgebraicValueType::Parameter(self.name.clone());
+        }
         AlgebraicValueType::Algebraic {
             name: self.name.clone(),
             arguments: self.arguments.clone(),
@@ -1005,10 +1094,14 @@ impl AlgebraicType {
         &self,
         value_type: &AlgebraicValueType,
     ) -> Option<Self> {
+        if let AlgebraicValueType::Parameter(name) = value_type {
+            return Some(Self::parameter(name.clone()));
+        }
         let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
             return None;
         };
         Some(Self {
+            rigid: false,
             name: name.clone(),
             arguments: arguments.clone(),
             variants: self.schemas.get(value_type)?.clone(),
@@ -1017,6 +1110,9 @@ impl AlgebraicType {
     }
 
     fn has_consistent_root_schema(&self) -> bool {
+        if self.rigid {
+            return self.arguments.is_empty() && self.variants.is_empty();
+        }
         let value_type = self.value_type();
         self.schemas
             .get(&value_type)
@@ -1027,7 +1123,8 @@ impl AlgebraicType {
 
 impl PartialEq for AlgebraicType {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.rigid == other.rigid
+            && self.name == other.name
             && self.arguments == other.arguments
             && self.variants == other.variants
     }
@@ -1037,6 +1134,7 @@ impl Eq for AlgebraicType {}
 
 impl std::hash::Hash for AlgebraicType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.rigid.hash(state);
         self.name.hash(state);
         self.arguments.hash(state);
         self.variants.hash(state);
@@ -1051,7 +1149,8 @@ impl PartialOrd for AlgebraicType {
 
 impl Ord for AlgebraicType {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.name, &self.arguments, &self.variants).cmp(&(
+        (self.rigid, &self.name, &self.arguments, &self.variants).cmp(&(
+            other.rigid,
             &other.name,
             &other.arguments,
             &other.variants,
@@ -1078,9 +1177,10 @@ impl AlgebraicValue {
         match self {
             Self::C(_) => true,
             Self::Algebraic(value) => {
-                schemas
-                    .get(expected)
-                    .is_some_and(|variants| variants == &value.algebraic_type.variants)
+                (matches!(expected, AlgebraicValueType::Parameter(_))
+                    || schemas
+                        .get(expected)
+                        .is_some_and(|variants| variants == &value.algebraic_type.variants))
                     && value.is_well_formed()
             }
         }
@@ -3140,26 +3240,12 @@ pub struct CFunctionContractRefinementContext {
     pub(super) next_kernel_variable: u64,
 }
 
-/// The explicit logical structure of a contract-refinement proof.
-///
-/// `If` is excluded-middle elimination over a condition written in the proof;
-/// both children are mandatory. `UnfoldPredicate` explicitly authorizes the
-/// checked definition of every occurrence of one named predicate in the two
-/// compared interfaces. `Simp` asks the kernel to check the local structural
-/// and proposition implications under the accumulated branch assumptions.
-/// There is no implicit predicate search or guard enumeration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CFunctionContractRefinementProof {
-    Simp,
-    UnfoldPredicate {
-        name: String,
-        proof: Box<CFunctionContractRefinementProof>,
-    },
-    If {
-        condition: Proposition,
-        then_proof: Box<CFunctionContractRefinementProof>,
-        else_proof: Box<CFunctionContractRefinementProof>,
-    },
+/// Kernel-generated sufficient logical obligations for one contract relation.
+/// The states and proposition cannot be supplied by the language layer.
+pub struct CFunctionContractRefinementObligations {
+    pub(super) entry: CState,
+    pub(super) post: CState,
+    pub(super) proposition: Proposition,
 }
 
 /// A proof tree produced by contextual proposition reasoning.

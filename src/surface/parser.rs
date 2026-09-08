@@ -9,6 +9,7 @@ use super::*;
 /// supported surface depth explicit and reject deeper input before recursive
 /// parsing begins.
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
+pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
@@ -154,6 +155,7 @@ impl Token {
 }
 
 struct Parser {
+    match_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -348,6 +350,7 @@ impl Parser {
             tokens,
             positions,
             matching_parentheses,
+            match_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -2981,6 +2984,13 @@ impl Parser {
             }
             "normalize" => {
                 self.expect_empty_tactic_args(&name)?;
+                if self.peek_ident() == Some("using") {
+                    let premises = self.parse_exact_premises()?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::NormalizeUsing(premises));
+                }
                 ProofTactic::Normalize
             }
             "arithmetic" => {
@@ -4363,9 +4373,7 @@ impl Parser {
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
-            if let Some(Token::Number(value)) = self.peek_next().cloned()
-                && value <= i32::MAX as u32 + 1
-            {
+            if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
                 return Ok(ContractExpression::CFragment(CExpression::Value(int32(
                     0u32.wrapping_sub(value),
@@ -4662,67 +4670,79 @@ impl Parser {
         false
     }
 
-    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
-        if self.peek_ident() == Some("match") {
-            self.position += 1;
-            let scrutinee = self.parse_contract_expression()?;
-            self.expect(Token::LBrace)?;
-            let mut arms = Vec::new();
-            while self.peek() != Some(&Token::RBrace) {
-                let type_name = self.expect_ident("match pattern datatype")?;
-                self.expect(Token::ColonColon)?;
-                let variant = self.expect_ident("match pattern variant")?;
-                let mut bindings = Vec::new();
-                if self.peek() == Some(&Token::LParen) {
-                    self.position += 1;
-                    if self.peek() != Some(&Token::RParen) {
-                        loop {
-                            bindings.push(self.expect_ident("match pattern binding")?);
-                            match self.peek() {
-                                Some(Token::Comma) => self.position += 1,
-                                Some(Token::RParen) => break,
-                                Some(token) => {
-                                    return Err(self.error(format!(
-                                        "expected `,` or `)` after match binding, got {}",
-                                        token.describe()
-                                    )));
-                                }
-                                None => {
-                                    return Err(self.error("expected `)` after match bindings"));
-                                }
+    fn parse_contract_match(&mut self) -> Result<ContractExpression, ClickError> {
+        self.position += 1;
+        let scrutinee = self.parse_contract_expression()?;
+        self.expect(Token::LBrace)?;
+        let mut arms = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let type_name = self.expect_ident("match pattern datatype")?;
+            self.expect(Token::ColonColon)?;
+            let variant = self.expect_ident("match pattern variant")?;
+            let mut bindings = Vec::new();
+            if self.peek() == Some(&Token::LParen) {
+                self.position += 1;
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        bindings.push(self.expect_ident("match pattern binding")?);
+                        match self.peek() {
+                            Some(Token::Comma) => self.position += 1,
+                            Some(Token::RParen) => break,
+                            Some(token) => {
+                                return Err(self.error(format!(
+                                    "expected `,` or `)` after match binding, got {}",
+                                    token.describe()
+                                )));
+                            }
+                            None => {
+                                return Err(self.error("expected `)` after match bindings"));
                             }
                         }
                     }
-                    self.expect(Token::RParen)?;
                 }
-                self.expect(Token::FatArrow)?;
-                let newly_bound = bindings
-                    .iter()
-                    .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let body = self.parse_contract_expression();
-                for binding in newly_bound {
-                    self.current_contract_bindings.remove(&binding);
-                }
-                let body = body?;
-                arms.push(AlgebraicMatchArm {
-                    type_name,
-                    variant,
-                    bindings,
-                    body,
-                });
-                if self.peek() == Some(&Token::Comma) {
-                    self.position += 1;
-                } else if self.peek() != Some(&Token::RBrace) {
-                    return Err(self.error("expected `,` or `}` after match arm"));
-                }
+                self.expect(Token::RParen)?;
             }
-            self.expect(Token::RBrace)?;
-            return Ok(ContractExpression::AlgebraicMatch {
-                scrutinee: Box::new(scrutinee),
-                arms,
+            self.expect(Token::FatArrow)?;
+            let newly_bound = bindings
+                .iter()
+                .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let body = self.parse_contract_expression();
+            for binding in newly_bound {
+                self.current_contract_bindings.remove(&binding);
+            }
+            let body = body?;
+            arms.push(AlgebraicMatchArm {
+                type_name,
+                variant,
+                bindings,
+                body,
             });
+            if self.peek() == Some(&Token::Comma) {
+                self.position += 1;
+            } else if self.peek() != Some(&Token::RBrace) {
+                return Err(self.error("expected `,` or `}` after match arm"));
+            }
+        }
+        self.expect(Token::RBrace)?;
+        return Ok(ContractExpression::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        });
+    }
+
+    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("match") {
+            if self.match_nesting >= MATCH_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "match nesting exceeds Click's supported depth of {MATCH_NESTING_LIMIT}"
+                )));
+            }
+            self.match_nesting += 1;
+            let result = self.parse_contract_match();
+            self.match_nesting -= 1;
+            return result;
         }
 
         if self.looks_like_algebraic_constructor() {
@@ -5058,7 +5078,11 @@ impl Parser {
                 }
             }
         }
-        Ok(AlgebraicTypeApplication { name, arguments })
+        Ok(AlgebraicTypeApplication {
+            rigid: false,
+            name,
+            arguments,
+        })
     }
 
     fn parse_snapshot_selector(&mut self) -> Result<SnapshotSelector, ClickError> {
@@ -5217,9 +5241,7 @@ impl Parser {
 
     fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
-            if let Some(Token::Number(value)) = self.peek_next().cloned()
-                && value <= i32::MAX as u32 + 1
-            {
+            if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
                 return Ok(C0Expression::Int32Literal(0u32.wrapping_sub(value)));
             }
@@ -5555,6 +5577,20 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
 /// A segment may spell its base directly (`object.field`) or by address
 /// (`&object.field`); both name the same object, so field resolution has to
 /// see through the address-of. Anything else is not a named place.
+/// The magnitude of a literal that a leading `-` turns into an `int32`.
+///
+/// `int32` reaches one further below zero than above it, so the magnitude
+/// 2^31 is negatable even though the positive spelling of it is not an
+/// `int32`. The tokenizer therefore hands that one over as a wider literal
+/// and it narrows here, where the minus sign is in hand.
+fn negatable_int32_magnitude(token: &Token) -> Option<u32> {
+    match token {
+        Token::Number(value) if *value <= i32::MAX as u32 => Some(*value),
+        Token::Int64Number(value) if *value == i32::MAX as i64 + 1 => Some(i32::MAX as u32 + 1),
+        _ => None,
+    }
+}
+
 fn named_place_base(expression: &CExpression) -> Option<&String> {
     match expression {
         CExpression::Variable(name) => Some(name),

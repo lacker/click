@@ -82,10 +82,11 @@ normal tooling-first policy and should then be added to this list.
 ## Architecture issues: 4
 
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
+- [Retain explicit quantified evidence for loop closure](loop-closure-quantified-evidence.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 28
+## Functionality gaps: 27
 
 C language coverage:
 
@@ -118,7 +119,6 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
-- [Rewrite algebraic arguments inside scalar-valued pure calls](algebraic-rewrite-through-scalar-calls.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 - [Add modules and imports for Click specifications](specification-imports.md)

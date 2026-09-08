@@ -60,8 +60,8 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   whose final callback mutates a separately owned resource.
 - A closed pure theorem can prove `Contract(&function)` explicitly. Its proof
   starts with `unfold(Contract)`, which introduces arbitrary call arguments,
-  and may use proof-level `if` to decide guarded mutable footprints before a
-  local `simp()` refinement check. The checker follows the written proof tree;
+  and uses ordinary non-execution proof blocks, including `have`, theorem
+  application, rewriting, quantifiers, and proof-level `if`. The checker follows the written proof tree;
   it does not enumerate guards or scan project functions. The resulting
   theorem can be applied to introduce the reusable contract fact at a
   higher-order call site.
@@ -83,8 +83,8 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   `unfold(Predicate)` tactic after opening its contract or contracts. The
   checker then compares the registered predicate body over the same symbolic
   entry and post-call memories as scalar refinement. Every differing opaque
-  predicate identity must be named; direct pointer formation remains opaque,
-  and an unrelated unfold grants no authority.
+  predicate identity must be opened by a checked proof step, which ordinary
+  `simp` may select; direct pointer formation remains opaque.
 
 - Finite sequence comparisons and membership over current and entry memory
   participate in refinement, including concatenation. Selected sequence
@@ -95,7 +95,7 @@ The remaining semantic step is refinement for broader state-dependent
 propositions at concrete-pointer formation.
 Guarded effects participate in footprint containment, but stateful
 postconditions with conditional footprints require an explicit closed theorem
-and written case split; automatic concrete-pointer formation remains limited
+when ordinary logical reasoning is required; automatic concrete-pointer formation remains limited
 to an unguarded named footprint. Stateful algebraic,
 resource-relation, and explicit-memory-snapshot propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be

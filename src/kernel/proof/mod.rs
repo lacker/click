@@ -13,6 +13,7 @@ mod facts;
 mod object;
 mod obligations;
 mod storage;
+pub(crate) mod term_rewrite;
 
 pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
 pub(crate) use execution::{

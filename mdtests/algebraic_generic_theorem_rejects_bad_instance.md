@@ -1,7 +1,7 @@
 # a generic theorem proof is checked before use
 
-An invalid generic proof grants no authority. The error is reported when a
-concrete application first requests that monomorph.
+An invalid generic proof grants no authority. Its declaration fails before a
+concrete application can request it.
 
 ```click
 theorem invalid<T>(left: T, right: T) {
@@ -17,5 +17,5 @@ theorem expose(left: int32, right: int32) {
 ```
 
 ```expect
-fail: generic theorem instance `invalid::<int32>` failed verification
+fail: invalid.ensures_0
 ```

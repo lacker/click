@@ -3,6 +3,43 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::surface::proof) fn for_contract_refinement_goal(
+        claim_label: &'a str,
+        goal: Proposition,
+        surface_goal: ClickProposition,
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        entry: &'a CState,
+        post: &'a CState,
+        snapshots: &'a RecordedSnapshots,
+        surfaces: &'a SurfacePropositionMap,
+        predicates: &'a PredicateEnvironment,
+        functions: &'a ClickFunctionEnvironment,
+        theorems: &'a TheoremEnvironment,
+    ) -> Self {
+        Self::for_fixed_state(
+            claim_label,
+            0,
+            &[],
+            |state| OpenBranch::surface_proposition_in(state, goal, surface_goal),
+            parameters,
+            arguments,
+            entry,
+            post,
+            post.locals().get("result"),
+            None,
+            snapshots,
+            surfaces,
+            predicates,
+            functions,
+            theorems,
+            &[],
+            &[],
+            &[],
+            None,
+        )
+    }
     /// Reattributes subsequent execution-structure diagnostics to the source
     /// tactic that owns them without changing proof state or provenance.
     ///

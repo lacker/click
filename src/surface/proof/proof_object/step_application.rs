@@ -60,6 +60,7 @@ impl<'a> Proof<'a> {
         let checked_proposition_successor = match &step {
             ProofStep::Assumption => Some(self.apply_assumption()),
             ProofStep::Normalize => Some(self.apply_normalize()),
+            ProofStep::NormalizeUsing(premises) => Some(self.apply_normalize_using(premises)),
             ProofStep::ArithmeticUsing(premises) => Some(self.apply_arithmetic_using(premises)),
             ProofStep::Intro => Some(self.apply_intro()),
             ProofStep::Split => Some(self.apply_split()),
@@ -1132,6 +1133,41 @@ impl<'a> Proof<'a> {
             }
             _ => unreachable!("kernel returned an unrelated normalize error"),
         })
+    }
+
+    #[inline(never)]
+    pub(super) fn apply_normalize_using(
+        &self,
+        surface_premises: &[ClickProposition],
+    ) -> Result<KernelProofHandle, ClickError> {
+        use crate::kernel::proof::fact_reasoning::ConditionalNormalizationError;
+        let premises = surface_premises
+            .iter()
+            .map(|premise| self.lower_surface_proposition(premise, "`normalize using` premise"))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.state
+            .apply_normalize_using(&premises)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("`normalize` requires a proposition goal")
+                }
+                PropositionCloseError::ConditionalNormalization(
+                    ConditionalNormalizationError::UnavailablePremise(index),
+                ) => self.step_error(format!(
+                    "`normalize using` premise {index} is not exactly available"
+                )),
+                PropositionCloseError::ConditionalNormalization(
+                    ConditionalNormalizationError::UnsupportedPremise(index),
+                ) => self.step_error(format!(
+                    "`normalize using` premise {index} must be a consistent single condition"
+                )),
+                PropositionCloseError::ConditionalNormalization(
+                    ConditionalNormalizationError::DoesNotNormalize,
+                ) => self.step_error(
+                    "`normalize using` goal did not normalize to true using the listed conditions",
+                ),
+                _ => unreachable!("kernel returned an unrelated normalize-using error"),
+            })
     }
 
     #[inline(never)]

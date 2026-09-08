@@ -88,6 +88,9 @@ enum BitvectorEqualityAtomKey {
 }
 
 impl ProofFacts {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ordered.len() == 0
+    }
     pub(crate) fn predicate_unfolded_universal_facts(&self) -> impl Iterator<Item = &Proposition> {
         self.predicate_unfolded_universal_facts.iter()
     }
@@ -817,6 +820,10 @@ fn collect_condition_bitvector_atoms(
     atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
 ) {
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+            right.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+        }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
         | ConditionTerm::Bitvector32SignedGreaterThan(left, right)

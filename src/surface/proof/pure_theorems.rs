@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::AlgebraicValueType;
+use crate::kernel::c_function_contract_refinement_obligations;
 
 const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;
 
@@ -12,9 +13,32 @@ pub(in crate::surface) fn verify_theorem_definitions(
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(&[]);
     for theorem in theorem_definitions {
-        if theorem.type_parameters().is_empty() {
+        {
+            let mut symbolic;
+            let checked = if theorem.type_parameters().is_empty() {
+                theorem
+            } else {
+                let substitution = theorem
+                    .type_parameters()
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            ClickType::Algebraic(AlgebraicTypeApplication {
+                                rigid: true,
+                                name: name.clone(),
+                                arguments: Vec::new(),
+                            }),
+                        )
+                    })
+                    .collect();
+                symbolic = generics::instantiate_theorem(theorem, &substitution)
+                    .map_err(ClickError::new)?;
+                symbolic.name = theorem.name().to_string();
+                &symbolic
+            };
             verified.extend(verify_concrete_theorem_definition(
-                theorem,
+                checked,
                 predicate_environment,
                 click_function_environment,
                 &theorem_environment,
@@ -314,8 +338,14 @@ fn click_type_from_algebraic_value_type(
             CType::Float32Array(length) => C0Type::Float32Array(*length),
             CType::Float64Array(length) => C0Type::Float64Array(*length),
         }),
+        AlgebraicValueType::Parameter(name) => ClickType::Algebraic(AlgebraicTypeApplication {
+            rigid: true,
+            name: name.clone(),
+            arguments: Vec::new(),
+        }),
         AlgebraicValueType::Algebraic { name, arguments } => {
             ClickType::Algebraic(AlgebraicTypeApplication {
+                rigid: false,
                 name: name.clone(),
                 arguments: arguments
                     .iter()
@@ -470,10 +500,17 @@ fn check_pure_structural_induction(
         )));
     };
     let parameter_expression = ContractExpression::AlgebraicVariable {
+        // Arbitrary types have no exhaustive constructor schema.
         name: parameter.clone(),
         algebraic_type: parameter_type.clone(),
         binder_index: parameter_index,
     };
+    if parameter_type.rigid {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: structural induction requires a datatype, not arbitrary type `{}`",
+            parameter_type.name
+        )));
+    }
     let state = CState::new().with_memory(context.memory.clone());
     let parameter_value = capture_fixed_state_algebraic_expression(
         &parameter_expression,
@@ -585,7 +622,8 @@ fn check_pure_structural_induction(
                         crate::kernel::symbolic_call_result(*c_type, variable),
                     );
                 }
-                algebraic @ AlgebraicValueType::Algebraic { .. } => {
+                algebraic @ (AlgebraicValueType::Algebraic { .. }
+                | AlgebraicValueType::Parameter(_)) => {
                     let ClickType::Algebraic(algebraic_type) =
                         click_type_from_algebraic_value_type(algebraic)?
                     else {
@@ -748,7 +786,7 @@ fn check_pure_structural_induction(
         );
         let Some(proof) = root.try_authoritative_linear_script(&prepared)? else {
             return Err(ClickError::new(format!(
-                "structural induction arm `{}::{}` did not close its goal",
+                "`{claim_label}` structural induction arm `{}::{}` did not close its goal",
                 arm.type_name, arm.variant
             )));
         };
@@ -1147,6 +1185,7 @@ fn verify_theorem_ensure(
         context,
         predicate_environment,
         click_function_environment,
+        theorem_environment,
         function_environment,
     )? {
         return Ok(verified);
@@ -1323,6 +1362,7 @@ fn verify_theorem_ensure(
                         claim_label,
                         &context.requires,
                         &goal,
+                        Some(surface_goal),
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
@@ -1449,6 +1489,7 @@ fn verify_contract_refinement_theorem(
     context: &PureTheoremContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<Option<VerifiedPureTheorem>, ClickError> {
     let ClickProposition::PredicateCall { name, arguments } = surface_goal else {
@@ -1606,94 +1647,78 @@ fn verify_contract_refinement_theorem(
             "`{claim_label}`: contract parameter count does not match its lowered function"
         )));
     }
-    let values = contract_parameters
+    let refinement_failure = || {
+        let subject = concrete_target
+            .map(|target| format!("&{target}"))
+            .or_else(|| symbolic_binding.map(str::to_string))
+            .expect("refinement subject");
+        ClickError::new(format!(
+            "`{claim_label}`: contract-refinement proof does not establish `{name}({subject})`"
+        ))
+    };
+    let obligations =
+        c_function_contract_refinement_obligations(&refinement).ok_or_else(refinement_failure)?;
+    let arguments = argument_values
         .iter()
-        .zip(argument_values)
-        .map(|(parameter, value)| (parameter.name().to_string(), value.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let entry = c_function_contract_refinement_entry_state(&refinement);
-
-    fn lower_proof(
-        tactics: &[ProofTactic],
-        claim_label: &str,
-        values: &BTreeMap<String, CValue>,
-        memory: &CMemory,
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
-    ) -> Result<CFunctionContractRefinementProof, ClickError> {
-        match tactics {
-            [ProofTactic::Simp | ProofTactic::Normalize] => {
-                Ok(CFunctionContractRefinementProof::Simp)
+        .cloned()
+        .map(CExpression::Value)
+        .collect::<Vec<_>>();
+    let parameters = contract_parameters
+        .iter()
+        .map(|parameter| {
+            syntax::C0Parameter::new(
+                parameter.c_type(),
+                parameter.name().to_string(),
+                parameter.struct_name().map(str::to_string),
+            )
+        })
+        .collect::<Vec<_>>();
+    let proof_goal = obligations.proposition().clone();
+    let presentation = super::surface_synthesis::synthesize_surface_proposition_at_entry_and_post(
+        &proof_goal,
+        &parameters,
+        &arguments,
+        obligations.entry(),
+        obligations.post(),
+    )
+    .ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}`: cannot present contract-refinement obligations"
+        ))
+    })?;
+    let snapshots = RecordedSnapshots::new();
+    let mut surfaces = SurfacePropositionMap::default();
+    let mut pending = vec![(&proof_goal, &presentation)];
+    while let Some((kernel, surface)) = pending.pop() {
+        match (kernel, surface) {
+            (Proposition::And(kl, kr), ClickProposition::And(sl, sr))
+            | (Proposition::Or(kl, kr), ClickProposition::Or(sl, sr))
+            | (Proposition::Implies(kl, kr), ClickProposition::Implies(sl, sr)) => {
+                pending.push((kl, sl));
+                pending.push((kr, sr));
             }
-            [ProofTactic::UnfoldPredicate(name), remainder @ ..] if !remainder.is_empty() => {
-                if predicate_environment.get(name).is_none() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}`: unknown predicate `{name}` in contract-refinement proof"
-                    )));
-                }
-                Ok(CFunctionContractRefinementProof::UnfoldPredicate {
-                    name: name.clone(),
-                    proof: Box::new(lower_proof(
-                        remainder,
-                        claim_label,
-                        values,
-                        memory,
-                        predicate_environment,
-                        click_function_environment,
-                    )?),
-                })
-            }
-            [ProofTactic::If(proof_if)] => {
-                let condition = lower_pure_theorem_proposition(
-                    claim_label,
-                    &proof_if.condition,
-                    values,
-                    &BTreeMap::new(),
-                    memory,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}`: could not lower contract-refinement `if` condition: {message}"
-                    ))
-                })?;
-                let then_proof = lower_proof(
-                    &proof_if.then_tactics,
-                    claim_label,
-                    values,
-                    memory,
-                    predicate_environment,
-                    click_function_environment,
-                )?;
-                let else_proof = lower_proof(
-                    &proof_if.else_tactics,
-                    claim_label,
-                    values,
-                    memory,
-                    predicate_environment,
-                    click_function_environment,
-                )?;
-                Ok(CFunctionContractRefinementProof::If {
-                    condition,
-                    then_proof: Box::new(then_proof),
-                    else_proof: Box::new(else_proof),
-                })
-            }
-            _ => Err(ClickError::new(format!(
-                "`{claim_label}`: after opening the contract, refinement supports explicit predicate `unfold`, `if` cases, and `simp();` leaves"
-            ))),
+            (Proposition::Not(k), ClickProposition::Not(s)) => pending.push((k, s)),
+            _ => surfaces.record_lowering(surface, kernel)?,
         }
     }
-
-    let proof = lower_proof(
-        proof_tactics,
+    let root = Proof::for_contract_refinement_goal(
         claim_label,
-        &values,
-        entry.memory(),
+        proof_goal,
+        presentation,
+        &parameters,
+        &arguments,
+        obligations.entry(),
+        obligations.post(),
+        &snapshots,
+        &surfaces,
         predicate_environment,
         click_function_environment,
-    )?;
+        theorem_environment,
+    );
+    let proof = root
+        .try_authoritative_linear_script(proof_tactics)?
+        .ok_or_else(refinement_failure)?;
+    let checked = proof.completed_proposition()?;
     let goal = lower_pure_theorem_proposition(
         theorem.name(),
         surface_goal,
@@ -1708,36 +1733,27 @@ fn verify_contract_refinement_theorem(
             "`{claim_label}` failed: could not lower conclusion: {message}"
         ))
     })?;
-    let kernel_authority = prove_c_function_contract_refinement(&refinement, goal.clone(), &proof)
-        .ok_or_else(|| {
-            let subject = concrete_target
-                .map(|target| format!("&{target}"))
-                .or_else(|| symbolic_binding.map(str::to_string))
-                .expect("refinement theorem has a subject");
-            ClickError::new(format!(
-                "`{claim_label}`: contract-refinement proof does not establish `{name}({subject})`"
-            ))
-        })?;
-    fn certificate_tactics(tactics: &[ProofTactic]) -> Vec<ProofTactic> {
-        tactics
-            .iter()
-            .map(|tactic| match tactic {
-                ProofTactic::Simp => ProofTactic::Normalize,
-                ProofTactic::If(proof_if) => ProofTactic::If(ProofIf {
-                    condition: proof_if.condition.clone(),
-                    then_tactics: certificate_tactics(&proof_if.then_tactics),
-                    else_tactics: certificate_tactics(&proof_if.else_tactics),
-                }),
-                tactic => tactic.clone(),
-            })
-            .collect()
-    }
-    let certificate =
-        ProofCertificate::from_proof_tactics(&certificate_tactics(tactics)).map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}`: invalid refinement certificate: {message:?}"
-            ))
-        })?;
+    let kernel_authority = prove_c_function_contract_refinement(
+        &refinement,
+        goal.clone(),
+        &checked,
+    )
+    .ok_or_else(|| {
+        let subject = concrete_target
+            .map(|target| format!("&{target}"))
+            .or_else(|| symbolic_binding.map(str::to_string))
+            .expect("refinement theorem has a subject");
+        ClickError::new(format!(
+            "`{claim_label}`: contract-refinement proof does not establish `{name}({subject})`"
+        ))
+    })?;
+    let mut certificate_steps =
+        ProofCertificate::from_proof_tactics(&tactics[..tactics.len() - proof_tactics.len()])
+            .map_err(|error| ClickError::new(format!("{error:?}")))?
+            .steps()
+            .to_vec();
+    certificate_steps.extend_from_slice(proof.completed_certificate()?.steps());
+    let certificate = ProofCertificate::from_steps(certificate_steps);
     Ok(Some(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,
@@ -2001,6 +2017,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::UnfoldFunction(_)
         | ProofStep::Assumption
         | ProofStep::Normalize
+        | ProofStep::NormalizeUsing(_)
         | ProofStep::ArithmeticUsing(_)
         | ProofStep::Intro
         | ProofStep::Induct { .. }
@@ -2078,10 +2095,12 @@ fn check_pure_script_with_proof(
         return Ok(None);
     }
 
-    let checked = if tactics
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::ArithmeticUsing(_)))
-    {
+    let checked = if tactics.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::ArithmeticUsing(_) | ProofTactic::NormalizeUsing(_)
+        )
+    }) {
         root.try_authoritative_linear_script(tactics)?
     } else {
         root.try_linear_script(tactics)?
@@ -3411,6 +3430,7 @@ pub(super) fn validate_pure_theorem_certificate(
         claim_label,
         requires,
         goal,
+        None,
         predicate_environment,
         click_function_environment,
         theorem_environment,
@@ -3425,6 +3445,7 @@ fn prove_pure_theorem_script(
     claim_label: &str,
     requires: &[Proposition],
     goal: &Proposition,
+    surface_goal: Option<&ClickProposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
@@ -3437,6 +3458,7 @@ fn prove_pure_theorem_script(
             claim_label,
             requires,
             goal,
+            surface_goal,
             predicate_environment,
             click_function_environment,
             theorem_environment,
@@ -3887,6 +3909,7 @@ fn prove_pure_theorem_tactics(
     claim_label: &str,
     requires: &[Proposition],
     original_goal: &Proposition,
+    original_surface_goal: Option<&ClickProposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
@@ -3907,7 +3930,9 @@ fn prove_pure_theorem_tactics(
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();
     let mut goal = original_goal.clone();
-    let mut surface_goal = induction_setup.map(|setup| setup.surface_goal.clone());
+    let mut surface_goal = original_surface_goal
+        .cloned()
+        .or_else(|| induction_setup.map(|setup| setup.surface_goal.clone()));
     let mut closed = false;
     let mut induction_active = false;
 
@@ -4484,6 +4509,34 @@ fn prove_pure_theorem_tactics(
                         describe_pure_fact(&goal, &[], &[])
                     )));
                 }
+                closed = true;
+            }
+            ProofTactic::NormalizeUsing(surface_premises) => {
+                let premises = surface_premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(ClickError::new)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                crate::kernel::proof::fact_reasoning::normalize_using_conditions(
+                    &goal,
+                    &premises,
+                    &crate::kernel::proof::ProofFacts::from_ordered(&available),
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`normalize using` failed for `{claim_label}`: {error:?}"
+                    ))
+                })?;
                 closed = true;
             }
             ProofTactic::ArithmeticUsing(surface_premises) => {

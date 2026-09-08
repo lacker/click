@@ -4,7 +4,7 @@
 //! A key match is never proof authority: the checked snapshot bridge still
 //! validates every selected candidate.
 
-use crate::kernel::Sort;
+use crate::kernel::{AlgebraicTerm, Sort};
 use crate::kernel::{
     Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
     CFloatCondition, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
@@ -53,6 +53,7 @@ pub(crate) struct SnapshotBlindMemoryRangeKey {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum SnapshotBlindConditionKey {
+    AlgebraicEqual(Box<AlgebraicTerm>, Box<AlgebraicTerm>),
     Constant(bool),
     Variable(Variable),
     SignedLessThan(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
@@ -138,6 +139,7 @@ impl SnapshotBlindPropositionKey {
 impl SnapshotBlindConditionKey {
     fn forgets_a_snapshot(&self) -> bool {
         match self {
+            Self::AlgebraicEqual(_, _) => false,
             Self::SignedLessThan(left, right)
             | Self::SignedLessEqual(left, right)
             | Self::SignedGreaterThan(left, right)
@@ -254,6 +256,9 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
     };
     match condition {
         ConditionTerm::Constant(value) => SnapshotBlindConditionKey::Constant(*value),
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            SnapshotBlindConditionKey::AlgebraicEqual(left.clone(), right.clone())
+        }
         ConditionTerm::Variable(variable) => SnapshotBlindConditionKey::Variable(*variable),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             let (left, right) = terms(left, right);

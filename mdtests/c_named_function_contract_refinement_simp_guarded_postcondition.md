@@ -1,8 +1,9 @@
-# Guarded contract refinement requires the written cases
+# Ordinary simp proves a guarded postcondition without enumerating cases
 
-Unfolding a contract does not make the kernel search for conditional-footprint
-cases. When a concrete callback's mutable footprint is guarded, the theorem
-must state the relevant split explicitly.
+The kernel does not enumerate conditional-footprint cases. In this example,
+ordinary implication introduction and extraction suffice: under the target's
+guard, the source's guarantee says that the cell is one, hence positive.
+The smart tactic records those ordinary logical steps.
 
 ```c filename=refinement_theorem_requires_cases.c
 void set_one_if_active(int32 active, int32* cell) {
@@ -52,5 +53,5 @@ theorem missing_cases() {
 ```
 
 ```expect
-fail: contract-refinement proof does not establish `MakePositive(&set_one_if_active)`
+pass
 ```

@@ -427,10 +427,7 @@ fn theorem_application_argument_type(
         click_function_environment,
     ) {
         return Ok(Some(generics::click_type_from_algebraic_value_type(
-            &crate::kernel::AlgebraicValueType::Algebraic {
-                name: value.algebraic_type.name,
-                arguments: value.algebraic_type.arguments,
-            },
+            &value.algebraic_type.value_type(),
         )));
     }
 
@@ -497,6 +494,10 @@ pub(super) fn theorem_application_bindings(
                 actual: &crate::kernel::AlgebraicValueType,
             ) -> bool {
                 match (expected, actual) {
+                    (
+                        ClickType::Algebraic(expected),
+                        crate::kernel::AlgebraicValueType::Parameter(name),
+                    ) => expected.rigid && expected.name == *name,
                     (ClickType::C(expected), crate::kernel::AlgebraicValueType::C(actual)) => {
                         expected.to_kernel_type() == *actual
                     }
@@ -504,7 +505,8 @@ pub(super) fn theorem_application_bindings(
                         ClickType::Algebraic(expected),
                         crate::kernel::AlgebraicValueType::Algebraic { name, arguments },
                     ) => {
-                        expected.name == *name
+                        !expected.rigid
+                            && expected.name == *name
                             && expected.arguments.len() == arguments.len()
                             && expected
                                 .arguments
@@ -517,7 +519,8 @@ pub(super) fn theorem_application_bindings(
                     _ => false,
                 }
             }
-            let type_matches = value.algebraic_type.name == expected_type.name
+            let type_matches = value.algebraic_type.rigid == expected_type.rigid
+                && value.algebraic_type.name == expected_type.name
                 && value.algebraic_type.arguments.len() == expected_type.arguments.len()
                 && expected_type
                     .arguments

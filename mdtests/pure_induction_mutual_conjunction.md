@@ -21,22 +21,28 @@ theorem parity_is_complementary(n: int32) {
     ensures parity_even(n) + parity_odd(n) == 1 by {
         induct(n) as ih;
         if n <= 0 {
-            simp();
+            unfold(parity_even(n));
+            unfold(parity_odd(n));
+            normalize() using { n <= 0; }
         } else {
-            if n <= 1 {
-                if n - 1 <= 0 {
-                    simp();
-                } else {
-                    simp();
-                }
-            } else {
-                if n - 1 <= 0 {
-                    simp();
-                } else {
-                    apply(ih((n - 1) - 1));
-                    simp();
-                }
+            have parity_even(n) == parity_odd(n - 1) by {
+                unfold(parity_even(n));
+                normalize() using { not(n <= 0); }
             }
+            have parity_odd(n) == parity_even(n - 1) by {
+                unfold(parity_odd(n));
+                normalize() using { not(n <= 0); }
+            }
+            rewrite(parity_even(n) == parity_odd(n - 1));
+            rewrite(parity_odd(n) == parity_even(n - 1));
+            have parity_odd(n - 1) + parity_even(n - 1)
+                == parity_even(n - 1) + parity_odd(n - 1) by {
+                normalize();
+            }
+            rewrite(parity_odd(n - 1) + parity_even(n - 1)
+                == parity_even(n - 1) + parity_odd(n - 1));
+            apply(ih(n - 1));
+            assumption();
         }
     }
 }

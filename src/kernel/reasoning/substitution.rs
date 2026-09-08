@@ -1302,6 +1302,11 @@ fn collect_condition_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_bitvector_bound_variables(term, variables));
+            right
+                .for_each_bitvector_term(|term| collect_bitvector_bound_variables(term, variables));
+        }
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -2947,6 +2952,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
 ) -> ConditionTerm {
     match condition {
         ConditionTerm::Constant(value) => ConditionTerm::Constant(*value),
+        ConditionTerm::AlgebraicEqual(left, right) => ConditionTerm::AlgebraicEqual(
+            Box::new(substitute_bitvector_variable_in_algebraic_term(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_algebraic_term(
+                right, from, to,
+            )),
+        ),
         ConditionTerm::Variable(variable) => ConditionTerm::Variable(*variable),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => ConditionTerm::signed_less_than(
             substitute_bitvector_variable(left, from, to),
@@ -4180,6 +4193,14 @@ fn substitute_pointer_variable_in_condition(
     to: &Pointer,
 ) -> ConditionTerm {
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => ConditionTerm::AlgebraicEqual(
+            Box::new(substitute_pointer_variable_in_algebraic_term(
+                left, from, to,
+            )),
+            Box::new(substitute_pointer_variable_in_algebraic_term(
+                right, from, to,
+            )),
+        ),
         ConditionTerm::PointerEqual(left, right) => ConditionTerm::pointer_equal(
             substitute_pointer_variable_in_pointer(left, from, to),
             substitute_pointer_variable_in_pointer(right, from, to),

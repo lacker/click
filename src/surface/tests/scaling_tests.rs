@@ -1,5 +1,54 @@
 use super::*;
 
+#[test]
+fn explicit_constructor_unfold_has_near_linear_nested_match_work() {
+    let mut samples = Vec::new();
+    for size in [2, 4, 8, 16, 32, 64] {
+        let mut body = "n".to_string();
+        for index in 0..size {
+            body = format!(
+                "match Nat::Zero {{ Nat::Zero => {body}, Nat::Succ(unused_{index}) => n, }}"
+            );
+        }
+        let source = format!(
+            "function nested(n: Nat) -> Nat {{ {body} }}\n\
+            theorem nested_result(n: Nat) {{ ensures nested(n) == n by {{ unfold(nested(n)); normalize(); }} }}"
+        );
+        if size > parser::MATCH_NESTING_LIMIT {
+            let error = verify_click_theorems(&source)
+                .expect_err("deep syntax must fail locally, not overflow the stack");
+            assert!(
+                error
+                    .message()
+                    .contains("match nesting exceeds Click's supported depth of 16"),
+                "{error:?}"
+            );
+            continue;
+        }
+        let (result, sample) = scaling_sample(size, || verify_click_theorems(&source));
+        result.expect("explicit constructor matches unfold and check");
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("nested constructor unfolding", &samples);
+}
+
+#[test]
+fn parametric_theorem_declarations_have_near_linear_checking_work() {
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let source = (0..size).map(|index| format!(
+            "theorem reflexive_{index}<T>(x: T) {{ ensures x == x by {{ normalize(); }} }}\n"
+        )).collect::<String>();
+        let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
+        assert_eq!(
+            verified.expect("every unused generic proof checks").len(),
+            size
+        );
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("parametric declarations", &samples);
+}
+
 #[derive(Clone, Debug)]
 struct ScalingSample {
     size: usize,

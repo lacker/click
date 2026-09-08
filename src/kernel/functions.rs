@@ -1198,6 +1198,26 @@ fn execute_verified_function_rule(
             });
             continue;
         }
+        // A direct store into read-only storage is rejected where it is
+        // executed, but a modular call performs its writes abstractly through
+        // this footprint. Without the same check, passing read-only storage to
+        // a callee that declares it mutable would let the call store there:
+        // string-literal bytes are the reachable case, since C0 models a
+        // literal as an ordinary `uint8*` and no qualifier catches it.
+        if let Some(range) = mutable_ranges
+            .iter()
+            .find(|range| entry_state.memory.is_read_only_block(&range.base().block))
+        {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "mutable footprint covers read-only storage `{}`",
+                    range.base().block
+                ))),
+                facts,
+                obligations,
+            });
+            continue;
+        }
 
         let memory = if mutable_ranges.is_empty() {
             entry_state.memory.clone()
@@ -1528,21 +1548,6 @@ pub(super) fn prepare_function_contract_refinement_context(
     })
 }
 
-pub(super) fn function_refines_named_contract_in_explicit_case(
-    context: &CFunctionContractRefinementContext,
-    case_assumptions: &[Proposition],
-    unfolded_predicates: &BTreeSet<String>,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<bool> {
-    function_refines_named_contract_in_case(
-        context,
-        case_assumptions,
-        unfolded_predicates,
-        true,
-        budget,
-    )
-}
-
 pub(super) fn function_contract_refinement_entry_state(
     context: &CFunctionContractRefinementContext,
 ) -> CState {
@@ -1551,6 +1556,153 @@ pub(super) fn function_contract_refinement_entry_state(
         context.contract.template(),
         &context.argument_values,
     )
+}
+
+pub(super) fn prepare_contract_refinement_obligations(
+    context: &CFunctionContractRefinementContext,
+) -> Option<CFunctionContractRefinementObligations> {
+    let target = context.contract.template();
+    let source = &context.function;
+    let mut budget = ExecutionBudget::default();
+    budget.next_kernel_variable = context.next_kernel_variable;
+    let entry = function_contract_refinement_entry_state(context);
+    let source_entry =
+        with_contract_argument_views(&CState::new(), source, &context.argument_values);
+    let mut assumptions = PureFactContext::new();
+    if !assume_contract_propositions(
+        &entry,
+        &entry,
+        target.contract_requires(),
+        &mut assumptions,
+        &mut budget,
+    )
+    .ok()?
+    {
+        return None;
+    }
+    // A single conservative post memory covers every possible source write.
+    // This does not enumerate guard combinations or assert that a guarded
+    // write happened. Resource/effect containment is checked independently.
+    let ranges =
+        evaluate_contract_mutable_ranges(source, &source_entry, &assumptions, &mut budget, false)
+            .ok()??;
+    let memory = entry.memory().clone().with_call_memory_havoc(
+        Variable(budget.next_kernel_variable),
+        &ranges,
+        &assumptions,
+    );
+    budget.next_kernel_variable += 1;
+    let result = symbolic_call_result(source.return_type(), context.result_variable);
+    let mut post = entry.clone().with_memory(memory.clone());
+    let mut source_post = source_entry.clone().with_memory(memory);
+    if source.return_type() != CType::Void {
+        set_function_result(&mut post, target, result.clone());
+        set_function_result(&mut source_post, source, result);
+    }
+    if !compatible_resource_and_effect_interfaces(
+        target,
+        source,
+        &entry,
+        &source_entry,
+        &post,
+        &source_post,
+        &assumptions,
+        &mut budget,
+    )
+    .ok()?
+    {
+        return None;
+    }
+    fn conjunction(items: Vec<Proposition>) -> Proposition {
+        items
+            .into_iter()
+            .reduce(|a, b| Proposition::And(Box::new(a), Box::new(b)))
+            .unwrap_or(Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            ))
+    }
+    fn lower(
+        function: &CFunction,
+        specs: &[SpecProposition],
+        state: &CState,
+        entry: &CState,
+        budget: &mut ExecutionBudget,
+    ) -> Option<Proposition> {
+        let definitions = function
+            .predicate_unfoldings()
+            .iter()
+            .map(|definition| (definition.body(), definition.predicate()))
+            .collect::<BTreeMap<_, _>>();
+        let mut propositions = Vec::new();
+        for spec in specs {
+            let spec = definitions.get(spec).copied().unwrap_or(spec);
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                spec,
+                Some(entry),
+                &PureFactContext::new(),
+                budget,
+            )
+            .ok()?;
+            let [path] = paths.as_slice() else {
+                return None;
+            };
+            // Lowering facts name reads and other definitional intermediates;
+            // they are not clauses of either callback contract. Both sides
+            // use the same kernel load identities in these fixed memories.
+            propositions.extend(
+                path.obligations
+                    .iter()
+                    .map(|obligation| obligation.proposition().clone()),
+            );
+            propositions.push(path.proposition.clone());
+        }
+        Some(conjunction(propositions))
+    }
+    let target_requires = lower(
+        target,
+        target.contract_requires(),
+        &entry,
+        &entry,
+        &mut budget,
+    )?;
+    let source_requires = lower(
+        source,
+        source.contract_requires(),
+        &source_entry,
+        &source_entry,
+        &mut budget,
+    )?;
+    let source_ensures = lower(
+        source,
+        source.contract_ensures(),
+        &source_post,
+        &source_entry,
+        &mut budget,
+    )?;
+    let target_ensures = lower(
+        target,
+        target.contract_ensures(),
+        &post,
+        &entry,
+        &mut budget,
+    )?;
+    let proposition = Proposition::Implies(
+        Box::new(target_requires),
+        Box::new(Proposition::And(
+            Box::new(source_requires),
+            Box::new(Proposition::Implies(
+                Box::new(source_ensures),
+                Box::new(target_ensures),
+            )),
+        )),
+    );
+    Some(CFunctionContractRefinementObligations {
+        entry,
+        post,
+        proposition,
+    })
 }
 
 fn function_refines_named_contract_in_case(
@@ -2402,7 +2554,8 @@ fn assume_contract_proposition(assumptions: &mut PureFactContext, proposition: P
             for (left, right) in
                 super::spec::sequence_elements(&left).zip(super::spec::sequence_elements(&right))
             {
-                if let Some(equality) = refinement_sequence_element_equality(left, right) {
+                if let Some(equality) = super::spec::integer_sequence_element_equality(left, right)
+                {
                     *assumptions = assumptions.clone().assume_proposition(equality);
                 }
             }
@@ -2480,7 +2633,8 @@ fn contract_refinement_proves(
             loop {
                 match (left.next(), right.next()) {
                     (Some(left), Some(right)) => {
-                        let Some(equality) = refinement_sequence_element_equality(left, right)
+                        let Some(equality) =
+                            super::spec::integer_sequence_element_equality(left, right)
                         else {
                             return false;
                         };
@@ -2553,27 +2707,6 @@ fn contract_refinement_proves(
                     *value,
                 ))
             })
-}
-
-// Sequence terms use logical equality. C integer equality agrees with it;
-// floating equality does not (NaNs and signed zero), and address equality
-// alone must not establish equality of pointer provenance.
-fn refinement_sequence_element_equality(left: &CValue, right: &CValue) -> Option<Proposition> {
-    if left.c_type() != right.c_type()
-        || !matches!(
-            left,
-            CValue::Int16(_)
-                | CValue::Int32(_)
-                | CValue::UInt8(_)
-                | CValue::UInt16(_)
-                | CValue::UInt32(_)
-                | CValue::Int64(_)
-                | CValue::UInt64(_)
-        )
-    {
-        return None;
-    }
-    c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
 }
 
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {
@@ -4430,6 +4563,31 @@ fn zero_aggregate_array_fields(
 /// but the pointed-to allocation is not. Missing cells in automatic storage
 /// remain missing so an uninitialized source field stays uninitialized in the
 /// copy; opaque/external source cells are represented by typed symbolic loads.
+/// Whether a borrowed local view names storage its block actually has.
+///
+/// Only a range whose bounds are constant can be placed against the block's
+/// extent. One with symbolic bounds keeps the previous treatment: it is the
+/// caller's own stack object either way, and tightening that case belongs
+/// with the range-arithmetic work rather than here.
+fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool {
+    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+        return true;
+    };
+    if end <= start {
+        return true;
+    }
+    let Some(elements) = u32::try_from(end - start).ok() else {
+        return false;
+    };
+    let Some(bytes) = elements.checked_mul(range.element_width()) else {
+        return false;
+    };
+    let base = range
+        .base()
+        .offset_by_elements(range.start().clone(), range.element_width());
+    memory.access_in_bounds(&base, bytes)
+}
+
 pub(super) fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
@@ -4841,12 +4999,16 @@ fn prepare_function_resource_transfer(
 
     let mut return_resources = caller_state.resources().clone();
     for resource in &required_resource_list {
-        if matches!(
-            resource,
-            CResourceFact::View(CResource::Memory(range))
-                if range.base().block.starts_with("local:")
-                    && callee_state.memory().has_block(&range.base().block)
-        ) {
+        // A borrowed view of the caller's own stack object needs no resource
+        // from the caller, but it still has to name storage that object has.
+        // A range running past the block would otherwise let the callee read
+        // whatever the caller keeps beyond it: `views a[0..3]` on an
+        // `int32 b[2]` used to be discharged by the block merely existing.
+        if let CResourceFact::View(CResource::Memory(range)) = resource
+            && range.base().block.starts_with("local:")
+            && callee_state.memory().has_block(&range.base().block)
+            && local_view_range_within_block(range, callee_state.memory())
+        {
             continue;
         }
         if let CResource::Composite { name, arguments } | CResource::Token { name, arguments } =

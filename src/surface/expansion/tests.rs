@@ -1,6 +1,180 @@
 use super::*;
 
 #[test]
+fn successive_constructor_unfolds_retain_a_checked_goal() {
+    let source = r#"
+theorem add_two(n: Nat) {
+    ensures nat_add(Nat::Succ(Nat::Succ(Nat::Zero)), n) == Nat::Succ(Nat::Succ(n)) by {
+        unfold(nat_add(Nat::Succ(Nat::Succ(Nat::Zero)), n));
+        unfold(nat_add(Nat::Succ(Nat::Zero), n));
+        unfold(nat_add(Nat::Zero, n));
+        normalize();
+    }
+}
+theorem singleton<T>(x: T) {
+    ensures list_length(List<T>::Cons(x, List<T>::Nil)) == Nat::Succ(Nat::Zero) by {
+        unfold(list_length(List<T>::Cons(x, List<T>::Nil)));
+        unfold(list_length(List<T>::Nil));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("successive explicit unfolds verify");
+    let smart_source = source.replace("normalize();", "simp();");
+    verify_c0_sources(&smart_source, &[]).expect("smart closers have checked certificates");
+    for (claim, index) in [("add_two.ensures_0", 3), ("singleton.ensures_0", 2)] {
+        let position = c0_tactic_source_position(&smart_source, &[], claim, index).unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(&smart_source, &[], position.line, position.column).unwrap();
+        verify_c0_sources(&expanded, &[]).expect("successive unfolds expand and recheck");
+    }
+    let tampered = source.replace("== Nat::Succ(Nat::Succ(n))", "== Nat::Succ(n)");
+    assert!(verify_c0_sources(&tampered, &[]).is_err());
+}
+
+#[test]
+fn generic_smart_proofs_expand_without_concrete_clients() {
+    let source = r#"
+theorem independent<T, U>(x: T, y: U) {
+    ensures x == x by { simp(); }
+    ensures y == y by { simp(); }
+}
+theorem lists<T>(xs: List<List<T>>) {
+    ensures list_append(xs, List<List<T>>::Nil) == xs by {
+        apply(list_append_right_identity(xs));
+    }
+}
+"#;
+    let verified = verify_click_theorems(source).expect("parametric proofs verify");
+    assert_eq!(verified.len(), 3);
+    for claim in [
+        "independent.ensures_0",
+        "independent.ensures_1",
+        "lists.ensures_0",
+    ] {
+        let position = c0_tactic_source_position(source, &[], claim, 0).unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(source, &[], position.line, position.column).unwrap();
+        assert!(expanded.contains("independent<T, U>"));
+        assert!(expanded.contains("lists<T>"));
+        verify_c0_sources(&expanded, &[]).expect("expanded parametric certificate rechecks");
+    }
+}
+
+#[test]
+fn conditional_normalization_roundtrips_and_rejects_tampering() {
+    let source = r#"
+theorem client(xs: List<int32>, ys: List<int32>) {
+    requires not(xs == ys);
+    ensures (if xs == ys { 1 } else { 0 }) == 0 by {
+        normalize() using { not(xs == ys); }
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("conditional client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("simple conditional normalization roundtrips");
+    assert!(expanded.contains("normalize() using"));
+    verify_c0_sources(&expanded, &[]).expect("conditional certificate rechecks");
+    for tampered in [
+        expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+        expanded.replace("not(xs == ys)", "xs == ys"),
+        expanded.replace("else { 0 }) == 0", "else { 0 }) == 1"),
+    ] {
+        assert_ne!(tampered, expanded);
+        assert!(verify_c0_sources(&tampered, &[]).is_err());
+    }
+}
+
+#[test]
+fn generic_template_expansion_checks_arbitrary_types() {
+    let source = r#"
+theorem client<T>(xs: List<T>, ys: List<T>) {
+    requires not(xs == ys);
+    ensures (if xs == ys { 1 } else { 0 }) == 0 by {
+        normalize() using { not(xs == ys); }
+    }
+}
+"#;
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0)
+        .expect("generic parameter lists have source locations");
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("a template has a checked parametric certificate");
+    verify_c0_sources(&expanded, &[]).expect("expanded template rechecks without a client");
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+            &[]
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn smart_conditional_normalization_emits_checked_evidence() {
+    let source = r#"
+function same_list(xs: List<int32>, ys: List<int32>) -> int32 {
+    if xs == ys { 1 } else { 0 }
+}
+theorem client(xs: List<int32>, ys: List<int32>) {
+    requires not(xs == ys);
+    ensures same_list(xs, ys) == 0 by { simp(); }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("smart conditional proof verifies");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("smart conditional proof expands");
+    assert!(expanded.contains("normalize() using"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("emitted conditional evidence rechecks");
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+            &[],
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn nested_list_membership_expands_and_rechecks() {
+    let source = r#"
+theorem client(xs: List<List<int32>>, ys: List<List<int32>>, value: List<int32>) {
+    ensures list_contains(list_append(xs, ys), value)
+        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        apply(list_contains_append(xs, ys, value));
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("nested-list client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("nested-list application expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded nested-list client rechecks");
+}
+
+#[test]
+fn scalar_call_congruence_expands_and_rejects_tampering() {
+    let source = r#"
+theorem client(xs: List<int32>, ys: List<int32>, value: int32) {
+    requires xs == ys;
+    ensures list_contains(xs, value) == list_contains(ys, value) by {
+        rewrite(xs == ys);
+        simp();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("rewrite client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 1).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("rewritten scalar goal expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded rewrite client rechecks");
+    let tampered = expanded.replace("requires xs == ys;", "requires xs == xs;");
+    assert!(verify_c0_sources(&tampered, &[]).is_err());
+}
+
+#[test]
 fn library_list_theorem_application_expands_and_rechecks() {
     let source = r#"
 theorem client(xs: List<int32>, ys: List<int32>, zs: List<int32>) {
@@ -1378,9 +1552,11 @@ int32 contains(uint8 p[], int32 n) {
 #[test]
 fn expanded_bitvector_facts_print_parseable_negative_literals() {
     let c_source = "int32 all_bits() { return ~0; }";
+    // `~0` is -1, and a sidecar literal takes the same type it takes in C, so
+    // the claim is spelled with the negative literal the expansion prints.
     let click_source = r#"verifying "all_bits.c";
 int32 all_bits() {
-    ensures result == 4294967295 by auto;
+    ensures result == -1 by auto;
 }"#;
     let offset = click_source.find("auto").expect("auto should be present");
     let position = position_at_offset(click_source, offset);
@@ -2000,7 +2176,8 @@ theorem set_one_is_make_positive() {
     let theorem = &expanded[expanded
         .find("theorem set_one_is_make_positive")
         .expect("expanded source should retain the theorem")..];
-    assert_eq!(theorem.matches("normalize();").count(), 2, "{theorem}");
+    assert!(theorem.contains("intro();"), "{theorem}");
+    assert!(theorem.contains("extract("), "{theorem}");
     assert!(!theorem.contains("simp();"), "{theorem}");
     verify_c0_sources(&expanded, &sources)
         .expect("expanded contract-refinement theorem should re-verify with its C target");

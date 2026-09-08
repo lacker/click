@@ -448,6 +448,9 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ProofTactic::Intro => Some(PostExecutionTactic::Intro),
         ProofTactic::Assumption => Some(PostExecutionTactic::Assumption),
         ProofTactic::Normalize => Some(PostExecutionTactic::Normalize),
+        ProofTactic::NormalizeUsing(premises) => {
+            Some(PostExecutionTactic::NormalizeUsing(premises.clone()))
+        }
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
         ProofTactic::FrameUsing { region, premises } => Some(PostExecutionTactic::FrameUsing {
             region: region.clone(),

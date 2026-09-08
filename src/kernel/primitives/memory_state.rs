@@ -463,6 +463,9 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
             HavocIdentityTask::Condition(condition) => {
                 crate::instrumentation::record_deterministic_work(1);
                 match condition {
+                    ConditionTerm::AlgebraicEqual(left, right) => {
+                        let _ = write!(identity, "aeq({left:?},{right:?});");
+                    }
                     ConditionTerm::Constant(value) => {
                         let _ = write!(identity, "cc{value};");
                     }

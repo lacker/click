@@ -115,12 +115,12 @@ bound by that arm:
 
 <!-- verified-example: mdtests/algebraic_structural_recursion.md -->
 ```click
-function list_length(xs: List<int32>) -> int32
+function example_list_length(xs: List<int32>) -> int32
     decreases xs
 {
     match xs {
         List::Nil => 0,
-        List::Cons(head, tail) => 1 + list_length(tail),
+        List::Cons(head, tail) => 1 + example_list_length(tail),
     }
 }
 ```
@@ -149,21 +149,28 @@ Click does not recursively normalize it by an arbitrary depth budget.
 not prove every property of that value. Use explicit strong induction in a
 pure theorem when the proof needs the result at a smaller argument:
 
-<!-- verified-example: mdtests/pure_click_functions.md -->
+<!-- verified-example: mdtests/pure_induction_countdown.md -->
 ```click
 theorem countdown_is_zero(n: int32) {
     requires n >= 0;
     ensures countdown(n) == 0 by {
         induct(n) as ih;
         if n <= 0 {
-            simp();
+            unfold(countdown(n));
+            normalize() using { n <= 0; }
         } else {
             apply(ih(n - 1));
-            simp();
+            unfold(countdown(n));
+            rewrite(countdown(n - 1) == 0);
+            normalize();
         }
     }
 }
 ```
+
+Pure conditional expressions remain symbolic during lowering, even when a
+branch condition is available. Here `normalize() using { n <= 0; }` explicitly
+checks the base-case reduction.
 
 `induct(n) as ih` is a simple tactic. It requires the current
 facts to prove `n >= 0`. Within the rest of that theorem proof, `ih(m)` states

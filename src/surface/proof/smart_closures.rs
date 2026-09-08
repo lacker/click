@@ -261,6 +261,9 @@ impl<'a> Proof<'a> {
         introduced_surfaces: &[ClickProposition],
         allow_function_unfold: bool,
     ) -> Result<Option<Self>, ClickError> {
+        if let Some(proof) = self.try_goal_conditional_normalization() {
+            return Ok(Some(proof));
+        }
         if let Some(surface_goal) = self.surface_goal()
             && let Some(proof) = self.try_selected_unchanged_load_forall_goal(surface_goal, &[])
         {
@@ -353,6 +356,65 @@ impl<'a> Proof<'a> {
             return Ok(Some(unfolded));
         }
         Ok(None)
+    }
+
+    /// Select only guards actually occurring in the goal, through indexed
+    /// fact/source lookups. The emitted simple step checks every selection.
+    fn try_goal_conditional_normalization(&self) -> Option<Self> {
+        let guards =
+            crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(self.goal()?);
+        let frontier_anchor = match self.context.as_ref() {
+            ProofContext::Execution(_) if self.focused_outcome_data().is_none() => {
+                self.execution().and_then(frontier_premise_anchor)
+            }
+            _ => None,
+        };
+        let (surfaces, anchor) = match self.context.as_ref() {
+            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
+            ProofContext::FixedState(context) => (
+                context.surface_propositions,
+                context.premise_anchor.as_ref(),
+            ),
+            ProofContext::Execution(_) => match self.focused_outcome_data() {
+                Some(data) => (&data.surface_propositions, data.premise_anchor.as_ref()),
+                None => (
+                    &self.execution()?.surface_propositions,
+                    frontier_anchor.as_ref(),
+                ),
+            },
+        };
+        let mut premises = Vec::new();
+        let mut selected = BTreeSet::new();
+        for condition in guards {
+            for value in [true, false] {
+                let fact = Proposition::ConditionIs(condition.clone(), value);
+                if !self.facts().contains(&fact)
+                    && !condition_polarity_forms(&fact)
+                        .iter()
+                        .any(|form| self.facts().contains(form))
+                {
+                    continue;
+                }
+                let surface = self
+                    .available_surface_fact(surfaces, anchor, &fact)
+                    .or_else(|| {
+                        condition_polarity_forms(&fact)
+                            .iter()
+                            .find_map(|form| self.available_surface_fact(surfaces, anchor, form))
+                    });
+                if let Some(surface) = surface
+                    && selected.insert(fact)
+                {
+                    premises.push(surface);
+                }
+            }
+        }
+        if premises.is_empty() {
+            return None;
+        }
+        self.apply_step(ProofStep::NormalizeUsing(premises))
+            .ok()
+            .filter(Proof::is_complete)
     }
 
     /// Uses one explicitly supplied equality before unfolding applications in
@@ -997,7 +1059,29 @@ impl<'a> Proof<'a> {
                     }
                 }
                 let mut available_surfaces = introduced_surfaces.to_vec();
+                available_surfaces.push(surface_antecedent.as_ref().clone());
                 available_surfaces.extend(conjuncts.iter().cloned());
+                // Introducing this guard can make a previously introduced
+                // conditional premise usable. Select its written consequent
+                // and let the ordinary checked `extract` rule discharge the
+                // guard; do not branch over possible guard values.
+                for premise in available_surfaces.clone() {
+                    let mut current = &premise;
+                    while let ClickProposition::Implies(_, consequent) = current {
+                        let Some(extracted) = attempt::candidate_outcome(
+                            introduced.apply_step(ProofStep::Extract(consequent.as_ref().clone())),
+                        )?
+                        else {
+                            break;
+                        };
+                        introduced = extracted;
+                        available_surfaces.push(consequent.as_ref().clone());
+                        if introduced.is_complete() {
+                            return Ok(Some(introduced));
+                        }
+                        current = consequent;
+                    }
+                }
                 if !conjuncts.is_empty()
                     && let Some(surface_goal) = introduced.surface_goal()
                     && let Some(source) = old_reflexive_transport_source(surface_goal)
@@ -2946,6 +3030,20 @@ impl<'a> Proof<'a> {
                 .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
+        if !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty() {
+            let conditions = premise_pairs
+                .iter()
+                .filter_map(|(kernel, surface)| {
+                    (!condition_polarity_forms(kernel).is_empty()).then(|| surface.clone())
+                })
+                .collect::<Vec<_>>();
+            if !conditions.is_empty()
+                && let Ok(closed) = proof.apply_step(ProofStep::NormalizeUsing(conditions))
+                && closed.is_complete()
+            {
+                return Some(closed);
+            }
+        }
         let restricted = premise_pairs
             .iter()
             .map(|(kernel, _)| kernel.clone())

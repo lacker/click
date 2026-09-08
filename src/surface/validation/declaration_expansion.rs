@@ -436,6 +436,12 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::NormalizeUsing(premises) => Ok(ProofTactic::NormalizeUsing(
+            premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: expand_declared_resource_proposition(
                 have.proposition,
@@ -899,9 +905,6 @@ pub(in crate::surface) fn combined_theorem_definitions_with_stdlib_ensure_count(
     let (_, _, _, mut definitions) = standard_library_definitions()?;
     let stdlib_ensure_count = definitions
         .iter()
-        // Generic schemas are checked at their use sites and do not occupy
-        // entries in the eagerly verified theorem-result prefix.
-        .filter(|definition| definition.type_parameters().is_empty())
         .map(|definition| definition.ensures().len())
         .sum();
     definitions.extend(file.theorem_definitions().iter().cloned());

@@ -875,6 +875,14 @@ int32 t() {
 
 ## 11. Sidecar integer literals in [2^31, 2^32) wrap to negative `int32`
 
+**Fixed** in `Type a sidecar literal the way a C source types it`; regressions
+`mdtests/sidecar_literal_types_match_c.md` and
+`mdtests/sidecar_literal_above_int32_rejected.md`. Two existing tests had
+encoded the old reading and were corrected in the same change:
+`mdtests/c_bitwise.md` and the expansion test
+`expanded_bitvector_facts_print_parseable_negative_literals` both claimed
+`~0 == 4294967295`, which is false in C, where the literal is a `long`.
+
 **Severity: high.** A spec author writing an ordinary unsigned constant gets a
 different number than they wrote, and the C frontend disagrees with the sidecar
 about the same digits.
@@ -1026,7 +1034,15 @@ cell matched, which needs a concrete offset; heap blocks have an explicit
 initialization state across a `views`/`owns` transfer at a call, and
 block-scoped objects reuse one block for the whole function.
 
-**Regression A**, symbolic index
+**Regression A**, symbolic index. **Attempted and reverted**: flagging a
+symbolic-offset load from a `local:` block unless the whole block is written
+does reject this case, but it is not the right test. A load at an index the
+proof bounds to the written prefix, which is what an ordinary copy or
+initialization loop does, would be rejected with it. The attempt also could
+not see the writes: local array stores do not appear in the cell map under
+constant offsets, so a fully written `int32 a[3]` still looked uninitialized
+and even the sound cases were rejected. A real fix needs the load's index
+placed against the initialized region, not a whole-object test
 (`mdtests/uninit_local_symbolic_index_rejected.md`):
 
 ```c
@@ -1078,8 +1094,11 @@ int32 uninit_eq_callee() {
 }
 ```
 
-**Regression C**, a `views` range wider than the caller's block
-(`mdtests/views_exceeds_local_block_rejected.md`):
+**Regression C**, a `views` range wider than the caller's block — **fixed** in
+`Bound a borrowed view of a caller's local to that local`, regressions
+`mdtests/borrowed_local_view_bounds_rejected.md` and
+`mdtests/borrowed_local_view_in_bounds.md`. A range with symbolic bounds keeps
+the previous treatment; only constant bounds are placed against the block:
 
 ```c
 int32 g(int32* a) {
@@ -1151,6 +1170,13 @@ indeterminate storage.
 ---
 
 ## 14. String literal storage can be made writable through a contract
+
+**Fixed** in `Reject a call whose mutable footprint covers read-only storage`;
+regression `mdtests/string_literal_mutable_footprint_rejected.md`. The fix is
+at the call rather than on the literal's resource: removing the literal's
+ownership would also remove the documented ability to return a literal and
+read it in the caller (`mdtests/string_literals_call.md`), because `produces`
+transfers ownership and there is no spelling for producing a view.
 
 **Severity: high.** A callee contract that takes `owns` over a literal's
 storage lets the caller store into read-only memory with no diagnostic.
@@ -1330,6 +1356,12 @@ inconsistent.
 ---
 
 ## 17. `--changed-since` misses named-contract and algebraic-type changes
+
+**Fixed** in `Rebuild when a shared contract or algebraic type changes`;
+regressions `incremental_selection_rebuilds_all_functions_for_named_contract_changes`
+and `..._for_algebraic_type_changes` in `src/surface/tests/project_tests.rs`,
+which is where the existing incremental-selection tests live because the
+scenario needs a baseline rather than a sidecar.
 
 **Severity: high.** After a shared `contract` block is weakened, every function
 is reused and the run exits 0, while a full verify of the same tree fails.

@@ -14,20 +14,19 @@ use crate::kernel::{
     CCheckedFunctionProposition, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
     CFunction, CFunctionContract, CFunctionContractClaim, CFunctionContractClaimKey,
-    CFunctionContractClaimTarget, CFunctionContractExecutionMode, CFunctionContractRefinementProof,
-    CFunctionExecutionCandidates, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
-    CLoopEffectCheck, CLoopEffectSpan, CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory,
-    CMemoryRange, CMemorySegment, CResource, CResourceAccessMode, CResourceFact, CResourceSpec,
-    CState, CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem,
-    ConditionTerm, ExecutionBudget, ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm,
-    ProofObligation, Proposition, PropositionDerivation, PureFactContext, ResourceContext,
-    ResourceContextValidityError, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
-    SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
-    Variable, abstract_c_state_for_join, c_checked_function_proposition,
-    c_condition_fact_has_memory, c_condition_fact_memories, c_contract_refinement_context,
-    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
-    c_function_contract_entry_state, c_function_contract_refinement_arguments,
-    c_function_contract_refinement_context, c_function_contract_refinement_entry_state,
+    CFunctionContractClaimTarget, CFunctionContractExecutionMode, CFunctionExecutionCandidates,
+    CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan,
+    CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
+    CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
+    CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
+    ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition,
+    PropositionDerivation, PureFactContext, ResourceContext, ResourceContextValidityError, Sort,
+    SpecAlgebraicExpression, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition,
+    SpecResource, SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
+    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
+    c_contract_refinement_context, c_do_while_preservation_contexts,
+    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
+    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
     c_function_entry_state, c_function_execution_candidates_from_outcomes,
     c_function_outcome_from_statement_outcome, c_function_specification,
     c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
@@ -413,8 +412,8 @@ pub enum AlgebraicFieldType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClickType {
     /// A declaration-scoped type parameter. Generic logical declarations are
-    /// instantiated to concrete Click types before they cross into Kernel
-    /// Click.
+    /// instantiated to concrete types at applications, or rigid arbitrary
+    /// types when checking theorem declarations, before crossing into Kernel Click.
     Parameter(String),
     C(C0Type),
     Algebraic(AlgebraicTypeApplication),
@@ -442,6 +441,8 @@ impl AlgebraicTypeApplication {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlgebraicTypeApplication {
+    /// Internal rigid type parameter, never a datatype with zero constructors.
+    rigid: bool,
     name: String,
     arguments: Vec<ClickType>,
 }
@@ -2160,6 +2161,7 @@ pub enum ProofTactic {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
@@ -2405,6 +2407,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "normalize-using",
+        syntax: "normalize() using",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "arithmetic",
         syntax: "arithmetic()",
         class: "simple",
@@ -2531,6 +2538,7 @@ pub enum ProofStep {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
@@ -2725,6 +2733,7 @@ impl ProofStep {
             ProofTactic::Assumption => Self::Assumption,
             ProofTactic::Extract(proposition) => Self::Extract(proposition.clone()),
             ProofTactic::Normalize => Self::Normalize,
+            ProofTactic::NormalizeUsing(premises) => Self::NormalizeUsing(premises.clone()),
             ProofTactic::ArithmeticUsing(premises) => Self::ArithmeticUsing(premises.clone()),
             ProofTactic::Intro => Self::Intro,
             ProofTactic::Split => Self::Split,
@@ -2904,6 +2913,7 @@ impl ProofStep {
             Self::Assumption => ProofTactic::Assumption,
             Self::Extract(proposition) => ProofTactic::Extract(proposition.clone()),
             Self::Normalize => ProofTactic::Normalize,
+            Self::NormalizeUsing(premises) => ProofTactic::NormalizeUsing(premises.clone()),
             Self::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(premises.clone()),
             Self::Intro => ProofTactic::Intro,
             Self::Split => ProofTactic::Split,
@@ -3188,7 +3198,9 @@ impl ProofTactic {
             Self::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
             Self::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
-            Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
+            Self::Normalize | Self::NormalizeUsing(_) => {
+                TacticClass::Simple(SimpleTactic::Normalize)
+            }
             Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),

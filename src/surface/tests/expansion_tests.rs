@@ -56,6 +56,46 @@ int32 identity(int32 x) {
 }
 
 #[test]
+fn contract_refinement_expands_ordinary_helper_proofs() {
+    let source = r#"
+        theorem nonnegative_equal(x: int32, y: int32) {
+            requires x >= 0;
+            ensures y == x implies y >= 0 by { simp(); }
+        }
+        contract int32 Source(int32 x) {
+            requires x >= 0;
+            ensures result == x;
+        }
+        contract int32 Target(int32 x) {
+            requires x >= 0;
+            ensures result >= 0;
+        }
+        theorem lift(callback: int32 (*)(int32)) {
+            requires Source(callback);
+            ensures Target(callback) by {
+                unfold(Source);
+                unfold(Target);
+                intro();
+                have result == x implies result >= 0 by {
+                    apply(nonnegative_equal(x, result));
+                }
+                simp();
+            }
+        }
+    "#;
+    verify_c0_sources(source, &[]).expect("ordinary refinement proof should verify");
+    let position = expansion::position_at_offset(source, source.rfind("simp();").unwrap());
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("refinement simp should emit its ordinary proof certificate");
+    assert!(
+        expanded.contains("apply(nonnegative_equal(x, result)) using"),
+        "{expanded}"
+    );
+    assert_eq!(expanded.matches("simp();").count(), 1, "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("expanded refinement proof should verify");
+}
+
+#[test]
 fn smart_simp_expansion_checks_as_surface_click() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

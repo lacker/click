@@ -15,10 +15,13 @@ theorem add_after_countdown_returns_extra(n: int32, extra: int32) {
     ensures add_after_countdown(n, extra) == extra by {
         induct(n) as ih;
         if n <= 0 {
-            simp();
+            unfold(add_after_countdown(n, extra));
+            normalize() using { n <= 0; }
         } else {
             apply(ih(n - 1));
-            simp();
+            unfold(add_after_countdown(n, extra));
+            rewrite(add_after_countdown(n - 1, extra) == extra);
+            normalize();
         }
     }
 }

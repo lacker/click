@@ -1039,6 +1039,10 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            collect_algebraic_term_bitvector_variables(left, variables);
+            collect_algebraic_term_bitvector_variables(right, variables);
+        }
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)

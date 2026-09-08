@@ -8207,6 +8207,44 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         assert!(outside_loop.certificate().steps().is_empty());
 
         let root = make_root(true);
+        let checks = vec![crate::kernel::CLoopInvariantCheck::new(
+            crate::kernel::SpecProposition::Comparison {
+                left: crate::kernel::SpecExpression::Value(int32(0)),
+                operator: crate::kernel::CComparisonOperator::LessEqual,
+                right: crate::kernel::SpecExpression::Value(int32(0)),
+            },
+            None,
+            None,
+        )];
+        let retained = root.with_kernel_state(
+            root.state
+                .retain_checked_invariant_lowerings(&CState::new(), &checks)
+                .expect("retain a checked lowering on the kernel proof object"),
+        );
+        let retained_core = &retained.execution().unwrap().core;
+        let evidence = retained_core.checked_invariant_lowerings.as_ref().unwrap();
+        assert_eq!(evidence._paths.len(), 1);
+        assert_eq!(evidence._checks, checks);
+        assert!(evidence._paths[0].recheck());
+        assert!(evidence._snapshot.shares_storage_with(&retained_core.state));
+        assert!(
+            root.execution()
+                .unwrap()
+                .core
+                .checked_invariant_lowerings
+                .is_none()
+        );
+        let mut successor_core = retained_core.clone();
+        assert!(Arc::ptr_eq(
+            evidence,
+            successor_core.checked_invariant_lowerings.as_ref().unwrap()
+        ));
+        successor_core.state = CState::new().with_local("changed", int32(1)).into();
+        assert!(
+            !evidence
+                ._snapshot
+                .shares_storage_with(&successor_core.state)
+        );
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let closed = root

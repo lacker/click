@@ -985,6 +985,10 @@ fn hash_memory_blind_condition<H: std::hash::Hasher>(condition: &ConditionTerm, 
     std::hash::Hash::hash(&std::mem::discriminant(condition), hasher);
     match condition {
         ConditionTerm::Constant(value) => std::hash::Hash::hash(value, hasher),
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            std::hash::Hash::hash(left, hasher);
+            std::hash::Hash::hash(right, hasher);
+        }
         ConditionTerm::Variable(variable) => std::hash::Hash::hash(variable, hasher),
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -1137,6 +1141,10 @@ fn collect_condition_memory_load_keys(
         collect_bitvector_memory_load_keys(right, keys);
     };
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_bitvector_memory_load_keys(term, keys));
+            right.for_each_bitvector_term(|term| collect_bitvector_memory_load_keys(term, keys));
+        }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
         | ConditionTerm::Bitvector32SignedGreaterThan(left, right)

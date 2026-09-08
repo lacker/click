@@ -478,6 +478,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::Assumption
         | ProofStep::Normalize
         | ProofStep::ArithmeticUsing(_)
+        | ProofStep::NormalizeUsing(_)
         | ProofStep::Intro
         | ProofStep::Split
         | ProofStep::Left

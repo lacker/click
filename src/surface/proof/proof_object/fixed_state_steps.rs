@@ -616,7 +616,7 @@ impl<'a> Proof<'a> {
             Some(equality) => equality,
             None => Box::new(
                 lower_fixed_state_proposition_with_assumptions(
-                    surface_equality,
+                    &self.substitute_fixed_state_locals_in_proposition(surface_equality)?,
                     self.facts().assumptions(),
                     view.parameters,
                     view.arguments,

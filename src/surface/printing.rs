@@ -408,6 +408,9 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &format!("extract({});", source_click_proposition(proposition)),
         ),
         ProofTactic::Normalize => line(output, &prefix, "normalize();"),
+        ProofTactic::NormalizeUsing(premises) => {
+            write_using_premises(output, "normalize()", premises, indent)
+        }
         ProofTactic::ArithmeticUsing(premises) if premises.is_empty() => {
             line(output, &prefix, "arithmetic();")
         }

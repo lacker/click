@@ -525,6 +525,10 @@ fn condition_fact_mentions_load_of(
     };
     let mut loads = Vec::new();
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
+            right.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
+        }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
         | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
@@ -968,6 +972,10 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             return;
         };
         match condition {
+            ConditionTerm::AlgebraicEqual(left, right) => {
+                left.for_each_bitvector_term(|term| collect_loads(term, loads));
+                right.for_each_bitvector_term(|term| collect_loads(term, loads));
+            }
             ConditionTerm::Bitvector32SignedLessThan(left, right)
             | ConditionTerm::Bitvector32SignedLessEqual(left, right)
             | ConditionTerm::Bitvector32SignedGreaterThan(left, right)

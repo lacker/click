@@ -532,6 +532,7 @@ fn expand_pure_theorem_source(
     ensure_index: usize,
 ) -> Result<String, ClickError> {
     let verified = verify_click_theorems_with_c_sources(click_source, c_sources)?;
+    let tokens = scan_source_tokens(click_source)?;
     let theorem = verified
         .iter()
         .find(|theorem| {
@@ -544,7 +545,6 @@ fn expand_pure_theorem_source(
             ))
         })?;
     let replacement = theorem.expanded_proof_source()?;
-    let tokens = scan_source_tokens(click_source)?;
     let source = find_theorem(&tokens, theorem_name)?;
     let edit = find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
     let span = edit.span();
@@ -723,11 +723,17 @@ fn find_theorem(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, Cl
     for (index, token) in tokens.iter().enumerate() {
         if token.text != "theorem"
             || tokens.get(index + 1).map(|token| token.text.as_str()) != Some(name)
-            || tokens.get(index + 2).map(|token| token.text.as_str()) != Some("(")
         {
             continue;
         }
-        let parameters_close = matching_delimiter(tokens, index + 2, "(", ")")?;
+        let mut parameters_open = index + 2;
+        if tokens.get(parameters_open).map(|token| token.text.as_str()) == Some("<") {
+            parameters_open = matching_delimiter(tokens, parameters_open, "<", ">")? + 1;
+        }
+        if tokens.get(parameters_open).map(|token| token.text.as_str()) != Some("(") {
+            continue;
+        }
+        let parameters_close = matching_delimiter(tokens, parameters_open, "(", ")")?;
         if tokens
             .get(parameters_close + 1)
             .map(|token| token.text.as_str())

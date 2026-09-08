@@ -619,7 +619,8 @@ fn algebraic_match_reconstructs(
         .iter()
         .map(|arm| arm.variant.as_str())
         .collect::<BTreeSet<_>>();
-    arms.len() == scrutinee.algebraic_type.variants.len()
+    !scrutinee.algebraic_type.rigid
+        && arms.len() == scrutinee.algebraic_type.variants.len()
         && arm_variants.len() == arms.len()
         && arms.iter().all(|arm| {
             let Some(schema) = scrutinee
@@ -651,7 +652,7 @@ fn algebraic_match_reconstructs(
                                 node: SpecAlgebraicExpressionNode::Binding(name),
                                 ..
                             }),
-                            AlgebraicValueType::Algebraic { .. },
+                            AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_),
                         ) => name == binding,
                         _ => false,
                     },
@@ -1010,15 +1011,17 @@ fn symbolic_algebraic_bindings(
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))
                 }
-                AlgebraicValueType::Algebraic { .. } => algebraic_type
-                    .resolve_nested_type(value_type)
-                    .map(|nested_type| {
-                        AlgebraicValue::Algebraic(AlgebraicTerm {
-                            algebraic_type: nested_type,
-                            node: AlgebraicTermNode::Variable(variable),
+                AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
+                    algebraic_type
+                        .resolve_nested_type(value_type)
+                        .map(|nested_type| {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: nested_type,
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
                         })
-                    })
-                    .ok_or(ExecutionLimit::Paths),
+                        .ok_or(ExecutionLimit::Paths)
+                }
             }
         })
         .collect()
@@ -1074,7 +1077,8 @@ fn spec_algebraic_result_match_arms_are_well_formed(
     algebraic_type: &AlgebraicType,
     arms: &[SpecAlgebraicResultMatchArm],
 ) -> bool {
-    arms.len() == algebraic_type.variants.len()
+    !algebraic_type.rigid
+        && arms.len() == algebraic_type.variants.len()
         && algebraic_type.variants.iter().all(|variant| {
             arms.iter()
                 .filter(|arm| arm.variant == variant.name)
@@ -1094,7 +1098,8 @@ fn spec_scalar_match_arms_are_well_formed(
     algebraic_type: &AlgebraicType,
     arms: &[SpecAlgebraicMatchArm],
 ) -> bool {
-    arms.len() == algebraic_type.variants.len()
+    !algebraic_type.rigid
+        && arms.len() == algebraic_type.variants.len()
         && algebraic_type.variants.iter().all(|variant| {
             arms.iter()
                 .filter(|arm| arm.variant == variant.name)
@@ -1322,10 +1327,7 @@ fn lower_spec_sequence_comparison_at_state(
             ) else {
                 continue;
             };
-            let equality = Proposition::Equal(
-                Term::Sequence(left_path.value.clone()),
-                Term::Sequence(right_path.value),
-            );
+            let equality = finite_sequence_equality(&left_path.value, &right_path.value);
             paths.push(SpecPropositionPath {
                 proposition: if equal {
                     equality
@@ -1338,6 +1340,66 @@ fn lower_spec_sequence_comparison_at_state(
         }
     }
     Ok(paths)
+}
+
+/// Finite integer sequences have ordinary elementwise equality. Expose that
+/// logical structure once during elaboration, so every proof context can use
+/// the same introduction, extraction, and equality rules. Other element types
+/// retain logical sequence equality (not C floating or address comparison).
+fn finite_sequence_equality(left: &SequenceTerm, right: &SequenceTerm) -> Proposition {
+    let fallback =
+        || Proposition::Equal(Term::Sequence(left.clone()), Term::Sequence(right.clone()));
+    let mut left = sequence_elements(left);
+    let mut right = sequence_elements(right);
+    let mut equalities = Vec::new();
+    loop {
+        match (left.next(), right.next()) {
+            (Some(left), Some(right)) => {
+                let Some(equality) = integer_sequence_element_equality(left, right) else {
+                    return fallback();
+                };
+                equalities.push(equality);
+            }
+            (None, None) => break,
+            _ => return Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+        }
+    }
+    if equalities.is_empty() {
+        return Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    }
+    while equalities.len() > 1 {
+        let mut next = Vec::with_capacity(equalities.len().div_ceil(2));
+        let mut values = equalities.into_iter();
+        while let Some(left) = values.next() {
+            next.push(match values.next() {
+                Some(right) => Proposition::And(Box::new(left), Box::new(right)),
+                None => left,
+            });
+        }
+        equalities = next;
+    }
+    equalities.pop().expect("nonempty equality tree")
+}
+
+pub(super) fn integer_sequence_element_equality(
+    left: &CValue,
+    right: &CValue,
+) -> Option<Proposition> {
+    if left.c_type() != right.c_type()
+        || !matches!(
+            left,
+            CValue::Int16(_)
+                | CValue::Int32(_)
+                | CValue::UInt8(_)
+                | CValue::UInt16(_)
+                | CValue::UInt32(_)
+                | CValue::Int64(_)
+                | CValue::UInt64(_)
+        )
+    {
+        return None;
+    }
+    c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
 }
 
 fn evaluate_spec_sequence_at_state(
@@ -1483,6 +1545,39 @@ mod sequence_term_tests {
     }
 
     #[test]
+    fn integer_sequence_equality_has_linear_size_and_logarithmic_depth() {
+        for size in [8usize, 32, 128, 512] {
+            let mut left = singleton(0);
+            for value in 1..size {
+                left = concatenate_sequence_terms(left, singleton(value as u32));
+            }
+            let right = SequenceTerm {
+                element_type: Some(CType::Int32),
+                node: std::sync::Arc::new(SequenceTermNode::Literal(
+                    (0..size)
+                        .map(|n| int32(n as u32))
+                        .collect::<Vec<_>>()
+                        .into(),
+                )),
+            };
+            let equality = finite_sequence_equality(&left, &right);
+            let mut pending = vec![(&equality, 0)];
+            let mut nodes = 0;
+            let mut depth = 0;
+            while let Some((proposition, current_depth)) = pending.pop() {
+                nodes += 1;
+                depth = depth.max(current_depth);
+                if let Proposition::And(left, right) = proposition {
+                    pending.push((left, current_depth + 1));
+                    pending.push((right, current_depth + 1));
+                }
+            }
+            assert_eq!(nodes, 2 * size - 1);
+            assert_eq!(depth, size.ilog2());
+        }
+    }
+
+    #[test]
     fn repeated_concatenation_shares_the_existing_root() {
         for size in [8usize, 64, 512] {
             let mut sequence = singleton(0);
@@ -1542,6 +1637,7 @@ mod algebraic_term_tests {
             arguments: arguments.clone(),
         };
         AlgebraicType {
+            rigid: false,
             name: "Maybe".to_string(),
             arguments,
             variants: variants.clone(),
@@ -1591,6 +1687,7 @@ mod algebraic_term_tests {
         let mut schemas = maybe_type.schemas.definitions().clone();
         schemas.insert(value_type, variants.clone());
         AlgebraicType {
+            rigid: false,
             name: "Envelope".to_string(),
             arguments: vec![AlgebraicValueType::C(CType::Int32)],
             variants,
@@ -1616,6 +1713,7 @@ mod algebraic_term_tests {
         ]
         .into();
         AlgebraicType {
+            rigid: false,
             name: "List".to_string(),
             arguments,
             variants: variants.clone(),
@@ -1636,6 +1734,7 @@ mod algebraic_term_tests {
         }]
         .into();
         AlgebraicType {
+            rigid: false,
             name: "Loop".to_string(),
             arguments: Vec::new(),
             variants: variants.clone(),
@@ -1659,6 +1758,7 @@ mod algebraic_term_tests {
             arguments: arguments.clone(),
         };
         AlgebraicType {
+            rigid: false,
             name: "Wide".to_string(),
             arguments,
             variants: variants.clone(),
@@ -3741,12 +3841,13 @@ pub(super) fn evaluate_spec_if_paths(
             &condition_path.facts,
             &condition_path.obligations,
         );
-        let condition_truth = if branch_assumptions.proves(&condition_path.proposition) {
+        // Logical expressions must have the same shape at declaration and
+        // application sites. Ambient proof facts justify explicit reductions,
+        // not a different expression during lowering.
+        let context_free = PureFactContext::new();
+        let condition_truth = if context_free.proves(&condition_path.proposition) {
             Some(true)
-        } else if assumptions_prove_proposition_false(
-            &branch_assumptions,
-            &condition_path.proposition,
-        ) {
+        } else if assumptions_prove_proposition_false(&context_free, &condition_path.proposition) {
             Some(false)
         } else {
             None
@@ -4111,11 +4212,13 @@ pub(super) fn proposition_as_single_condition(
 ) -> Option<(ConditionTerm, bool)> {
     match proposition {
         Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => Some((
+            ConditionTerm::AlgebraicEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        )),
         Proposition::Not(body) => {
-            let Proposition::ConditionIs(condition, value) = body.as_ref() else {
-                return None;
-            };
-            Some((condition.clone(), !*value))
+            let (condition, value) = proposition_as_single_condition(body)?;
+            Some((condition, !value))
         }
         _ => None,
     }

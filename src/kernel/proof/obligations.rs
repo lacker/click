@@ -97,14 +97,24 @@ pub(crate) struct OutcomeProofCore {
 pub(crate) struct CheckedProposition {
     proposition: Arc<Proposition>,
     outcome: Option<OutcomeProofCore>,
+    closed: bool,
 }
 
 impl CheckedProposition {
-    pub(super) fn new(proposition: Proposition, outcome: Option<OutcomeProofCore>) -> Self {
+    pub(super) fn new(
+        proposition: Proposition,
+        outcome: Option<OutcomeProofCore>,
+        closed: bool,
+    ) -> Self {
         Self {
             proposition: Arc::new(proposition),
             outcome,
+            closed,
         }
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed
     }
 
     pub(crate) fn proposition(&self) -> &Proposition {

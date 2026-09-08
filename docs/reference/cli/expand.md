@@ -37,6 +37,10 @@ The selected proof unit must verify before rewriting. Click verifies the
 complete rewritten proof unit and the transitive contracts it calls before any
 output is written. Unselected source text is preserved byte for byte.
 
+Generic theorem bodies are checked with rigid arbitrary type parameters.
+Their proofs can be expanded and rechecked without a concrete client or a
+selected type instance; expansion preserves the generic declaration.
+
 ## Options
 
 | Option | Meaning |

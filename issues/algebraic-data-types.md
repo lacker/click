@@ -93,7 +93,8 @@ unchanged.
   call-site inference, checked conflict/ambiguity diagnostics, distinct kernel
   identities for concrete function instances, and concrete body
   instantiation before `unfold`; and
-- generic theorems with inferred concrete type arguments and checked use-site
+- generic theorems checked at declaration with rigid arbitrary type parameters,
+  including unused proofs and parametric expansion/rechecking, plus checked use-site
   monomorphization. Type substitution covers statements, explicit proof
   terms, and structural induction; each distinct concrete instance is
   verified once per theorem environment before `apply` grants its conclusion.
@@ -107,17 +108,11 @@ not remain a second, privileged logical collection universe.
 
 The prelude now supplies `List<T>`, `list_append`, and `list_contains`, with
 checked generic append identities, its constructor equation and associativity,
-and the membership constructor equations. Pure clients exercise integers,
-pointers, and nested lists in `mdtests/stdlib_list.md`.
-
-Membership's constructor law currently works for C scalar and pointer
-elements, but its conditional comparison still needs algebraic-valued
-elements. A regression should apply
-`list_contains_cons(List<int32>::Nil, xs, List<int32>::Nil)` for
-`xs: List<List<int32>>` and prove membership equals `1`. Currently the
-instantiated theorem conclusion fails lowering with zero paths. Acceptance
-requires checked symbolic algebraic equality in the conditional, including
-a negative comparison of distinct constructors; do not evaluate unknown lists.
+and the membership constructor and append equations. Pure clients exercise
+integers, pointers, and nested lists in `mdtests/stdlib_list.md` and
+`mdtests/stdlib_list_compositionality.md`. Algebraic equality in conditionals
+stays symbolic; `normalize() using { ... }` checks reductions from explicitly
+cited conditions without evaluating unknown lists.
 
 Still open are algebraic quantifiers, resource arguments, mutual structural
 induction, migration of sequence syntax, recursive-resource use, and symbolic

@@ -5,6 +5,10 @@ reference](index.md). It describes Surface Click, the syntax accepted in
 `.click` files. Kernel Click is an internal representation and has no textual
 user syntax.
 
+The recursive parser currently supports at most 16 nested parentheses and
+16 nested `match` expressions. Excessive nesting is rejected with a source
+diagnostic rather than risking a native stack overflow.
+
 ## Lexical conventions
 
 Identifiers start with an ASCII letter or underscore and continue with ASCII
@@ -159,8 +163,10 @@ predicate is_empty<T>(xs: TestList<T>) {
 ```
 
 Inference rejects both unconstrained parameters and conflicting arguments.
-Generic theorem declarations are checked structurally and type-checked without
-choosing a concrete type. At `apply`, Click infers the concrete type arguments,
+Generic theorem declarations, including their proofs, are checked with rigid
+arbitrary type parameters. An unused invalid proof is rejected. A parameter
+supports typed symbolic values and equality, not arithmetic or constructor
+elimination. At `apply`, Click infers the type arguments,
 substitutes them through the theorem statement and proof, verifies that
 monomorph, and caches the checked instance. An invalid generic proof therefore
 grants no authority, and distinct applications such as `TestList<int32>` and

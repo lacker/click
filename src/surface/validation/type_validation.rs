@@ -489,6 +489,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Assumption
             | ProofTactic::Extract(_)
             | ProofTactic::Normalize
+            | ProofTactic::NormalizeUsing(_)
             | ProofTactic::ArithmeticUsing(_)
             | ProofTactic::Intro
             | ProofTactic::Split
@@ -581,6 +582,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Assumption => "assumption",
         ProofTactic::Extract(_) => "extract",
         ProofTactic::Normalize => "normalize",
+        ProofTactic::NormalizeUsing(_) => "normalize",
         ProofTactic::ArithmeticUsing(_) => "arithmetic",
         ProofTactic::Intro => "intro",
         ProofTactic::Split => "split",

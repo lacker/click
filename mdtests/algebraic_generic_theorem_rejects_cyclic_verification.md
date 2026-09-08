@@ -17,5 +17,5 @@ theorem expose(value: int32) {
 ```
 
 ```expect
-fail: cyclic verification of generic theorem instance `circular::<int32>`
+fail: unknown theorem `circular`
 ```

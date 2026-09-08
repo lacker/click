@@ -18,12 +18,12 @@ spec enum TestList<T> {
     Cons(T, TestList<T>),
 }
 
-function list_length<T>(xs: TestList<T>) -> int32
+function example_list_length<T>(xs: TestList<T>) -> int32
     decreases xs
 {
     match xs {
         TestList::Nil => 0,
-        TestList::Cons(head, tail) => 1 + list_length(tail),
+        TestList::Cons(head, tail) => 1 + example_list_length(tail),
     }
 }
 
@@ -60,8 +60,8 @@ theorem generic_list_instances(
     tail: TestList<int32>,
     ys: TestList<int32>
 ) {
-    ensures list_length(TestList<int32>::Nil) == 0 by {
-        unfold(list_length(TestList<int32>::Nil));
+    ensures example_list_length(TestList<int32>::Nil) == 0 by {
+        unfold(example_list_length(TestList<int32>::Nil));
         simp();
     }
     ensures append(TestList<int32>::Cons(value, tail), ys)
