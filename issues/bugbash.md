@@ -1160,6 +1160,13 @@ indeterminate storage.
 
 ## 14. String literal storage can be made writable through a contract
 
+**Fixed** in `Reject a call whose mutable footprint covers read-only storage`;
+regression `mdtests/string_literal_mutable_footprint_rejected.md`. The fix is
+at the call rather than on the literal's resource: removing the literal's
+ownership would also remove the documented ability to return a literal and
+read it in the caller (`mdtests/string_literals_call.md`), because `produces`
+transfers ownership and there is no spelling for producing a view.
+
 **Severity: high.** A callee contract that takes `owns` over a literal's
 storage lets the caller store into read-only memory with no diagnostic.
 

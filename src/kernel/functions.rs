@@ -1051,6 +1051,26 @@ fn execute_verified_function_rule(
             });
             continue;
         }
+        // A direct store into read-only storage is rejected where it is
+        // executed, but a modular call performs its writes abstractly through
+        // this footprint. Without the same check, passing read-only storage to
+        // a callee that declares it mutable would let the call store there:
+        // string-literal bytes are the reachable case, since C0 models a
+        // literal as an ordinary `uint8*` and no qualifier catches it.
+        if let Some(range) = mutable_ranges
+            .iter()
+            .find(|range| entry_state.memory.is_read_only_block(&range.base().block))
+        {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "mutable footprint covers read-only storage `{}`",
+                    range.base().block
+                ))),
+                facts,
+                obligations,
+            });
+            continue;
+        }
 
         let memory = if mutable_ranges.is_empty() {
             entry_state.memory.clone()
