@@ -2126,9 +2126,6 @@ impl Parser {
         &mut self,
         return_type: ParsedType,
     ) -> Result<(C0Type, syntax::C0FunctionPointerSignature), ClickError> {
-        if return_type.pointee_constant {
-            return Err(self.error("const-qualified callback returns are not supported"));
-        }
         self.expect(Token::LParen)?;
         let mut parameters = Vec::new();
         if self.peek() != Some(&Token::RParen) {
@@ -2152,6 +2149,7 @@ impl Parser {
                 parameters.push(syntax::C0FunctionPointerParameter::new(
                     parsed_parameter.parameter.c_type(),
                     parsed_parameter.struct_name,
+                    parsed_parameter.parameter.pointee_is_constant(),
                 ));
                 match self.peek() {
                     Some(Token::Comma) => self.position += 1,
@@ -2173,19 +2171,26 @@ impl Parser {
         }
         let parameter_types = parameters
             .iter()
-            .map(|parameter| parameter.c_type().to_kernel_type())
+            .map(|parameter| {
+                (
+                    parameter.c_type().to_kernel_type(),
+                    parameter.pointee_is_constant(),
+                )
+            })
             .collect::<Vec<_>>();
-        let signature = crate::kernel::CType::function_pointer_signature(
+        let signature = crate::kernel::CType::qualified_function_pointer_signature(
             return_type.c_type.to_kernel_type(),
+            return_type.pointee_constant,
             &parameter_types,
         );
-        if signature == 0 {
+        if signature == crate::kernel::CallbackSignature::UNSPECIFIED {
             return Err(self.error("function-pointer signature uses an unsupported modeled type"));
         }
         let function_pointer_signature = syntax::C0FunctionPointerSignature::new(
             return_type.c_type,
             return_type.struct_name,
             parameters,
+            return_type.pointee_constant,
         );
         Ok((
             C0Type::FunctionPointer(signature),

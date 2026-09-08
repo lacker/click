@@ -1412,13 +1412,18 @@ pub struct C0Parameter {
 pub struct C0FunctionPointerParameter {
     c_type: C0Type,
     struct_name: Option<String>,
+    pointee_constant: bool,
 }
 
 impl C0FunctionPointerParameter {
-    pub(crate) fn new(c_type: C0Type, struct_name: Option<String>) -> Self {
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+    pub(crate) fn new(c_type: C0Type, struct_name: Option<String>, pointee_constant: bool) -> Self {
         Self {
             c_type,
             struct_name,
+            pointee_constant,
         }
     }
 
@@ -1438,19 +1443,25 @@ impl C0FunctionPointerParameter {
 pub struct C0FunctionPointerSignature {
     return_type: C0Type,
     return_struct_name: Option<String>,
+    return_pointee_constant: bool,
     parameters: Vec<C0FunctionPointerParameter>,
 }
 
 impl C0FunctionPointerSignature {
+    pub fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
+    }
     pub(crate) fn new(
         return_type: C0Type,
         return_struct_name: Option<String>,
         parameters: Vec<C0FunctionPointerParameter>,
+        return_pointee_constant: bool,
     ) -> Self {
         Self {
             return_type,
             return_struct_name,
             parameters,
+            return_pointee_constant,
         }
     }
 
@@ -1637,7 +1648,7 @@ pub enum C0Type {
     /// A callback signature identified by a stable, structural signature key.
     /// The key is shared with the kernel type and is deliberately opaque to
     /// ordinary C expressions: function pointers are callable, not objects.
-    FunctionPointer(u64),
+    FunctionPointer(crate::kernel::CallbackSignature),
     Int32Array(u32),
     UInt8Array(u32),
     Int16Array(u32),
@@ -5061,9 +5072,10 @@ impl Parser {
 
     fn expression_pointee_is_constant(&self, expression: &C0Expression) -> bool {
         match expression {
-            C0Expression::Call { function_name, .. } => self
-                .function_declaration_for_call(function_name)
-                .is_some_and(|function| function.return_pointee_constant),
+            C0Expression::Call { function_name, .. } => {
+                self.call_return_pointee_is_constant(function_name)
+            }
+            C0Expression::IndirectCall { signature, .. } => signature.return_pointee_constant,
             C0Expression::Variable(name) => {
                 self.variable_pointee_is_constant(name)
                     || (self.variable_is_constant(name)
@@ -8097,9 +8109,6 @@ impl Parser {
         if self.peek() != Some(&Token::LParen) {
             return Ok(None);
         }
-        if return_type.pointee_constant {
-            return Err(self.error_here("const-qualified callback returns are not supported"));
-        }
         if return_type.struct_name.is_some() && !return_type.c_type.is_pointer() {
             return Err(self.error_here(
                 "function-pointer return values must use modeled scalars or struct pointers",
@@ -8145,6 +8154,7 @@ impl Parser {
                 parameters.push(C0FunctionPointerParameter::new(
                     parameter_type,
                     parsed_type.struct_name,
+                    parsed_type.pointee_constant,
                 ));
                 if matches!(self.peek(), Some(Token::Ident(_))) {
                     self.position += 1;
@@ -8172,13 +8182,19 @@ impl Parser {
         }
         let parameter_types = parameters
             .iter()
-            .map(|parameter| parameter.c_type.to_kernel_type())
+            .map(|parameter| {
+                (
+                    parameter.c_type.to_kernel_type(),
+                    parameter.pointee_constant,
+                )
+            })
             .collect::<Vec<_>>();
-        let signature = crate::kernel::CType::function_pointer_signature(
+        let signature = crate::kernel::CType::qualified_function_pointer_signature(
             return_type.c_type.to_kernel_type(),
+            return_type.pointee_constant,
             &parameter_types,
         );
-        if signature == 0 {
+        if signature == crate::kernel::CallbackSignature::UNSPECIFIED {
             return Err(
                 self.error_here("function-pointer signature uses an unsupported modeled type")
             );
@@ -8187,6 +8203,7 @@ impl Parser {
             return_type.c_type,
             return_type.struct_name,
             parameters,
+            return_type.pointee_constant,
         );
         Ok(Some((
             name,
@@ -9923,7 +9940,7 @@ impl Parser {
             ));
         }
         if self.peek() == Some(&Token::LParen) {
-            if parsed_type.is_constant || parsed_type.pointee_constant {
+            if parsed_type.is_constant {
                 return Err(self.error_here(
                     "const-qualified function-pointer declarations are not supported in this slice",
                 ));
@@ -11032,9 +11049,7 @@ impl Parser {
         function_name: String,
         arguments: Vec<C0Expression>,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if self
-            .function_declaration_for_call(&function_name)
-            .is_some_and(|function| function.return_pointee_constant)
+        if self.call_return_pointee_is_constant(&function_name)
             && self
                 .variable_types
                 .get(&target)
@@ -12012,12 +12027,16 @@ impl Parser {
                         self.variable_structs.insert(target.clone(), struct_name);
                     }
                 } else if let Some(signature) = self.variable_function_pointers.get(&function_name)
-                    && let Some(struct_name) = &signature.return_struct_name
                 {
                     self.variable_types
                         .insert(target.clone(), signature.return_type);
-                    self.variable_structs
-                        .insert(target.clone(), struct_name.clone());
+                    if signature.return_pointee_constant {
+                        self.variable_pointee_constants.insert(target.clone());
+                    }
+                    if let Some(struct_name) = &signature.return_struct_name {
+                        self.variable_structs
+                            .insert(target.clone(), struct_name.clone());
+                    }
                 }
                 prefix.push(C0Statement::CallAssign {
                     target: target.clone(),
@@ -12406,6 +12425,16 @@ impl Parser {
         loop {
             let argument_index = arguments.len();
             let expression = self.parse_expression_allow_direct_aggregate()?;
+            if let Some(parameter) = function_name
+                .and_then(|name| self.variable_function_pointers.get(name))
+                .and_then(|signature| signature.parameters.get(argument_index))
+            {
+                self.reject_discarded_const_pointer(
+                    parameter.c_type,
+                    parameter.pointee_constant,
+                    &expression,
+                )?;
+            }
             if let Some((parameter_type, struct_name, function_pointer_signature)) =
                 self.call_parameter_metadata(function_name, argument_index)
             {
@@ -12469,6 +12498,11 @@ impl Parser {
     ) -> Result<Vec<C0Expression>, C0SyntaxError> {
         let arguments = self.parse_call_arguments(None)?;
         for (argument, parameter) in arguments.iter().zip(signature.parameters()) {
+            self.reject_discarded_const_pointer(
+                parameter.c_type,
+                parameter.pointee_constant,
+                argument,
+            )?;
             let expected_struct = parameter.struct_name().map(str::to_owned);
             self.validate_struct_pointer_assignment(
                 expected_struct.as_ref(),
@@ -12501,6 +12535,16 @@ impl Parser {
                     parameter.function_pointer_signature.clone(),
                 )
             })
+    }
+
+    fn call_return_pointee_is_constant(&self, name: &str) -> bool {
+        self.variable_function_pointers.get(name).map_or_else(
+            || {
+                self.function_declaration_for_call(name)
+                    .is_some_and(|function| function.return_pointee_constant)
+            },
+            |signature| signature.return_pointee_constant,
+        )
     }
 
     fn function_pointer_signature(
@@ -12912,14 +12956,6 @@ impl Parser {
             if let Some(Token::Ident(name)) = self.peek().cloned()
                 && !self.variable_types.contains_key(&self.resolve_name(&name))
             {
-                if self
-                    .function_declaration_for_call(&name)
-                    .is_some_and(|function| function.return_pointee_constant)
-                {
-                    return Err(
-                        self.error_here("const-qualified callback returns are not supported")
-                    );
-                }
                 self.position += 1;
                 return Ok(C0Expression::FunctionAddress(
                     self.resolve_function_name(&name),
@@ -14056,19 +14092,30 @@ fn function_pointer_signature_from_header(header: &C0FunctionHeader) -> C0Functi
             .parameters
             .iter()
             .map(|parameter| {
-                C0FunctionPointerParameter::new(parameter.c_type, parameter.struct_name.clone())
+                C0FunctionPointerParameter::new(
+                    parameter.c_type,
+                    parameter.struct_name.clone(),
+                    parameter.pointee_constant,
+                )
             })
             .collect(),
+        header.return_pointee_constant,
     )
 }
 
 fn function_pointer_type(signature: &C0FunctionPointerSignature) -> C0Type {
-    C0Type::FunctionPointer(crate::kernel::CType::function_pointer_signature(
+    C0Type::FunctionPointer(crate::kernel::CType::qualified_function_pointer_signature(
         signature.return_type().to_kernel_type(),
+        signature.return_pointee_constant,
         &signature
             .parameters()
             .iter()
-            .map(|parameter| parameter.c_type().to_kernel_type())
+            .map(|parameter| {
+                (
+                    parameter.c_type().to_kernel_type(),
+                    parameter.pointee_constant,
+                )
+            })
             .collect::<Vec<_>>(),
     ))
 }
@@ -14077,9 +14124,16 @@ fn describe_function_pointer_signature(signature: &C0FunctionPointerSignature) -
     let parameters = signature
         .parameters
         .iter()
-        .map(|parameter| match &parameter.struct_name {
-            Some(name) => format!("struct {name}*"),
-            None => format!("{:?}", parameter.c_type),
+        .map(|parameter| {
+            let ty = match &parameter.struct_name {
+                Some(name) => format!("struct {name}*"),
+                None => format!("{:?}", parameter.c_type),
+            };
+            if parameter.pointee_constant {
+                format!("const {ty}")
+            } else {
+                ty
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -14087,7 +14141,12 @@ fn describe_function_pointer_signature(signature: &C0FunctionPointerSignature) -
         Some(name) => format!("struct {name}*"),
         None => format!("{:?}", signature.return_type),
     };
-    format!("{return_type} ({parameters})")
+    let qualifier = if signature.return_pointee_constant {
+        "const "
+    } else {
+        ""
+    };
+    format!("{qualifier}{return_type} ({parameters})")
 }
 
 fn integer_literal_parts(literal: &str) -> (&str, &str) {

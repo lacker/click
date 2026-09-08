@@ -554,7 +554,11 @@ fn resource_field_schemas_are_typed_shared_and_non_countable() {
     assert!(
         ResourceFieldSchema::new(vec![("".into(), ResourceFieldType::C(CType::Int32))]).is_none()
     );
-    for ty in [CType::Void, CType::Int32Array(3), CType::FunctionPointer(1)] {
+    for ty in [
+        CType::Void,
+        CType::Int32Array(3),
+        CType::FunctionPointer(CallbackSignature::from_encoded(1)),
+    ] {
         assert!(ResourceFieldSchema::new(vec![("bad".into(), ResourceFieldType::C(ty))]).is_none());
     }
     let mut malformed = resource_index_type("Mark", vec![]);

@@ -631,13 +631,13 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     }
 
     // A direct function address starts with the intentionally untyped
-    // FunctionPointer(0) marker. Call arguments retag it from the declared
+    // unspecified signature marker. Call arguments retag it from the declared
     // parameter type before binding; typed stores need the same destination
     // context so a callback field can be initialized without weakening
     // already-typed function-pointer compatibility checks.
     if let (CType::FunctionPointer(signature), CValue::Pointer(pointer)) = (target_type, &value)
         && pointer.block.is_function()
-        && pointer.c_type() == CType::FunctionPointer(0)
+        && pointer.c_type() == CType::FunctionPointer(CallbackSignature::UNSPECIFIED)
     {
         return Some(CValue::typed_pointer(
             pointer.pointer().clone(),
@@ -1021,7 +1021,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::FunctionAddress(name) => vec![CExpressionPath {
             outcome: CExpressionOutcome::Value(CValue::typed_pointer(
                 Pointer::function(name.clone()),
-                CType::FunctionPointer(0),
+                CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
             )),
             facts: Vec::new(),
             obligations: Vec::new(),

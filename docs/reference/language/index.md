@@ -523,8 +523,8 @@ the callback signature, and are bound only inside the execution proof; they
 cannot escape into theorem premises or conclusions. Their names must be
 distinct from the callback and from `result`; a return-valued callback parameter
 also cannot be named `result`. Additional theorem parameters remain outside
-this slice. The existing callback-type limitations (such as const-qualified
-callback returns) are unchanged.
+this slice. Const-qualified pointer returns and parameters use the same C
+spelling in callbacks, named contracts, and execution proofs.
 
 When the target contract declares resource proof parameters, their names are
 available inside the execution proof block. For example, a target parameter

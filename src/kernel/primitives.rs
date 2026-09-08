@@ -474,7 +474,7 @@ pub enum CType {
     UInt64PointerPointer,
     Float32PointerPointer,
     Float64PointerPointer,
-    FunctionPointer(u64),
+    FunctionPointer(CallbackSignature),
     Int32Array(u32),
     UInt8Array(u32),
     Int16Array(u32),
@@ -484,6 +484,37 @@ pub enum CType {
     UInt64Array(u32),
     Float32Array(u32),
     Float64Array(u32),
+}
+
+/// Exact packed callback type identity. Byte alignment keeps the common C type
+/// enum compact; using a u128 payload would enlarge every execution frame.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct CallbackSignature([u8; 10]);
+
+impl CallbackSignature {
+    pub const UNSPECIFIED: Self = Self([0; 10]);
+
+    pub(crate) fn from_encoded(encoded: u128) -> Self {
+        assert!(
+            encoded < (1u128 << 80),
+            "callback signature capacity exceeded"
+        );
+        Self(encoded.to_le_bytes()[..10].try_into().unwrap())
+    }
+}
+
+impl std::fmt::Display for CallbackSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut bytes = [0; 16];
+        bytes[..10].copy_from_slice(&self.0);
+        std::fmt::Display::fmt(&u128::from_le_bytes(bytes), formatter)
+    }
+}
+
+impl std::fmt::Debug for CallbackSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, formatter)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

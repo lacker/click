@@ -897,12 +897,13 @@ impl CFunction {
     }
 
     pub(crate) fn function_pointer_type(&self) -> CType {
-        CType::FunctionPointer(CType::function_pointer_signature(
+        CType::FunctionPointer(CType::qualified_function_pointer_signature(
             self.return_type,
+            self.return_pointee_is_constant(),
             &self
                 .parameters
                 .iter()
-                .map(CParameter::c_type)
+                .map(|parameter| (parameter.c_type(), parameter.pointee_is_constant()))
                 .collect::<Vec<_>>(),
         ))
     }

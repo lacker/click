@@ -69,7 +69,7 @@ mod pointee_const_return_tests {
     #[test]
     fn pointee_const_return_function_address_cannot_convert_to_mutable_callback() {
         let target = function(true);
-        let parameter = c_parameter("callback", target.function_pointer_type());
+        let parameter = c_parameter("callback", function(false).function_pointer_type());
         let environment = CExecutionEnvironment::new().with_function(target);
         let value = type_function_address_value(
             &CExpression::FunctionAddress("text".to_string()),
@@ -78,7 +78,7 @@ mod pointee_const_return_tests {
                     block: PointerBlock::Function("text".to_string()),
                     offset: PointerOffsetTerm::Constant(0),
                 },
-                CType::FunctionPointer(0),
+                CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
             ),
             Some(&environment),
         );
@@ -4209,13 +4209,12 @@ fn type_function_address_value(
     };
     match value {
         CValue::Pointer(pointer)
-            if pointer.block.is_function() && pointer.c_type() == CType::FunctionPointer(0) =>
+            if pointer.block.is_function()
+                && pointer.c_type() == CType::FunctionPointer(CallbackSignature::UNSPECIFIED) =>
         {
-            // Callback signatures do not encode return qualifiers in this
-            // slice. Preserve the restriction through argument coercion;
-            // indirect dispatch also rejects the declared target explicitly.
+            // Return and parameter qualifications belong to the callback
+            // signature, not to the function-pointer object's pointee view.
             CValue::typed_pointer(pointer.into_pointer(), function.function_pointer_type())
-                .with_pointer_pointee_constant(function.return_pointee_is_constant())
         }
         value => value,
     }
