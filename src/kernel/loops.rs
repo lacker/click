@@ -1180,7 +1180,129 @@ pub(super) fn collect_invariant_check_obligations_without_search(
     )
 }
 
-type VerifiedInvariantPath = (Vec<ExecutionPureFact>, Vec<ProofObligation>);
+/// The proof of one kernel-lowered invariant path. This retains the actual
+/// binder identities and safety obligations, rather than a surface spelling
+/// that would need to be lowered (and proved) again.
+#[derive(Clone)]
+pub(crate) struct CheckedInvariantLowering {
+    check_index: usize,
+    path: SpecPropositionPath,
+    context: PureFactContext,
+    required: Vec<Proposition>,
+    obligation_proofs: Vec<PropositionDerivation>,
+    goal_proof: PropositionDerivation,
+}
+
+impl CheckedInvariantLowering {
+    /// Check only the supplied evidence, in its original path context. No
+    /// derivation builder or alternate proof search belongs in this method.
+    pub(crate) fn recheck(&self) -> bool {
+        let required = self
+            .required
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        self.path
+            .obligations
+            .iter()
+            .filter(|obligation| !obligation.is_assumable())
+            .all(|obligation| required.contains(obligation.proposition()))
+            && self.required.len() == self.obligation_proofs.len()
+            && self
+                .required
+                .iter()
+                .zip(&self.obligation_proofs)
+                .all(|(goal, proof)| proof.conclusion() == goal && proof.check(&self.context))
+            && self.goal_proof.conclusion() == &self.path.proposition
+            && self.goal_proof.check(&self.context)
+    }
+}
+
+type VerifiedInvariantPath = (
+    Vec<ExecutionPureFact>,
+    Vec<ProofObligation>,
+    std::sync::Arc<CheckedInvariantLowering>,
+);
+
+#[cfg(test)]
+mod checked_lowering_tests {
+    use super::*;
+
+    fn predicate(name: &str) -> Proposition {
+        Proposition::Predicate {
+            name: name.into(),
+            arguments: vec![],
+        }
+    }
+
+    fn record(unrelated: usize) -> std::sync::Arc<CheckedInvariantLowering> {
+        let goal = predicate("invariant");
+        let safety = predicate("load_safety");
+        let mut context = PureFactContext::new()
+            .assume_proposition(goal.clone())
+            .assume_proposition(safety.clone());
+        for index in 0..unrelated {
+            context = context.assume_proposition(predicate(&format!("unrelated_{index}")));
+        }
+        verify_lowered_invariant_path(
+            0,
+            &[],
+            &[],
+            SpecPropositionPath {
+                proposition: goal,
+                facts: vec![],
+                obligations: vec![ProofObligation::verification_condition(safety)],
+            },
+            &context,
+        )
+        .unwrap()
+        .unwrap()
+        .2
+    }
+
+    #[test]
+    fn checked_lowering_retains_and_checks_every_proof_slot() {
+        let original = record(0);
+        assert!(original.recheck());
+        assert_eq!(original.path.obligations.len(), 1);
+        assert_eq!(original.obligation_proofs.len(), 1);
+        let mut missing = (*original).clone();
+        missing.obligation_proofs.clear();
+        assert!(!missing.recheck());
+        missing.required.clear();
+        assert!(
+            !missing.recheck(),
+            "dropping the target must not hide a missing proof"
+        );
+        let mut wrong = (*original).clone();
+        wrong.obligation_proofs[0] = wrong.goal_proof.clone();
+        assert!(!wrong.recheck());
+        let mut wrong_goal = (*original).clone();
+        wrong_goal.path.proposition = predicate("different_invariant");
+        assert!(!wrong_goal.recheck());
+        let mut wrong_context = (*original).clone();
+        wrong_context.context = PureFactContext::new();
+        assert!(!wrong_context.recheck());
+    }
+
+    #[test]
+    fn checked_lowering_recheck_does_not_scan_ambient_facts() {
+        let samples = [16, 32, 64, 128].map(|size| {
+            let record = record(size);
+            let shared = record.clone();
+            assert!(std::sync::Arc::ptr_eq(&record, &shared));
+            let (valid, work) =
+                crate::instrumentation::measure_deterministic_work(|| record.recheck());
+            assert!(valid);
+            work
+        });
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+                "{samples:?}"
+            );
+        }
+    }
+}
 
 fn verify_lowered_invariant_path(
     check_index: usize,
@@ -1199,11 +1321,20 @@ fn verify_lowered_invariant_path(
         return Ok(None);
     };
     let local = assumptions_with_path_context(assumptions, &merged_facts, &merged_obligations);
+    let mut required = Vec::new();
+    let mut obligation_proofs = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    // Path merging may discharge an obligation from exact ambient facts.
+    // Retain that proof too: the original lowered path still requires it.
     for obligation in merged_obligations
         .iter()
+        .chain(path.obligations.iter())
         .filter(|obligation| !obligation.is_assumable())
     {
         let proposition = obligation.proposition();
+        if !seen.insert(proposition.clone()) {
+            continue;
+        }
         let Some(derivation) = local
             .derive_proposition_without_premise_minimization(proposition)
             .or_else(|| local.derive_simp_proposition(proposition))
@@ -1215,11 +1346,8 @@ fn verify_lowered_invariant_path(
                 "invariant {check_index} is missing path obligation: {proposition:?}"
             ));
         };
-        if !derivation.check(&local) {
-            return Err(format!(
-                "invariant {check_index} path obligation derivation check failed: {proposition:?}"
-            ));
-        }
+        required.push(proposition.clone());
+        obligation_proofs.push(derivation);
     }
     let Some(derivation) = local
         .derive_proposition_without_premise_minimization(&path.proposition)
@@ -1233,19 +1361,26 @@ fn verify_lowered_invariant_path(
             path.proposition
         ));
     };
-    if !derivation.check(&local) {
+    let lowering = std::sync::Arc::new(CheckedInvariantLowering {
+        check_index,
+        path,
+        context: local,
+        required,
+        obligation_proofs,
+        goal_proof: derivation,
+    });
+    if !lowering.recheck() {
         return Err(format!(
-            "invariant {check_index} path derivation check failed: {:?}",
-            path.proposition
+            "invariant {check_index} lowering evidence check failed"
         ));
     }
     if !merged_facts
         .iter()
-        .any(|fact| fact.proposition() == &path.proposition)
+        .any(|fact| fact.proposition() == &lowering.path.proposition)
     {
-        merged_facts.push(ExecutionPureFact::new(path.proposition));
+        merged_facts.push(ExecutionPureFact::new(lowering.path.proposition.clone()));
     }
-    Ok(Some((merged_facts, merged_obligations)))
+    Ok(Some((merged_facts, merged_obligations, lowering)))
 }
 
 pub(super) fn verify_invariant_checks_at_back_edge_using(
@@ -1254,8 +1389,9 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
     checks: &[CLoopInvariantCheck],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> Result<(), String> {
+) -> Result<Vec<std::sync::Arc<CheckedInvariantLowering>>, String> {
     let mut contexts = vec![(Vec::new(), Vec::new())];
+    let mut lowerings = Vec::new();
     for (check_index, check) in checks.iter().enumerate() {
         let mut next_contexts = Vec::new();
         for (facts, obligations) in contexts {
@@ -1280,7 +1416,9 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
                         path,
                         assumptions,
                     )? {
-                        next_contexts.push(context);
+                        let (facts, obligations, lowering) = context;
+                        next_contexts.push((facts, obligations));
+                        lowerings.push(lowering);
                     }
                 }
                 continue;
@@ -1299,7 +1437,9 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
                         path,
                         assumptions,
                     )? {
-                        next_contexts.push(context);
+                        let (facts, obligations, lowering) = context;
+                        next_contexts.push((facts, obligations));
+                        lowerings.push(lowering);
                     }
                 }
                 continue;
@@ -1348,14 +1488,20 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
             })?;
             let mut verified = verified.drain(..).flatten().collect::<Vec<_>>();
             verified.sort_by_key(|(index, _)| *index);
-            next_contexts.extend(verified.into_iter().filter_map(|(_, context)| context));
+            for (facts, obligations, lowering) in
+                verified.into_iter().filter_map(|(_, context)| context)
+            {
+                next_contexts.push((facts, obligations));
+                lowerings.push(lowering);
+            }
         }
         contexts = next_contexts;
     }
     if contexts.is_empty() {
         return Err("invariant bundle has no reachable lowering path".to_string());
     }
-    Ok(())
+    debug_assert!(lowerings.iter().all(|path| path.check_index < checks.len()));
+    Ok(lowerings)
 }
 
 #[allow(clippy::too_many_arguments)]

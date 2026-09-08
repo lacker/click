@@ -1111,6 +1111,62 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         Ok((Self::new(state, focused_branch), result))
     }
 
+    /// Build and retain lowering evidence from this branch's own checked facts.
+    /// No caller-supplied context or portable success token is accepted.
+    pub(crate) fn retain_checked_invariant_lowerings(
+        &self,
+        loop_entry: &crate::kernel::CState,
+        checks: &[crate::kernel::CLoopInvariantCheck],
+    ) -> Result<Self, String> {
+        let (branch, execution) = self
+            .focused_frontier_execution()
+            .map_err(|_| "invariant lowering requires an execution frontier".to_string())?;
+        if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
+            return Err("invariant lowering requires a loop body".into());
+        }
+        let mut facts = branch.state.facts.clone();
+        for fact in execution.core.effect_facts.iter() {
+            facts = facts.with_fact(fact.proposition().clone());
+        }
+        for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
+            facts = facts.with_fact(fact);
+        }
+        let paths = crate::kernel::loops::verify_invariant_checks_at_back_edge_using(
+            &execution.core.state,
+            loop_entry,
+            checks,
+            facts.assumptions(),
+            &mut crate::kernel::ExecutionBudget::default(),
+        )?;
+        let mut core = execution.core.clone();
+        core.checked_invariant_lowerings =
+            Some(Arc::new(super::execution::CheckedLoopInvariantLowerings {
+                _snapshot: core.state.clone(),
+                _checks: checks.to_vec(),
+                _paths: paths,
+            }));
+        let state = ProofBranchState {
+            facts: branch.state.facts.clone(),
+            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+            execution: Some(Arc::new(ProofExecutionState::new(
+                core,
+                execution.presentation.clone(),
+            ))),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .with_branch_state_at(self.focused_branch, state),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            self.focused_branch,
+        ))
+    }
+
     pub(crate) fn close_frontier_invariants(&self) -> Result<Self, ExecutionUpdateError> {
         let (branch, execution) = self.focused_frontier_execution()?;
         if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {

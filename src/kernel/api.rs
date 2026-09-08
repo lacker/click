@@ -381,6 +381,7 @@ pub fn c_loop_invariants_hold_at_back_edge_using(
         assumptions,
         &mut ExecutionBudget::default(),
     )
+    .map(|_| ())
     .map_err(|error| format!("could not check invariant closer: {error}"))
 }
 

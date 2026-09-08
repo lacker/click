@@ -269,18 +269,18 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("loop invariant closure requires a loop-region proof"));
         }
 
-        let mut closer_facts = self.facts().to_vec();
-        closer_facts.extend(
-            execution
-                .core
-                .effect_facts
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        closer_facts.extend(crate::kernel::certified_store_equations(
-            &execution.core.effect_facts,
-        ));
         if do_while {
+            let mut closer_facts = self.facts().to_vec();
+            closer_facts.extend(
+                execution
+                    .core
+                    .effect_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            closer_facts.extend(crate::kernel::certified_store_equations(
+                &execution.core.effect_facts,
+            ));
             let condition_may_continue = crate::kernel::c_loop_condition_may_continue(
                 &execution.core.state,
                 condition,
@@ -309,18 +309,16 @@ impl<'a> Proof<'a> {
                 unchecked_invariants.push(check.clone());
             }
         }
-        c_loop_invariants_hold_at_back_edge_using(
-            &execution.core.state,
-            loop_entry_state,
-            &unchecked_invariants,
-            &assumptions_from_propositions(&closer_facts),
-        )
-        .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
+        let state = self
+            .state
+            .retain_checked_invariant_lowerings(loop_entry_state, &unchecked_invariants)
+            .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
+        let proof = self.with_kernel_state(state);
 
         if execution.core.region_invariants_closed {
-            Ok(self.clone())
+            Ok(proof)
         } else {
-            self.apply_step(ProofStep::CloseInvariants)
+            proof.apply_step(ProofStep::CloseInvariants)
         }
     }
 

@@ -66,22 +66,48 @@ publish the quantified loadability fact. Two further distinctions appeared:
 No prototype verifier changes or fixture edits were integrated. The initial
 full-gate failure and the subsequent focused failures are not green results.
 
-## Intended regression and implementation sequence
+## Checked-lowering retention (2026-09-07)
+
+The chosen representation is a typed, kernel-owned checked-lowering record.
+The legacy planner now retains the exact lowered path, its non-assumable
+obligation targets, their derivations, the goal derivation, and the persistent
+path context. Record validation checks supplied derivations and their exact
+conclusions; it does not invoke a derivation builder. Keeping the actual
+lowered binders avoids a second lowering and alpha-equivalence lookup.
+
+The proof-object adapter constructs these records from its own branch facts
+and checked execution facts, and retains them with a shared execution snapshot
+and the selected invariant checks. This is archival evidence, not a portable
+success token or permission to close a different snapshot. It does not clone
+the C state or entire ambient fact history to attach a record.
+
+This is the retention foundation, **not the completed closure migration**.
+The legacy general/simp planner still constructs these proofs; source-level
+explicit-invariant bypasses and the existing closure-intent flag remain.
+The retained paths cover checks sent to the legacy planner, not yet every
+invariant in the source bundle. The records must next become the complete
+input to closure validation, with construction moved to proof planning.
+
+Regressions cover missing/replaced safety evidence, changed goal/context, and
+multi-size ambient-fact scaling of record rechecking. The existing bubble-pass
+expansion regressions remain the integration requirement.
+
+## Remaining implementation sequence
 
 1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Construct an explicit
    surface proof of the updated quantified invariant and its lowering safety
    obligations using the existing statement evidence. Identify any missing
    simple rule before broadening smart search. Do not call the legacy closer
    as a successful preflight that skips generating this proof.
-2. Decide how checked lowering evidence is retained: explicit surface facts
-   are one option; a typed record binding the checked lowering, path, snapshot,
-   and proof is another. The latter must not trust a surface spelling as proof,
-   and must have an independently checkable representation after expansion.
+2. Extend the retained checked-lowering records to cover the complete bundle,
+   including currently bypassed explicit invariants. Keep their construction
+   separate from validation, without trusting a surface spelling as proof.
    Avoid requiring users to write redundant safety bookkeeping for each read.
-3. Support exact alpha-equivalent quantified safety facts, if that is the chosen
-   representation, without semantic simp or scans over unrelated snapshots.
-   Test renamed binders, changed free variables, different pointer/byte ranges,
-   and changed memory snapshots. Include deterministic multi-size scaling tests.
+3. Bind record consumption to the exact path/snapshot and selected checks.
+   Reject changed free variables, pointer/byte ranges, and memory snapshots.
+   Include deterministic multi-size scaling tests for complete closure, not
+   just individual record rechecking. Alpha-equivalence indexing is not needed
+   when consuming the exact retained lowering.
 4. Consume the evidence at the kernel proof-object closure boundary. The current
    `close_frontier_invariants` flag update records intent before bundle checking;
    it must not become proof authority on its own. Handle the collector's path

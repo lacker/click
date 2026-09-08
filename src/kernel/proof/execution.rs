@@ -2196,11 +2196,20 @@ pub(crate) struct ExecutionProofCore {
     /// observation introduces (its count and quantity witnesses).
     pub(crate) function_entry_derivations: PersistentOrderedSet<Theorem>,
     pub(crate) region_invariants_closed: bool,
+    /// Archival checked lowerings, bound to the snapshot at which they were
+    /// constructed. This is evidence retention, not a reusable closure flag.
+    pub(crate) checked_invariant_lowerings: Option<Arc<CheckedLoopInvariantLowerings>>,
     pub(crate) next_opaque_call: u64,
     pub(crate) next_kernel_variable: u64,
     pub(crate) has_empty_execution_branch_leaf: bool,
     pub(crate) has_structured_branch_history: bool,
     pub(crate) unfolded_predicates: SharedVec<String>,
+}
+
+pub(crate) struct CheckedLoopInvariantLowerings {
+    pub(crate) _snapshot: SharedValue<CState>,
+    pub(crate) _checks: Vec<crate::kernel::CLoopInvariantCheck>,
+    pub(crate) _paths: Vec<Arc<crate::kernel::loops::CheckedInvariantLowering>>,
 }
 
 /// One checked execution branch combines kernel semantic state with an opaque
@@ -3002,6 +3011,7 @@ impl ExecutionProofCore {
             concrete_loop_execution: false,
             function_entry_derivations: Default::default(),
             region_invariants_closed: false,
+            checked_invariant_lowerings: None,
             next_opaque_call: 0,
             next_kernel_variable: 0,
             has_empty_execution_branch_leaf: false,
