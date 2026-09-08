@@ -168,6 +168,7 @@ struct Parser {
     qualified_objects: Option<BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>>,
     pending_contract_name: Option<String>,
     contract_resource_parameters: BTreeMap<String, ResourceClause>,
+    contract_proof_bindings: BTreeMap<String, Vec<(String, Variable, String)>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
     match_nesting: usize,
@@ -366,6 +367,7 @@ impl Parser {
             qualified_objects: None,
             pending_contract_name: None,
             contract_resource_parameters: BTreeMap::new(),
+            contract_proof_bindings: BTreeMap::new(),
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
             tokens,
@@ -403,6 +405,7 @@ impl Parser {
         let mut click_function_definitions = Vec::new();
         let mut resource_definitions = Vec::new();
         let mut theorem_definitions = Vec::new();
+        let mut deferred_theorems = Vec::new();
         let mut contract_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
@@ -416,7 +419,28 @@ impl Parser {
             } else if self.peek_ident() == Some("function") {
                 click_function_definitions.push(self.parse_click_function_definition()?);
             } else if self.peek_ident() == Some("theorem") {
-                theorem_definitions.push(self.parse_theorem_definition()?);
+                // Resource parameters of an executes target are lexical proof
+                // bindings, including when that contract is declared later.
+                // Visit each declaration's tokens once here, then parse it
+                // after the contract index is complete.
+                deferred_theorems.push(self.position);
+                let mut depth = 0usize;
+                loop {
+                    crate::instrumentation::record_deterministic_work(1);
+                    match self.peek() {
+                        Some(Token::LBrace) => depth += 1,
+                        Some(Token::RBrace) if depth > 0 => {
+                            depth -= 1;
+                            if depth == 0 {
+                                self.position += 1;
+                                break;
+                            }
+                        }
+                        None => return Err(self.error("unterminated theorem declaration")),
+                        _ => {}
+                    }
+                    self.position += 1;
+                }
             } else if self.peek_ident() == Some("contract") {
                 contract_definitions.push(self.parse_contract_definition()?);
             } else if self.peek_ident() == Some("abstract") {
@@ -441,6 +465,12 @@ impl Parser {
                 )));
             }
         }
+        let end = self.position;
+        for position in deferred_theorems {
+            self.position = position;
+            theorem_definitions.push(self.parse_theorem_definition()?);
+        }
+        self.position = end;
         let file = ClickFile {
             verifying_sources,
             algebraic_type_definitions,
@@ -534,6 +564,22 @@ impl Parser {
                 "named contracts cannot carry proofs, `decreases`, or `constructs` clauses",
             ));
         }
+        let bindings = proof_parameters
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|parameter| {
+                let ResourceClause::Named { binding, resource } = parameter else {
+                    return None;
+                };
+                let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                    return None;
+                };
+                Some((binding.name.clone(), binding.identity, name.clone()))
+            })
+            .collect();
+        self.contract_proof_bindings
+            .insert(function_block.signature().name().to_string(), bindings);
         Ok(ContractDefinition {
             proof_parameters,
             function_block,
@@ -1234,7 +1280,14 @@ impl Parser {
                     );
                 }
                 Some("ensures") => {
-                    let ensure = self.parse_ensure_clause()?;
+                    let ensure = if let Some(execution) = &executes {
+                        let mut names = parameter_names.clone();
+                        names.extend(execution.parameters.iter().map(|p| p.name().to_string()));
+                        names.extend(contract_let_names.iter().cloned());
+                        self.parse_ensure_clause_with_execution_scope(Some(&names))?
+                    } else {
+                        self.parse_ensure_clause()?
+                    };
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
                             .map_err(|message| self.error(message))?,
@@ -2489,6 +2542,13 @@ impl Parser {
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
+        self.parse_ensure_clause_with_execution_scope(None)
+    }
+
+    fn parse_ensure_clause_with_execution_scope(
+        &mut self,
+        execution_names: Option<&BTreeSet<String>>,
+    ) -> Result<EnsureClause, ClickError> {
         self.expect_ident_spelling("ensures")?;
         let name = if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_next() == Some(&Token::Colon)
@@ -2500,7 +2560,24 @@ impl Parser {
             None
         };
         let ensure = self.parse_ensure_condition()?;
+        let previous = execution_names.map(|_| std::mem::take(&mut self.current_resource_bindings));
+        if let Some(names) = execution_names
+            && let Ensure::Proposition(ClickProposition::PredicateCall { name, .. }) = &ensure
+            && let Some(bindings) = self.contract_proof_bindings.get(name)
+        {
+            for (name, identity, resource) in bindings {
+                crate::instrumentation::record_deterministic_work(1);
+                if name == "result" || names.contains(name) {
+                    return Err(self.error(format!("target resource parameter `{name}` conflicts with an execution proof binding")));
+                }
+                self.current_resource_bindings
+                    .insert(name.clone(), (*identity, resource.clone()));
+            }
+        }
         let proof = self.parse_proof_clause_or_default()?;
+        if let Some(previous) = previous {
+            self.current_resource_bindings = previous;
+        }
 
         Ok(EnsureClause {
             name,
