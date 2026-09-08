@@ -2050,6 +2050,7 @@ pub struct CVerifiedFunctionRule {
 pub struct CFunctionContract {
     pub(super) name: String,
     pub(super) function: CFunction,
+    pub(super) proof_parameter_count: usize,
 }
 
 /// A contract supplied for a C function whose implementation is outside the

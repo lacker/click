@@ -1637,6 +1637,17 @@ pub(super) fn execute_c_function_contracts_paths(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if contracts
+        .iter()
+        .any(|contract| contract.proof_parameter_count != 0)
+    {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "explicit resource arguments require checked call transport, which is not supported yet".into(),
+            )),
+            facts: vec![], obligations: vec![],
+        }]);
+    }
     let functions = contracts
         .iter()
         .map(|contract| contract.template())

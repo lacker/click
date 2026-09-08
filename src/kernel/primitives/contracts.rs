@@ -1287,10 +1287,21 @@ impl CFunctionSpecification {
 impl CFunctionContract {
     const PREDICATE_PREFIX: &'static str = "__click_function_contract::";
 
+    /// Retain the explicit proof arity even when the body does not use its
+    /// parameters. Until checked instantiation exists, such an interface must
+    /// not accidentally be applied as a zero-argument contract.
+    pub(crate) fn with_proof_parameter_count(mut self, count: usize) -> Self {
+        self.proof_parameter_count = count;
+        self
+    }
+
     pub fn new(name: impl Into<String>, function: CFunction) -> Option<Self> {
         let name = name.into();
-        (function.opaque_contract_supported() && !name.is_empty())
-            .then_some(Self { name, function })
+        (function.opaque_contract_supported() && !name.is_empty()).then_some(Self {
+            name,
+            function,
+            proof_parameter_count: 0,
+        })
     }
 
     pub fn name(&self) -> &str {
@@ -1321,7 +1332,8 @@ impl CFunctionContract {
     /// same normalized interface. Behavioral refinement is intentionally a
     /// later rule; exact equality is restrictive but sound.
     pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
-        self.function.return_type == function.return_type
+        self.proof_parameter_count == 0
+            && self.function.return_type == function.return_type
             && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
             && self.function.parameters == function.parameters
@@ -1346,7 +1358,8 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.function.return_type == function.return_type
+        self.proof_parameter_count == 0
+            && self.function.return_type == function.return_type
             && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
             && self.function.parameters.len() == function.parameters.len()

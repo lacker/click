@@ -136,6 +136,12 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
     }
 
     for contract in &mut file.contract_definitions {
+        if let Some(parameters) = &mut contract.proof_parameters {
+            for parameter in parameters {
+                *parameter =
+                    expand_declared_resource_clause(parameter.clone(), &resource_definitions)?;
+            }
+        }
         expand_declared_resources_in_function_block(
             &mut contract.function_block,
             &resource_definitions,
