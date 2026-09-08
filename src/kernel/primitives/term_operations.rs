@@ -2275,71 +2275,94 @@ fn compare_float_bits(
 }
 
 impl CType {
-    pub(crate) fn function_pointer_signature(return_type: Self, parameter_types: &[Self]) -> u64 {
-        // Encode the twenty-type alphabet in base twenty with a leading one.
-        // The sentinel distinguishes arities, including leading zero codes.
-        // Return plus thirteen parameters uses at most 2 * 20^14 - 1, which
-        // fits u64. Four-bit slots are NOT sufficient for codes 16 through 19.
-        fn code(c_type: CType) -> Option<u64> {
-            Some(match c_type {
-                CType::Void => 0,
-                CType::VoidPointer => 19,
-                CType::Int32 => 1,
-                CType::UInt8 => 2,
-                CType::UInt32 => 3,
-                CType::Int32Pointer => 4,
-                CType::UInt8Pointer => 5,
-                CType::Int32PointerPointer => 6,
-                CType::UInt8PointerPointer => 7,
-                CType::Int16 => 8,
-                CType::UInt16 => 9,
-                CType::Int64 => 10,
-                CType::UInt64 => 11,
-                CType::Int16Pointer => 12,
-                CType::UInt16Pointer => 13,
-                CType::UInt32Pointer => 14,
-                CType::Int64Pointer => 15,
-                CType::UInt64Pointer => 16,
-                CType::Float32 => 17,
-                CType::Float64 => 18,
-                CType::Int16PointerPointer
-                | CType::UInt16PointerPointer
-                | CType::UInt32PointerPointer
-                | CType::Int64PointerPointer
-                | CType::UInt64PointerPointer
-                | CType::FunctionPointer(_)
-                | CType::Int32Array(_)
-                | CType::UInt8Array(_)
-                | CType::Int16Array(_)
-                | CType::UInt16Array(_)
-                | CType::UInt32Array(_)
-                | CType::Int64Array(_)
-                | CType::UInt64Array(_)
-                | CType::Float32Pointer
-                | CType::Float64Pointer
-                | CType::Float32PointerPointer
-                | CType::Float64PointerPointer
-                | CType::Float32Array(_)
-                | CType::Float64Array(_) => {
-                    return None;
-                }
-            })
+    pub(crate) fn function_pointer_signature(
+        return_type: Self,
+        parameter_types: &[Self],
+    ) -> CallbackSignature {
+        Self::qualified_function_pointer_signature(
+            return_type,
+            false,
+            &parameter_types
+                .iter()
+                .map(|&ty| (ty, false))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub(crate) fn qualified_function_pointer_signature(
+        return_type: Self,
+        return_constant: bool,
+        parameters: &[(Self, bool)],
+    ) -> CallbackSignature {
+        // Exact base-40 digits: twenty modeled types, each with a pointee-const
+        // bit. The leading one distinguishes arities. Fourteen digits plus
+        // the sentinel use fewer than 76 bits, preserving the 13-parameter
+        // capacity without truncation or probabilistic identities.
+        fn code(c_type: CType, constant: bool) -> Option<u128> {
+            if constant && !c_type.is_object_pointer() {
+                return None;
+            }
+            Some(
+                match c_type {
+                    CType::Void => 0,
+                    CType::VoidPointer => 19,
+                    CType::Int32 => 1,
+                    CType::UInt8 => 2,
+                    CType::UInt32 => 3,
+                    CType::Int32Pointer => 4,
+                    CType::UInt8Pointer => 5,
+                    CType::Int32PointerPointer => 6,
+                    CType::UInt8PointerPointer => 7,
+                    CType::Int16 => 8,
+                    CType::UInt16 => 9,
+                    CType::Int64 => 10,
+                    CType::UInt64 => 11,
+                    CType::Int16Pointer => 12,
+                    CType::UInt16Pointer => 13,
+                    CType::UInt32Pointer => 14,
+                    CType::Int64Pointer => 15,
+                    CType::UInt64Pointer => 16,
+                    CType::Float32 => 17,
+                    CType::Float64 => 18,
+                    CType::Int16PointerPointer
+                    | CType::UInt16PointerPointer
+                    | CType::UInt32PointerPointer
+                    | CType::Int64PointerPointer
+                    | CType::UInt64PointerPointer
+                    | CType::FunctionPointer(_)
+                    | CType::Int32Array(_)
+                    | CType::UInt8Array(_)
+                    | CType::Int16Array(_)
+                    | CType::UInt16Array(_)
+                    | CType::UInt32Array(_)
+                    | CType::Int64Array(_)
+                    | CType::UInt64Array(_)
+                    | CType::Float32Pointer
+                    | CType::Float64Pointer
+                    | CType::Float32PointerPointer
+                    | CType::Float64PointerPointer
+                    | CType::Float32Array(_)
+                    | CType::Float64Array(_) => {
+                        return None;
+                    }
+                } + if constant { 20 } else { 0 },
+            )
         }
 
-        if parameter_types.len() > 13 {
-            return 0;
+        if parameters.len() > 13 {
+            return CallbackSignature::UNSPECIFIED;
         }
-        let Some(return_code) = code(return_type) else {
-            return 0;
+        let Some(return_code) = code(return_type, return_constant) else {
+            return CallbackSignature::UNSPECIFIED;
         };
-        let mut signature = 20 + return_code;
-        for &parameter_type in parameter_types {
-            let Some(parameter_code) = code(parameter_type) else {
-                return 0;
+        let mut signature = 40 + return_code;
+        for &(parameter_type, constant) in parameters {
+            let Some(parameter_code) = code(parameter_type, constant) else {
+                return CallbackSignature::UNSPECIFIED;
             };
-            signature = signature * 20 + parameter_code;
+            signature = signature * 40 + parameter_code;
         }
-        signature
+        CallbackSignature::from_encoded(signature)
     }
 
     pub fn is_pointer(self) -> bool {

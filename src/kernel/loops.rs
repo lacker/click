@@ -88,7 +88,7 @@ mod pointee_const_return_tests {
     }
 
     #[test]
-    fn pointee_const_return_direct_call_preserves_const_and_callback_dispatch_rejects_it() {
+    fn pointee_const_return_direct_and_callback_calls_preserve_const() {
         let function = CFunction::new(
             CType::UInt8Pointer,
             "text",
@@ -119,6 +119,52 @@ mod pointee_const_return_tests {
                     offset: PointerOffsetTerm::Constant(0),
                 },
                 function_type,
+            ),
+        );
+        let paths = execute_c_call_assign_paths(
+            &state,
+            "temporary",
+            "callback",
+            &[],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert!(matches!(&paths[0].outcome, CStatementOutcome::Normal(state)
+            if matches!(state.locals.binding("temporary"), Some(CLocalBinding::Object { pointee_constant: true, .. }))));
+
+        let state = state.with_local(
+            "mutable",
+            CValue::typed_pointer(Pointer::null(), CType::UInt8Pointer),
+        );
+        let paths = execute_c_call_assign_paths(
+            &state,
+            "mutable",
+            "callback",
+            &[],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            &paths[0].outcome,
+            CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+        ));
+
+        let incompatible =
+            CType::FunctionPointer(CType::function_pointer_signature(CType::UInt8Pointer, &[]));
+        let state = CState::new().with_local(
+            "callback",
+            CValue::typed_pointer(
+                Pointer {
+                    block: PointerBlock::Function("text".into()),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                incompatible,
             ),
         );
         let paths = execute_c_call_assign_paths(
@@ -198,6 +244,61 @@ mod pointee_const_return_tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn pointee_const_return_symbolic_callback_checks_signature_and_destination() {
+        let template = CFunction::new(CType::Int32Pointer, "view", vec![], CStatement::Skip)
+            .with_return_pointee_constant(true)
+            .with_contract(vec![], vec![], vec![], vec![], true);
+        let contract = CFunctionContract::new("View", template).unwrap();
+        let qualified = contract.function_pointer_type();
+        let unqualified =
+            CType::FunctionPointer(CType::function_pointer_signature(CType::Int32Pointer, &[]));
+        let pointer = Pointer {
+            block: PointerBlock::FunctionSymbolic(Variable(890)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let value = CValue::typed_pointer(pointer.clone(), qualified);
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::Predicate {
+            name: contract.predicate_name(),
+            arguments: vec![Term::CState(CState::new()), Term::CValue(value)],
+        });
+        let environment = CExecutionEnvironment::new().with_function_contract(contract);
+        for (signature, mutable_destination) in
+            [(qualified, false), (qualified, true), (unqualified, false)]
+        {
+            let mut state = CState::new().with_local(
+                "callback",
+                CValue::typed_pointer(pointer.clone(), signature),
+            );
+            if mutable_destination {
+                state = state.with_local(
+                    "temporary",
+                    CValue::typed_pointer(Pointer::null(), CType::Int32Pointer),
+                );
+            }
+            let paths = execute_c_call_assign_paths(
+                &state,
+                "temporary",
+                "callback",
+                &[],
+                &assumptions,
+                &environment,
+                CExecutionSemantics::EXECUTE_BODIES,
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap();
+            if signature == qualified && !mutable_destination {
+                assert!(matches!(&paths[0].outcome, CStatementOutcome::Normal(state)
+                    if matches!(state.locals.binding("temporary"), Some(CLocalBinding::Object { value: CValue::Pointer(pointer), pointee_constant: true, .. }) if pointer.pointee_constant())));
+            } else {
+                assert!(matches!(
+                    &paths[0].outcome,
+                    CStatementOutcome::RuntimeError(_)
+                ));
+            }
+        }
     }
 }
 
@@ -577,6 +678,15 @@ fn execute_c_indirect_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if function_type == CType::FunctionPointer(CallbackSignature::UNSPECIFIED) {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "indirect calls require a supported callback signature".into(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
     let mut paths = Vec::new();
     for target_path in evaluate_c_expression_paths(
         state,
@@ -605,10 +715,7 @@ fn execute_c_indirect_call_paths(
                         let contracts = target_assumptions
                             .function_contract_facts_for(pointer.pointer())
                             .filter_map(|(name, _)| environment.get_function_contract(name))
-                            .filter(|contract| {
-                                !contract.template().return_pointee_is_constant()
-                                    && contract.function_pointer_type() == function_type
-                            })
+                            .filter(|contract| contract.function_pointer_type() == function_type)
                             .collect::<Vec<_>>();
                         if let Some(selected) = &environment.selected_call_contract
                             && !contracts
@@ -693,9 +800,7 @@ fn execute_c_indirect_call_paths(
                 });
                 continue;
             };
-            if function.return_pointee_is_constant()
-                || function.function_pointer_type() != function_type
-            {
+            if function.function_pointer_type() != function_type {
                 paths.push(CFunctionPath {
                     outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                         format!(

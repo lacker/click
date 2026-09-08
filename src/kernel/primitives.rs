@@ -474,7 +474,7 @@ pub enum CType {
     UInt64PointerPointer,
     Float32PointerPointer,
     Float64PointerPointer,
-    FunctionPointer(u64),
+    FunctionPointer(CallbackSignature),
     Int32Array(u32),
     UInt8Array(u32),
     Int16Array(u32),
@@ -484,6 +484,37 @@ pub enum CType {
     UInt64Array(u32),
     Float32Array(u32),
     Float64Array(u32),
+}
+
+/// Exact packed callback type identity. Byte alignment keeps the common C type
+/// enum compact; using a u128 payload would enlarge every execution frame.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct CallbackSignature([u8; 10]);
+
+impl CallbackSignature {
+    pub const UNSPECIFIED: Self = Self([0; 10]);
+
+    pub(crate) fn from_encoded(encoded: u128) -> Self {
+        assert!(
+            encoded < (1u128 << 80),
+            "callback signature capacity exceeded"
+        );
+        Self(encoded.to_le_bytes()[..10].try_into().unwrap())
+    }
+}
+
+impl std::fmt::Display for CallbackSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut bytes = [0; 16];
+        bytes[..10].copy_from_slice(&self.0);
+        std::fmt::Display::fmt(&u128::from_le_bytes(bytes), formatter)
+    }
+}
+
+impl std::fmt::Debug for CallbackSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, formatter)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1912,6 +1943,7 @@ pub struct CPredicateUnfolding {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
+    pub(super) instance_schema: Option<ResourceFieldSchema>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     /// Existential witnesses bound inside the body (`let next: T where P`).
@@ -2890,6 +2922,9 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    /// Exclusive handles retained by explicit unfolding. These permit pure
+    /// field projections, never folded ownership or modular call transfer.
+    pub(super) open_instances: ResourceContext,
     /// Call-local formal identities; the ledger retains actual caller identities.
     pub(super) resource_bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
     pub(super) locals: CLocalEnvironment,
@@ -2985,6 +3020,9 @@ impl std::fmt::Debug for ResourceContext {
 
 impl PartialEq for ResourceContext {
     fn eq(&self, other: &Self) -> bool {
+        if std::sync::Arc::ptr_eq(&self.storage, &other.storage) {
+            return true;
+        }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
             && self.storage.expansions_by_support == other.storage.expansions_by_support

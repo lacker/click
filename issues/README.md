@@ -95,7 +95,6 @@ C language coverage:
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Model signed eight-bit integers](signed-byte-integers.md)
-- [Preserve const-qualified callback returns](const-qualified-callback-returns.md)
 
 Semantics and reasoning:
 

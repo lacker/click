@@ -121,7 +121,10 @@ Implement and check the following slices in order:
    identity/field-state representation are implemented. Source supports
    `owns cell: marked_cell(p);`, with current `cell.model` and entry-state
    `old(cell.model)` projections. Explicit callback applications now transport
-   opaque instances. Next implement checked body fold/unfold and ordinary
+   opaque instances. Checked unchanged-field fold/unfold supports unguarded,
+   nonrecursive, witness-free memory bodies, including certified folds after
+   C returns. Open handles permit field projections but cannot satisfy folded
+   ownership requirements. Next implement guarded/nested bodies and ordinary
    inline-call binder transport; field establishment/update syntax remains
    deferred. Opaque nonrecursive resources already preserve arbitrary field
    values, not only concrete constructors. The earlier kernel symbolic-index
@@ -129,8 +132,12 @@ Implement and check the following slices in order:
    [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
    current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
    Keep that unsupported-parameter diagnostic until the parameter path is
-   supported. Add the intended arbitrary-state read/return proof using named
-   resource fields, with meaningful negative transfer tests.
+   supported. The arbitrary-state read/return regression uses named fields;
+   invalid folds and missing returned ownership are rejected.
+   Post-return instance folds currently require one retained execution trace;
+   extend certification to path-specific return exchanges before accepting
+   multi-path folds. Regressions must keep each path's result, memory, complete
+   body ownership, and field facts tied to that path's checked execution.
 2. **Checked resource `match`.** Check exhaustive constructor arms and their
    scoped typed fields. Fold/unfold selects a justified arm and exposes only
    its immediate owned resources and pure facts. An unknown model remains
@@ -167,9 +174,8 @@ its current field state, while `old(cell.model)` denotes its entry state.
 Returning the instance does not itself promise unchanged fields: that requires
 a postcondition such as `ensures cell.model == old(cell.model);`.
 
-The next implementation must connect these source bindings to checked
-body unfolding, preserving binder scope across calls and keeping
-function-entry snapshots distinct from loop-entry snapshots. The intended
+Checked memory-body unfolding preserves the bound identity and keeps
+function-entry snapshots distinct from loop-entry snapshots. The
 first C regression is an unchanged `return *p;` function using a field-bearing
 cell resource, with a proof that returns the same instance and preserves an
 arbitrary `Mark` field. Missing ownership, a different instance, or an unproved

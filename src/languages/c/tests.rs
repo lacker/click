@@ -9364,10 +9364,9 @@ fn c0_void_pointers_are_opaque_object_views() {
         crate::kernel::CType::VoidPointer
             .pointer_types_compatible(crate::kernel::CType::Int32Pointer)
     );
-    assert!(
-        !crate::kernel::CType::VoidPointer
-            .pointer_types_compatible(crate::kernel::CType::FunctionPointer(1))
-    );
+    assert!(!crate::kernel::CType::VoidPointer.pointer_types_compatible(
+        crate::kernel::CType::FunctionPointer(crate::kernel::CallbackSignature::from_encoded(1))
+    ));
 }
 
 #[test]

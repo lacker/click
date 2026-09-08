@@ -523,8 +523,8 @@ the callback signature, and are bound only inside the execution proof; they
 cannot escape into theorem premises or conclusions. Their names must be
 distinct from the callback and from `result`; a return-valued callback parameter
 also cannot be named `result`. Additional theorem parameters remain outside
-this slice. The existing callback-type limitations (such as const-qualified
-callback returns) are unchanged.
+this slice. Const-qualified pointer returns and parameters use the same C
+spelling in callbacks, named contracts, and execution proofs.
 
 When the target contract declares resource proof parameters, their names are
 available inside the execution proof block. For example, a target parameter
@@ -762,12 +762,18 @@ state. Returning ownership does not itself promise unchanged fields; use an
 explicit postcondition. Instance identity is distinct from field state, and
 fields are symbolic Click values, not executable C ghost parameters.
 
-These instances remain opaque. Explicit callback applications such as
+Explicit callback applications such as
 `step(Read(first))` transport ownership with fresh post-call fields constrained
-by the selected contract. Checked body fold/unfold, field establishment and
-updates through body proofs, and ordinary inline-call transport are not yet supported.
-Field names are not yet in scope in body expressions. A declaration alone
-grants no ownership, and binding an instance does not expose its memory body.
+by the selected contract. `unfold(cell)` exposes an instance's immediate memory
+body and its facts; field names in the body denote that instance's fields.
+`fold(cell)` requires the complete memory body and re-establishes its facts,
+preserving the same identity and fields. The open handle permits field
+projections but does not count as folded ownership for calls or returns.
+This supports unguarded, nonrecursive, witness-free memory bodies only.
+Post-return instance folds currently require a single retained execution trace.
+Field establishment, updates, and ordinary inline-call transport remain
+unsupported. A declaration alone grants no ownership, and binding an instance
+does not implicitly expose its memory body.
 
 A composite body may instead have one top-level guard:
 

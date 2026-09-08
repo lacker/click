@@ -1297,7 +1297,11 @@ pub fn c_function_entry_state(
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    bind_c_function_arguments(caller_state, function, &values)
+    let mut entry = bind_c_function_arguments(caller_state, function, &values)?;
+    // This API rebinds a proof frontier, including an explicitly unfolded
+    // entry representation. It is not the modular call ownership transfer.
+    entry.open_instances = caller_state.open_instances.clone();
+    Some(entry)
 }
 
 /// Produces the exact callee entry state used by contract verification.
