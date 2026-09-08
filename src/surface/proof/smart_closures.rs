@@ -1004,6 +1004,89 @@ impl<'a> Proof<'a> {
         Ok(None)
     }
 
+    // Keep implication-local proof and syntax temporaries out of every
+    // recursive structural dispatcher frame. Search order is unchanged.
+    #[inline(never)]
+    fn try_implication_simp_closure(
+        &self,
+        surface_antecedent: &ClickProposition,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(mut introduced) = attempt::candidate_outcome(self.apply_step(ProofStep::Intro))?
+        else {
+            return Ok(None);
+        };
+        // The introduced antecedent itself is the uniquely selected
+        // contradiction candidate. This is a constant-size probe:
+        // `Contradiction` checks that exact fact and its indexed
+        // opposite, without scanning ambient path facts.
+        if let Some(closed) =
+            introduced.try_introduced_antecedent_contradiction(surface_antecedent)?
+        {
+            return Ok(Some(closed));
+        }
+        let mut conjuncts = Vec::new();
+        if matches!(surface_antecedent, ClickProposition::And(_, _)) {
+            collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
+        }
+        for conjunct in &conjuncts {
+            let Some(extracted) = attempt::candidate_outcome(
+                introduced.apply_step(ProofStep::Extract(conjunct.clone())),
+            )?
+            else {
+                return Ok(None);
+            };
+            introduced = extracted;
+            if introduced.is_complete() {
+                return Ok(Some(introduced));
+            }
+        }
+        let mut available_surfaces = introduced_surfaces.to_vec();
+        available_surfaces.push(surface_antecedent.clone());
+        available_surfaces.extend(conjuncts.iter().cloned());
+        // Introducing this guard can make a previously introduced
+        // conditional premise usable. Select its written consequent
+        // and let the ordinary checked `extract` rule discharge the
+        // guard; do not branch over possible guard values.
+        for premise in available_surfaces.clone() {
+            let mut current = &premise;
+            while let ClickProposition::Implies(_, consequent) = current {
+                let Some(extracted) = attempt::candidate_outcome(
+                    introduced.apply_step(ProofStep::Extract(consequent.as_ref().clone())),
+                )?
+                else {
+                    break;
+                };
+                introduced = extracted;
+                available_surfaces.push(consequent.as_ref().clone());
+                if introduced.is_complete() {
+                    return Ok(Some(introduced));
+                }
+                current = consequent;
+            }
+        }
+        if !conjuncts.is_empty()
+            && let Some(surface_goal) = introduced.surface_goal()
+            && let Some(source) = old_reflexive_transport_source(surface_goal)
+        {
+            match introduced.search_fixed_state_fact_transport(
+                &source,
+                surface_goal,
+                conjuncts.iter().cloned(),
+            ) {
+                Ok(transported) if transported.is_complete() => {
+                    return Ok(Some(transported));
+                }
+                Ok(_) => {}
+                Err(_) => check_verification_deadline()?,
+            }
+        }
+        if let Some(split) = introduced.try_upper_bound_split_closure(&available_surfaces)? {
+            return Ok(Some(split));
+        }
+        introduced.try_simp_closure_with_surfaces(&available_surfaces)
+    }
+
     /// Refines the Proof-owned Surface goal through audited scopes and steps.
     /// The caller cannot supply a second description of the judgment: this
     /// syntax is the view paired with the kernel goal in `PropositionObligation`.
@@ -1028,82 +1111,7 @@ impl<'a> Proof<'a> {
                 }
             }
             (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
-                let Some(mut introduced) =
-                    attempt::candidate_outcome(self.apply_step(ProofStep::Intro))?
-                else {
-                    return Ok(None);
-                };
-                // The introduced antecedent itself is the uniquely selected
-                // contradiction candidate. This is a constant-size probe:
-                // `Contradiction` checks that exact fact and its indexed
-                // opposite, without scanning ambient path facts.
-                if let Some(closed) = introduced
-                    .try_introduced_antecedent_contradiction(surface_antecedent.as_ref())?
-                {
-                    return Ok(Some(closed));
-                }
-                let mut conjuncts = Vec::new();
-                if matches!(surface_antecedent.as_ref(), ClickProposition::And(_, _)) {
-                    collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
-                }
-                for conjunct in &conjuncts {
-                    let Some(extracted) = attempt::candidate_outcome(
-                        introduced.apply_step(ProofStep::Extract(conjunct.clone())),
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    introduced = extracted;
-                    if introduced.is_complete() {
-                        return Ok(Some(introduced));
-                    }
-                }
-                let mut available_surfaces = introduced_surfaces.to_vec();
-                available_surfaces.push(surface_antecedent.as_ref().clone());
-                available_surfaces.extend(conjuncts.iter().cloned());
-                // Introducing this guard can make a previously introduced
-                // conditional premise usable. Select its written consequent
-                // and let the ordinary checked `extract` rule discharge the
-                // guard; do not branch over possible guard values.
-                for premise in available_surfaces.clone() {
-                    let mut current = &premise;
-                    while let ClickProposition::Implies(_, consequent) = current {
-                        let Some(extracted) = attempt::candidate_outcome(
-                            introduced.apply_step(ProofStep::Extract(consequent.as_ref().clone())),
-                        )?
-                        else {
-                            break;
-                        };
-                        introduced = extracted;
-                        available_surfaces.push(consequent.as_ref().clone());
-                        if introduced.is_complete() {
-                            return Ok(Some(introduced));
-                        }
-                        current = consequent;
-                    }
-                }
-                if !conjuncts.is_empty()
-                    && let Some(surface_goal) = introduced.surface_goal()
-                    && let Some(source) = old_reflexive_transport_source(surface_goal)
-                {
-                    match introduced.search_fixed_state_fact_transport(
-                        &source,
-                        surface_goal,
-                        conjuncts.iter().cloned(),
-                    ) {
-                        Ok(transported) if transported.is_complete() => {
-                            return Ok(Some(transported));
-                        }
-                        Ok(_) => {}
-                        Err(_) => check_verification_deadline()?,
-                    }
-                }
-                if let Some(split) =
-                    introduced.try_upper_bound_split_closure(&available_surfaces)?
-                {
-                    return Ok(Some(split));
-                }
-                introduced.try_simp_closure_with_surfaces(&available_surfaces)
+                self.try_implication_simp_closure(surface_antecedent, introduced_surfaces)
             }
             (ClickProposition::And(_, _), Proposition::And(_, _)) => {
                 let (split_proof, split, ids) = self.split_focused_both()?;

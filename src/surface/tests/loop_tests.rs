@@ -75,10 +75,9 @@ fn explicit_invariant_body_quantified_bubble_census() {
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
-/// The unchanged copy3 closure must report a local search miss, not overflow.
-/// Positive automatic planning remains tracked in the linked issue.
+/// The old/current snapshot body verifies and expands on the ordinary stack.
 #[test]
-fn explicit_invariant_body_copy3_has_a_bounded_planning_miss() {
+fn explicit_invariant_body_copy3_checks_and_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/copy3_array_demo.md");
     let source = std::fs::read_to_string(&path).unwrap();
     let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
@@ -92,6 +91,39 @@ fn explicit_invariant_body_copy3_has_a_bounded_planning_miss() {
     let expanded = expand_c0_claim_source(click, &sources, "copy3", CProofClaim::Grouped).unwrap();
     assert!(expanded.contains("close_invariants();"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    let discovery_before = crate::kernel::invariant_discovery_calls();
+    verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
+    let expanded =
+        expand_c0_claim_source(&explicit, &sources, "copy3", CProofClaim::Grouped).unwrap();
+    assert!(!expanded.contains("close_invariants();"));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
+}
+
+/// The remaining composed-store planner gap is local, not an implicit fallback.
+#[test]
+fn explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/bubble_sort3_two_pass_sorted.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    verify_c0_sources(click, &sources).unwrap();
+    let expanded = expand_c0_claim_source(
+        click,
+        &sources,
+        "bubble_sort3_two_pass",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    assert!(expanded.contains("close_invariants();"));
+    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    let discovery_before = crate::kernel::invariant_discovery_calls();
     let error = verify_c0_sources(&explicit, &sources).unwrap_err();
     assert!(
         error
@@ -99,6 +131,7 @@ fn explicit_invariant_body_copy3_has_a_bounded_planning_miss() {
             .contains("closure body did not prove every invariant obligation"),
         "{error:?}"
     );
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
 #[test]
