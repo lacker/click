@@ -678,6 +678,15 @@ pub(super) fn execute_c_function_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if environment.selected_call_contract.is_some() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "step(Contract) requires a function-pointer call".to_string(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
     if let Some(rule) = environment.get_external_function_rule(function.name()) {
         let assumed_rule = CVerifiedFunctionRule {
             function: rule.function.clone(),
@@ -908,6 +917,7 @@ fn execute_verified_function_rule(
     execute_verified_function_templates(
         caller_state,
         &[&rule.function],
+        None,
         arguments,
         assumptions,
         environment,
@@ -918,6 +928,7 @@ fn execute_verified_function_rule(
 fn execute_verified_function_templates(
     caller_state: &CState,
     functions: &[&CFunction],
+    selected_contract: Option<usize>,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -948,7 +959,7 @@ fn execute_verified_function_templates(
     let result_identity = variables.next();
     budget.next_kernel_variable = variables.next;
     let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(
+    'arguments: for arguments_path in evaluate_c_arguments_paths(
         caller_state,
         arguments,
         assumptions,
@@ -966,21 +977,29 @@ fn execute_verified_function_templates(
 
         let mut applicable = Vec::new();
         let mut first_failure = None;
-        for function in functions {
+        let mut selected_position = None;
+        for (index, function) in functions.iter().enumerate() {
             let prepared = prepare_verified_function_call(
                 caller_state,
                 function,
                 arguments_path.clone(),
-                functions.len() > 1,
+                functions.len() > 1 || selected_contract.is_some(),
                 assumptions,
                 environment,
                 budget,
             )?;
             match prepared {
                 Ok(prepared) => {
+                    if selected_contract == Some(index) {
+                        selected_position = Some(applicable.len());
+                    }
                     applicable.push(prepared);
                 }
                 Err(failure) => {
+                    if selected_contract == Some(index) {
+                        paths.push(failure);
+                        continue 'arguments;
+                    }
                     if first_failure.is_none() {
                         first_failure = Some(failure);
                     }
@@ -991,10 +1010,11 @@ fn execute_verified_function_templates(
             paths.push(first_failure.expect("a nonempty set of callback contracts"));
             continue;
         }
-        // Pure conjunction does not duplicate an ownership ledger. Arbitrary
-        // alternative owned postconditions need a resource-algebra extension;
-        // do not represent them as either paths or separating ownership.
-        if applicable.len() > 1
+        // Pure conjunction does not duplicate an ownership ledger. An explicit
+        // selector chooses one resource transition; absent that choice, do not
+        // represent alternative ownership as paths or separating ownership.
+        if selected_contract.is_none()
+            && applicable.len() > 1
             && applicable.iter().any(|call| {
                 !call.function.resource_requires.is_empty()
                     || !call.function.resource_ensures.is_empty()
@@ -1004,7 +1024,7 @@ fn execute_verified_function_templates(
         {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                    "combining resource-bearing callback contracts is not yet supported"
+                    "ambiguous callback resource transition; use step(Contract) to select one"
                         .to_string(),
                 )),
                 facts: arguments_path.facts,
@@ -1012,7 +1032,15 @@ fn execute_verified_function_templates(
             });
             continue;
         }
-        let mut calls = applicable.into_iter();
+        // Supplementary guarantees are interpreted on the shared post-memory,
+        // not an alternative output ledger. In particular, resource counts must
+        // not accidentally be evaluated against that interface's input ledger.
+        let independent_guarantees_only = selected_contract.is_some()
+            && applicable.iter().any(|call| {
+                !call.function.resource_requires.is_empty()
+                    || !call.function.resource_ensures.is_empty()
+            });
+        let primary = applicable.remove(selected_position.unwrap_or(0));
         let PreparedVerifiedFunctionCall {
             function,
             argument_values,
@@ -1023,8 +1051,8 @@ fn execute_verified_function_templates(
             obligations,
             effective_assumptions,
             mutable_ranges,
-        } = calls.next().unwrap();
-        let additional_calls = calls;
+        } = primary;
+        let additional_calls = applicable.into_iter();
         let memory = if mutable_ranges.is_empty() {
             entry_state.memory.clone()
         } else {
@@ -1227,12 +1255,21 @@ fn execute_verified_function_templates(
                 additional.function,
                 &additional.argument_values,
             );
-            add_verified_function_ensure_facts(
+            add_verified_function_ensure_facts_selected(
                 &mut additional_facts,
                 &additional.obligations,
                 &additional_post,
                 &additional.entry_contract_state,
                 additional.function,
+                additional
+                    .function
+                    .contract_ensures()
+                    .iter()
+                    .filter(|ensure| {
+                        !independent_guarantees_only
+                            || spec_proposition_is_state_independent(ensure)
+                            || spec_proposition_supports_stateful_memory_refinement(ensure)
+                    }),
                 &additional.effective_assumptions,
                 budget,
             )?;
@@ -1592,6 +1629,12 @@ pub(super) fn execute_c_function_contracts_paths(
     execute_verified_function_templates(
         caller_state,
         &functions,
+        environment.selected_call_contract.as_ref().map(|name| {
+            contracts
+                .iter()
+                .position(|contract| contract.name() == name.as_ref())
+                .expect("selected contract membership was checked at the call")
+        }),
         arguments,
         assumptions,
         environment,
@@ -3204,7 +3247,29 @@ fn add_verified_function_ensure_facts(
     effective_assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<()> {
-    for ensure in function.contract_ensures() {
+    add_verified_function_ensure_facts_selected(
+        facts,
+        obligations,
+        post_contract_state,
+        entry_contract_state,
+        function,
+        function.contract_ensures().iter(),
+        effective_assumptions,
+        budget,
+    )
+}
+
+fn add_verified_function_ensure_facts_selected<'a>(
+    facts: &mut Vec<ExecutionPureFact>,
+    obligations: &[ProofObligation],
+    post_contract_state: &CState,
+    entry_contract_state: &CState,
+    function: &'a CFunction,
+    ensures: impl Iterator<Item = &'a SpecProposition>,
+    effective_assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<()> {
+    for ensure in ensures {
         let ensure_assumptions =
             assumptions_with_path_context(effective_assumptions, facts, obligations);
         // A verified callee certifies that its ensures, including the memory

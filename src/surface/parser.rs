@@ -2867,8 +2867,14 @@ impl Parser {
         }
         let tactic = match name.as_str() {
             "step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Step
+                self.expect(Token::LParen)?;
+                let step = if self.peek() == Some(&Token::RParen) {
+                    ProofTactic::Step
+                } else {
+                    ProofTactic::StepContract(self.expect_ident("call contract name")?)
+                };
+                self.expect(Token::RParen)?;
+                step
             }
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;

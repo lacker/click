@@ -1,13 +1,9 @@
-# Folded resource alternatives require explicit selection
+# Contract selection requires a call at the current frontier
 
-Both behavioral facts may be known after refinement. Ordinary resource matching
-can use the folded resource for either interface. Combining those alternative
-owned descriptions requires `step(Contract)`, rather than selecting a view
-by contract-name order or returning two successors.
+The next C statement is a return with no call, so selection must fail.
 
 ```c filename=joint.c
 int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
-    callback(data, count);
     return 0;
 }
 ```
@@ -29,9 +25,9 @@ int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
     requires count >= 0;
     owns Buffer(data, count);
     ensures result == 0;
-} by { execute(); simp(); }
+} by { step(Buffered); execute(); simp(); }
 ```
 
 ```expect
-fail: ambiguous callback resource transition; use step(Contract)
+fail: requires a call at the current frontier
 ```

@@ -1,9 +1,6 @@
-# Folded resource alternatives require explicit selection
+# Select a contract inside ordinary proof branches
 
-Both behavioral facts may be known after refinement. Ordinary resource matching
-can use the folded resource for either interface. Combining those alternative
-owned descriptions requires `step(Contract)`, rather than selecting a view
-by contract-name order or returning two successors.
+Both proof branches can select the same resource transition and preserve it in their certificates.
 
 ```c filename=joint.c
 int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
@@ -29,9 +26,9 @@ int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
     requires count >= 0;
     owns Buffer(data, count);
     ensures result == 0;
-} by { execute(); simp(); }
+} by { if count == 0 { step(Buffered); execute(); simp(); } else { step(Buffered); execute(); simp(); } }
 ```
 
 ```expect
-fail: ambiguous callback resource transition; use step(Contract)
+pass
 ```

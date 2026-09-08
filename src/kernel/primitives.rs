@@ -1882,6 +1882,8 @@ pub struct CFunctionSpecification {
 
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
+    // A proof-local rule choice. This is not installed in the project environment.
+    pub(crate) selected_call_contract: Option<std::sync::Arc<str>>,
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
     pub(super) function_contracts: std::sync::Arc<BTreeMap<String, CFunctionContract>>,
     pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
@@ -1896,6 +1898,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("CExecutionEnvironment")
+            .field("selected_call_contract", &self.selected_call_contract)
             .field("functions", &self.functions)
             .field("function_contracts", &self.function_contracts)
             .field("external_function_rules", &self.external_function_rules)
@@ -1911,7 +1914,8 @@ impl std::fmt::Debug for CExecutionEnvironment {
 
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
-        self.functions == other.functions
+        self.selected_call_contract == other.selected_call_contract
+            && self.functions == other.functions
             && self.function_contracts == other.function_contracts
             && self.external_function_rules == other.external_function_rules
             && self.verified_function_rules == other.verified_function_rules

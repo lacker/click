@@ -1549,6 +1549,13 @@ fn execute_step_from_frontier_position_selecting_path(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
     })?;
+    if function_environment.selected_call_contract.is_some()
+        && !matches!(source_region.kind, SourceStatementKind::Plain)
+    {
+        return Err(ClickError::new(
+            "step(Contract) requires a call at the current frontier",
+        ));
+    }
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
         let entered = execute_branch_step_from_frontier_position(
             execution,
@@ -1611,6 +1618,13 @@ fn execute_step_from_frontier_position_selecting_path(
         return Ok(Vec::new());
     }
     let step_statement = source_statement;
+    if function_environment.selected_call_contract.is_some()
+        && !statement_contains_call(&step_statement)
+    {
+        return Err(ClickError::new(
+            "step(Contract) requires a call at the current frontier",
+        ));
+    }
 
     // The surface step for this statement is written from the proof state
     // *before* the statement runs. Its own check establishes this

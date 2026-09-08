@@ -2113,6 +2113,7 @@ pub(crate) struct PlannedStatementTransition {
 pub enum ProofTactic {
     Mark(String),
     Step,
+    StepContract(String),
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -2269,6 +2270,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step",
         syntax: "step()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step-contract",
+        syntax: "step(Contract)",
         class: "simple",
     },
     PublicTacticForm {
@@ -2509,6 +2515,7 @@ pub struct ProofCertificate {
 pub enum ProofStep {
     Mark(String),
     Step,
+    StepContract(String),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -2673,6 +2680,7 @@ impl ProofStep {
         match tactic {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
+            ProofTactic::StepContract(name) => Self::StepContract(name.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
@@ -2862,6 +2870,7 @@ impl ProofStep {
         match self {
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
+            Self::StepContract(name) => ProofTactic::StepContract(name.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
@@ -3183,7 +3192,9 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
-            Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::Step | Self::StepContract(_) => {
+                TacticClass::Simple(SimpleTactic::StatementTransition)
+            }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),

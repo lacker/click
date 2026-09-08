@@ -10,6 +10,29 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step` requires an execution-frontier proof"));
         };
+        let selected_environment;
+        let selected_context;
+        let context = if let ProofStep::StepContract(name) = &step {
+            if context
+                .function_environment
+                .get_function_contract(name)
+                .is_none()
+            {
+                return Err(self.step_error(format!("unknown call contract `{name}`")));
+            }
+            selected_environment = context
+                .function_environment
+                .clone()
+                .with_selected_call_contract(name);
+            selected_context = context.with_loop_binding(
+                context.function_block,
+                context.function,
+                &selected_environment,
+            );
+            &selected_context
+        } else {
+            context
+        };
         self.require_execution_frontier("`step`")?;
         let mut execution = self
             .execution()

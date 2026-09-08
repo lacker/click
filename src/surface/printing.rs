@@ -124,6 +124,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     match tactic {
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
         ProofTactic::Step => line(output, &prefix, "step();"),
+        ProofTactic::StepContract(name) => line(output, &prefix, &format!("step({name});")),
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }

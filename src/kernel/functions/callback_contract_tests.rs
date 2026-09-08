@@ -54,6 +54,15 @@ fn interface(index: usize) -> CFunctionContract {
 
 #[test]
 fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
+    check_callback_interface_scaling(false);
+}
+
+#[test]
+fn selected_callback_shares_call_budget_and_scales_with_interfaces() {
+    check_callback_interface_scaling(true);
+}
+
+fn check_callback_interface_scaling(select: bool) {
     let mut samples = Vec::new();
     for count in [1, 8, 32, 128] {
         let contracts = (0..count).map(interface).collect::<Vec<_>>();
@@ -62,13 +71,18 @@ fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
             .with_function_calls(1)
             .with_paths(1);
         let initial_expressions = budget.expression_steps;
+        let environment = if select {
+            CExecutionEnvironment::new().with_selected_call_contract(&format!("Bound{}", count - 1))
+        } else {
+            CExecutionEnvironment::new()
+        };
         let (paths, work) = crate::instrumentation::measure_deterministic_work(|| {
             execute_c_function_contracts_paths(
                 &CState::new(),
                 &contracts,
                 &[c_int32_literal(7)],
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
+                &environment,
                 &mut budget,
             )
             .unwrap()
@@ -96,6 +110,15 @@ fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
 
 #[test]
 fn callback_conjunction_does_not_visit_unrelated_functions() {
+    check_unrelated_functions(false);
+}
+
+#[test]
+fn selected_callback_does_not_visit_unrelated_functions() {
+    check_unrelated_functions(true);
+}
+
+fn check_unrelated_functions(select: bool) {
     let contracts = vec![interface(0), interface(1)];
     let contracts = contracts.iter().collect::<Vec<_>>();
     let mut samples = Vec::new();
@@ -112,6 +135,13 @@ fn callback_conjunction_does_not_visit_unrelated_functions() {
         let mut budget = ExecutionBudget::default()
             .with_function_calls(1)
             .with_paths(1);
+        if select {
+            let selected = environment.clone().with_selected_call_contract("Bound1");
+            assert!(selected.shares_all_storage_with(&environment));
+            assert_ne!(selected, environment);
+            assert!(environment.selected_call_contract.is_none());
+            environment = selected;
+        }
         let (paths, work) = crate::instrumentation::measure_deterministic_work(|| {
             execute_c_function_contracts_paths(
                 &CState::new(),

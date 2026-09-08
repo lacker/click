@@ -1365,6 +1365,12 @@ impl CFunctionContract {
 }
 
 impl CExecutionEnvironment {
+    /// Selects a call rule for one proof-local statement transition. All
+    /// project tables and their variable index remain shared.
+    pub(crate) fn with_selected_call_contract(mut self, name: &str) -> Self {
+        self.selected_call_contract = Some(std::sync::Arc::from(name));
+        self
+    }
     pub fn new() -> Self {
         Self::default()
     }

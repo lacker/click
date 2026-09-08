@@ -1,9 +1,6 @@
-# Folded resource alternatives require explicit selection
+# Selected preconditions must hold even when another contract applies
 
-Both behavioral facts may be known after refinement. Ordinary resource matching
-can use the folded resource for either interface. Combining those alternative
-owned descriptions requires `step(Contract)`, rather than selecting a view
-by contract-name order or returning two successors.
+Raw is applicable, but selection must not fall back when Buffered's stronger precondition fails.
 
 ```c filename=joint.c
 int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
@@ -19,19 +16,20 @@ contract void Raw(int32* data, int32 count) {
     owns data[0..count];
 }
 contract void Buffered(int32* data, int32 count) {
-    requires count >= 0;
+    requires count >= 2;
     owns Buffer(data, count);
 }
 verifying "joint.c";
 int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
+    requires count == 1;
     requires Raw(callback);
     requires Buffered(callback);
     requires count >= 0;
     owns Buffer(data, count);
     ensures result == 0;
-} by { execute(); simp(); }
+} by { step(Buffered); execute(); simp(); }
 ```
 
 ```expect
-fail: ambiguous callback resource transition; use step(Contract)
+fail: precondition
 ```
