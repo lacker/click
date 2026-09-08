@@ -18,13 +18,13 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Minimum viable rbtree (MVR)
+## P1: before launch (20)
 
-MVR is the smallest result that supports a public claim that Click verified
-the Linux kernel rbtree implementation. It verifies an unchanged, pinned
-upstream `lib/rbtree.c` and the public inline rbtree implementation in
-`rbtree.h` and `rbtree_augmented.h`, under one pinned compiler configuration
-and LP64 target.
+Launch is the minimum viable rbtree (MVR): the smallest result that supports
+a public claim that Click verified the Linux kernel rbtree implementation. It
+verifies an unchanged, pinned upstream `lib/rbtree.c` and the public inline
+rbtree implementation in `rbtree.h` and `rbtree_augmented.h`, under one pinned
+compiler configuration and LP64 target.
 
 The proof must establish sequential memory safety and defined behavior;
 parent/child consistency and acyclicity; preservation of the red-black color
@@ -41,8 +41,17 @@ ordering, RCU grace periods, or data races. Those belong to
 compiler/target profile; cross-compiler and cross-architecture verification
 belongs to [multiple-compilers.md](multiple-compilers.md).
 
-The following open issues are required for MVR. This is a dependency marker,
-not a prescribed implementation order:
+P1 is the work that has to land before that claim can be made. The list is a
+dependency marker, not a prescribed implementation order. An unsound rule is
+P1 whatever it is about: the claim is worthless if the verifier accepts false
+contracts, so soundness bugs come first even when rbtree does not exercise
+them. A gap that only a different program would hit is P2.
+
+Soundness and kernel shape:
+
+- [Bug bash: open soundness holes and C mis-models](bugbash.md)
+- [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
+- [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
 
@@ -67,62 +76,30 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-An existing architecture issue is not an MVR dependency merely because a
-large rbtree proof might exercise it. If MVR work exposes one of the tooling
+## P2: after launch (12)
+
+Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
+it turns out to block that claim: if P1 work exposes one of the tooling
 failures described in `AGENTS.md`, that issue becomes a blocker under the
-normal tooling-first policy and should then be added to this list.
-
-## Soundness bugs: 1
-
-- [Bug bash: open soundness holes and C mis-models](bugbash.md) bundles 16 root
-  causes with reproductions, each of which certifies a claim that is false
-  under C or models a construct differently from C. Split each section into
-  its own file as it is picked up.
-
-## Architecture issues: 4
-
-- [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
-- [Retain explicit quantified evidence for loop closure](loop-closure-quantified-evidence.md)
-- [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
-- [Verify user-defined arena region ownership](arena-resource-ownership.md)
-
-## Functionality gaps: 27
+normal tooling-first policy and moves up.
 
 C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
-- [Widen the struct model](struct-model.md)
-- [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
-- [Model file-scope objects, statics, and string literals](global-variables.md)
-- [Preserve const-qualified callback returns](const-qualified-callback-returns.md)
-- [Model signed eight-bit integers](signed-byte-integers.md)
 - [Model forward and backward goto edges](goto.md)
 - [Model variadic functions](variadic-functions.md)
-- [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)
-- [Model volatile accesses to pointer-valued objects](volatile-pointer-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
-- [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
-- [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
-- [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
-- [Preserve `const` qualification in C types](const-qualified-types.md)
-- [Model C `_Bool` and `bool`](c-bool.md)
-- [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
+- [Model signed eight-bit integers](signed-byte-integers.md)
+- [Preserve const-qualified callback returns](const-qualified-callback-returns.md)
 
 Semantics and reasoning:
 
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
-- [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
-- [Add algebraic data types to specifications](algebraic-data-types.md)
-- [Give function-pointer values checked named contracts](function-contracts.md)
-- [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
-- [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)
+- [Retain explicit quantified evidence for loop closure](loop-closure-quantified-evidence.md)
+- [Recursion](recursion.md)
 
 Proof language and tooling:
 
+- [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
-- [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
-
-## Hard bucket: 1
-
-- [Recursion](recursion.md)
