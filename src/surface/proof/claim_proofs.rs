@@ -338,6 +338,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
         grouped_contract: false,
+        invariant_body_context: None,
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();
@@ -518,6 +519,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
         grouped_contract: true,
+        invariant_body_context: None,
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();

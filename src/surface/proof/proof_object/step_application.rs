@@ -50,6 +50,9 @@ impl<'a> Proof<'a> {
             )));
         }
 
+        if let ProofStep::CloseInvariantsBy(body) = &step {
+            return self.apply_close_invariants_body(&body.to_proof_tactics());
+        }
         if let ProofStep::Have { proposition, proof } = &step {
             return self.apply_have_step(proposition, proof);
         }

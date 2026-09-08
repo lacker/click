@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn nested_conjunction_body_parsing_uses_small_frames_and_linear_work() {
+    std::thread::Builder::new()
+        .name("small-stack-proof-body-parser".into())
+        .stack_size(7 * 256 * 1024)
+        .spawn(|| {
+            let samples = [2, 4, 8, 16].map(|depth| {
+                let mut body = "have 0 == 0 by { normalize(); } normalize();".to_string();
+                for _ in 0..depth {
+                    body = format!("both {{ {body} }} and {{ normalize(); }}");
+                }
+                let source = format!("theorem nested() {{ ensures 0 == 0 by {{ {body} }} }}");
+                let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    crate::surface::parse(&source)
+                        .expect("nested proof bodies should parse on the ordinary stack")
+                });
+                work
+            });
+            for pair in samples.windows(2) {
+                assert!(
+                    pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+                    "{samples:?}"
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn explicit_constructor_unfold_has_near_linear_nested_match_work() {
     let mut samples = Vec::new();
     for size in [2, 4, 8, 16, 32, 64] {

@@ -1491,6 +1491,9 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic-form.close-invariants"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 [[item]]
+id = "tactic-form.close-invariants-by"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
 id = "tactic-form.rewrite"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]

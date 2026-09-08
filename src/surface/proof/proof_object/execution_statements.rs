@@ -114,6 +114,119 @@ impl<'a> Proof<'a> {
             .map_err(|error| self.execution_update_error("`mark`", error))
     }
 
+    /// Check the written proof immediately against the exact lowered goals.
+    /// This is an additional source obligation: legacy bundle preparation and
+    /// kernel validation remain mandatory and unchanged at finalization.
+    pub(in crate::surface::proof) fn apply_close_invariants_body(
+        &self,
+        body: &[ProofTactic],
+    ) -> Result<Self, ClickError> {
+        self.require_execution_frontier("`close_invariants by`")?;
+        if body.is_empty() {
+            return Err(self.step_error("`close_invariants by` requires a nonempty proof body"));
+        }
+        if !self.is_at_region_boundary() {
+            return Err(self.step_error("`close_invariants by` requires the loop back edge"));
+        }
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`close_invariants by` requires a loop proof"));
+        };
+        let Some((loop_entry, checks)) = context.constants.invariant_body_context.as_deref() else {
+            return Err(self.step_error("`close_invariants by` requires a loop invariant context"));
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("missing loop execution state"))?;
+        if execution.core.region_invariants_close_requested {
+            return Err(
+                self.step_error("the invariant bundle was closed more than once on one path")
+            );
+        }
+        let mut facts = self.facts().clone();
+        for fact in execution.core.effect_facts.iter() {
+            facts = facts.with_kernel_checked_fact(fact.proposition().clone());
+        }
+        for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
+            facts = facts.with_kernel_checked_fact(fact);
+        }
+        let obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+            &execution.core.state,
+            loop_entry,
+            checks,
+            facts.assumptions(),
+        )
+        .map_err(|_| self.step_error("could not lower explicit invariant obligations"))?;
+        // The collector retains safety as separate obligations. None of the
+        // collected goals is added to the proof's premises.
+        let goal = obligations
+            .iter()
+            .rev()
+            .map(|obligation| obligation.proposition().clone())
+            .reduce(|right, left| Proposition::And(Box::new(left), Box::new(right)))
+            .unwrap_or(Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            ));
+        let surface = synthesize_surface_proposition(
+            &goal,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &execution.core.state,
+        );
+        let root = Self {
+            context: self.context.clone(),
+            state: KernelProofObject::root(
+                self.state().locals().clone(),
+                OpenBranch::new(
+                    Obligation::Proposition(PropositionObligation::new(
+                        goal.clone(),
+                        PropositionPresentation {
+                            surface: surface.map(Arc::new),
+                            surface_bindings: PersistentMap::default(),
+                        },
+                    )),
+                    BranchState {
+                        facts,
+                        unfolded_predicates: self.focused_branch_unfolds().clone(),
+                        execution: self.branch_execution().cloned(),
+                    },
+                ),
+            ),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                focused_branch: BranchId::ROOT,
+                depth: 0,
+            }),
+        };
+        let checkpoint = root.checkpoint();
+        let Some(completed) = root.try_authoritative_linear_script(body)? else {
+            return Err(self.step_error("closure body did not prove every invariant obligation"));
+        };
+        let proof = completed
+            .state
+            .completed_proposition()
+            .ok_or_else(|| self.step_error("closure body left an invariant obligation open"))?;
+        if proof.proposition() != &goal {
+            return Err(self.step_error("closure body proved a different invariant goal"));
+        }
+        // Also require the retained proof to descend from this exact root.
+        let certificate = completed.certificate_since(&checkpoint)?;
+        let requested = self.apply_step(ProofStep::CloseInvariants)?;
+        Ok(Self {
+            context: self.context.clone(),
+            state: requested.state,
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: Some(Arc::new(ProofStep::CloseInvariantsBy(Box::new(
+                    certificate,
+                )))),
+                focused_branch: self.focused_branch_id(),
+                depth: self.node.depth + 1,
+            }),
+        })
+    }
+
     pub(super) fn apply_close_invariants(&self) -> Result<KernelProofHandle, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));

@@ -148,7 +148,10 @@ fn checked_execution_arm_tactics_end(
         if linear_execution_proof_step(&indexed.tactic).is_none()
             && !matches!(
                 indexed.tactic,
-                ProofTactic::ApplyTheorem(_) | ProofTactic::Transport { .. } | ProofTactic::Have(_)
+                ProofTactic::ApplyTheorem(_)
+                    | ProofTactic::Transport { .. }
+                    | ProofTactic::Have(_)
+                    | ProofTactic::CloseInvariantsBy(_)
             )
         {
             if may_exit && flat_post_execution_tactic(&indexed.tactic).is_some() {
@@ -388,6 +391,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
+                | ProofTactic::CloseInvariantsBy(_)
                 | ProofTactic::ExecuteUntil(_)
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
@@ -619,6 +623,8 @@ fn advance_checked_linear_continuation<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
+        } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
+            proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
             proof.apply_step_at(
                 ProofStep::Choose(choice.clone()),
@@ -1500,7 +1506,10 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                         )));
                     };
                     proof = advanced;
-                    if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+                    if matches!(
+                        indexed.tactic,
+                        ProofTactic::CloseInvariants | ProofTactic::CloseInvariantsBy(_)
+                    ) {
                         proof =
                             proof.record_invariant_closer(indexed.index, indexed.source_index)?;
                     }
@@ -1757,6 +1766,8 @@ fn advance_focused_execution_arm<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step(step)?
+        } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
+            proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
             proof.apply_step(ProofStep::Choose(choice.clone()))?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {

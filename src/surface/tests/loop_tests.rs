@@ -1,6 +1,77 @@
 use super::*;
 
 #[test]
+fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
+    let c_source = "int32 count() { int32 i; i = 0; while (i < 3) { i = i + 1; } return i; }";
+    let source = r#"
+        verifying "count.c";
+        int32 count() { ensures result == 3; } by {
+            step(); step();
+            loop {
+                invariant i >= 0;
+                invariant i <= 3;
+                initialize by simp;
+                preserve by {
+                    step();
+                    close_invariants by { simp(); }
+                }
+            }
+            step(); simp();
+        }
+    "#;
+    let sources = [("count.c", c_source)];
+    verify_c0_sources(source, &sources).expect("the body must prove the exact closure obligations");
+    let position =
+        expansion::position_at_offset(source, source.find("close_invariants by").unwrap());
+    let expanded = expand_c0_tactic_source_at(source, &sources, position.line, position.column)
+        .expect("the checked body should expand");
+    assert!(expanded.contains("close_invariants by {"), "{expanded}");
+    assert!(expanded.contains("both {"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).expect("expanded closure body must recheck");
+    for replacement in [
+        "close_invariants by { }",
+        "close_invariants by { assumption(); }",
+        "close_invariants by { both { simp(); } and { } }",
+        "close_invariants { simp(); }",
+        "close_invariants by { simp(); } close_invariants by { simp(); }",
+    ] {
+        let invalid = source.replace("close_invariants by { simp(); }", replacement);
+        assert!(
+            verify_c0_sources(&invalid, &sources).is_err(),
+            "accepted {replacement}"
+        );
+    }
+    let premature = source.replace(
+        "step();\n                    close_invariants by",
+        "close_invariants by",
+    );
+    assert!(verify_c0_sources(&premature, &sources).is_err());
+}
+
+#[test]
+fn explicit_invariant_body_quantified_bubble_census() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/bubble_pass3_max_suffix.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    verify_c0_sources(click, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(click, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
+    assert!(expanded.contains("close_invariants();"));
+    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
+    let expanded =
+        expand_c0_claim_source(&explicit, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+}
+
+#[test]
 fn frontier_local_loop_verifies_and_advances_to_exit() {
     let c_source = r#"
             int32 count_to_three() {

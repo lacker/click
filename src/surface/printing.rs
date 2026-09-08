@@ -439,6 +439,11 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_using_premises(output, "simp()", &simp.premises, indent)
         }
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
+        ProofTactic::CloseInvariantsBy(body) => {
+            line(output, &prefix, "close_invariants by {");
+            write_tactics(output, body, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::Rewrite(equality) => line(
             output,
             &prefix,

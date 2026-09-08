@@ -530,7 +530,8 @@ fn validate_pure_theorem_tactics(
                     tactic_name(tactic)
                 )));
             }
-            ProofTactic::CloseInvariants
+            ProofTactic::CloseInvariantsBy(_)
+            | ProofTactic::CloseInvariants
             | ProofTactic::Step
             | ProofTactic::StepContract(_)
             | ProofTactic::SmartExecute
@@ -597,6 +598,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Enumerate => "enumerate",
         ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::CloseInvariants => "close_invariants",
+        ProofTactic::CloseInvariantsBy(_) => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
         ProofTactic::InstantiateUsing { .. } => "instantiate",

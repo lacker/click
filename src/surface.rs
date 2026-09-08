@@ -2168,6 +2168,7 @@ pub(crate) struct PlannedStatementTransition {
 /// tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofTactic {
+    CloseInvariantsBy(Vec<ProofTactic>),
     Mark(String),
     Step,
     StepContract(String),
@@ -2293,6 +2294,7 @@ pub enum SmartTacticKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlTactic {
+    CloseInvariants,
     Both,
     Have,
     Open,
@@ -2527,6 +2529,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "close-invariants-by",
+        syntax: "close_invariants by",
+        class: "control",
+    },
+    PublicTacticForm {
         id: "rewrite",
         syntax: "rewrite(P)",
         class: "simple",
@@ -2577,6 +2584,7 @@ pub struct ProofCertificate {
 /// recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
+    CloseInvariantsBy(Box<ProofCertificate>),
     Both {
         left_proof: Box<ProofCertificate>,
         right_proof: Box<ProofCertificate>,
@@ -2684,6 +2692,7 @@ struct CertificateStructuralItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificatePathSegment {
+    InvariantBody,
     LeftConjunct,
     RightConjunct,
     Tactic(usize),
@@ -2748,6 +2757,11 @@ impl ProofCertificate {
 impl ProofStep {
     fn from_validated_tactic(tactic: &ProofTactic) -> Self {
         match tactic {
+            ProofTactic::CloseInvariantsBy(body) => {
+                Self::CloseInvariantsBy(Box::new(ProofCertificate::from_steps(
+                    body.iter().map(Self::from_validated_tactic).collect(),
+                )))
+            }
             ProofTactic::Both(both) => Self::Both {
                 left_proof: Box::new(ProofCertificate::from_steps(
                     both.left_tactics
@@ -2952,6 +2966,9 @@ impl ProofStep {
 
     fn to_proof_tactic(&self) -> ProofTactic {
         match self {
+            Self::CloseInvariantsBy(body) => {
+                ProofTactic::CloseInvariantsBy(body.to_proof_tactics())
+            }
             Self::Both {
                 left_proof,
                 right_proof,
@@ -3127,6 +3144,15 @@ fn validate_certificate_tactics(
     for (index, tactic) in tactics.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
         let result = match tactic.class() {
+            TacticClass::Control(ControlTactic::CloseInvariants) => {
+                let ProofTactic::CloseInvariantsBy(body) = tactic else {
+                    unreachable!()
+                };
+                path.push(CertificatePathSegment::InvariantBody);
+                let result = validate_certificate_tactics(body, path);
+                path.pop();
+                result
+            }
             TacticClass::Simple(_) => Ok(()),
             TacticClass::Control(ControlTactic::Both) => {
                 let ProofTactic::Both(both) = tactic else {
@@ -3323,6 +3349,7 @@ impl ProofTactic {
             Self::Enumerate => TacticClass::Simple(SimpleTactic::Enumerate),
             Self::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
             Self::CloseInvariants => TacticClass::Simple(SimpleTactic::CloseInvariants),
+            Self::CloseInvariantsBy(_) => TacticClass::Control(ControlTactic::CloseInvariants),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
             Self::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),

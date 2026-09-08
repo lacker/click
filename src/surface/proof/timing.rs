@@ -34,7 +34,7 @@ impl SourceSiteKind {
 /// source location for nested or omitted automation without changing its
 /// intrinsic tactic class.
 pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKind {
-    if let ProofTactic::Both(_) = tactic {
+    if let ProofTactic::Both(_) | ProofTactic::CloseInvariantsBy(_) = tactic {
         // Like `have`, the selectable container owns its nested proof work.
         return if ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).is_ok() {
             SourceSiteKind::ControlContainer

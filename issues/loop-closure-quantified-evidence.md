@@ -199,18 +199,41 @@ It opens the exact kernel conjuncts in isolated sibling scopes and retains
 their proof bodies through expansion. Structural conjunction planning now uses
 these scopes too, including after rewrites and within proof branches. The
 current `split()` remains unchanged: it checks a conjunction from
-already-established facts. The remaining work is to connect the approved
-`close_invariants by { ... }` body to exact lowered obligations. The `by`
-distinguishes a proof of closure obligations from an execution region. This
-syntax is selected but is not yet implemented. Do not silently make
+already-established facts. The approved `close_invariants by { ... }` body is
+now connected to exact lowered obligations as described below. The `by`
+distinguishes a proof of closure obligations from an execution region. Do not silently make
 `have` select a kernel goal by a same-written surface formula: that revives
 the snapshot/binder ambiguity this interface is intended to remove.
 
 All runtime and syntax changes from this prototype were reverted. The
 scalar prototype's success is not evidence that the new syntax is available.
-The acceptance tests must include original and expanded quantified proofs,
+The replacement's acceptance tests must include original and expanded quantified proofs,
 incomplete bodies, substituted child proofs, changed premises/snapshots, and
 four-size deterministic scaling of scope entry and completion.
+
+### Explicit closure bodies (2026-09-08)
+
+`close_invariants by { ... }` now checks its body immediately at the loop back
+edge against the conjunction returned by the no-search obligation collector.
+It shares the current execution snapshot and premises, does not assume its
+own safety goals, and requires completion of that exact proof root before
+retaining a `CloseInvariantsBy` proof object. `both` preserves exact child
+identities. Empty, incomplete, premature, repeated, and missing-`by` bodies
+are rejected; a failed body never falls back to the automatic closer.
+
+This is deliberately an additional source proof, not a replacement for kernel
+bundle evidence: the existing preparation and independent bundle validation
+still run. A regression checks that completing a body alone cannot bypass
+missing kernel lowering evidence. Removing that remaining legacy preparation
+still requires a separately validated, context-bound evidence interface.
+
+Scalar and quantified `bubble_pass3_max_suffix.md` proofs verify and expand
+with bodies while preserving the original C. Rechecking the expanded bubble
+proof exposed oversized recursive parser frames; separating conjunction and
+leaf dispatch fixes that case without changing stack limits. A small-stack
+four-size parser regression and an unrelated-premise scaling regression cover
+the new scopes. The original failed outer-scope prototype above remains
+historical context, not the current implementation.
 
 ### Prepared-bundle consumption (2026-09-07)
 

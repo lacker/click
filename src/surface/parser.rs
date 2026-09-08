@@ -2757,6 +2757,38 @@ impl Parser {
 
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
+        match name.as_str() {
+            "both" => self.parse_both_proof_tactic(),
+            "close_invariants" if self.peek_ident() == Some("by") => {
+                self.position += 1;
+                let body = self.parse_possibly_empty_tactic_block()?;
+                if self.peek() == Some(&Token::Semicolon) {
+                    self.position += 1;
+                }
+                Ok(ProofTactic::CloseInvariantsBy(body))
+            }
+            _ => self.parse_other_proof_tactic(name),
+        }
+    }
+
+    #[inline(never)]
+    fn parse_both_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
+        let left_tactics = self.parse_possibly_empty_tactic_block()?;
+        self.expect_ident_spelling("and")?;
+        let right_tactics = self.parse_possibly_empty_tactic_block()?;
+        if self.peek() == Some(&Token::Semicolon) {
+            self.position += 1;
+        }
+        Ok(ProofTactic::Both(ProofBoth {
+            left_tactics,
+            right_tactics,
+        }))
+    }
+
+    // Conjunction spines do not retain the larger frames for loop, resource,
+    // and leaf syntax at every child-proof level.
+    #[inline(never)]
+    fn parse_other_proof_tactic(&mut self, name: String) -> Result<ProofTactic, ClickError> {
         if let Some(replacement) = match name.as_str() {
             "conjunction" => Some("`conjunction()` was renamed to `split()`"),
             "apply_loop_summary" | "summarize" => Some(
@@ -2801,18 +2833,6 @@ impl Parser {
                 self.position += 1;
             }
             return Ok(ProofTactic::Open(ProofOpen { resource, tactics }));
-        }
-        if name == "both" {
-            let left_tactics = self.parse_possibly_empty_tactic_block()?;
-            self.expect_ident_spelling("and")?;
-            let right_tactics = self.parse_possibly_empty_tactic_block()?;
-            if self.peek() == Some(&Token::Semicolon) {
-                self.position += 1;
-            }
-            return Ok(ProofTactic::Both(ProofBoth {
-                left_tactics,
-                right_tactics,
-            }));
         }
         if name == "if" {
             let condition = self.parse_proposition()?;
@@ -2955,6 +2975,13 @@ impl Parser {
                 preserve_proof,
             }));
         }
+        self.parse_named_proof_tactic(name)
+    }
+
+    // Keep the large leaf-tactic dispatch frame out of recursive proof-body
+    // parsing. Expanded both/if/closure scopes can nest while reading terms.
+    #[inline(never)]
+    fn parse_named_proof_tactic(&mut self, name: String) -> Result<ProofTactic, ClickError> {
         let tactic = match name.as_str() {
             "step" => {
                 self.expect(Token::LParen)?;

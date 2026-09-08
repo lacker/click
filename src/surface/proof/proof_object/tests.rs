@@ -8532,6 +8532,107 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 }
 
 #[test]
+fn explicit_invariant_body_scales_and_does_not_replace_kernel_validation() {
+    let file = crate::surface::parse("int32 region(int32 x) { ensures result == x; }").unwrap();
+    let block = &file.function_blocks()[0];
+    let predicates = PredicateEnvironment::new(&[]);
+    let click_functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let parsed = syntax::parse_function("int32 region(int32 x) { return x; }").unwrap();
+    let function = parsed.to_kernel_function();
+    let functions = CExecutionEnvironment::new();
+    let resources = ResourceEnvironment::new(&[]);
+    let arguments = [CExpression::Value(int32(7))];
+    let checks = vec![crate::kernel::CLoopInvariantCheck::new(
+        crate::kernel::SpecProposition::Comparison {
+            left: crate::kernel::SpecExpression::Value(int32(0)),
+            operator: crate::kernel::CComparisonOperator::LessEqual,
+            right: crate::kernel::SpecExpression::Value(int32(0)),
+        },
+        None,
+        None,
+    )];
+    let samples = [16, 32, 64, 128].map(|size| {
+        let root = Proof::for_execution_frontier(
+            "explicit invariant body",
+            0,
+            ExecutionProofState::at_entry(
+                CState::new(),
+                ExecutionFrontier {
+                    region: ExecutionRegionKind::LoopBody,
+                    position: FrontierPosition::RegionBoundary,
+                    ..Default::default()
+                },
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
+            ExecutionProofConstants {
+                invariant_body_context: Some(Arc::new((CState::new(), checks.clone()))),
+                ..Default::default()
+            },
+            block,
+            &function,
+            &parsed,
+            &arguments,
+            &functions,
+            &resources,
+            &predicates,
+            &click_functions,
+            &theorems,
+        );
+        let (closed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            root.apply_close_invariants_body(&[ProofTactic::Normalize])
+                .unwrap()
+        });
+        assert!(root.certificate().steps().is_empty());
+        assert!(
+            !root
+                .execution()
+                .unwrap()
+                .core
+                .region_invariants_close_requested
+        );
+        assert!(
+            closed
+                .execution()
+                .unwrap()
+                .core
+                .region_invariants_close_requested
+        );
+        assert_eq!(root.facts().to_vec(), closed.facts().to_vec());
+        assert!(
+            root.execution()
+                .unwrap()
+                .core
+                .state
+                .shares_storage_with(&closed.execution().unwrap().core.state)
+        );
+        assert!(matches!(
+            closed.certificate().steps(),
+            [ProofStep::CloseInvariantsBy(_)]
+        ));
+        // The source proof is not a kernel bundle-acceptance token. Mandatory
+        // preparation and validation still reject missing bundle evidence.
+        assert!(closed.certify_loop_invariant_bundle(&checks).is_err());
+        assert!(
+            closed
+                .apply_close_invariants_body(&[ProofTactic::Normalize])
+                .is_err()
+        );
+        assert!(root.apply_close_invariants_body(&[]).is_err());
+        work
+    });
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+            "{samples:?}"
+        );
+    }
+}
+
+#[test]
 fn proof_condition_split_filters_conflicts_without_rebuilding_facts() {
     let symbolic = Variable(50_000);
     let state = CState::new().with_local("x", int32(Bitvector32Term::Variable(symbolic)));

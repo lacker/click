@@ -665,6 +665,9 @@ fn instantiate_proof_tactic(
                 algebraic_parameters,
             )?,
         }),
+        ProofTactic::CloseInvariantsBy(body) => ProofTactic::CloseInvariantsBy(
+            instantiate_proof_tactics(body, substitution, algebraic_parameters)?,
+        ),
         ProofTactic::Both(both) => ProofTactic::Both(ProofBoth {
             left_tactics: instantiate_proof_tactics(
                 &both.left_tactics,

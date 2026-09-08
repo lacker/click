@@ -20,6 +20,7 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_if.then_tactics, names);
                 collect_applied_theorems(&proof_if.else_tactics, names);
             }
+            ProofTactic::CloseInvariantsBy(body) => collect_applied_theorems(body, names),
             ProofTactic::Both(both) => {
                 collect_applied_theorems(&both.left_tactics, names);
                 collect_applied_theorems(&both.right_tactics, names);

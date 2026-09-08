@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
@@ -491,7 +492,8 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         ProofStep::Have { proof, .. } => {
             Proof::supports_linear_source(&SourceProof::Script(proof.to_proof_tactics()))
         }
-        ProofStep::Induct { .. }
+        ProofStep::CloseInvariantsBy(_)
+        | ProofStep::Induct { .. }
         | ProofStep::Both { .. }
         | ProofStep::StructuralInduct { .. }
         | ProofStep::ApplyInduction { .. }
@@ -1265,6 +1267,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut recorded_snapshots = RecordedSnapshots::new();
     let constants = ExecutionProofConstants {
         proof_site: Some(preserve_site),
+        invariant_body_context: Some(Arc::new((
+            preservation.loop_entry_state().clone(),
+            invariant_checks.to_vec(),
+        ))),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()

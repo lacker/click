@@ -54,6 +54,9 @@ pub(in crate::surface::proof) struct FixedStateProofContext<'a> {
 /// that `old(...)` and requirement premises resolve against.
 #[derive(Clone, Default)]
 pub(in crate::surface::proof) struct ExecutionProofConstants {
+    /// The exact loop context whose obligations an explicit closure body proves.
+    pub(in crate::surface::proof) invariant_body_context:
+        Option<Arc<(CState, Vec<CLoopInvariantCheck>)>>,
     pub(in crate::surface::proof) proof_site: Option<ProofSite>,
     pub(in crate::surface::proof) source_layout: SourceExecutionLayout,
     pub(in crate::surface::proof) execution_start_facts: Arc<Vec<Proposition>>,

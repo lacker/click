@@ -337,8 +337,11 @@ uses ordinary `have` scopes, re-lowering the child goals. Exact child-goal
 scopes are therefore required, not just an outer proof body. The new
 `both { ... } and { ... }` construct now supplies exact isolated conjunct
 scopes, including retained proof bodies for expansion. Structural conjunction
-planning now uses those scopes directly. Restoring the selected
-`close_invariants by { ... }` body remains next.
+planning now uses those scopes directly. `close_invariants by { ... }` now
+checks and retains a proof of the exact collected value/safety goals; scalar
+and quantified bubble proofs expand and recheck. Existing kernel bundle
+preparation/validation remains an independent requirement, so the legacy
+preparation migration is not yet complete.
 That closure-body prototype was reverted. A rejected key
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.

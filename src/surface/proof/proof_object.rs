@@ -1898,6 +1898,7 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::FrameUsing { .. } => "frame",
         ProofStep::CloseInvariants => "close_invariants()",
+        ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",
         _ => "tactic",
     }
