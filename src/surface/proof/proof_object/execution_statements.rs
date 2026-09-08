@@ -96,7 +96,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
         }
         self.state
-            .close_frontier_invariants()
+            .request_frontier_invariant_closure()
             .map_err(|error| self.execution_update_error("`close_invariants`", error))
     }
 
@@ -234,16 +234,15 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Checks the complete loop-invariant bundle at this back edge and
-    /// retains `close_invariants` when the source path has not already
-    /// supplied it.
+    /// Prepare complete back-edge lowering evidence for the loop planner.
+    /// `None` denotes a checked do-while exit with no continuing back edge.
     ///
     /// The legacy source driver may arrive with the surface closer already
     /// reflected in cursor metadata. That metadata is not authority for the
     /// invariant judgment. Every invariant goes through checked lowering,
     /// including those already established by explicit proof steps: their
     /// value facts do not replace the lowering's safety evidence.
-    pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
+    pub(in crate::surface::proof) fn prepare_loop_invariant_bundle(
         &self,
         loop_entry_state: &CState,
         condition: &CExpression,
@@ -251,7 +250,7 @@ impl<'a> Proof<'a> {
         invariant_surfaces: &[ClickProposition],
         composite_resource_definitions: &[CCompositeResourceDefinition],
         do_while: bool,
-    ) -> Result<Self, ClickError> {
+    ) -> Result<Option<Self>, ClickError> {
         self.check_loop_state_join(
             loop_entry_state,
             condition,
@@ -290,7 +289,7 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("loop condition classification: {message}"))
             })?;
             if !condition_may_continue {
-                return Ok(self.clone());
+                return Ok(None);
             }
         }
         if invariant_surfaces.len() != invariant_checks.len() {
@@ -303,11 +302,24 @@ impl<'a> Proof<'a> {
             .retain_checked_invariant_lowerings(loop_entry_state, invariant_checks)
             .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
         let proof = self.with_kernel_state(state);
+        Ok(Some(proof))
+    }
 
-        if execution.core.region_invariants_closed {
-            Ok(proof)
+    /// Consume the complete prepared bundle without lowering or proof search.
+    pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
+        &self,
+        invariant_checks: &[CLoopInvariantCheck],
+    ) -> Result<Self, ClickError> {
+        self.state
+            .validate_checked_invariant_lowerings(invariant_checks)
+            .map_err(|message| self.step_error(message))?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
+        if execution.core.region_invariants_close_requested {
+            Ok(self.clone())
         } else {
-            proof.apply_step(ProofStep::CloseInvariants)
+            self.apply_step(ProofStep::CloseInvariants)
         }
     }
 

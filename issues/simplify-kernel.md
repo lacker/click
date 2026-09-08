@@ -270,7 +270,7 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Loop closure: `loops.rs::verify_lowered_invariant_path`, reached through `api.rs::c_loop_invariants_hold_at_back_edge_using` | Tries general derivation then simp for every missing path obligation and invariant goal, checks the result, and discards the tree. Surface uses this both for legacy preflight and for actual invariant closure. | Move planning to surface; consume explicit per-path goal and obligation evidence. Start here. |
+| Loop preparation: `loops.rs::verify_lowered_invariant_path`, also reached through `api.rs::c_loop_invariants_hold_at_back_edge_using` | Tries general derivation then simp for missing path obligations and goals. Preparation now retains the trees and closure separately validates them; the legacy prefix probe still discards them. | Replace preparation/prefix discovery with explicit per-path goal and obligation proof operations. Start here. |
 | Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join`, `checked_evidence_premises_hold` | Validates introduced facts, interface facts on both arms, branch obligations, and theorem premises by contextual proof. In particular, an already checked theorem's unavailable premise can still be rediscovered at application time. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
@@ -322,8 +322,12 @@ Checked-lowering records now retain the legacy planner's actual paths, safety
 proofs, and goal proofs on the proof object with a shared execution snapshot.
 The explicit-invariant bypass is now removed: unfolded predicate `have` scopes
 at loop frontiers retain their checked bodies, and all lowering obligations
-(including provisional read safety) receive proofs. Legacy proof discovery
-and the closure-intent flag remain; the linked issue tracks that migration.
+(including provisional read safety) receive proofs. Preparation and consumption
+are now separate: kernel proof-object closure validates the complete saved
+bundle against its snapshot, premise store, execution facts, and selected
+checks, without re-lowering or building derivations. The source closer flag is
+explicitly only a request. Legacy proof discovery remains in preparation and
+the prefix probe; the linked issue tracks its removal.
 
 1. Replace the legacy loop closer using the existing
    `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
@@ -332,9 +336,10 @@ and the closure-intent flag remain; the linked issue tracks that migration.
    with a non-assumable lowering obligation; removing the obligation evidence
    must reject, even if unrelated ambient facts could prove it. Expanded and
    unexpanded proofs must agree without editing C. Include the actual
-   proof-object boundary: `close_frontier_invariants` currently marks the
-   frontier closed without taking invariant evidence. Merely moving the old
-   solver call above that flag update would not complete this migration.
+   proof-object boundary: `validate_checked_invariant_lowerings` now rejects
+   missing or stale evidence independently of the source closer request.
+   The remaining migration must remove discovery from preparation, not merely
+   move the old solver call above the record consumer.
 2. Census the residual pointer-offset effect fallback, recording attempts and
    first successful decisions. Delete or replace it with a named witness;
    reject a witness for another offset pair or memory state. Keep the existing

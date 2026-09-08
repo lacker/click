@@ -67,7 +67,6 @@ impl<T: Clone> SharedVec<T> {
         Some(&self.0[ancestor.0.len()..])
     }
 
-    #[cfg(test)]
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -104,7 +103,6 @@ impl<T> From<T> for SharedValue<T> {
 }
 
 impl<T: Clone> SharedValue<T> {
-    #[cfg(test)]
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

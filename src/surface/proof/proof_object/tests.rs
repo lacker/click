@@ -8250,8 +8250,9 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             })
             .unwrap();
         assert!(explicit.facts().contains(&body_kernel));
-        let certified = joined
-            .certify_loop_invariant_bundle(
+        assert!(joined.certify_loop_invariant_bundle(&checks).is_err());
+        let prepared = joined
+            .prepare_loop_invariant_bundle(
                 &CState::new(),
                 &CExpression::Value(int32(1)),
                 &checks,
@@ -8259,16 +8260,18 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
                 &[],
                 false,
             )
+            .unwrap()
             .unwrap();
+        let certified = prepared.certify_loop_invariant_bundle(&checks).unwrap();
         let execution = certified.execution().unwrap();
         let record = execution.core.checked_invariant_lowerings.as_ref().unwrap();
-        assert_eq!(record._checks, checks);
+        assert_eq!(record.checks(), checks);
         assert_eq!(
-            record._paths.len(),
+            record.paths().len(),
             2,
             "the explicit have must not bypass retained lowering"
         );
-        assert!(record._paths.iter().all(|path| path.recheck()));
+        assert!(record.paths().iter().all(|path| path.recheck()));
     }
     for pair in samples.windows(2) {
         assert!(
@@ -8354,10 +8357,14 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         );
         let retained_core = &retained.execution().unwrap().core;
         let evidence = retained_core.checked_invariant_lowerings.as_ref().unwrap();
-        assert_eq!(evidence._paths.len(), 1);
-        assert_eq!(evidence._checks, checks);
-        assert!(evidence._paths[0].recheck());
-        assert!(evidence._snapshot.shares_storage_with(&retained_core.state));
+        assert_eq!(evidence.paths().len(), 1);
+        assert_eq!(evidence.checks(), checks);
+        assert!(evidence.paths()[0].recheck());
+        assert!(
+            evidence
+                .snapshot()
+                .shares_storage_with(&retained_core.state)
+        );
         assert!(
             root.execution()
                 .unwrap()
@@ -8373,7 +8380,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         successor_core.state = CState::new().with_local("changed", int32(1)).into();
         assert!(
             !evidence
-                ._snapshot
+                .snapshot()
                 .shares_storage_with(&successor_core.state)
         );
         let retained_root = root.clone();
@@ -8391,7 +8398,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         let execution = closed
             .execution()
             .expect("the successor retains execution state");
-        assert!(execution.core.region_invariants_closed);
+        assert!(execution.core.region_invariants_close_requested);
         assert!(
             execution.presentation.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the check adapter boundary"

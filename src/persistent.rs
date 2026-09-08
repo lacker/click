@@ -125,7 +125,6 @@ impl<K: Ord, V> PersistentMap<K, V> {
         comparisons
     }
 
-    #[cfg(test)]
     pub(crate) fn shares_root_with(&self, other: &Self) -> bool {
         match (&self.root, &other.root) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),
@@ -275,7 +274,6 @@ impl<T: Ord> PersistentSet<T> {
         self.map.lookup_comparisons(value)
     }
 
-    #[cfg(test)]
     pub(crate) fn shares_root_with(&self, other: &Self) -> bool {
         self.map.shares_root_with(&other.map)
     }

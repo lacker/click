@@ -88,6 +88,12 @@ enum BitvectorEqualityAtomKey {
 }
 
 impl ProofFacts {
+    /// Exact premise-store identity, without comparing ambient propositions.
+    pub(super) fn shares_premises_with(&self, other: &Self) -> bool {
+        self.top_level_exact
+            .shares_root_with(&other.top_level_exact)
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.ordered.len() == 0
     }

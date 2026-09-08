@@ -2,15 +2,16 @@
 
 ## Violated invariant
 
-Loop preservation still depends on general proof discovery in
-`loops.rs::verify_lowered_invariant_path`. Replacing it with exact fact checks
-is blocked by evidence that the current surface loop planner does not retain.
+Loop preservation still depends on general proof discovery during preparation
+in `loops.rs::verify_lowered_invariant_path`. The proof object now retains and
+separately validates its results, but the surface planner does not yet replace
+all that discovery with explicit proof operations.
 An invariant's checked value relation is not, by itself, evidence for every
 loadability obligation produced when lowering that invariant.
 
 This is a prerequisite for the loop-closure migration in
 [simplify-kernel.md](simplify-kernel.md), not a new load-equality fallback or
-permission to change C. The existing fixture is green with the legacy closer;
+permission to change C. The existing fixture is green with legacy preparation;
 the missing capability is an independently checkable surface proof for what
 that closer currently derives.
 
@@ -81,10 +82,9 @@ and the selected invariant checks. This is archival evidence, not a portable
 success token or permission to close a different snapshot. It does not clone
 the C state or entire ambient fact history to attach a record.
 
-This is the retention foundation, **not the completed closure migration**.
-The legacy general/simp planner still constructs these proofs, and the
-existing closure-intent flag remains. The records must next become the
-input to closure validation, with construction moved to proof planning.
+This is the retention foundation, **not the completed discovery migration**.
+The legacy general/simp planner still constructs these proofs. The closure
+consumer described below now validates the records separately.
 
 ### Complete bundle coverage
 
@@ -115,25 +115,43 @@ expansion regressions remain the integration requirement.
 
 ## Remaining implementation sequence
 
+### Prepared-bundle consumption (2026-09-07)
+
+The loop planner now calls `prepare_loop_invariant_bundle` before closure.
+`certify_loop_invariant_bundle` consumes that result through the kernel proof
+object's `validate_checked_invariant_lowerings`; neither consumer lowers the
+invariant again nor invokes a derivation builder. Missing evidence fails even
+for a derivable scalar goal and even after a source `close_invariants` request.
+The old flag and its setter are named as requests, not checked closure.
+
+The opaque complete bundle binds the selected invariant checks, shared C-state
+snapshot, exact premise-store root, and checked execution-fact storage. Closure
+rejects replaced snapshots (even structurally equal ones), changed premises,
+changed checks, incomplete path coverage, and invalid supplied path proofs.
+The binding checks are constant-time storage comparisons; proof checking is
+charged to the supplied evidence. A four-size deterministic regression covers
+the whole kernel consumer against growing unrelated fact stores.
+
+This separates construction from consumption; it does **not** remove the
+general/simp construction ladder from preparation or the legacy prefix probe.
+Expanded source still prepares internal lowering records while being checked.
+Removing that discovery, and replacing the independent state-join reasoning,
+remain separate migration work. Do-while paths proven unable to continue need
+no back-edge bundle and retain the existing exit classification.
+
+### Still outstanding
+
 1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Construct an explicit
    surface proof of the updated quantified invariant and its lowering safety
    obligations using the existing statement evidence. Identify any missing
    simple rule before broadening smart search. Do not call the legacy closer
    as a successful preflight that skips generating this proof.
-2. Move construction of the complete checked-lowering bundle into proof
-   planning, keeping it separate from validation. Retain the actual proofs
-   without trusting surface spellings or requiring redundant read-safety
-   bookkeeping from users.
-3. Bind record consumption to the exact path/snapshot and selected checks.
-   Reject changed free variables, pointer/byte ranges, and memory snapshots.
-   Include deterministic multi-size scaling tests for complete closure, not
-   just individual record rechecking. Alpha-equivalence indexing is not needed
-   when consuming the exact retained lowering.
-4. Consume the evidence at the kernel proof-object closure boundary. The current
-   `close_frontier_invariants` flag update records intent before bundle checking;
-   it must not become proof authority on its own. Handle the collector's path
-   implications explicitly and reject missing non-assumable obligations.
-5. Remove `verify_lowered_invariant_path` and its general/simp derivation ladder
+2. Replace the planner's internal general/simp derivation construction with
+   explicit proof operations while preserving complete path and safety coverage.
+   Retain actual proofs without trusting surface spellings or requiring
+   redundant read-safety bookkeeping from users. Exact retained lowering
+   consumption does not require alpha-equivalence indexing.
+3. Remove `verify_lowered_invariant_path` and its general/simp derivation ladder
    only after the original and expanded fixtures pass through the replacement.
 
 ## Acceptance criteria

@@ -1141,9 +1141,12 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         let mut core = execution.core.clone();
         core.checked_invariant_lowerings =
             Some(Arc::new(super::execution::CheckedLoopInvariantLowerings {
-                _snapshot: core.state.clone(),
-                _checks: checks.to_vec(),
-                _paths: paths,
+                snapshot: core.state.clone(),
+                checks: checks.to_vec(),
+                facts: branch.state.facts.clone(),
+                effects: core.effect_facts.clone(),
+                path_count: paths.len(),
+                paths: paths,
             }));
         let state = ProofBranchState {
             facts: branch.state.facts.clone(),
@@ -1167,16 +1170,57 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
-    pub(crate) fn close_frontier_invariants(&self) -> Result<Self, ExecutionUpdateError> {
+    /// Validate only retained evidence. Preparation, lowering, and proof
+    /// discovery are deliberately absent from the closure boundary.
+    pub(crate) fn validate_checked_invariant_lowerings(
+        &self,
+        checks: &[crate::kernel::CLoopInvariantCheck],
+    ) -> Result<(), String> {
+        let (branch, execution) = self
+            .focused_frontier_execution()
+            .map_err(|_| "invariant closure requires an execution frontier".to_string())?;
+        if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
+            return Err("invariant closure requires a loop body".into());
+        }
+        let evidence = execution
+            .core
+            .checked_invariant_lowerings
+            .as_ref()
+            .ok_or("invariant closure is missing prepared lowering evidence")?;
+        if !evidence.snapshot.shares_storage_with(&execution.core.state)
+            || !evidence.facts.shares_premises_with(&branch.state.facts)
+            || !evidence
+                .effects
+                .shares_storage_with(&execution.core.effect_facts)
+        {
+            return Err("invariant closure has stale lowering evidence".into());
+        }
+        if evidence.checks != checks {
+            return Err(
+                "invariant closure evidence belongs to a different invariant bundle".into(),
+            );
+        }
+        if evidence.paths.len() != evidence.path_count
+            || (!checks.is_empty() && evidence.paths.is_empty())
+            || !evidence.paths.iter().all(|path| path.recheck())
+        {
+            return Err("invariant closure has invalid lowering evidence".into());
+        }
+        Ok(())
+    }
+
+    /// Record the source closer request. This alone is not bundle authority;
+    /// loop finalization separately validates the prepared lowerings above.
+    pub(crate) fn request_frontier_invariant_closure(&self) -> Result<Self, ExecutionUpdateError> {
         let (branch, execution) = self.focused_frontier_execution()?;
         if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
             return Err(ExecutionUpdateError::NotLoopBody);
         }
-        if execution.core.region_invariants_closed {
+        if execution.core.region_invariants_close_requested {
             return Err(ExecutionUpdateError::InvariantsAlreadyClosed);
         }
         let mut core = execution.core.clone();
-        core.region_invariants_closed = true;
+        core.region_invariants_close_requested = true;
         let state = ProofBranchState {
             facts: branch.state.facts.clone(),
             unfolded_predicates: branch.state.unfolded_predicates.clone(),
@@ -1733,6 +1777,159 @@ mod tests {
     use super::*;
     use crate::kernel::proof::PropositionObligation;
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
+
+    #[test]
+    fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {
+        use crate::kernel::proof::{ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind};
+        use crate::kernel::{
+            CComparisonOperator, CLoopInvariantCheck, CState, CValue, SpecExpression,
+            SpecProposition,
+        };
+        type TestProof = ProofObject<(), ProofObligation<(), ()>, ProofExecutionState<()>>;
+        let root = |facts: ProofFacts, core: ExecutionProofCore| -> TestProof {
+            ProofObject::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(ProofExecutionState::new(core, ()))),
+                    },
+                ),
+            )
+        };
+        let checks = vec![
+            CLoopInvariantCheck::new(
+                SpecProposition::Comparison {
+                    left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                    operator: CComparisonOperator::LessEqual,
+                    right: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                },
+                None,
+                None,
+            ),
+            CLoopInvariantCheck::new(
+                SpecProposition::Predicate {
+                    name: "invariant".into(),
+                    arguments: vec![],
+                },
+                None,
+                None,
+            ),
+        ];
+        let mut samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let facts = ProofFacts::from_ordered(
+                &(0..size)
+                    .map(|i| Proposition::Predicate {
+                        name: format!("unrelated_{i}"),
+                        arguments: vec![],
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .with_fact(Proposition::Predicate {
+                name: "invariant".into(),
+                arguments: vec![Term::CState(CState::new())],
+            });
+            let core = ExecutionProofCore::at_entry(
+                CState::new(),
+                ExecutionFrontier {
+                    region: ExecutionRegionKind::LoopBody,
+                    ..Default::default()
+                },
+            );
+            let unprepared = root(facts.clone(), core);
+            assert!(
+                unprepared
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            let requested = unprepared
+                .request_frontier_invariant_closure()
+                .ok()
+                .unwrap();
+            assert!(
+                requested
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            let prepared = requested
+                .retain_checked_invariant_lowerings(&CState::new(), &checks)
+                .unwrap();
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                prepared.validate_checked_invariant_lowerings(&checks)
+            });
+            result.unwrap();
+            samples.push(work);
+            assert!(prepared.validate_checked_invariant_lowerings(&[]).is_err());
+            let changed_checks = vec![CLoopInvariantCheck::new(
+                SpecProposition::Comparison {
+                    left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+                    operator: CComparisonOperator::LessEqual,
+                    right: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+                },
+                None,
+                None,
+            )];
+            assert!(
+                prepared
+                    .validate_checked_invariant_lowerings(&changed_checks)
+                    .is_err()
+            );
+            let core = prepared.execution_view().unwrap().execution().core.clone();
+            let mut stale_effects = core.clone();
+            stale_effects.effect_facts = Vec::new().into();
+            assert!(
+                root(facts.clone(), stale_effects)
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            let mut stale = core.clone();
+            // Even an equal-valued replacement snapshot is not the saved one.
+            stale.state = CState::new().into();
+            assert!(
+                root(facts.clone(), stale)
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            let other_facts = facts.with_fact(Proposition::Predicate {
+                name: "other_arm".into(),
+                arguments: vec![],
+            });
+            assert!(
+                root(other_facts, core.clone())
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            let mut incomplete = core.clone();
+            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap())
+                .paths
+                .pop();
+            assert!(
+                root(facts.clone(), incomplete)
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            // Coverage metadata cannot claim more paths than are supplied.
+            let mut incomplete = core.clone();
+            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap()).path_count += 1;
+            assert!(
+                root(facts.clone(), incomplete)
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            prepared
+                .validate_checked_invariant_lowerings(&checks)
+                .unwrap();
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+                "closure work: {samples:?}"
+            );
+        }
+    }
 
     #[test]
     fn completed_proposition_retains_whether_it_relied_on_root_assumptions() {

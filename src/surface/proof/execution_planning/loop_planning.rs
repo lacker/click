@@ -1438,7 +1438,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let source_tactics = leaf.path_certificate().to_proof_tactics();
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
-        let invariants_already_closed = context_execution.core.region_invariants_closed;
+        let invariants_close_requested = context_execution.core.region_invariants_close_requested;
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some(step) = context_execution.presentation.invariant_closer_step {
@@ -1532,7 +1532,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })?;
             leaf.clone()
         } else {
-            leaf.certify_loop_invariant_bundle(
+            leaf.prepare_loop_invariant_bundle(
                 preservation.loop_entry_state(),
                 condition,
                 invariant_checks,
@@ -1540,6 +1540,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 environment.function.composite_resource_definitions(),
                 do_while,
             )
+            .and_then(|prepared| match prepared {
+                Some(proof) => proof.certify_loop_invariant_bundle(invariant_checks),
+                // A do-while exit has no continuing back edge to certify.
+                None => Ok(leaf.clone()),
+            })
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` (loop {loop_index} invariant bundle preservation): {}",
@@ -1575,7 +1580,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 final_exit_candidates.push(candidate);
             }
         }
-        let closer_tactics = if invariant_checks.is_empty() || invariants_already_closed {
+        let closer_tactics = if invariant_checks.is_empty() || invariants_close_requested {
             Vec::new()
         } else {
             checked
