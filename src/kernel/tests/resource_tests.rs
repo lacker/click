@@ -1,5 +1,61 @@
 use super::*;
 
+#[test]
+fn resource_field_schemas_are_typed_shared_and_non_countable() {
+    let fields = vec![
+        (
+            "model".into(),
+            ResourceFieldType::Algebraic(resource_index_type("Mark", vec![])),
+        ),
+        ("revision".into(), ResourceFieldType::C(CType::Int32)),
+    ];
+    let schema = ResourceFieldSchema::new(fields.clone()).unwrap();
+    assert_eq!(schema.fields(), fields);
+    assert!(!schema.is_countable());
+    let copy = schema.clone();
+    assert!(std::ptr::eq(
+        schema.fields().as_ptr(),
+        copy.fields().as_ptr()
+    ));
+    assert!(ResourceFieldSchema::new(vec![]).unwrap().is_countable());
+    assert!(ResourceFieldSchema::new(vec![fields[0].clone(), fields[0].clone()]).is_none());
+    assert!(
+        ResourceFieldSchema::new(vec![("".into(), ResourceFieldType::C(CType::Int32))]).is_none()
+    );
+    for ty in [CType::Void, CType::Int32Array(3), CType::FunctionPointer(1)] {
+        assert!(ResourceFieldSchema::new(vec![("bad".into(), ResourceFieldType::C(ty))]).is_none());
+    }
+    let mut malformed = resource_index_type("Mark", vec![]);
+    malformed.name = "Wrong".into();
+    assert!(
+        ResourceFieldSchema::new(vec![(
+            "bad".into(),
+            ResourceFieldType::Algebraic(malformed)
+        )])
+        .is_none()
+    );
+}
+
+#[test]
+fn resource_field_schema_clones_share_storage_at_multiple_sizes() {
+    for size in [16, 32, 64, 128] {
+        let schema = ResourceFieldSchema::new(
+            (0..size)
+                .map(|i| (format!("field_{i}"), ResourceFieldType::C(CType::Int32)))
+                .collect(),
+        )
+        .unwrap();
+        for _ in 0..size {
+            let copy = schema.clone();
+            assert_eq!(copy.fields().len(), size);
+            assert!(
+                std::ptr::eq(schema.fields().as_ptr(), copy.fields().as_ptr()),
+                "cloning declaration metadata must not copy any field entries"
+            );
+        }
+    }
+}
+
 fn resource_index_type(name: &str, fields: Vec<AlgebraicValueType>) -> AlgebraicType {
     let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
         AlgebraicVariantType {

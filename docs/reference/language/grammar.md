@@ -42,7 +42,7 @@ documentation inventory keep the following accepted words synchronized.
 | `constructs` | Authorizes one function to create an abstract resource token. |
 | `immutable`, `mutable` | Effect clauses and structural effect items. |
 | `invariant`, `step`, `initialize`, `preserve` | Loop structural items and phase proofs. |
-| `contains`, `fact`, `if` | Composite-resource members and optional resource guard. `if` also forms expressions and proof splits. |
+| `contains`, `fact`, `field`, `if` | Composite-resource members, pure field declarations, and optional resource guard. `if` also forms expressions and proof splits. |
 | `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
 | `forall`, `exists` | Universal and existential quantifiers. |

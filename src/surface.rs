@@ -183,6 +183,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "exit",
     "extract",
     "fact",
+    "field",
     "fold",
     "forall",
     "frame",
@@ -478,10 +479,12 @@ pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     composite_body: Option<CompositeResourceBody>,
+    field_schema: Option<crate::kernel::ResourceFieldSchema>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
+    fields: Vec<ResourceFieldDefinition>,
     condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
@@ -489,6 +492,21 @@ pub struct CompositeResourceBody {
     /// `where` proposition is also one of `facts`; the witness name is in
     /// scope for every later clause of the body.
     witnesses: Vec<ResourceWitness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldDefinition {
+    name: String,
+    click_type: ClickType,
+}
+
+impl ResourceFieldDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn click_type(&self) -> &ClickType {
+        &self.click_type
+    }
 }
 
 /// A pointer the body of a composite resource asserts to exist.
@@ -3738,6 +3756,20 @@ impl ClickFunctionDefinition {
 }
 
 impl ResourceDefinition {
+    pub fn fields(&self) -> &[ResourceFieldDefinition] {
+        self.composite_body
+            .as_ref()
+            .map_or(&[], |body| &body.fields)
+    }
+
+    pub fn field_schema(&self) -> Option<&crate::kernel::ResourceFieldSchema> {
+        self.field_schema.as_ref()
+    }
+
+    pub fn is_countable(&self) -> bool {
+        self.fields().is_empty()
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

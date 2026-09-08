@@ -816,6 +816,63 @@ pub enum AlgebraicValueType {
     },
 }
 
+/// A resource field has a logical type, never a C storage location.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceFieldType {
+    C(CType),
+    Algebraic(AlgebraicType),
+}
+
+/// Checked declaration metadata only. This does not create an owned instance
+/// or authorize a memory access. Field-bearing instances require their own
+/// identity/state representation before they can enter the resource algebra.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldSchema {
+    fields: std::sync::Arc<[(String, ResourceFieldType)]>,
+}
+
+impl ResourceFieldSchema {
+    pub fn new(fields: Vec<(String, ResourceFieldType)>) -> Option<Self> {
+        let mut names = BTreeSet::new();
+        for (name, ty) in &fields {
+            if name.is_empty() || !names.insert(name) {
+                return None;
+            }
+            let valid = match ty {
+                ResourceFieldType::C(ty) => !matches!(
+                    ty,
+                    CType::Void
+                        | CType::FunctionPointer(_)
+                        | CType::Int16Array(_)
+                        | CType::Int32Array(_)
+                        | CType::UInt8Array(_)
+                        | CType::UInt16Array(_)
+                        | CType::UInt32Array(_)
+                        | CType::Int64Array(_)
+                        | CType::UInt64Array(_)
+                        | CType::Float32Array(_)
+                        | CType::Float64Array(_)
+                ),
+                ResourceFieldType::Algebraic(ty) => ty.has_consistent_root_schema(),
+            };
+            if !valid {
+                return None;
+            }
+        }
+        Some(Self {
+            fields: fields.into(),
+        })
+    }
+
+    pub fn fields(&self) -> &[(String, ResourceFieldType)] {
+        &self.fields
+    }
+
+    pub fn is_countable(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AlgebraicVariantType {
     pub name: String,

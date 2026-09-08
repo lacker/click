@@ -368,8 +368,10 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
-        let file = super::validation::expand_declared_resource_clauses(self.parse_file_items()?)?;
+        let mut file =
+            super::validation::expand_declared_resource_clauses(self.parse_file_items()?)?;
         super::validation::validate_click_definitions(&file)?;
+        super::lowering::check_resource_field_schemas(&mut file)?;
         Ok(file)
     }
 
@@ -716,11 +718,29 @@ impl Parser {
             name,
             parameters: parsed_parameters.parameters,
             composite_body,
+            field_schema: None,
         })
     }
 
     fn parse_composite_resource_body(&mut self) -> Result<CompositeResourceBody, ClickError> {
         self.expect(Token::LBrace)?;
+        let mut fields = Vec::new();
+        while self.peek_ident() == Some("field") {
+            self.position += 1;
+            let name = self.expect_ident("resource field name")?;
+            self.expect(Token::Colon)?;
+            let (click_type, parsed_c_type) = self.parse_click_type()?;
+            if parsed_c_type.as_ref().is_some_and(|ty| {
+                !algebraic_field_c_type_supported(ty.c_type)
+                    || ty.struct_name.is_some()
+                    || ty.constant
+                    || ty.pointee_constant
+            }) {
+                return Err(self.error(format!("resource field `{name}` requires an unqualified scalar, pointer, or algebraic Click type")));
+            }
+            self.expect(Token::Semicolon)?;
+            fields.push(ResourceFieldDefinition { name, click_type });
+        }
         let condition = if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -734,6 +754,7 @@ impl Parser {
         let mut witnesses: Vec<ResourceWitness> = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
+                Some("field") => return Err(self.error("resource fields must be declared before body clauses and outside the resource guard")),
                 Some("let") => {
                     let binding = self.parse_contract_let_binding()?;
                     let ContractLetBindingKind::Where(condition) = binding.kind else {
@@ -808,6 +829,7 @@ impl Parser {
             .flat_map(expand_aggregate_resource_clause)
             .collect();
         Ok(CompositeResourceBody {
+            fields,
             condition,
             contains,
             facts,

@@ -1,5 +1,56 @@
 use super::*;
 
+pub(in crate::surface) fn check_resource_field_schemas(
+    file: &mut ClickFile,
+) -> Result<(), ClickError> {
+    if file
+        .resource_definitions
+        .iter()
+        .all(ResourceDefinition::is_countable)
+    {
+        return Ok(());
+    }
+    let environment = ClickFunctionEnvironment::with_algebraic_types(
+        &[],
+        &super::super::validation::combined_algebraic_type_definitions(file)?,
+    );
+    for definition in &mut file.resource_definitions {
+        if definition.is_countable() {
+            continue;
+        }
+        let fields = definition
+            .fields()
+            .iter()
+            .map(|field| {
+                let ty = match field.click_type() {
+                    ClickType::C(ty) => crate::kernel::ResourceFieldType::C(ty.to_kernel_type()),
+                    ClickType::Algebraic(application) => {
+                        crate::kernel::ResourceFieldType::Algebraic(
+                            algebraic_kernel_type(&environment, application)
+                                .map_err(ClickError::new)?,
+                        )
+                    }
+                    ClickType::Parameter(name) => {
+                        return Err(ClickError::new(format!(
+                            "unresolved resource field type `{name}`"
+                        )));
+                    }
+                };
+                Ok((field.name().to_string(), ty))
+            })
+            .collect::<Result<Vec<_>, ClickError>>()?;
+        definition.field_schema = Some(
+            crate::kernel::ResourceFieldSchema::new(fields).ok_or_else(|| {
+                ClickError::new(format!(
+                    "invalid field schema for resource `{}`",
+                    definition.name()
+                ))
+            })?,
+        );
+    }
+    Ok(())
+}
+
 fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => true,

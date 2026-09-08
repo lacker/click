@@ -630,6 +630,35 @@ resource uncalled(flag: int32*) {
 }
 ```
 
+A resource may declare pure fields before its body clauses:
+
+<!-- verified-example: mdtests/resource_fields.md -->
+```click
+resource buffer(p: int32*, capacity: int32) {
+    field contents: List<int32>;
+    field mark: Mark;
+    field revision: int32;
+    owns p[0..capacity];
+}
+```
+
+Here `Mark` is the enum declared in the linked fixture. Fields have Click
+types: supported unqualified C scalar/pointer types or algebraic types,
+including instantiated generic types. Field names must be distinct from one
+another, resource parameters, and body witnesses. Fields precede any guard
+and cannot be declared inside it. Qualified C types, struct types/pointers,
+arrays, and function-pointer field types are not supported in this slice.
+
+Resources with fields are non-countable and intended for exclusive
+instance-based ownership. Both `count(resource(...))` and quantities such as
+`1 of resource(...)` are rejected. Field-free resources keep their existing
+rules. This is currently declaration support only: fields are preserved in
+checked schemas, but instance binding, field access, and field establishment
+against memory are not implemented. Field names are not yet in scope in body
+expressions. Using a field-bearing resource in a contract or fold/unfold proof
+is rejected rather than treating it as a field-free resource. A declaration
+alone grants no ownership and does not establish any field values.
+
 A composite body may instead have one top-level guard:
 
 <!-- verified-example: mdtests/recursive_conditional_resource.md -->
