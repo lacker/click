@@ -3,6 +3,21 @@ use super::*;
 use crate::kernel::int32;
 
 #[test]
+fn adt_resource_parameters_report_unsupported_types_without_panicking() {
+    for declaration in [
+        "resource marked_cell(p: int32*, mark: Mark) { owns p[0..1]; }",
+        "abstract resource marked_cell(p: int32*, mark: Mark);",
+    ] {
+        let source = format!("spec enum Mark {{ Clear, Set, }}\n{declaration}");
+        let error = parser::parse(&source).expect_err("ADT resource indices are not supported yet");
+        assert_eq!(
+            error.message(),
+            "resource `marked_cell` parameter `mark` uses an algebraic type; algebraic resource arguments are not supported yet"
+        );
+    }
+}
+
+#[test]
 fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
     let source = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click")
         .replace("verifying \"modeled_binary_tree.c\";", "");

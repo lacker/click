@@ -79,6 +79,10 @@ Implement and check the following slices in order:
    actual types through resource identities, equality, substitution, lowering,
    and certificates. Check a small nonrecursive model-indexed resource first,
    including an arbitrary model variable, not only concrete constructors.
+   [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
+   current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
+   Turn it into a passing fixture as support lands, then add the arbitrary-index
+   read/return proof and meaningful negative transfer tests described there.
 2. **Checked resource `match`.** Check exhaustive constructor arms and their
    scoped typed fields. Fold/unfold selects a justified arm and exposes only
    its immediate owned resources and pure facts. An unknown model remains

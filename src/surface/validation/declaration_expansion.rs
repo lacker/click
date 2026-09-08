@@ -72,23 +72,31 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
         .resource_definitions()
         .iter()
         .map(|definition| {
-            (
+            Ok((
                 definition.name().to_string(),
                 DeclaredResourceInfo {
                     parameter_types: definition
                         .parameters()
                         .iter()
-                        .map(FunctionParameter::c_type)
-                        .collect::<Vec<_>>(),
+                        .map(|parameter| {
+                            parameter.click_type().c_type().ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "resource `{}` parameter `{}` uses an algebraic type; algebraic resource arguments are not supported yet",
+                                    definition.name(),
+                                    parameter.name()
+                                ))
+                            })
+                        })
+                        .collect::<Result<Vec<_>, ClickError>>()?,
                     kind: if definition.composite_body().is_some() {
                         ResourceKind::Composite
                     } else {
                         ResourceKind::Token
                     },
                 },
-            )
+            ))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>, ClickError>>()?;
     resource_definitions
         .entry(CResourceFact::ALLOCATION_RESOURCE_NAME.to_string())
         .or_insert_with(|| DeclaredResourceInfo {
