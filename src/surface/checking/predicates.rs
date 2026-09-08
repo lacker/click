@@ -1,5 +1,4 @@
 use super::*;
-use crate::kernel::AlgebraicValueType;
 
 pub(in crate::surface) fn unfold_available_predicate_facts(
     predicate_environment: &PredicateEnvironment,
@@ -249,10 +248,7 @@ fn instantiate_lowered_predicate_definition(
                 }
                 Some(Term::Algebraic(value)) => {
                     Some(generics::click_type_from_algebraic_value_type(
-                        &AlgebraicValueType::Algebraic {
-                            name: value.algebraic_type.name.clone(),
-                            arguments: value.algebraic_type.arguments.clone(),
-                        },
+                        &value.algebraic_type.value_type(),
                     ))
                 }
                 _ => None,

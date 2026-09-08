@@ -93,7 +93,8 @@ unchanged.
   call-site inference, checked conflict/ambiguity diagnostics, distinct kernel
   identities for concrete function instances, and concrete body
   instantiation before `unfold`; and
-- generic theorems with inferred concrete type arguments and checked use-site
+- generic theorems checked at declaration with rigid arbitrary type parameters,
+  including unused proofs and parametric expansion/rechecking, plus checked use-site
   monomorphization. Type substitution covers statements, explicit proof
   terms, and structural induction; each distinct concrete instance is
   verified once per theorem environment before `apply` grants its conclusion.

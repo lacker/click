@@ -412,8 +412,8 @@ pub enum AlgebraicFieldType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClickType {
     /// A declaration-scoped type parameter. Generic logical declarations are
-    /// instantiated to concrete Click types before they cross into Kernel
-    /// Click.
+    /// instantiated to concrete types at applications, or rigid arbitrary
+    /// types when checking theorem declarations, before crossing into Kernel Click.
     Parameter(String),
     C(C0Type),
     Algebraic(AlgebraicTypeApplication),
@@ -441,6 +441,8 @@ impl AlgebraicTypeApplication {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlgebraicTypeApplication {
+    /// Internal rigid type parameter, never a datatype with zero constructors.
+    rigid: bool,
     name: String,
     arguments: Vec<ClickType>,
 }

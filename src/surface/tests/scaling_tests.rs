@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn parametric_theorem_declarations_have_near_linear_checking_work() {
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let source = (0..size).map(|index| format!(
+            "theorem reflexive_{index}<T>(x: T) {{ ensures x == x by {{ normalize(); }} }}\n"
+        )).collect::<String>();
+        let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
+        assert_eq!(
+            verified.expect("every unused generic proof checks").len(),
+            size
+        );
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("parametric declarations", &samples);
+}
+
 #[derive(Clone, Debug)]
 struct ScalingSample {
     size: usize,

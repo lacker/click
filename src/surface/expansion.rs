@@ -540,15 +540,6 @@ fn expand_pure_theorem_source(
                 && theorem.ensure_index == ensure_index
         })
         .ok_or_else(|| {
-            if tokens.windows(3).any(|tokens| {
-                tokens[0].text == "theorem"
-                    && tokens[1].text == theorem_name
-                    && tokens[2].text == "<"
-            }) {
-                return ClickError::new(format!(
-                    "cannot expand generic theorem `{theorem_name}` without a concrete type instance; templates are checked at their applications"
-                ));
-            }
             ClickError::new(format!(
                 "verified theorem `{theorem_name}` has no ensure {ensure_index}"
             ))

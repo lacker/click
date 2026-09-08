@@ -796,6 +796,7 @@ pub struct SpecAlgebraicResultMatchArm {
 /// supplied by surface lowering.
 #[derive(Clone, Debug)]
 pub struct AlgebraicType {
+    pub rigid: bool,
     pub name: String,
     pub arguments: Vec<AlgebraicValueType>,
     pub variants: std::sync::Arc<[AlgebraicVariantType]>,
@@ -804,6 +805,7 @@ pub struct AlgebraicType {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AlgebraicValueType {
+    Parameter(String),
     C(CType),
     Algebraic {
         name: String,
@@ -841,7 +843,7 @@ impl AlgebraicSchemas {
             for (value_type, constructors) in &variants {
                 if constructors.iter().any(|constructor| {
                     constructor.fields.iter().all(|field| match field {
-                        AlgebraicValueType::C(_) => true,
+                        AlgebraicValueType::C(_) | AlgebraicValueType::Parameter(_) => true,
                         AlgebraicValueType::Algebraic { .. } => grounded.contains(field),
                     })
                 }) {
@@ -1037,7 +1039,8 @@ impl AlgebraicTerm {
                 arguments.iter().all(PureFunctionArgument::is_well_formed)
             }
             AlgebraicTermNode::Match { scrutinee, arms } => {
-                scrutinee.is_well_formed()
+                !scrutinee.algebraic_type.rigid
+                    && scrutinee.is_well_formed()
                     && arms.len() == scrutinee.algebraic_type.variants.len()
                     && scrutinee.algebraic_type.variants.iter().all(|variant| {
                         arms.iter()
@@ -1067,7 +1070,20 @@ impl AlgebraicTerm {
 }
 
 impl AlgebraicType {
-    pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
+    pub(crate) fn parameter(name: String) -> Self {
+        Self {
+            rigid: true,
+            name,
+            arguments: Vec::new(),
+            variants: Vec::new().into(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(Default::default())),
+        }
+    }
+
+    pub(crate) fn value_type(&self) -> AlgebraicValueType {
+        if self.rigid {
+            return AlgebraicValueType::Parameter(self.name.clone());
+        }
         AlgebraicValueType::Algebraic {
             name: self.name.clone(),
             arguments: self.arguments.clone(),
@@ -1078,10 +1094,14 @@ impl AlgebraicType {
         &self,
         value_type: &AlgebraicValueType,
     ) -> Option<Self> {
+        if let AlgebraicValueType::Parameter(name) = value_type {
+            return Some(Self::parameter(name.clone()));
+        }
         let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
             return None;
         };
         Some(Self {
+            rigid: false,
             name: name.clone(),
             arguments: arguments.clone(),
             variants: self.schemas.get(value_type)?.clone(),
@@ -1090,6 +1110,9 @@ impl AlgebraicType {
     }
 
     fn has_consistent_root_schema(&self) -> bool {
+        if self.rigid {
+            return self.arguments.is_empty() && self.variants.is_empty();
+        }
         let value_type = self.value_type();
         self.schemas
             .get(&value_type)
@@ -1100,7 +1123,8 @@ impl AlgebraicType {
 
 impl PartialEq for AlgebraicType {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.rigid == other.rigid
+            && self.name == other.name
             && self.arguments == other.arguments
             && self.variants == other.variants
     }
@@ -1110,6 +1134,7 @@ impl Eq for AlgebraicType {}
 
 impl std::hash::Hash for AlgebraicType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.rigid.hash(state);
         self.name.hash(state);
         self.arguments.hash(state);
         self.variants.hash(state);
@@ -1124,7 +1149,8 @@ impl PartialOrd for AlgebraicType {
 
 impl Ord for AlgebraicType {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.name, &self.arguments, &self.variants).cmp(&(
+        (self.rigid, &self.name, &self.arguments, &self.variants).cmp(&(
+            other.rigid,
             &other.name,
             &other.arguments,
             &other.variants,
@@ -1151,9 +1177,10 @@ impl AlgebraicValue {
         match self {
             Self::C(_) => true,
             Self::Algebraic(value) => {
-                schemas
-                    .get(expected)
-                    .is_some_and(|variants| variants == &value.algebraic_type.variants)
+                (matches!(expected, AlgebraicValueType::Parameter(_))
+                    || schemas
+                        .get(expected)
+                        .is_some_and(|variants| variants == &value.algebraic_type.variants))
                     && value.is_well_formed()
             }
         }

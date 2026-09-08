@@ -5031,7 +5031,11 @@ impl Parser {
                 }
             }
         }
-        Ok(AlgebraicTypeApplication { name, arguments })
+        Ok(AlgebraicTypeApplication {
+            rigid: false,
+            name,
+            arguments,
+        })
     }
 
     fn parse_snapshot_selector(&mut self) -> Result<SnapshotSelector, ClickError> {

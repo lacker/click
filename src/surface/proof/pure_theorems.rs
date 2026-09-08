@@ -13,9 +13,32 @@ pub(in crate::surface) fn verify_theorem_definitions(
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(&[]);
     for theorem in theorem_definitions {
-        if theorem.type_parameters().is_empty() {
+        {
+            let mut symbolic;
+            let checked = if theorem.type_parameters().is_empty() {
+                theorem
+            } else {
+                let substitution = theorem
+                    .type_parameters()
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            ClickType::Algebraic(AlgebraicTypeApplication {
+                                rigid: true,
+                                name: name.clone(),
+                                arguments: Vec::new(),
+                            }),
+                        )
+                    })
+                    .collect();
+                symbolic = generics::instantiate_theorem(theorem, &substitution)
+                    .map_err(ClickError::new)?;
+                symbolic.name = theorem.name().to_string();
+                &symbolic
+            };
             verified.extend(verify_concrete_theorem_definition(
-                theorem,
+                checked,
                 predicate_environment,
                 click_function_environment,
                 &theorem_environment,
@@ -315,8 +338,14 @@ fn click_type_from_algebraic_value_type(
             CType::Float32Array(length) => C0Type::Float32Array(*length),
             CType::Float64Array(length) => C0Type::Float64Array(*length),
         }),
+        AlgebraicValueType::Parameter(name) => ClickType::Algebraic(AlgebraicTypeApplication {
+            rigid: true,
+            name: name.clone(),
+            arguments: Vec::new(),
+        }),
         AlgebraicValueType::Algebraic { name, arguments } => {
             ClickType::Algebraic(AlgebraicTypeApplication {
+                rigid: false,
                 name: name.clone(),
                 arguments: arguments
                     .iter()
@@ -471,10 +500,17 @@ fn check_pure_structural_induction(
         )));
     };
     let parameter_expression = ContractExpression::AlgebraicVariable {
+        // Arbitrary types have no exhaustive constructor schema.
         name: parameter.clone(),
         algebraic_type: parameter_type.clone(),
         binder_index: parameter_index,
     };
+    if parameter_type.rigid {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: structural induction requires a datatype, not arbitrary type `{}`",
+            parameter_type.name
+        )));
+    }
     let state = CState::new().with_memory(context.memory.clone());
     let parameter_value = capture_fixed_state_algebraic_expression(
         &parameter_expression,
@@ -586,7 +622,8 @@ fn check_pure_structural_induction(
                         crate::kernel::symbolic_call_result(*c_type, variable),
                     );
                 }
-                algebraic @ AlgebraicValueType::Algebraic { .. } => {
+                algebraic @ (AlgebraicValueType::Algebraic { .. }
+                | AlgebraicValueType::Parameter(_)) => {
                     let ClickType::Algebraic(algebraic_type) =
                         click_type_from_algebraic_value_type(algebraic)?
                     else {

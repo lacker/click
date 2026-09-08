@@ -1,5 +1,47 @@
 use super::*;
 
+#[test]
+fn rigid_parameters_are_typed_values_not_empty_datatypes() {
+    let ty = AlgebraicType::parameter("T".into());
+    let x = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(0)),
+    };
+    assert!(x.is_well_formed());
+    assert_eq!(ty.value_type(), AlgebraicValueType::Parameter("T".into()));
+    assert_ne!(ty, AlgebraicType::parameter("U".into()));
+    let mut nominal = ty.clone();
+    nominal.rigid = false;
+    assert_ne!(ty, nominal);
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: nominal,
+            node: x.node.clone()
+        }
+        .is_well_formed()
+    );
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: "Fake".into(),
+                fields: vec![]
+            }
+        }
+        .is_well_formed()
+    );
+    assert!(
+        !AlgebraicTerm {
+            algebraic_type: ty,
+            node: AlgebraicTermNode::Match {
+                scrutinee: Box::new(x),
+                arms: vec![]
+            }
+        }
+        .is_well_formed()
+    );
+}
+
 fn maybe_int32_type() -> AlgebraicType {
     let arguments = vec![AlgebraicValueType::C(CType::Int32)];
     let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
@@ -18,6 +60,7 @@ fn maybe_int32_type() -> AlgebraicType {
         arguments: arguments.clone(),
     };
     AlgebraicType {
+        rigid: false,
         name: "Maybe".to_string(),
         arguments,
         variants: variants.clone(),

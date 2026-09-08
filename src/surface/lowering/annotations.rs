@@ -1611,7 +1611,8 @@ impl AnnotationLowerer<'_> {
                                     body_environment.values.remove(binding);
                                     body_environment.algebraic_values.remove(binding);
                                 }
-                                AlgebraicValueType::Algebraic { .. } => {
+                                AlgebraicValueType::Algebraic { .. }
+                                | AlgebraicValueType::Parameter(_) => {
                                     body_environment.values.remove(binding);
                                     body_environment.algebraic_values.insert(
                                         binding.clone(),
@@ -1955,9 +1956,10 @@ impl AnnotationLowerer<'_> {
                         AlgebraicValueType::C(_) => self
                             .lower_contract_expression_to_spec(argument, environment)
                             .map(SpecAlgebraicValue::C),
-                        AlgebraicValueType::Algebraic { .. } => self
-                            .lower_contract_algebraic_to_spec(argument, environment)
-                            .map(SpecAlgebraicValue::Algebraic),
+                        AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
+                            self.lower_contract_algebraic_to_spec(argument, environment)
+                                .map(SpecAlgebraicValue::Algebraic)
+                        }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(SpecAlgebraicExpression {
@@ -2010,7 +2012,8 @@ impl AnnotationLowerer<'_> {
                                 body_environment.values.remove(binding);
                                 body_environment.algebraic_values.remove(binding);
                             }
-                            AlgebraicValueType::Algebraic { .. } => {
+                            AlgebraicValueType::Algebraic { .. }
+                            | AlgebraicValueType::Parameter(_) => {
                                 body_environment.values.remove(binding);
                                 body_environment.algebraic_values.insert(
                                     binding.clone(),
@@ -2103,6 +2106,9 @@ impl AnnotationLowerer<'_> {
         &mut self,
         application: &AlgebraicTypeApplication,
     ) -> Result<AlgebraicType, String> {
+        if application.rigid {
+            return Ok(AlgebraicType::parameter(application.name.clone()));
+        }
         let arguments = algebraic_kernel_type_arguments(application)?;
         let key = (application.name.clone(), arguments);
         if let Some(algebraic_type) = self.algebraic_types.get(&key) {
@@ -2117,6 +2123,9 @@ impl AnnotationLowerer<'_> {
         &mut self,
         value_type: &AlgebraicValueType,
     ) -> Result<AlgebraicType, String> {
+        if let AlgebraicValueType::Parameter(name) = value_type {
+            return Ok(AlgebraicType::parameter(name.clone()));
+        }
         let AlgebraicValueType::Algebraic { name, arguments } = value_type else {
             return Err("expected an algebraic value type".to_string());
         };
@@ -2272,10 +2281,7 @@ impl AnnotationLowerer<'_> {
             ClickType::Algebraic(_) => {
                 let value = self.lower_contract_algebraic_to_spec(argument, environment)?;
                 Ok(Some(generics::click_type_from_algebraic_value_type(
-                    &AlgebraicValueType::Algebraic {
-                        name: value.algebraic_type.name,
-                        arguments: value.algebraic_type.arguments,
-                    },
+                    &value.algebraic_type.value_type(),
                 )))
             }
             ClickType::C(c_type) => Ok(Some(ClickType::C(*c_type))),
@@ -2298,10 +2304,7 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Binding(name) => {
                 if let Some(value) = environment.algebraic_values.get(name) {
                     return Ok(Some(generics::click_type_from_algebraic_value_type(
-                        &AlgebraicValueType::Algebraic {
-                            name: value.algebraic_type.name.clone(),
-                            arguments: value.algebraic_type.arguments.clone(),
-                        },
+                        &value.algebraic_type.value_type(),
                     )));
                 }
                 Ok(environment
@@ -3338,6 +3341,9 @@ fn click_type_to_algebraic_value_type(
     match click_type {
         ClickType::Parameter(name) => Err(format!("unresolved type parameter `{name}`")),
         ClickType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
+        ClickType::Algebraic(application) if application.rigid => {
+            Ok(AlgebraicValueType::Parameter(application.name.clone()))
+        }
         ClickType::Algebraic(application) => Ok(AlgebraicValueType::Algebraic {
             name: application.name.clone(),
             arguments: algebraic_kernel_type_arguments(application)?,
@@ -3349,6 +3355,9 @@ fn algebraic_kernel_type(
     environment: &ClickFunctionEnvironment,
     application: &AlgebraicTypeApplication,
 ) -> Result<AlgebraicType, String> {
+    if application.rigid {
+        return Ok(AlgebraicType::parameter(application.name.clone()));
+    }
     let arguments = algebraic_kernel_type_arguments(application)?;
     algebraic_kernel_type_from_parts(environment, &application.name, &arguments)
 }
@@ -3370,6 +3379,7 @@ fn algebraic_kernel_type_from_parts(
         .cloned()
         .ok_or_else(|| format!("missing algebraic datatype schema for `{name}`"))?;
     Ok(AlgebraicType {
+        rigid: false,
         name: name.to_string(),
         arguments: arguments.to_vec(),
         variants,

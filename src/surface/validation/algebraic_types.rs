@@ -1822,6 +1822,7 @@ pub(super) fn instantiate_field_type(
                 .map(|argument| instantiate_field_type(definition, application, argument))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ClickType::Algebraic(AlgebraicTypeApplication {
+                rigid: false,
                 name: name.clone(),
                 arguments,
             }))

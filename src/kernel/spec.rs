@@ -619,7 +619,8 @@ fn algebraic_match_reconstructs(
         .iter()
         .map(|arm| arm.variant.as_str())
         .collect::<BTreeSet<_>>();
-    arms.len() == scrutinee.algebraic_type.variants.len()
+    !scrutinee.algebraic_type.rigid
+        && arms.len() == scrutinee.algebraic_type.variants.len()
         && arm_variants.len() == arms.len()
         && arms.iter().all(|arm| {
             let Some(schema) = scrutinee
@@ -651,7 +652,7 @@ fn algebraic_match_reconstructs(
                                 node: SpecAlgebraicExpressionNode::Binding(name),
                                 ..
                             }),
-                            AlgebraicValueType::Algebraic { .. },
+                            AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_),
                         ) => name == binding,
                         _ => false,
                     },
@@ -1010,15 +1011,17 @@ fn symbolic_algebraic_bindings(
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))
                 }
-                AlgebraicValueType::Algebraic { .. } => algebraic_type
-                    .resolve_nested_type(value_type)
-                    .map(|nested_type| {
-                        AlgebraicValue::Algebraic(AlgebraicTerm {
-                            algebraic_type: nested_type,
-                            node: AlgebraicTermNode::Variable(variable),
+                AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
+                    algebraic_type
+                        .resolve_nested_type(value_type)
+                        .map(|nested_type| {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: nested_type,
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
                         })
-                    })
-                    .ok_or(ExecutionLimit::Paths),
+                        .ok_or(ExecutionLimit::Paths)
+                }
             }
         })
         .collect()
@@ -1074,7 +1077,8 @@ fn spec_algebraic_result_match_arms_are_well_formed(
     algebraic_type: &AlgebraicType,
     arms: &[SpecAlgebraicResultMatchArm],
 ) -> bool {
-    arms.len() == algebraic_type.variants.len()
+    !algebraic_type.rigid
+        && arms.len() == algebraic_type.variants.len()
         && algebraic_type.variants.iter().all(|variant| {
             arms.iter()
                 .filter(|arm| arm.variant == variant.name)
@@ -1094,7 +1098,8 @@ fn spec_scalar_match_arms_are_well_formed(
     algebraic_type: &AlgebraicType,
     arms: &[SpecAlgebraicMatchArm],
 ) -> bool {
-    arms.len() == algebraic_type.variants.len()
+    !algebraic_type.rigid
+        && arms.len() == algebraic_type.variants.len()
         && algebraic_type.variants.iter().all(|variant| {
             arms.iter()
                 .filter(|arm| arm.variant == variant.name)
@@ -1632,6 +1637,7 @@ mod algebraic_term_tests {
             arguments: arguments.clone(),
         };
         AlgebraicType {
+            rigid: false,
             name: "Maybe".to_string(),
             arguments,
             variants: variants.clone(),
@@ -1681,6 +1687,7 @@ mod algebraic_term_tests {
         let mut schemas = maybe_type.schemas.definitions().clone();
         schemas.insert(value_type, variants.clone());
         AlgebraicType {
+            rigid: false,
             name: "Envelope".to_string(),
             arguments: vec![AlgebraicValueType::C(CType::Int32)],
             variants,
@@ -1706,6 +1713,7 @@ mod algebraic_term_tests {
         ]
         .into();
         AlgebraicType {
+            rigid: false,
             name: "List".to_string(),
             arguments,
             variants: variants.clone(),
@@ -1726,6 +1734,7 @@ mod algebraic_term_tests {
         }]
         .into();
         AlgebraicType {
+            rigid: false,
             name: "Loop".to_string(),
             arguments: Vec::new(),
             variants: variants.clone(),
@@ -1749,6 +1758,7 @@ mod algebraic_term_tests {
             arguments: arguments.clone(),
         };
         AlgebraicType {
+            rigid: false,
             name: "Wide".to_string(),
             arguments,
             variants: variants.clone(),

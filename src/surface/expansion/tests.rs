@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn generic_smart_proofs_expand_without_concrete_clients() {
+    let source = r#"
+theorem independent<T, U>(x: T, y: U) {
+    ensures x == x by { simp(); }
+    ensures y == y by { simp(); }
+}
+theorem lists<T>(xs: List<List<T>>) {
+    ensures list_append(xs, List<List<T>>::Nil) == xs by {
+        apply(list_append_right_identity(xs));
+    }
+}
+"#;
+    let verified = verify_click_theorems(source).expect("parametric proofs verify");
+    assert_eq!(verified.len(), 3);
+    for claim in [
+        "independent.ensures_0",
+        "independent.ensures_1",
+        "lists.ensures_0",
+    ] {
+        let position = c0_tactic_source_position(source, &[], claim, 0).unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(source, &[], position.line, position.column).unwrap();
+        assert!(expanded.contains("independent<T, U>"));
+        assert!(expanded.contains("lists<T>"));
+        verify_c0_sources(&expanded, &[]).expect("expanded parametric certificate rechecks");
+    }
+}
+
+#[test]
 fn conditional_normalization_roundtrips_and_rejects_tampering() {
     let source = r#"
 theorem client(xs: List<int32>, ys: List<int32>) {
@@ -27,7 +56,7 @@ theorem client(xs: List<int32>, ys: List<int32>) {
 }
 
 #[test]
-fn generic_template_expansion_reports_missing_instantiation() {
+fn generic_template_expansion_checks_arbitrary_types() {
     let source = r#"
 theorem client<T>(xs: List<T>, ys: List<T>) {
     requires not(xs == ys);
@@ -38,11 +67,15 @@ theorem client<T>(xs: List<T>, ys: List<T>) {
 "#;
     let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0)
         .expect("generic parameter lists have source locations");
-    let error = expand_c0_tactic_source_at(source, &[], position.line, position.column)
-        .expect_err("a template has no concrete checked certificate to expand");
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("a template has a checked parametric certificate");
+    verify_c0_sources(&expanded, &[]).expect("expanded template rechecks without a client");
     assert!(
-        error.message.contains("concrete type instance"),
-        "{error:?}"
+        verify_c0_sources(
+            &expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+            &[]
+        )
+        .is_err()
     );
 }
 

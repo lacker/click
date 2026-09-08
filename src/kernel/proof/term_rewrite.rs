@@ -89,6 +89,7 @@ mod tests {
         }]
         .into();
         let algebraic_type = AlgebraicType {
+            rigid: false,
             name: "Marker".into(),
             arguments: vec![],
             variants: variants.clone(),

@@ -1,7 +1,8 @@
-# generic theorems are checked at concrete applications
+# generic theorems are checked parametrically and at concrete applications
 
 Generic theorem parameters use the same Rust-like syntax and call-site type
-inference as logical functions. Each concrete instance is checked before an
+inference as logical functions. Declarations verify with rigid arbitrary types,
+without needing callers. Each concrete instance is also checked before an
 `apply` step may use its conclusion. This example exercises structural
 induction and two distinct element types.
 

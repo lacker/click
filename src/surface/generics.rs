@@ -95,7 +95,10 @@ fn unify_click_type(
                     validation::describe_click_type(actual)
                 ));
             };
-            if expected.name != actual.name || expected.arguments.len() != actual.arguments.len() {
+            if expected.rigid != actual.rigid
+                || expected.name != actual.name
+                || expected.arguments.len() != actual.arguments.len()
+            {
                 return Err(format!(
                     "expected {}, got {}",
                     validation::describe_click_type(pattern),
@@ -132,6 +135,7 @@ pub(super) fn instantiate_algebraic_type(
     substitution: &TypeSubstitution,
 ) -> Result<AlgebraicTypeApplication, String> {
     Ok(AlgebraicTypeApplication {
+        rigid: application.rigid,
         name: application.name.clone(),
         arguments: application
             .arguments
@@ -143,9 +147,15 @@ pub(super) fn instantiate_algebraic_type(
 
 pub(super) fn click_type_from_algebraic_value_type(value_type: &AlgebraicValueType) -> ClickType {
     match value_type {
+        AlgebraicValueType::Parameter(name) => ClickType::Algebraic(AlgebraicTypeApplication {
+            rigid: true,
+            name: name.clone(),
+            arguments: Vec::new(),
+        }),
         AlgebraicValueType::C(c_type) => ClickType::C(c0_type_from_kernel(*c_type)),
         AlgebraicValueType::Algebraic { name, arguments } => {
             ClickType::Algebraic(AlgebraicTypeApplication {
+                rigid: false,
                 name: name.clone(),
                 arguments: arguments
                     .iter()
@@ -205,6 +215,24 @@ pub(super) fn instance_name(
     type_parameters: &[String],
     substitution: &TypeSubstitution,
 ) -> Result<String, String> {
+    fn type_identity(ty: &ClickType) -> String {
+        match ty {
+            ClickType::Algebraic(application) if application.rigid => {
+                format!("[rigid {}]", application.name)
+            }
+            ClickType::Algebraic(application) if !application.arguments.is_empty() => format!(
+                "{}<{}>",
+                application.name,
+                application
+                    .arguments
+                    .iter()
+                    .map(type_identity)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            _ => validation::describe_click_type(ty),
+        }
+    }
     if type_parameters.is_empty() {
         return Ok(name.to_string());
     }
@@ -213,7 +241,7 @@ pub(super) fn instance_name(
         .map(|parameter| {
             substitution
                 .get(parameter)
-                .map(validation::describe_click_type)
+                .map(type_identity)
                 .ok_or_else(|| format!("unresolved type parameter `{parameter}`"))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -317,10 +345,7 @@ pub(super) fn concrete_variable_types(
         .chain(algebraic_values.iter().map(|(name, value)| {
             (
                 name.clone(),
-                click_type_from_algebraic_value_type(&AlgebraicValueType::Algebraic {
-                    name: value.algebraic_type.name.clone(),
-                    arguments: value.algebraic_type.arguments.clone(),
-                }),
+                click_type_from_algebraic_value_type(&value.algebraic_type.value_type()),
             )
         }))
         .collect()
