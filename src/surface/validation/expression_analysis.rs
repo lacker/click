@@ -74,7 +74,8 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
             contains_old_expression(left) || contains_old_expression(right)
         }
         ContractExpression::Old(_) => true,
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
@@ -146,7 +147,8 @@ pub(in crate::surface) fn contains_resource_count(expression: &ContractExpressio
             contains_resource_count(left) || contains_resource_count(right)
         }
         ContractExpression::ResourceCount(_) => true,
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => false,
         ContractExpression::Field { base, .. }
@@ -329,7 +331,8 @@ pub(in crate::surface) fn collect_resource_count_families(
                     collect_expression(argument, families);
                 }
             }
-            ContractExpression::CFragment(_)
+            ContractExpression::QualifiedC { .. }
+            | ContractExpression::CFragment(_)
             | ContractExpression::CBinding(_)
             | ContractExpression::ResourceWildcard => {}
         }
@@ -500,7 +503,8 @@ pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression
             contains_at_expression(left) || contains_at_expression(right)
         }
         ContractExpression::At { .. } => true,
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
@@ -642,7 +646,8 @@ pub(in crate::surface) fn collect_click_function_calls(
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
         }
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => {}
         ContractExpression::ResourceCount(resource) => {
@@ -1144,7 +1149,8 @@ fn validate_recursive_calls_in_expression(
             recurse(left, lower_bounds, structural_subterms)?;
             recurse(right, lower_bounds, structural_subterms)
         }
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => Ok(()),
         ContractExpression::ResourceCount(resource) => {

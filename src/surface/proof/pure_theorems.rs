@@ -3104,7 +3104,8 @@ pub(super) fn click_function_applications(
                 }
                 _ => {}
             },
-            ContractExpression::CFragment(_)
+            ContractExpression::QualifiedC { .. }
+            | ContractExpression::CFragment(_)
             | ContractExpression::CBinding(_)
             | ContractExpression::ResourceWildcard => {}
         }

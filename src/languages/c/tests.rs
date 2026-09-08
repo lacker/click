@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn c0_wide_static_initializers_use_checked_wide_values() {
+    use crate::kernel::{Bitvector32Term, CValue};
+    let unit = syntax::parse_translation_unit_for_source(
+        r#"
+        static long low = -9223372036854775807L - 1;
+        static unsigned long high = 18446744073709551615UL;
+        static unsigned long zero;
+        static long promoted = 4294967295U;
+    "#,
+        "wide.c",
+    )
+    .unwrap();
+    for (name, expected) in [
+        (
+            "low",
+            CValue::Int64(Bitvector32Term::Int64Constant(i64::MIN)),
+        ),
+        (
+            "high",
+            CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+        ),
+        ("zero", CValue::UInt64(Bitvector32Term::UInt64Constant(0))),
+        (
+            "promoted",
+            CValue::Int64(Bitvector32Term::Int64Constant(i64::from(u32::MAX))),
+        ),
+    ] {
+        let global = unit.globals[name].to_kernel_global().unwrap();
+        assert_eq!(global.initial_value(), &expected, "{name}");
+    }
+    for source in [
+        "static long bad = 9223372036854775808UL;",
+        "static long bad = 9223372036854775807L + 1;",
+    ] {
+        assert!(syntax::parse_translation_unit_for_source(source, "bad.c").is_err());
+    }
+}
+
+#[test]
 fn c0_plain_char_retains_source_types_and_unsigned_byte_lowering() {
     use syntax::C0Type;
     let functions = syntax::parse_functions(

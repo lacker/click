@@ -1846,7 +1846,11 @@ impl AnnotationLowerer<'_> {
                     arms: lowered_arms,
                 })
             }
-            ContractExpression::CFragment(expression)
+            ContractExpression::QualifiedC {
+                lowered: expression,
+                ..
+            }
+            | ContractExpression::CFragment(expression)
             | ContractExpression::Field {
                 lowered: expression,
                 ..
@@ -3214,7 +3218,8 @@ impl AnnotationLowerer<'_> {
                 .unwrap_or_else(|| {
                     self.array_ref_element_type_for_name_in_environment(name, environment)
                 }),
-            ContractExpression::Field { lowered, .. } => self
+            ContractExpression::QualifiedC { lowered, .. }
+            | ContractExpression::Field { lowered, .. } => self
                 .c_expression_array_element_type(lowered, environment)
                 .unwrap_or(CType::Int32),
             ContractExpression::At { expression, .. } => {
@@ -3258,7 +3263,11 @@ impl AnnotationLowerer<'_> {
                         _ => None,
                     })
                 }),
-            ContractExpression::CFragment(expression)
+            ContractExpression::QualifiedC {
+                lowered: expression,
+                ..
+            }
+            | ContractExpression::CFragment(expression)
             | ContractExpression::Field {
                 lowered: expression,
                 ..

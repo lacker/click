@@ -1378,7 +1378,8 @@ fn validate_algebraic_expression(
                 ClickType::C(_) => None,
             }))
         }
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
         | ContractExpression::Binding(_)
         | ContractExpression::CBinding(_)
@@ -1447,7 +1448,7 @@ fn infer_generic_expression_type(
         | ContractExpression::CFragment(CExpression::Variable(name)) => {
             Ok(variables.get(name).cloned())
         }
-        ContractExpression::CFragment(_) => {
+        ContractExpression::QualifiedC { .. } | ContractExpression::CFragment(_) => {
             let c_variables = variables
                 .iter()
                 .filter_map(|(name, click_type)| {

@@ -5729,7 +5729,7 @@ pub(super) fn contract_expression_mentions_c_local(
         ContractExpression::CFragment(CExpression::Variable(name)) => {
             !parameter_names.contains(name.as_str())
         }
-        ContractExpression::CFragment(_) => false,
+        ContractExpression::QualifiedC { .. } | ContractExpression::CFragment(_) => false,
         ContractExpression::Field { base, .. }
         | ContractExpression::Old(base)
         | ContractExpression::At {

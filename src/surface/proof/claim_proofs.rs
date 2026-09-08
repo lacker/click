@@ -3944,6 +3944,29 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 &surface_goals,
                                             )?
                                         };
+                                        // Keep the checked authority for the original claims,
+                                        // but close the rewritten goals in the expanded proof.
+                                        // Reflexive residuals need normalization, not assumption.
+                                        if proof_context.constants.grouped_contract
+                                            && !direct_claims.is_empty()
+                                            && direct_claims.iter().all(|(index, _, _)| {
+                                                rewritten_claim_proofs[*index]
+                                                    .as_ref()
+                                                    .is_some_and(|(proof, _)| {
+                                                        proof.apply_step(ProofStep::Normalize).is_ok()
+                                                    })
+                                            })
+                                        {
+                                            let mut tactics = direct_proof
+                                                .certificate_since(&direct_base)?
+                                                .to_proof_tactics();
+                                            tactics.push(ProofTactic::Normalize);
+                                            let certificate = ProofCertificate::from_proof_tactics(&tactics)
+                                                .map_err(|error| ClickError::new(format!(
+                                                    "checked normalization closure is not simple: {error:?}"
+                                                )))?;
+                                            return Ok(Some((certificate, completed.1)));
+                                        }
                                         Ok(Some(completed))
                                                     };
                                                 let outcome = attempt();

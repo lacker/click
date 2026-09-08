@@ -883,13 +883,19 @@ fn kernel_integer_literal_value(
                 crate::kernel::int64(crate::kernel::Bitvector32Term::Int64Constant(*value))
             }
             C0Expression::Int32Literal(value) => {
-                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(*value))
+                crate::kernel::int64(crate::kernel::Bitvector32Term::int64_from_32(
+                    crate::kernel::Bitvector32Term::Constant(*value),
+                ))
             }
             C0Expression::UInt8Literal(value) => {
-                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(u32::from(*value)))
+                crate::kernel::int64(crate::kernel::Bitvector32Term::int64_from_uint32(
+                    crate::kernel::Bitvector32Term::Constant(u32::from(*value)),
+                ))
             }
             C0Expression::UInt32Literal(value) => {
-                crate::kernel::int64(crate::kernel::Bitvector32Term::Constant(*value))
+                crate::kernel::int64(crate::kernel::Bitvector32Term::int64_from_uint32(
+                    crate::kernel::Bitvector32Term::Constant(*value),
+                ))
             }
             _ => return None,
         },
@@ -901,13 +907,19 @@ fn kernel_integer_literal_value(
                 crate::kernel::Bitvector32Term::UInt64Constant(*value as u64),
             ),
             C0Expression::Int32Literal(value) => {
-                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(*value))
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::uint64_from_int32(
+                    crate::kernel::Bitvector32Term::Constant(*value),
+                ))
             }
             C0Expression::UInt8Literal(value) => {
-                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(u32::from(*value)))
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::uint64_from_32(
+                    crate::kernel::Bitvector32Term::Constant(u32::from(*value)),
+                ))
             }
             C0Expression::UInt32Literal(value) => {
-                crate::kernel::uint64(crate::kernel::Bitvector32Term::Constant(*value))
+                crate::kernel::uint64(crate::kernel::Bitvector32Term::uint64_from_32(
+                    crate::kernel::Bitvector32Term::Constant(*value),
+                ))
             }
             _ => return None,
         },
@@ -2813,6 +2825,8 @@ impl C0Type {
                 | Self::UInt8
                 | Self::UInt16
                 | Self::UInt32
+                | Self::Int64
+                | Self::UInt64
                 | Self::Float32
                 | Self::Float64
                 | Self::Int16Pointer
@@ -2876,7 +2890,7 @@ impl C0Type {
         }
     }
 
-    fn pointer_type(self) -> Option<Self> {
+    pub(crate) fn pointer_type(self) -> Option<Self> {
         Some(match self {
             Self::Int16 => Self::Int16Pointer,
             Self::Int32 => Self::Int32Pointer,
@@ -3516,6 +3530,8 @@ fn is_static_integer_type(c_type: C0Type) -> bool {
             | C0Type::UInt8
             | C0Type::UInt16
             | C0Type::UInt32
+            | C0Type::Int64
+            | C0Type::UInt64
     )
 }
 
@@ -3977,6 +3993,8 @@ fn static_integer_literal_for_type(
         C0Type::UInt8 => (0, i128::from(u8::MAX)),
         C0Type::UInt16 => (0, i128::from(u16::MAX)),
         C0Type::UInt32 => (0, i128::from(u32::MAX)),
+        C0Type::Int64 => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        C0Type::UInt64 => (0, i128::from(u64::MAX)),
         _ => return Err(StaticIntegerEvaluationError::NotConstant),
     };
     let value = match value {
@@ -3993,7 +4011,11 @@ fn static_integer_literal_for_type(
         }
         return Err(StaticIntegerEvaluationError::OutOfRange);
     }
-    if matches!(c_type, C0Type::Int16 | C0Type::Int32) {
+    if c_type == C0Type::Int64 {
+        Ok(C0Expression::Int64Literal(value as i64))
+    } else if c_type == C0Type::UInt64 {
+        Ok(C0Expression::UInt64Literal(value as u64))
+    } else if matches!(c_type, C0Type::Int16 | C0Type::Int32) {
         Ok(C0Expression::Int32Literal((value as i32) as u32))
     } else {
         Ok(C0Expression::UInt32Literal(value as u32))

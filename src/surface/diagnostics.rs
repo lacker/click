@@ -1151,6 +1151,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::SequenceConcat(left, right) => {
             describe_binary_contract_expression(left, "++", right)
         }
+        ContractExpression::QualifiedC { name, .. } => name.clone(),
         ContractExpression::CFragment(expression) => describe_c_expression(expression),
         ContractExpression::Field { base, field, .. } => {
             format!("{}->{field}", describe_contract_expression(base))

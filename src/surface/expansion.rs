@@ -1601,6 +1601,7 @@ fn parse_source_with_c_layouts(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     ) = parse_c_layouts(click_source, &sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -1609,6 +1610,7 @@ fn parse_source_with_c_layouts(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     )
 }
 

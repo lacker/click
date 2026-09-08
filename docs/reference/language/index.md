@@ -990,6 +990,47 @@ See [Surface Click and Kernel Click](../../concepts/surface-and-kernel.md).
 
 ## `c(...)`
 
+### File-qualified C objects
+
+A `verifying` declaration may introduce a file alias:
+
+<!-- verified-example: mdtests/qualified_static_resource.md -->
+```click
+verifying "left.c" as left;
+verifying "right.c" as right;
+
+resource both() {
+    owns &left::count[0..1];
+    owns &right::count[0..1];
+    fact right::count == 19u64;
+}
+```
+
+Declare the alias before using it. `counter::count` refers to the file-scope
+C object declared in `counter.c`, including a private `static` object. The
+alias is only a naming mechanism: it neither creates a module nor grants
+ownership. One resource can own objects from several files. Ordinary calls
+still need their declared resources, supplied initially by the program-entry
+proof or transferred by a caller.
+
+Use the existing memory syntax: `&counter::count[0..1]` owns the storage of a
+scalar, `cache::entries[0..16]` owns array elements, and
+`counter::state.value` names a struct field resource. Owning a pointer variable
+is different from owning the memory to which its value points. Resource facts
+describe any contents that the resource's abstraction promises to clients.
+
+Qualified objects also work in expressions, including `old(counter::count)`
+and `counter::state.value`. Private objects with identical names in different
+files remain distinct; qualifications of the same external object retain its
+shared identity. This does not make private names visible in another C file.
+
+This slice supports file-scope scalars, scalar arrays, and struct objects.
+It does not qualify functions, function-local statics, or arrays of structs.
+Aliases must be unique and cannot share a name with a specification datatype.
+Existing unqualified references and `verifying "file.c";` remain unchanged.
+
+### Explicit C binding references
+
 `c(name)` explicitly refers to the binding named `name` in the verified C
 program. It is distinct from Click built-ins and contract bindings with the
 same spelling. In particular, bare `result` is the function's contract result,

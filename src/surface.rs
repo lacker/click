@@ -1026,7 +1026,11 @@ fn collect_current_contract_expression_variables(
             collect_current_contract_expression_variables(left, names);
             collect_current_contract_expression_variables(right, names);
         }
-        ContractExpression::CFragment(expression) => {
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression) => {
             collect_c_expression_variables(expression, names);
         }
         ContractExpression::Field { base, lowered, .. } => {
@@ -1450,6 +1454,12 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    /// A translation-unit-qualified C object. Retain its spelling for checked
+    /// proof expansion while lowering its stable storage identity, not a local.
+    QualifiedC {
+        name: String,
+        lowered: CExpression,
+    },
     ResourceField(ResourceFieldAccess),
     /// A fully type-applied constructor of a specification-only algebraic
     /// datatype. The first slice permits C scalar and data-pointer fields.

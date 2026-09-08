@@ -1485,7 +1485,11 @@ fn collect_resource_fact_reads_from_contract_expression(
                 resource_name,
             )
         }
-        ContractExpression::CFragment(expression)
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression)
         | ContractExpression::Field {
             lowered: expression,
             ..

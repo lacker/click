@@ -615,7 +615,8 @@ fn collect_contract_expression_binding_names(
             collect_contract_expression_binding_names(left, names);
             collect_contract_expression_binding_names(right, names);
         }
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => {}
         ContractExpression::Field { base, .. }
@@ -1146,7 +1147,8 @@ fn rewrite_contract_expression_exact(
                 changed,
             )
         }
-        ContractExpression::CFragment(_)
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
         | ContractExpression::Field { .. }
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => (expression.clone(), false),
@@ -1809,7 +1811,11 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
             collect_contract_expression_referenced_names(left, names);
             collect_contract_expression_referenced_names(right, names);
         }
-        ContractExpression::CFragment(expression) => {
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
         ContractExpression::Field { base, .. } => {
@@ -2028,7 +2034,9 @@ pub(in crate::surface) fn substitute_contract_expression(
             Box::new(substitute_contract_expression(left, substitutions)?),
             Box::new(substitute_contract_expression(right, substitutions)?),
         )),
-        ContractExpression::CBinding(_) => Ok(expression.clone()),
+        ContractExpression::QualifiedC { .. } | ContractExpression::CBinding(_) => {
+            Ok(expression.clone())
+        }
         ContractExpression::ResourceWildcard => Ok(expression.clone()),
         ContractExpression::ResourceCount(resource) => {
             let ResourceClause::Declared {
@@ -2406,7 +2414,11 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
-        ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             Some(CExpression::Variable(name.clone()))
@@ -2492,7 +2504,11 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => None,
-        ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             Some(CExpression::Variable(name.clone()))

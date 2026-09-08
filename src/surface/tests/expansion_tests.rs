@@ -12440,6 +12440,178 @@ fn source_expander_is_idempotent() {
 }
 
 #[test]
+fn qualified_static_ownership_verifies_and_expands() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/qualified_static_ownership.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &sources).unwrap();
+    for name in ["reset", "read_cache", "main"] {
+        let expanded =
+            expand_c0_claim_source(source, &sources, name, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
+    }
+    let wrong = source.replace("result == 12", "result == 7");
+    assert!(verify_c0_sources(&wrong, &sources).is_err());
+}
+
+#[test]
+fn qualified_static_ownership_rejects_missing_and_wrong_resources() {
+    let sources = [
+        (
+            "left.c",
+            "static int count = 7; void write_zero(int *p) { *p = 0; } void clear(void) { write_zero(&count); }",
+        ),
+        ("right.c", "static int count = 19;"),
+        (
+            "main.c",
+            "void clear(void); int main(void) { clear(); return 0; }",
+        ),
+    ];
+    let source = r#"
+verifying "left.c" as left;
+verifying "right.c" as right;
+verifying "main.c";
+void write_zero(int *p) {
+    requires loadable(p[0..1]);
+    owns p[0..1];
+    ensures p[0] == 0;
+} by { execute(); simp(); }
+void clear() {
+    owns &left::count[0..1];
+    ensures left::count == 0;
+} by { execute(); simp(); }
+int main() { ensures result == 0; } by { execute(); simp(); }
+"#;
+    verify_c0_sources(source, &sources).unwrap();
+    for invalid in [
+        source.replace("owns &left::count[0..1];", ""),
+        source.replace("owns &left::count", "owns &right::count"),
+        source.replace("owns &left::count", "owns &missing::count"),
+        source.replace("owns &left::count", "owns &left::missing"),
+        source.replace("as right", "as left"),
+        source.replace("owns &left::count[0..1];", "owns &left::count[0..2];"),
+    ] {
+        assert!(
+            verify_c0_sources(&invalid, &sources).is_err(),
+            "accepted {invalid}"
+        );
+    }
+}
+
+#[test]
+fn qualified_static_direct_assignment_matches_existing_implicit_global_access() {
+    let sources = [(
+        "left.c",
+        "static int count = 7; void clear(void) { count = 0; }",
+    )];
+    let unqualified = r#"verifying "left.c";
+void clear() { ensures count == 0; } by { execute(); simp(); }"#;
+    verify_c0_sources(unqualified, &sources)
+        .expect("existing direct global access needs no explicit resource contract");
+    let qualified = unqualified
+        .replace("\"left.c\";", "\"left.c\" as left;")
+        .replace("ensures count", "ensures left::count");
+    verify_c0_sources(&qualified, &sources)
+        .expect("qualification must not change the existing direct-access policy");
+}
+
+#[test]
+fn qualified_static_helper_requires_transferred_ownership() {
+    let sources = [(
+        "counter.c",
+        "static int count = 7; void write_zero(int *p) { *p = 0; } void clear(void) { write_zero(&count); }",
+    )];
+    let source = r#"verifying "counter.c" as counter;
+void write_zero(int *p) {
+    requires loadable(p[0..1]);
+    owns p[0..1];
+    ensures p[0] == 0;
+} by { execute(); simp(); }
+void clear() {
+    owns &counter::count[0..1];
+    ensures counter::count == 0;
+} by { execute(); simp(); }"#;
+    verify_c0_sources(source, &sources).unwrap();
+    let missing = source.replace("owns &counter::count[0..1];", "");
+    assert!(
+        verify_c0_sources(&missing, &sources).is_err(),
+        "a helper call cannot manufacture ownership"
+    );
+}
+
+#[test]
+fn qualified_static_struct_startup_and_expansion() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/qualified_static_struct.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let file = super::super::verification::parse_c0_click_file(source, &sources).unwrap();
+    let map = sources.iter().copied().collect();
+    let parsed = super::super::verification::parse_verified_sources(&file, &map).unwrap();
+    let state = parsed["main"].1.program_entry_state.as_ref().unwrap();
+    assert_eq!(
+        state
+            .memory()
+            .load(&CMemory::global_pointer("state#file-static:counter.c")),
+        CExpressionOutcome::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(7)))
+    );
+    verify_c0_sources(source, &sources).unwrap();
+    for name in ["read_value", "current", "main"] {
+        let expanded =
+            expand_c0_claim_source(source, &sources, name, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
+    }
+}
+
+#[test]
+fn grouped_residual_normalization_expansion_checks_original_claims() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/qualified_static_struct.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let repeated_rewrite = source.replace(
+        "rewrite(result == old(counter::state.value));",
+        "rewrite(result == old(counter::state.value));\n    rewrite(old(counter::state.value) == 7u64);",
+    );
+    assert_ne!(repeated_rewrite, source);
+    for source in [source, repeated_rewrite.as_str()] {
+        verify_c0_sources(source, &sources).unwrap();
+        let expanded =
+            expand_c0_claim_source(source, &sources, "current", CProofClaim::Grouped).unwrap();
+        assert!(expanded.contains("    normalize();\n    assumption();"));
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
+        for proof in [source, expanded.as_str()] {
+            assert!(
+                verify_c0_sources(
+                    &proof.replace("ensures result == 7u64;", "ensures result == 8u64;"),
+                    &sources
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
 fn source_expander_replaces_and_checks_default_ensure_proof() {
     let c_source = r#"
             int32 identity(int32 x) {

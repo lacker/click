@@ -4,6 +4,13 @@ use tokenizer::tokenize;
 
 use super::*;
 
+#[derive(Clone, Debug)]
+pub(super) struct QualifiedCObject {
+    pub expression: CExpression,
+    pub struct_name: Option<String>,
+    pub array_shape: Option<Vec<u32>>,
+}
+
 /// Click's recursive-descent proposition and contract-expression parsers use
 /// the native stack once per syntactically nested parenthesis. Keep the
 /// supported surface depth explicit and reject deeper input before recursive
@@ -22,16 +29,18 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+    qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
 ) -> Result<ClickFile, ClickError> {
-    Parser::new_with_layouts_and_aggregate_objects(
+    let mut parser = Parser::new_with_layouts_and_aggregate_objects(
         source,
         struct_layouts,
         union_layouts,
         aggregate_objects_by_function,
         aggregate_array_objects_by_function,
         global_array_shapes_by_function,
-    )?
-    .parse_file()
+    )?;
+    parser.qualified_objects = Some(qualified_objects);
+    parser.parse_file()
 }
 
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
@@ -155,6 +164,8 @@ impl Token {
 }
 
 struct Parser {
+    source_aliases: BTreeMap<String, String>,
+    qualified_objects: Option<BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
     match_nesting: usize,
@@ -349,6 +360,8 @@ impl Parser {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
+            source_aliases: BTreeMap::new(),
+            qualified_objects: None,
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
             tokens,
@@ -416,6 +429,14 @@ impl Parser {
             }
         }
 
+        for definition in &algebraic_type_definitions {
+            if self.source_aliases.contains_key(&definition.name) {
+                return Err(self.error(format!(
+                    "C source alias `{}` conflicts with a specification datatype",
+                    definition.name
+                )));
+            }
+        }
         let file = ClickFile {
             verifying_sources,
             algebraic_type_definitions,
@@ -573,8 +594,73 @@ impl Parser {
     fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
         self.expect_ident_spelling("verifying")?;
         let source_path = self.expect_string("C source path")?;
+        if self.peek_ident() == Some("as") {
+            self.position += 1;
+            let alias = self.expect_ident("C source alias")?;
+            if self
+                .source_aliases
+                .insert(alias.clone(), source_path.clone())
+                .is_some()
+            {
+                return Err(self.error(format!("duplicate C source alias `{alias}`")));
+            }
+        }
         self.expect(Token::Semicolon)?;
         Ok(source_path)
+    }
+
+    fn is_qualified_c_name(&self) -> bool {
+        self.peek_next() == Some(&Token::ColonColon)
+            && self
+                .peek_ident()
+                .is_some_and(|name| self.source_aliases.contains_key(name))
+    }
+
+    fn parse_qualified_c_name(&mut self) -> Result<(String, CExpression), ClickError> {
+        let alias = self.expect_ident("C source alias")?;
+        self.expect(Token::ColonColon)?;
+        let name = self.expect_ident("C declaration name")?;
+        let qualified = format!("{alias}::{name}");
+        let source = self
+            .source_aliases
+            .get(&alias)
+            .ok_or_else(|| self.error(format!("unknown C source alias `{alias}`")))?;
+        let expression = match &self.qualified_objects {
+            None => CExpression::Variable(qualified.clone()),
+            Some(objects) => objects
+                .get(source)
+                .and_then(|objects| objects.get(&name))
+                .map(|object| object.expression.clone())
+                .ok_or_else(|| {
+                    self.error(format!(
+                        "no supported file-scope C object `{qualified}` in `{source}`"
+                    ))
+                })?,
+        };
+        Ok((qualified, expression))
+    }
+
+    fn qualified_object(&self, name: &str) -> Option<&QualifiedCObject> {
+        let (alias, name) = name.split_once("::")?;
+        self.qualified_objects
+            .as_ref()?
+            .get(self.source_aliases.get(alias)?)?
+            .get(name)
+    }
+
+    fn parse_segment_primary(&mut self) -> Result<(ContractExpression, CExpression), ClickError> {
+        if self.peek_next() == Some(&Token::ColonColon) {
+            let (name, expression) = self.parse_qualified_c_name()?;
+            return Ok((
+                ContractExpression::CFragment(CExpression::Variable(name)),
+                expression,
+            ));
+        }
+        let expression = self.parse_ensure_primary()?.to_kernel_expression();
+        Ok((
+            ContractExpression::CFragment(expression.clone()),
+            expression,
+        ))
     }
 
     fn parse_predicate_definition(&mut self) -> Result<PredicateDefinition, ClickError> {
@@ -3582,9 +3668,15 @@ impl Parser {
         }
         let (mut surface_base, mut base) = if self.peek() == Some(&Token::Amp) {
             self.position += 1;
-            let expression = self.parse_ensure_primary()?;
-            let base = CExpression::AddressOf(Box::new(expression.to_kernel_expression()));
-            (ContractExpression::CFragment(base.clone()), base)
+            let (surface, expression) = self.parse_segment_primary()?;
+            let base = match expression {
+                CExpression::TypedLoad { pointer, .. } => *pointer,
+                expression => CExpression::AddressOf(Box::new(expression)),
+            };
+            let surface = CExpression::AddressOf(Box::new(
+                contract_expression_as_c_fragment(&surface).expect("C segment base"),
+            ));
+            (ContractExpression::CFragment(surface), base)
         } else if matches!(
             self.peek_ident(),
             Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
@@ -3604,9 +3696,7 @@ impl Parser {
             })?;
             (expression, base)
         } else {
-            let expression = self.parse_ensure_primary()?;
-            let base = expression.to_kernel_expression();
-            (ContractExpression::CFragment(base.clone()), base)
+            self.parse_segment_primary()?
         };
         let mut struct_name = match &surface_base {
             ContractExpression::Binding(name)
@@ -3614,6 +3704,10 @@ impl Parser {
                 .current_struct_params
                 .get(name)
                 .or_else(|| self.current_aggregate_objects.get(name))
+                .or_else(|| {
+                    self.qualified_object(name)
+                        .and_then(|object| object.struct_name.as_ref())
+                })
                 .cloned(),
             _ => None,
         };
@@ -3633,9 +3727,14 @@ impl Parser {
         let mut struct_array_shape: Option<Vec<u32>> = None;
         let mut scalar_array_shape = match &surface_base {
             ContractExpression::Binding(name)
-            | ContractExpression::CFragment(CExpression::Variable(name)) => {
-                self.current_global_array_shapes.get(name).cloned()
-            }
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_global_array_shapes
+                .get(name)
+                .cloned()
+                .or_else(|| {
+                    self.qualified_object(name)
+                        .and_then(|object| object.array_shape.clone())
+                }),
             _ => None,
         };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
@@ -4561,6 +4660,9 @@ impl Parser {
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_primary()?;
         let mut struct_name = match &expression {
+            ContractExpression::QualifiedC { name, .. } => self
+                .qualified_object(name)
+                .and_then(|object| object.struct_name.clone()),
             ContractExpression::Binding(name)
             | ContractExpression::CFragment(CExpression::Variable(name)) => self
                 .current_struct_params
@@ -4586,6 +4688,9 @@ impl Parser {
         };
         let mut struct_array_shape: Option<Vec<u32>> = None;
         let mut scalar_array_shape = match &expression {
+            ContractExpression::QualifiedC { name, .. } => self
+                .qualified_object(name)
+                .and_then(|object| object.array_shape.clone()),
             ContractExpression::Binding(name)
             | ContractExpression::CFragment(CExpression::Variable(name)) => {
                 self.current_global_array_shapes.get(name).cloned()
@@ -4894,6 +4999,10 @@ impl Parser {
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.is_qualified_c_name() {
+            let (name, lowered) = self.parse_qualified_c_name()?;
+            return Ok(ContractExpression::QualifiedC { name, lowered });
+        }
         if self.peek_ident() == Some("match") {
             if self.match_nesting >= MATCH_NESTING_LIMIT {
                 return Err(self.error(format!(

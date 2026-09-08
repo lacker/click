@@ -87,6 +87,8 @@ impl CGlobal {
                     | CType::UInt8
                     | CType::UInt16
                     | CType::UInt32
+                    | CType::Int64
+                    | CType::UInt64
                     | CType::Float32
                     | CType::Float64
                     | CType::Int16Pointer

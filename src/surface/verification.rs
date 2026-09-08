@@ -201,6 +201,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     ) = parse_c_layouts(click_source, &sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -209,6 +210,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     )?;
     let parsed_sources = parse_verified_sources(&file, &sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
@@ -291,6 +293,7 @@ pub(in crate::surface) fn parse_c0_click_file(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     ) = parse_c_layouts(click_source, &sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -299,6 +302,7 @@ pub(in crate::surface) fn parse_c0_click_file(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     )
 }
 
@@ -696,6 +700,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             aggregate_objects,
             aggregate_array_objects,
             global_array_shapes,
+            qualified_objects,
         ) = parse_c_layouts(click_source, &c_sources)?;
         let file = parser::parse_with_layouts_and_aggregate_objects(
             click_source,
@@ -704,6 +709,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             aggregate_objects,
             aggregate_array_objects,
             global_array_shapes,
+            qualified_objects,
         )?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
         let expansion_functions = expansion_capture
@@ -1622,6 +1628,7 @@ pub fn c0_external_dependencies(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     ) = parse_c_layouts(click_source, &sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -1630,6 +1637,7 @@ pub fn c0_external_dependencies(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     )?;
     let parsed_sources = parse_verified_sources(&file, &sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
@@ -2188,6 +2196,7 @@ pub(in crate::surface) fn parse_c_layouts(
         BTreeMap<String, BTreeMap<String, String>>,
         BTreeMap<String, BTreeSet<String>>,
         BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+        BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
     ),
     ClickError,
 > {
@@ -2196,8 +2205,66 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut aggregate_objects = BTreeMap::new();
     let mut aggregate_array_objects = BTreeMap::new();
     let mut global_array_shapes = BTreeMap::new();
+    let mut qualified_objects = BTreeMap::new();
     for source_path in super::verifying_source_paths(click_source)? {
         let unit = parse_c_source_unit(&source_path, c_sources)?;
+        let mut objects = BTreeMap::new();
+        for (name, global) in &unit.globals {
+            if let Some(pointer_type) = global.c_type().pointer_type() {
+                let pointer = CExpression::Value(
+                    CValue::typed_pointer_with_pointee_constant(
+                        CMemory::global_pointer(global.kernel_name()),
+                        pointer_type.to_kernel_type(),
+                        global.is_constant(),
+                    )
+                    .with_pointer_pointee_volatile(global.is_volatile()),
+                );
+                objects.insert(
+                    name.clone(),
+                    parser::QualifiedCObject {
+                        expression: CExpression::TypedLoad {
+                            pointer: Box::new(pointer),
+                            value_type: global.c_type().to_kernel_type(),
+                        },
+                        struct_name: global.struct_name().map(str::to_owned),
+                        array_shape: None,
+                    },
+                );
+            }
+        }
+        for (name, array) in &unit.global_arrays {
+            if let Some(pointer_type) = array.element_type().pointer_type() {
+                objects.insert(
+                    name.clone(),
+                    parser::QualifiedCObject {
+                        expression: CExpression::Value(
+                            CValue::typed_pointer_with_pointee_constant(
+                                CMemory::global_pointer(array.kernel_name()),
+                                pointer_type.to_kernel_type(),
+                                array.is_constant(),
+                            ),
+                        ),
+                        struct_name: None,
+                        array_shape: array.index_shape(),
+                    },
+                );
+            }
+        }
+        for (name, aggregate) in &unit.global_aggregates {
+            objects.insert(
+                name.clone(),
+                parser::QualifiedCObject {
+                    expression: CExpression::Value(CValue::typed_pointer_with_pointee_constant(
+                        CMemory::global_pointer(aggregate.kernel_name()),
+                        CType::Int32Pointer,
+                        aggregate.is_constant(),
+                    )),
+                    struct_name: Some(aggregate.struct_name().to_owned()),
+                    array_shape: None,
+                },
+            );
+        }
+        qualified_objects.insert(source_path.clone(), objects);
         for (name, layout) in &unit.structs {
             if let Some(previous) = layouts.insert(name.clone(), layout.clone())
                 && previous != *layout
@@ -2270,6 +2337,7 @@ pub(in crate::surface) fn parse_c_layouts(
         aggregate_objects,
         aggregate_array_objects,
         global_array_shapes,
+        qualified_objects,
     ))
 }
 

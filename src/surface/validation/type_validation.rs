@@ -853,7 +853,11 @@ pub(super) fn infer_contract_expression_type(
                 "sequence values are only valid as operands of `==` or `!=` in {context}"
             )))
         }
-        ContractExpression::CFragment(expression)
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression)
         | ContractExpression::Field {
             lowered: expression,
             ..
@@ -1641,7 +1645,9 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
-        ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_) => Ok(()),
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => {
                 for argument in arguments {

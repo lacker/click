@@ -39,6 +39,14 @@ those helpers. The integer-narrowing prerequisite is separate from this gap.
 
 ## Acceptance criteria
 
+File aliases now provide a naming mechanism: `verifying "library.c" as library;`
+allows a resource body to own `library::state.value`. Resources can contain
+objects from multiple translation units without making private C names visible
+to another C file. The qualified-static mdtests cover scalar/array storage,
+cross-file resource ownership, and a private struct passed to a read helper.
+The original incrementing wrapper and unchanged PCG seed/draw client below
+remain follow-up acceptance work, not evidence supplied by the read-helper test.
+
 The startup policy is now chosen: a distinguished, parameterless `main`
 proof starts with the program's initialized static ownership and is not
 published as a reusable call contract. This is not a module abstraction.

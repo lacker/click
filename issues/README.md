@@ -76,7 +76,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (16)
+## P2: after launch (17)
 
 - [Split nested explicit post-call proof cases](nested-post-call-proof-cases.md)
 
@@ -89,6 +89,7 @@ C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
+- [Lower calls in short-circuit right operands](short-circuit-operand-calls.md)
 - [Convert representable symbolic wide results to int](symbolic-wide-return-to-int.md)
 - [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model forward and backward goto edges](goto.md)

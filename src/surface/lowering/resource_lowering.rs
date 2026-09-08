@@ -1013,7 +1013,11 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => Err(
             ClickError::new("declared resource arguments do not yet accept sequence values"),
         ),
-        ContractExpression::CFragment(expression) => Ok(expression.clone()),
+        ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::CFragment(expression) => Ok(expression.clone()),
         ContractExpression::Field { lowered, .. } => Ok(lowered.clone()),
         ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             Ok(CExpression::Variable(name.clone()))
