@@ -538,6 +538,12 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         Some(super::CheckedProposition::new(
             goal.proposition().clone(),
             goal.outcome.as_deref().map(|outcome| outcome.core.clone()),
+            self.state
+                .open_branches
+                .root_branch()
+                .state
+                .facts
+                .is_empty(),
         ))
     }
 
@@ -1671,6 +1677,35 @@ mod tests {
     use super::*;
     use crate::kernel::proof::PropositionObligation;
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
+
+    #[test]
+    fn completed_proposition_retains_whether_it_relied_on_root_assumptions() {
+        let truth = Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true);
+        for assumed in [false, true] {
+            let branch = ProofBranch::new(
+                ProofObligation::Proposition(PropositionObligation::new(truth.clone(), ())),
+                ProofBranchState {
+                    facts: ProofFacts::from_ordered(if assumed {
+                        std::slice::from_ref(&truth)
+                    } else {
+                        &[]
+                    }),
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: None,
+                },
+            );
+            let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
+                ProofObject::root((), branch);
+            let checked = proof
+                .apply_normalize()
+                .ok()
+                .unwrap()
+                .completed_proposition()
+                .unwrap();
+            assert_eq!(checked.is_closed(), !assumed);
+            assert_eq!(checked.proposition(), &truth);
+        }
+    }
 
     #[test]
     fn intro_freshens_a_universal_binder_away_from_ambient_facts() {

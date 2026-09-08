@@ -1059,7 +1059,29 @@ impl<'a> Proof<'a> {
                     }
                 }
                 let mut available_surfaces = introduced_surfaces.to_vec();
+                available_surfaces.push(surface_antecedent.as_ref().clone());
                 available_surfaces.extend(conjuncts.iter().cloned());
+                // Introducing this guard can make a previously introduced
+                // conditional premise usable. Select its written consequent
+                // and let the ordinary checked `extract` rule discharge the
+                // guard; do not branch over possible guard values.
+                for premise in available_surfaces.clone() {
+                    let mut current = &premise;
+                    while let ClickProposition::Implies(_, consequent) = current {
+                        let Some(extracted) = attempt::candidate_outcome(
+                            introduced.apply_step(ProofStep::Extract(consequent.as_ref().clone())),
+                        )?
+                        else {
+                            break;
+                        };
+                        introduced = extracted;
+                        available_surfaces.push(consequent.as_ref().clone());
+                        if introduced.is_complete() {
+                            return Ok(Some(introduced));
+                        }
+                        current = consequent;
+                    }
+                }
                 if !conjuncts.is_empty()
                     && let Some(surface_goal) = introduced.surface_goal()
                     && let Some(source) = old_reflexive_transport_source(surface_goal)

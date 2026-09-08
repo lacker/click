@@ -11,12 +11,34 @@ struct SurfaceSynthesisBudget {
 }
 
 thread_local! {
+    static SYNTHESIS_ENTRY_STATE: std::cell::RefCell<Option<CState>> = const { std::cell::RefCell::new(None) };
     static SURFACE_SYNTHESIS_BUDGET: std::cell::RefCell<Option<SurfaceSynthesisBudget>> =
         const { std::cell::RefCell::new(None) };
     static LAST_SURFACE_SYNTHESIS_EXHAUSTION: std::cell::Cell<Option<&'static str>> =
         const { std::cell::Cell::new(None) };
     static SURFACE_SYNTHESIS_BITVECTOR_NESTING: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
+}
+
+struct SynthesisEntryScope(Option<CState>);
+impl Drop for SynthesisEntryScope {
+    fn drop(&mut self) {
+        SYNTHESIS_ENTRY_STATE.with(|slot| {
+            slot.replace(self.0.take());
+        });
+    }
+}
+
+pub(in crate::surface) fn synthesize_surface_proposition_at_entry_and_post(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    entry: &CState,
+    post: &CState,
+) -> Option<ClickProposition> {
+    let _entry =
+        SynthesisEntryScope(SYNTHESIS_ENTRY_STATE.with(|slot| slot.replace(Some(entry.clone()))));
+    synthesize_surface_proposition(proposition, parameters, arguments, post)
 }
 
 struct SurfaceSynthesisScope(Option<SurfaceSynthesisBudget>);
@@ -295,6 +317,45 @@ fn synthesize_surface_proposition_with_bound_variables(
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
     let _frame = SurfaceSynthesisFrame::enter("proposition")?;
+    if let Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) = proposition {
+        fn sequence(
+            value: &crate::kernel::SequenceTerm,
+            parameters: &[syntax::C0Parameter],
+            arguments: &[CExpression],
+            state: &CState,
+            bound: &BTreeMap<Variable, String>,
+        ) -> Option<ContractExpression> {
+            let _frame = SurfaceSynthesisFrame::enter("sequence")?;
+            Some(match value.node.as_ref() {
+                crate::kernel::SequenceTermNode::Literal(values) => {
+                    ContractExpression::SequenceLiteral(
+                        values
+                            .iter()
+                            .map(|value| {
+                                let CValue::Int32(value) = value else {
+                                    return None;
+                                };
+                                synthesize_surface_bitvector(
+                                    value, parameters, arguments, state, bound,
+                                )
+                            })
+                            .collect::<Option<Vec<_>>>()?,
+                    )
+                }
+                crate::kernel::SequenceTermNode::Concat(left, right) => {
+                    ContractExpression::SequenceConcat(
+                        Box::new(sequence(left, parameters, arguments, state, bound)?),
+                        Box::new(sequence(right, parameters, arguments, state, bound)?),
+                    )
+                }
+            })
+        }
+        return Some(ClickProposition::Comparison {
+            left: sequence(left, parameters, arguments, state, bound_variables)?,
+            operator: ComparisonOperator::Equal,
+            right: sequence(right, parameters, arguments, state, bound_variables)?,
+        });
+    }
     match proposition {
         Proposition::And(left, right) => {
             return Some(ClickProposition::And(
@@ -483,7 +544,12 @@ fn synthesize_surface_proposition_with_bound_variables(
             )?,
         });
     }
-    if let Proposition::CMemoryLoadable { base, bytes, .. } = proposition {
+    if let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = proposition
+    {
         let element_count = if let Some(byte_count) = bytes.as_const() {
             if !byte_count.is_multiple_of(4) {
                 return None;
@@ -517,7 +583,7 @@ fn synthesize_surface_proposition_with_bound_variables(
             bound_variables,
         )
         .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
-        return Some(ClickProposition::Loadable {
+        let loadable = ClickProposition::Loadable {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
                 base: semantic_base,
@@ -529,6 +595,22 @@ fn synthesize_surface_proposition_with_bound_variables(
                     end: ContractExpression::CFragment(element_count),
                 },
             },
+        };
+        let at_entry = SYNTHESIS_ENTRY_STATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|entry| entry.memory() == memory && state.memory() != entry.memory())
+        });
+        return Some(if at_entry {
+            ClickProposition::At {
+                selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                    region: CodeRegionRef::Function,
+                    kind: ProgramPointKind::Entry,
+                }),
+                proposition: Box::new(loadable),
+            }
+        } else {
+            loadable
         });
     }
     if let Proposition::Not(body) = proposition {
@@ -545,6 +627,19 @@ fn synthesize_surface_proposition_with_bound_variables(
     let Proposition::ConditionIs(condition, value) = proposition else {
         return None;
     };
+    if let ConditionTerm::Bitvector32SignedAddOverflows(left, right) = condition
+        && !value
+    {
+        return Some(ClickProposition::Defined {
+            expression: synthesize_surface_bitvector(
+                &Bitvector32Term::Add(left.clone(), right.clone()),
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
+        });
+    }
     if let ConditionTerm::Constant(condition) = condition {
         return Some(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Value(int32(0))),
@@ -1103,7 +1198,36 @@ fn synthesize_surface_bitvector(
                 target_type: CType::UInt64,
             }))
         }
-        Bitvector32Term::MemoryLoad(_, kernel_pointer) => {
+        Bitvector32Term::MemoryLoad(memory, kernel_pointer) => {
+            let old = SYNTHESIS_ENTRY_STATE.with(|slot| {
+                let slot = slot.borrow();
+                let entry = slot.as_ref()?;
+                if entry.memory() == state.memory() {
+                    return None;
+                }
+                let Bitvector32Term::Variable(variable) = crate::kernel::canonical_form_of_load(
+                    memory.clone(),
+                    kernel_pointer.as_ref().clone(),
+                ) else {
+                    return None;
+                };
+                let load = registered_load_in_state(&variable, entry)?;
+                if registered_load_in_state(&variable, state).is_some() {
+                    return None;
+                }
+                Some(ContractExpression::Old(Box::new(
+                    synthesize_surface_bitvector(
+                        &load,
+                        parameters,
+                        arguments,
+                        entry,
+                        bound_variables,
+                    )?,
+                )))
+            });
+            if old.is_some() {
+                return old;
+            }
             if let PointerBlock::Concrete(block) = &kernel_pointer.block
                 && let Some(name) = block.strip_prefix("local:")
                 && kernel_pointer.offset == PointerOffsetTerm::Constant(0)
@@ -1189,13 +1313,29 @@ fn synthesize_surface_bitvector(
                     name.to_string(),
                 )));
             }
-            synthesize_surface_bitvector(
-                &registered_load_in_state(variable, state)?,
-                parameters,
-                arguments,
-                state,
-                bound_variables,
-            )
+            if let Some(load) = registered_load_in_state(variable, state) {
+                return synthesize_surface_bitvector(
+                    &load,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
+                );
+            }
+            SYNTHESIS_ENTRY_STATE.with(|slot| {
+                let slot = slot.borrow();
+                let entry = slot.as_ref()?;
+                let load = registered_load_in_state(variable, entry)?;
+                Some(ContractExpression::Old(Box::new(
+                    synthesize_surface_bitvector(
+                        &load,
+                        parameters,
+                        arguments,
+                        entry,
+                        bound_variables,
+                    )?,
+                )))
+            })
         }
         Bitvector32Term::Int64Constant(value) => Some(ContractExpression::CFragment(
             CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(*value))),

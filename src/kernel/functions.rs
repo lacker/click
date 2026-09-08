@@ -1381,21 +1381,6 @@ pub(super) fn prepare_function_contract_refinement_context(
     })
 }
 
-pub(super) fn function_refines_named_contract_in_explicit_case(
-    context: &CFunctionContractRefinementContext,
-    case_assumptions: &[Proposition],
-    unfolded_predicates: &BTreeSet<String>,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<bool> {
-    function_refines_named_contract_in_case(
-        context,
-        case_assumptions,
-        unfolded_predicates,
-        true,
-        budget,
-    )
-}
-
 pub(super) fn function_contract_refinement_entry_state(
     context: &CFunctionContractRefinementContext,
 ) -> CState {
@@ -1404,6 +1389,153 @@ pub(super) fn function_contract_refinement_entry_state(
         context.contract.template(),
         &context.argument_values,
     )
+}
+
+pub(super) fn prepare_contract_refinement_obligations(
+    context: &CFunctionContractRefinementContext,
+) -> Option<CFunctionContractRefinementObligations> {
+    let target = context.contract.template();
+    let source = &context.function;
+    let mut budget = ExecutionBudget::default();
+    budget.next_kernel_variable = context.next_kernel_variable;
+    let entry = function_contract_refinement_entry_state(context);
+    let source_entry =
+        with_contract_argument_views(&CState::new(), source, &context.argument_values);
+    let mut assumptions = PureFactContext::new();
+    if !assume_contract_propositions(
+        &entry,
+        &entry,
+        target.contract_requires(),
+        &mut assumptions,
+        &mut budget,
+    )
+    .ok()?
+    {
+        return None;
+    }
+    // A single conservative post memory covers every possible source write.
+    // This does not enumerate guard combinations or assert that a guarded
+    // write happened. Resource/effect containment is checked independently.
+    let ranges =
+        evaluate_contract_mutable_ranges(source, &source_entry, &assumptions, &mut budget, false)
+            .ok()??;
+    let memory = entry.memory().clone().with_call_memory_havoc(
+        Variable(budget.next_kernel_variable),
+        &ranges,
+        &assumptions,
+    );
+    budget.next_kernel_variable += 1;
+    let result = symbolic_call_result(source.return_type(), context.result_variable);
+    let mut post = entry.clone().with_memory(memory.clone());
+    let mut source_post = source_entry.clone().with_memory(memory);
+    if source.return_type() != CType::Void {
+        set_function_result(&mut post, target, result.clone());
+        set_function_result(&mut source_post, source, result);
+    }
+    if !compatible_resource_and_effect_interfaces(
+        target,
+        source,
+        &entry,
+        &source_entry,
+        &post,
+        &source_post,
+        &assumptions,
+        &mut budget,
+    )
+    .ok()?
+    {
+        return None;
+    }
+    fn conjunction(items: Vec<Proposition>) -> Proposition {
+        items
+            .into_iter()
+            .reduce(|a, b| Proposition::And(Box::new(a), Box::new(b)))
+            .unwrap_or(Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            ))
+    }
+    fn lower(
+        function: &CFunction,
+        specs: &[SpecProposition],
+        state: &CState,
+        entry: &CState,
+        budget: &mut ExecutionBudget,
+    ) -> Option<Proposition> {
+        let definitions = function
+            .predicate_unfoldings()
+            .iter()
+            .map(|definition| (definition.body(), definition.predicate()))
+            .collect::<BTreeMap<_, _>>();
+        let mut propositions = Vec::new();
+        for spec in specs {
+            let spec = definitions.get(spec).copied().unwrap_or(spec);
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                spec,
+                Some(entry),
+                &PureFactContext::new(),
+                budget,
+            )
+            .ok()?;
+            let [path] = paths.as_slice() else {
+                return None;
+            };
+            // Lowering facts name reads and other definitional intermediates;
+            // they are not clauses of either callback contract. Both sides
+            // use the same kernel load identities in these fixed memories.
+            propositions.extend(
+                path.obligations
+                    .iter()
+                    .map(|obligation| obligation.proposition().clone()),
+            );
+            propositions.push(path.proposition.clone());
+        }
+        Some(conjunction(propositions))
+    }
+    let target_requires = lower(
+        target,
+        target.contract_requires(),
+        &entry,
+        &entry,
+        &mut budget,
+    )?;
+    let source_requires = lower(
+        source,
+        source.contract_requires(),
+        &source_entry,
+        &source_entry,
+        &mut budget,
+    )?;
+    let source_ensures = lower(
+        source,
+        source.contract_ensures(),
+        &source_post,
+        &source_entry,
+        &mut budget,
+    )?;
+    let target_ensures = lower(
+        target,
+        target.contract_ensures(),
+        &post,
+        &entry,
+        &mut budget,
+    )?;
+    let proposition = Proposition::Implies(
+        Box::new(target_requires),
+        Box::new(Proposition::And(
+            Box::new(source_requires),
+            Box::new(Proposition::Implies(
+                Box::new(source_ensures),
+                Box::new(target_ensures),
+            )),
+        )),
+    );
+    Some(CFunctionContractRefinementObligations {
+        entry,
+        post,
+        proposition,
+    })
 }
 
 fn function_refines_named_contract_in_case(
@@ -2255,7 +2387,8 @@ fn assume_contract_proposition(assumptions: &mut PureFactContext, proposition: P
             for (left, right) in
                 super::spec::sequence_elements(&left).zip(super::spec::sequence_elements(&right))
             {
-                if let Some(equality) = refinement_sequence_element_equality(left, right) {
+                if let Some(equality) = super::spec::integer_sequence_element_equality(left, right)
+                {
                     *assumptions = assumptions.clone().assume_proposition(equality);
                 }
             }
@@ -2333,7 +2466,8 @@ fn contract_refinement_proves(
             loop {
                 match (left.next(), right.next()) {
                     (Some(left), Some(right)) => {
-                        let Some(equality) = refinement_sequence_element_equality(left, right)
+                        let Some(equality) =
+                            super::spec::integer_sequence_element_equality(left, right)
                         else {
                             return false;
                         };
@@ -2406,27 +2540,6 @@ fn contract_refinement_proves(
                     *value,
                 ))
             })
-}
-
-// Sequence terms use logical equality. C integer equality agrees with it;
-// floating equality does not (NaNs and signed zero), and address equality
-// alone must not establish equality of pointer provenance.
-fn refinement_sequence_element_equality(left: &CValue, right: &CValue) -> Option<Proposition> {
-    if left.c_type() != right.c_type()
-        || !matches!(
-            left,
-            CValue::Int16(_)
-                | CValue::Int32(_)
-                | CValue::UInt8(_)
-                | CValue::UInt16(_)
-                | CValue::UInt32(_)
-                | CValue::Int64(_)
-                | CValue::UInt64(_)
-        )
-    {
-        return None;
-    }
-    c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
 }
 
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {

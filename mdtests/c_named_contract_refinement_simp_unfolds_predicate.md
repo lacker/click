@@ -1,7 +1,7 @@
-# Stateful predicate refinement must be explicitly unfolded
+# Ordinary simp records the predicate unfolding needed by refinement
 
-The predicate body is not an implicit refinement rule. Merely opening the
-named contract does not authorize the checker to use `IsZero`'s definition.
+Opening the contract does not itself unfold the predicate. Ordinary `simp`
+can select its checked unfolding, just as in other proposition proofs.
 
 ```c filename=predicate_refinement_requires_unfold.c
 void clear_cell(int32* cell) {
@@ -41,5 +41,5 @@ theorem clear_cell_is_sets_zero() {
 ```
 
 ```expect
-fail: contract-refinement proof does not establish `SetsZero(&clear_cell)`
+pass
 ```

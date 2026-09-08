@@ -2111,7 +2111,8 @@ theorem set_one_is_make_positive() {
     let theorem = &expanded[expanded
         .find("theorem set_one_is_make_positive")
         .expect("expanded source should retain the theorem")..];
-    assert_eq!(theorem.matches("normalize();").count(), 2, "{theorem}");
+    assert!(theorem.contains("intro();"), "{theorem}");
+    assert!(theorem.contains("extract("), "{theorem}");
     assert!(!theorem.contains("simp();"), "{theorem}");
     verify_c0_sources(&expanded, &sources)
         .expect("expanded contract-refinement theorem should re-verify with its C target");

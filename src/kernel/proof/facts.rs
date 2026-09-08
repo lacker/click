@@ -88,6 +88,9 @@ enum BitvectorEqualityAtomKey {
 }
 
 impl ProofFacts {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ordered.len() == 0
+    }
     pub(crate) fn predicate_unfolded_universal_facts(&self) -> impl Iterator<Item = &Proposition> {
         self.predicate_unfolded_universal_facts.iter()
     }

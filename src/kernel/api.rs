@@ -4567,16 +4567,29 @@ pub fn c_function_contract_refinement_entry_state(
     function_contract_refinement_entry_state(context)
 }
 
-/// Checks an explicit pure proof tree and issues reusable theorem authority.
-///
-/// The checker follows exactly the written `if` tree. It never discovers or
-/// enumerates footprint guards. Every leaf performs the ordinary local
-/// contract-refinement check under the branch assumptions accumulated on the
-/// route to that leaf.
-pub fn prove_c_function_contract_refinement(
+pub fn c_function_contract_refinement_obligations(
+    context: &CFunctionContractRefinementContext,
+) -> Option<CFunctionContractRefinementObligations> {
+    prepare_contract_refinement_obligations(context)
+}
+
+impl CFunctionContractRefinementObligations {
+    pub fn entry(&self) -> &CState {
+        &self.entry
+    }
+    pub fn post(&self) -> &CState {
+        &self.post
+    }
+    pub fn proposition(&self) -> &Proposition {
+        &self.proposition
+    }
+}
+
+/// Issues contract authority only from the exact closed ordinary proof obligation.
+pub(crate) fn prove_c_function_contract_refinement(
     context: &CFunctionContractRefinementContext,
     conclusion: Proposition,
-    proof: &CFunctionContractRefinementProof,
+    proof: &crate::kernel::proof::CheckedProposition,
 ) -> Option<CVerifiedPureTheorem> {
     let Proposition::Predicate { name, arguments } = &conclusion else {
         return None;
@@ -4595,67 +4608,8 @@ pub fn prove_c_function_contract_refinement(
         return None;
     }
 
-    fn check(
-        context: &CFunctionContractRefinementContext,
-        proof: &CFunctionContractRefinementProof,
-        assumptions: &mut Vec<Proposition>,
-        unfolded_predicates: &mut BTreeSet<String>,
-    ) -> bool {
-        match proof {
-            CFunctionContractRefinementProof::Simp => {
-                let mut budget = ExecutionBudget::default();
-                budget.next_kernel_variable = context.next_kernel_variable;
-                function_refines_named_contract_in_explicit_case(
-                    context,
-                    assumptions,
-                    unfolded_predicates,
-                    &mut budget,
-                )
-                .unwrap_or(false)
-            }
-            CFunctionContractRefinementProof::UnfoldPredicate { name, proof } => {
-                let registered = context
-                    .contract
-                    .template()
-                    .predicate_unfoldings()
-                    .iter()
-                    .chain(context.function.predicate_unfoldings())
-                    .any(|unfolding| {
-                        matches!(
-                            unfolding.predicate(),
-                            SpecProposition::Predicate {
-                                name: predicate_name,
-                                ..
-                            } if predicate_name == name
-                        )
-                    });
-                if !registered || !unfolded_predicates.insert(name.clone()) {
-                    return false;
-                }
-                let holds = check(context, proof, assumptions, unfolded_predicates);
-                unfolded_predicates.remove(name);
-                holds
-            }
-            CFunctionContractRefinementProof::If {
-                condition,
-                then_proof,
-                else_proof,
-            } => {
-                assumptions.push(condition.clone());
-                let then_holds = check(context, then_proof, assumptions, unfolded_predicates);
-                assumptions.pop();
-                if !then_holds {
-                    return false;
-                }
-                assumptions.push(Proposition::Not(Box::new(condition.clone())));
-                let else_holds = check(context, else_proof, assumptions, unfolded_predicates);
-                assumptions.pop();
-                else_holds
-            }
-        }
-    }
-
-    if !check(context, proof, &mut Vec::new(), &mut BTreeSet::new()) {
+    let obligations = prepare_contract_refinement_obligations(context)?;
+    if !proof.is_closed() || proof.proposition() != &obligations.proposition {
         return None;
     }
     let theorem = match &context.source_contract {

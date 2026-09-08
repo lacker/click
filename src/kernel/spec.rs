@@ -1322,10 +1322,7 @@ fn lower_spec_sequence_comparison_at_state(
             ) else {
                 continue;
             };
-            let equality = Proposition::Equal(
-                Term::Sequence(left_path.value.clone()),
-                Term::Sequence(right_path.value),
-            );
+            let equality = finite_sequence_equality(&left_path.value, &right_path.value);
             paths.push(SpecPropositionPath {
                 proposition: if equal {
                     equality
@@ -1338,6 +1335,66 @@ fn lower_spec_sequence_comparison_at_state(
         }
     }
     Ok(paths)
+}
+
+/// Finite integer sequences have ordinary elementwise equality. Expose that
+/// logical structure once during elaboration, so every proof context can use
+/// the same introduction, extraction, and equality rules. Other element types
+/// retain logical sequence equality (not C floating or address comparison).
+fn finite_sequence_equality(left: &SequenceTerm, right: &SequenceTerm) -> Proposition {
+    let fallback =
+        || Proposition::Equal(Term::Sequence(left.clone()), Term::Sequence(right.clone()));
+    let mut left = sequence_elements(left);
+    let mut right = sequence_elements(right);
+    let mut equalities = Vec::new();
+    loop {
+        match (left.next(), right.next()) {
+            (Some(left), Some(right)) => {
+                let Some(equality) = integer_sequence_element_equality(left, right) else {
+                    return fallback();
+                };
+                equalities.push(equality);
+            }
+            (None, None) => break,
+            _ => return Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+        }
+    }
+    if equalities.is_empty() {
+        return Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    }
+    while equalities.len() > 1 {
+        let mut next = Vec::with_capacity(equalities.len().div_ceil(2));
+        let mut values = equalities.into_iter();
+        while let Some(left) = values.next() {
+            next.push(match values.next() {
+                Some(right) => Proposition::And(Box::new(left), Box::new(right)),
+                None => left,
+            });
+        }
+        equalities = next;
+    }
+    equalities.pop().expect("nonempty equality tree")
+}
+
+pub(super) fn integer_sequence_element_equality(
+    left: &CValue,
+    right: &CValue,
+) -> Option<Proposition> {
+    if left.c_type() != right.c_type()
+        || !matches!(
+            left,
+            CValue::Int16(_)
+                | CValue::Int32(_)
+                | CValue::UInt8(_)
+                | CValue::UInt16(_)
+                | CValue::UInt32(_)
+                | CValue::Int64(_)
+                | CValue::UInt64(_)
+        )
+    {
+        return None;
+    }
+    c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
 }
 
 fn evaluate_spec_sequence_at_state(
@@ -1479,6 +1536,39 @@ mod sequence_term_tests {
         SequenceTerm {
             element_type: Some(CType::Int32),
             node: std::sync::Arc::new(SequenceTermNode::Literal(vec![int32(value)].into())),
+        }
+    }
+
+    #[test]
+    fn integer_sequence_equality_has_linear_size_and_logarithmic_depth() {
+        for size in [8usize, 32, 128, 512] {
+            let mut left = singleton(0);
+            for value in 1..size {
+                left = concatenate_sequence_terms(left, singleton(value as u32));
+            }
+            let right = SequenceTerm {
+                element_type: Some(CType::Int32),
+                node: std::sync::Arc::new(SequenceTermNode::Literal(
+                    (0..size)
+                        .map(|n| int32(n as u32))
+                        .collect::<Vec<_>>()
+                        .into(),
+                )),
+            };
+            let equality = finite_sequence_equality(&left, &right);
+            let mut pending = vec![(&equality, 0)];
+            let mut nodes = 0;
+            let mut depth = 0;
+            while let Some((proposition, current_depth)) = pending.pop() {
+                nodes += 1;
+                depth = depth.max(current_depth);
+                if let Proposition::And(left, right) = proposition {
+                    pending.push((left, current_depth + 1));
+                    pending.push((right, current_depth + 1));
+                }
+            }
+            assert_eq!(nodes, 2 * size - 1);
+            assert_eq!(depth, size.ilog2());
         }
     }
 

@@ -1,7 +1,8 @@
-# Contract refinement rejects an unrelated predicate unfold
+# Ordinary simp works after an unrelated predicate unfold
 
-Naming an arbitrary predicate does not authorize the checked definition of a
-different predicate embedded in the compared contract interface.
+The ordinary proof engine accepts the same logical tactics after opening a
+contract. The closing smart tactic can prove this true claim even though the
+preceding predicate unfold was unnecessary.
 
 ```c filename=unused_predicate_unfold.c
 void clear_cell(int32* cell) {
@@ -46,5 +47,5 @@ theorem clear_cell_is_sets_zero() {
 ```
 
 ```expect
-fail: contract-refinement proof does not establish `SetsZero(&clear_cell)`
+pass
 ```

@@ -3212,26 +3212,12 @@ pub struct CFunctionContractRefinementContext {
     pub(super) next_kernel_variable: u64,
 }
 
-/// The explicit logical structure of a contract-refinement proof.
-///
-/// `If` is excluded-middle elimination over a condition written in the proof;
-/// both children are mandatory. `UnfoldPredicate` explicitly authorizes the
-/// checked definition of every occurrence of one named predicate in the two
-/// compared interfaces. `Simp` asks the kernel to check the local structural
-/// and proposition implications under the accumulated branch assumptions.
-/// There is no implicit predicate search or guard enumeration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CFunctionContractRefinementProof {
-    Simp,
-    UnfoldPredicate {
-        name: String,
-        proof: Box<CFunctionContractRefinementProof>,
-    },
-    If {
-        condition: Proposition,
-        then_proof: Box<CFunctionContractRefinementProof>,
-        else_proof: Box<CFunctionContractRefinementProof>,
-    },
+/// Kernel-generated sufficient logical obligations for one contract relation.
+/// The states and proposition cannot be supplied by the language layer.
+pub struct CFunctionContractRefinementObligations {
+    pub(super) entry: CState,
+    pub(super) post: CState,
+    pub(super) proposition: Proposition,
 }
 
 /// A proof tree produced by contextual proposition reasoning.

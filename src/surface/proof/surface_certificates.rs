@@ -4338,7 +4338,10 @@ fn plan_explicit_constant_strict_upper_bound_weakening(
         return None;
     };
     for (premise_kernel, premise_surface) in premise_pairs {
-        let Some((premise_value, premise_upper)) = signed_nonstrict_parts(premise_kernel) else {
+        let strict = signed_strict_parts(premise_kernel).is_some();
+        let Some((premise_value, premise_upper)) =
+            signed_nonstrict_parts(premise_kernel).or_else(|| signed_strict_parts(premise_kernel))
+        else {
             continue;
         };
         if premise_value != goal_value.as_ref() {
@@ -4350,14 +4353,23 @@ fn plan_explicit_constant_strict_upper_bound_weakening(
         if (*premise_constant as i32) >= (*goal_constant as i32) {
             continue;
         }
-        let (surface_value, surface_premise_upper) = surface_nonstrict_parts(premise_surface)?;
+        let (surface_value, surface_premise_upper) = if strict {
+            surface_strict_parts(premise_surface)?
+        } else {
+            surface_nonstrict_parts(premise_surface)?
+        };
         let goal_upper_surface = ContractExpression::CFragment(CExpression::Value(CValue::Int32(
             Bitvector32Term::Constant(*goal_constant),
         )));
         return Some(vec![
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
-                    name: "int32_le_lt_transitive".to_string(),
+                    name: if strict {
+                        "int32_lt_transitive"
+                    } else {
+                        "int32_le_lt_transitive"
+                    }
+                    .to_string(),
                     arguments: vec![surface_value, surface_premise_upper, goal_upper_surface],
                 },
                 premises: vec![premise_surface.clone()],
