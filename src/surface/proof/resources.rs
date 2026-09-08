@@ -664,6 +664,11 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             ))
         })?;
     let (observed_quantity, counted_resource, explicit_quantity) = match resource {
+        ResourceClause::Named { .. } => {
+            return Err(ClickError::new(
+                "named resources do not have counted observations",
+            ));
+        }
         ResourceClause::Quantified { quantity, resource } => {
             (quantity.clone(), resource.as_ref().clone(), true)
         }
@@ -1048,6 +1053,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
 
 fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
     match resource {
+        ResourceClause::Named { resource, .. } => resource_clause_subject(resource),
         ResourceClause::Quantified { resource, .. } => resource_clause_subject(resource),
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             ResourceSubject::Memory(segment.clone())
@@ -3190,6 +3196,10 @@ pub(super) fn instantiate_resource_clause(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
             quantity: substitute_contract_expression(quantity, substitutions)?,
             resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
@@ -3256,6 +3266,7 @@ fn materialize_composite_resource_cells(
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
     let Some((segment, range)) = (match resource_clause {
+        ResourceClause::Named { .. } => None,
         ResourceClause::ViewMemory(segment) => {
             lowered.memory_view_range().map(|range| (segment, range))
         }

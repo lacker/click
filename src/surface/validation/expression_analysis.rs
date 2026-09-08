@@ -57,7 +57,9 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
 
 pub(in crate::surface) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => false,
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => false,
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             arguments.iter().any(contains_old_expression)
         }
@@ -127,7 +129,9 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
 
 pub(in crate::surface) fn contains_resource_count(expression: &ContractExpression) -> bool {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => false,
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => false,
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             arguments.iter().any(contains_resource_count)
         }
@@ -241,7 +245,9 @@ pub(in crate::surface) fn collect_resource_count_families(
 ) {
     fn collect_expression(expression: &ContractExpression, families: &mut BTreeSet<String>) {
         match expression {
-            ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {}
+            ContractExpression::ResourceField(_)
+            | ContractExpression::AlgebraicVariable { .. }
+            | ContractExpression::Binding(_) => {}
             ContractExpression::AlgebraicConstructor { arguments, .. } => {
                 for argument in arguments {
                     collect_expression(argument, families);
@@ -477,7 +483,9 @@ pub(in crate::surface) fn proposition_contains_old_expression(
 
 pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => false,
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => false,
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             arguments.iter().any(contains_at_expression)
         }
@@ -611,7 +619,9 @@ pub(in crate::surface) fn collect_click_function_calls(
     calls: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {}
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => {}
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_click_function_calls(argument, calls);
@@ -1065,7 +1075,9 @@ fn validate_recursive_calls_in_expression(
         )
     };
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 recurse(argument, lower_bounds, structural_subterms)?;

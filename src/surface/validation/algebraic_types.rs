@@ -835,6 +835,10 @@ fn validate_algebraic_expression(
     context: &str,
 ) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access) => Ok(match &access.click_type {
+            Some(ClickType::Algebraic(ty)) => Some(ty.clone()),
+            _ => None,
+        }),
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             validate_type_application(algebraic_type, definitions, context)?;
             Ok(Some(algebraic_type.clone()))
@@ -1400,6 +1404,7 @@ fn infer_generic_expression_type(
     context: &str,
 ) -> Result<Option<ClickType>, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
         }

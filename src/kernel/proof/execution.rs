@@ -1910,6 +1910,7 @@ fn interface_resource_intrinsic_fact(
     state: &CState,
 ) -> Option<Proposition> {
     let segment = match spec {
+        CResourceSpec::Instance { .. } => return None,
         CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
         CResourceSpec::Quantified { .. }
         | CResourceSpec::Composite { .. }

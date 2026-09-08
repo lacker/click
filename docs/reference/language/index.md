@@ -717,12 +717,31 @@ arrays, and function-pointer field types are not supported in this slice.
 Resources with fields are non-countable and intended for exclusive
 instance-based ownership. Both `count(resource(...))` and quantities such as
 `1 of resource(...)` are rejected. Field-free resources keep their existing
-rules. This is currently declaration support only: fields are preserved in
-checked schemas, but instance binding, field access, and field establishment
-against memory are not implemented. Field names are not yet in scope in body
-expressions. Using a field-bearing resource in a contract or fold/unfold proof
-is rejected rather than treating it as a field-free resource. A declaration
-alone grants no ownership and does not establish any field values.
+rules. Named ownership binds an exclusive instance with arbitrary typed fields:
+
+<!-- verified-example: mdtests/resource_instance_bindings.md -->
+```click
+int32 identity(int32 value) {
+    owns cell: marked_cell();
+    ensures result == value;
+    ensures cell.model == old(cell.model);
+    ensures cell.revision == old(cell.revision);
+} by {
+    execute();
+    simp();
+}
+```
+
+Here `marked_cell` is declared in the linked fixture. `cell.model` reads the
+currently owned instance's field; `old(cell.model)` reads its function-entry
+state. Returning ownership does not itself promise unchanged fields; use an
+explicit postcondition. Instance identity is distinct from field state, and
+fields are symbolic Click values, not executable C ghost parameters.
+
+These instances remain opaque. Checked body fold/unfold, field establishment
+and updates, and binder transport across modular calls are not yet supported.
+Field names are not yet in scope in body expressions. A declaration alone
+grants no ownership, and binding an instance does not expose its memory body.
 
 A composite body may instead have one top-level guard:
 

@@ -1411,7 +1411,9 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_resource_fact_reads_from_contract_expression(
@@ -2070,6 +2072,7 @@ fn constant_c_expression_i64(expression: &CExpression) -> Option<i64> {
 
 fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
     match resource {
+        ResourceClause::Named { resource, .. } => declared_composite_resource_name(resource),
         ResourceClause::Declared {
             kind: ResourceKind::Composite,
             name,
@@ -2092,6 +2095,9 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                 .into_iter()
                 .flat_map(CompositeResourceBody::contains)
                 .filter_map(|resource| match resource {
+                    ResourceClause::Named { resource, .. } => {
+                        declared_composite_resource_name(resource).map(str::to_string)
+                    }
                     ResourceClause::Declared {
                         kind: ResourceKind::Composite,
                         name,

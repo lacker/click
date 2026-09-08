@@ -935,6 +935,21 @@ fn execute_verified_function_templates(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = functions[0];
+    if functions.iter().any(|function| {
+        function
+            .resource_requires()
+            .iter()
+            .chain(function.resource_ensures())
+            .any(|resource| matches!(resource, CResourceSpec::Instance { .. }))
+    }) {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "calls with named resource instances require checked binder transport, which is not supported yet".into(),
+            )),
+            facts: vec![],
+            obligations: vec![],
+        }]);
+    }
     budget.consume_function_call()?;
     let existing_variables = crate::instrumentation::measure_operation(
         function.name(),
@@ -2309,6 +2324,7 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
 
 fn resource_spec_supports_framed_refinement(resource: &CResourceSpec) -> bool {
     match resource {
+        CResourceSpec::Instance { .. } => false,
         CResourceSpec::OwnMemory(_)
         | CResourceSpec::ViewMemory(_)
         | CResourceSpec::Composite { .. }
@@ -5607,6 +5623,7 @@ fn population_quantities_are_equal(
 
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
     match resource {
+        CResourceSpec::Instance { .. } => false,
         CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => {
             segment.guard.is_none()
                 && c_expression_is_snapshot_independent(&segment.base)
@@ -5626,6 +5643,7 @@ fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) ->
 fn population_body_requires_positive_witness(definition: &CCompositeResourceDefinition) -> bool {
     fn resource_is_duplicable_view(resource: &CResourceSpec) -> bool {
         match resource {
+            CResourceSpec::Instance { .. } => false,
             CResourceSpec::ViewMemory(_) => true,
             CResourceSpec::Quantified { resource, .. } => resource_is_duplicable_view(resource),
             CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
@@ -7262,6 +7280,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
     let mut propositions = Vec::new();
     for resource in definition.contains() {
         let segment = match resource {
+            CResourceSpec::Instance { .. } => continue,
             CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
             CResourceSpec::Quantified { .. }
             | CResourceSpec::Composite { .. }
@@ -7676,6 +7695,45 @@ pub(super) fn evaluate_function_resource_spec(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource {
+        CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+        } => {
+            let required =
+                match evaluate_function_resource_spec(state, resource, assumptions, budget)? {
+                    Ok(resource) => resource,
+                    Err(error) => return Ok(Err(error)),
+                };
+            let Some(instance) = state.resources().owned_instance(*identity) else {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "named resource instance is not owned".into(),
+                )));
+            };
+            let CResourceFact::Own(CResource::Composite { name, arguments }, quantity) = required
+            else {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "named instance requires an owned resource definition".into(),
+                )));
+            };
+            if quantity.as_const() != Some(1)
+                || instance.name() != name
+                || instance.schema() != schema
+                || instance.arguments().len() != arguments.len()
+                || !instance
+                    .arguments()
+                    .iter()
+                    .zip(arguments.iter())
+                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
+            {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "named resource instance does not match its contract".into(),
+                )));
+            }
+            Ok(Ok(CResourceFact::own(CResource::Instance(
+                instance.clone(),
+            ))))
+        }
         CResourceSpec::Quantified { quantity, resource } => {
             let (access, name) = match resource.as_ref() {
                 CResourceSpec::Composite { access, name, .. }

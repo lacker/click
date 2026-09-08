@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
 
 pub(in crate::surface) fn check_resource_field_schemas(
     file: &mut ClickFile,
@@ -48,6 +49,81 @@ pub(in crate::surface) fn check_resource_field_schemas(
             })?,
         );
     }
+    let schemas = file
+        .resource_definitions
+        .iter()
+        .filter_map(|definition| {
+            definition
+                .field_schema()
+                .map(|schema| (definition.name().to_string(), schema.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    // Separate from the existing C/spec and composite-witness ranges. These
+    // variables are collected from the entry resource state by the kernel's
+    // fresh-variable allocator, so later execution cannot reuse their IDs.
+    let mut next_field_variable = 9_000_000_000u64;
+    for function in file.function_blocks.iter_mut().chain(
+        file.contract_definitions
+            .iter_mut()
+            .map(|contract| &mut contract.function_block),
+    ) {
+        let mut bindings = BTreeMap::new();
+        let parameter_names = function
+            .signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name())
+            .collect::<BTreeSet<_>>();
+        for requirement in &mut function.requires {
+            let Requirement::Resource(ResourceClause::Named { binding, resource }) = requirement
+            else {
+                continue;
+            };
+            if parameter_names.contains(binding.name.as_str()) {
+                return Err(ClickError::new(format!(
+                    "resource instance `{}` conflicts with a C parameter",
+                    binding.name
+                )));
+            }
+            let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                return Err(ClickError::new(
+                    "named ownership requires a declared resource",
+                ));
+            };
+            let schema = schemas
+                .get(name)
+                .ok_or_else(|| ClickError::new("named resource has no checked fields"))?;
+            let fields = schema
+                .fields()
+                .iter()
+                .map(|(_, ty)| {
+                    let variable = Variable(next_field_variable);
+                    next_field_variable += 1;
+                    match ty {
+                        crate::kernel::ResourceFieldType::C(ty) => {
+                            AlgebraicValue::C(crate::kernel::symbolic_call_result(*ty, variable))
+                        }
+                        crate::kernel::ResourceFieldType::Algebraic(ty) => {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: ty.clone(),
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
+                        }
+                    }
+                })
+                .collect::<crate::kernel::ResourceArguments>();
+            binding.schema = Some(schema.clone());
+            binding.fields = Some(fields);
+            bindings.insert(binding.identity, binding.clone());
+        }
+        for ensure in &mut function.ensures {
+            if let Ensure::Resource(ResourceClause::Named { binding, .. }) = &mut ensure.ensure {
+                *binding = bindings.get(&binding.identity).cloned().ok_or_else(|| {
+                    ClickError::new("returned resource instance has no entry binding")
+                })?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -68,6 +144,9 @@ fn contract_expression_is_algebraic(
     lexical_bindings: &mut Vec<(String, bool)>,
 ) -> bool {
     match expression {
+        ContractExpression::ResourceField(access) => {
+            matches!(access.click_type, Some(ClickType::Algebraic(_)))
+        }
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => true,
         ContractExpression::Binding(name) => lexical_bindings
@@ -932,7 +1011,7 @@ fn collect_owned_resource_memory_segments_inner(
     active_guard: Option<ClickProposition>,
 ) -> Result<(), ClickError> {
     match resource {
-        ResourceClause::Quantified { resource, .. } => {
+        ResourceClause::Named { resource, .. } | ResourceClause::Quantified { resource, .. } => {
             collect_owned_resource_memory_segments_inner(
                 resource,
                 resource_environment,
@@ -1634,12 +1713,57 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    fn fixed_resource_field(
+        &self,
+        access: &ResourceFieldAccess,
+        environment: &SpecElaborationContext,
+    ) -> Result<Option<AlgebraicValue>, String> {
+        let snapshot = environment.snapshot_state.as_ref().or_else(|| {
+            (environment.at_function_entry && !environment.function_contract)
+                .then_some(self.entry_state)
+        });
+        snapshot
+            .map(|state| {
+                state
+                    .resources()
+                    .owned_instance(access.identity)
+                    .and_then(|instance| instance.fields().get(access.field_index))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "resource instance `{}` is not owned at this snapshot",
+                            access.owner
+                        )
+                    })
+            })
+            .transpose()
+    }
+
     fn lower_contract_expression_to_spec(
         &mut self,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::ResourceField(access) => {
+                let Some(ClickType::C(c_type)) = &access.click_type else {
+                    return Err("expected a scalar resource field".into());
+                };
+                if let Some(value) = self.fixed_resource_field(access, environment)? {
+                    let AlgebraicValue::C(value) = value else {
+                        return Err("resource field type mismatch".into());
+                    };
+                    return Ok(SpecExpression::Value(value));
+                }
+                Ok(SpecExpression::ResourceField {
+                    projection: crate::kernel::ResourceFieldProjection {
+                        identity: access.identity,
+                        field_index: access.field_index,
+                        at_entry: environment.at_function_entry,
+                    },
+                    c_type: c_type.to_kernel_type(),
+                })
+            }
             ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
                 Err("a sequence value is only valid as an operand of `==` or `!=`".to_string())
             }
@@ -2004,6 +2128,34 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecAlgebraicExpression, String> {
         match expression {
+            ContractExpression::ResourceField(access) => {
+                let Some(ClickType::Algebraic(ty)) = &access.click_type else {
+                    return Err("expected an algebraic resource field".into());
+                };
+                let algebraic_type = self.cached_algebraic_kernel_type(ty)?;
+                let node = if let Some(value) = self.fixed_resource_field(access, environment)? {
+                    let AlgebraicValue::Algebraic(AlgebraicTerm {
+                        node: AlgebraicTermNode::Variable(variable),
+                        ..
+                    }) = value
+                    else {
+                        return Err("only entry-bound symbolic resource fields support fixed snapshots in this slice".into());
+                    };
+                    SpecAlgebraicExpressionNode::Variable(variable)
+                } else {
+                    SpecAlgebraicExpressionNode::ResourceField(
+                        crate::kernel::ResourceFieldProjection {
+                            identity: access.identity,
+                            field_index: access.field_index,
+                            at_entry: environment.at_function_entry,
+                        },
+                    )
+                };
+                Ok(SpecAlgebraicExpression {
+                    algebraic_type,
+                    node,
+                })
+            }
             ContractExpression::AlgebraicVariable {
                 name,
                 algebraic_type,
@@ -2378,6 +2530,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<Option<ClickType>, String> {
         match argument {
+            ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
             ContractExpression::AlgebraicVariable { algebraic_type, .. }
             | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
                 Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
@@ -3394,6 +3547,7 @@ impl AnnotationLowerer<'_> {
 
 fn spec_expression_click_type(expression: &SpecExpression) -> Option<ClickType> {
     let c_type = match expression {
+        SpecExpression::ResourceField { c_type, .. } => *c_type,
         SpecExpression::Value(value) => value.c_type(),
         SpecExpression::PureFunctionApplication { result_type, .. }
         | SpecExpression::MemoryLoad {

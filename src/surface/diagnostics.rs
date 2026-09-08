@@ -1094,6 +1094,7 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
+        ContractExpression::ResourceField(access) => format!("{}.{}", access.owner, access.field),
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,

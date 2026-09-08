@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DeclaredResourceInfo {
+    fields: std::sync::Arc<BTreeMap<String, (usize, ClickType)>>,
     parameter_types: Vec<C0Type>,
     kind: ResourceKind,
     has_fields: bool,
@@ -76,6 +77,9 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             Ok((
                 definition.name().to_string(),
                 DeclaredResourceInfo {
+                    fields: std::sync::Arc::new(definition.fields().iter().enumerate()
+                        .map(|(index, field)| (field.name().to_string(), (index, field.click_type().clone())))
+                        .collect()),
                     has_fields: !definition.is_countable(),
                     parameter_types: definition
                         .parameters()
@@ -102,6 +106,7 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
     resource_definitions
         .entry(CResourceFact::ALLOCATION_RESOURCE_NAME.to_string())
         .or_insert_with(|| DeclaredResourceInfo {
+            fields: Default::default(),
             has_fields: false,
             parameter_types: vec![C0Type::Int32Pointer, C0Type::Int32],
             kind: ResourceKind::Token,
@@ -627,6 +632,43 @@ fn expand_declared_resource_clause(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            let ResourceClause::Declared {
+                access: ResourceAccessMode::Own,
+                name,
+                arguments,
+                ..
+            } = *resource
+            else {
+                return Err(ClickError::new(
+                    "named ownership requires a declared resource",
+                ));
+            };
+            let info = declared_resource_info_with_fields(
+                &name,
+                arguments.len(),
+                resource_definitions,
+                true,
+            )?;
+            if !info.has_fields {
+                return Err(ClickError::new(format!(
+                    "resource `{name}` has no fields; use ordinary unnamed ownership"
+                )));
+            }
+            Ok(ResourceClause::Named {
+                binding,
+                resource: Box::new(ResourceClause::Declared {
+                    access: ResourceAccessMode::Own,
+                    kind: info.kind,
+                    name,
+                    arguments: arguments
+                        .into_iter()
+                        .map(|arg| expand_declared_resource_expression(arg, resource_definitions))
+                        .collect::<Result<_, _>>()?,
+                    parameter_types: info.parameter_types,
+                }),
+            })
+        }
         ResourceClause::Quantified { quantity, resource } => {
             reject_counted_field_resource(&resource, resource_definitions)?;
             Ok(ResourceClause::Quantified {
@@ -830,6 +872,22 @@ fn expand_declared_resource_expression(
     let recurse =
         |expression| expand_declared_resource_expression(expression, resource_definitions);
     Ok(match expression {
+        ContractExpression::ResourceField(mut access) => {
+            let info = resource_definitions
+                .get(&access.resource_name)
+                .ok_or_else(|| {
+                    ClickError::new(format!("unknown resource `{}`", access.resource_name))
+                })?;
+            let (index, field) = info.fields.get(&access.field).ok_or_else(|| {
+                ClickError::new(format!(
+                    "resource `{}` has no field `{}`",
+                    access.resource_name, access.field
+                ))
+            })?;
+            access.field_index = *index;
+            access.click_type = Some(field.clone());
+            ContractExpression::ResourceField(access)
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -976,6 +1034,15 @@ fn declared_resource_info(
     actual: usize,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<DeclaredResourceInfo, ClickError> {
+    declared_resource_info_with_fields(name, actual, resource_definitions, false)
+}
+
+fn declared_resource_info_with_fields(
+    name: &str,
+    actual: usize,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    allow_fields: bool,
+) -> Result<DeclaredResourceInfo, ClickError> {
     let Some(info) = resource_definitions.get(name) else {
         return Err(ClickError::new(format!("unknown resource `{name}`")));
     };
@@ -985,9 +1052,9 @@ fn declared_resource_info(
             "resource `{name}` expects {expected} argument(s), got {actual}"
         )));
     }
-    if info.has_fields {
+    if info.has_fields && !allow_fields {
         return Err(ClickError::new(format!(
-            "resource `{name}` has fields; resource instance binding and field establishment are not supported yet"
+            "resource `{name}` has fields; bind it with `owns name: {name}(...);`"
         )));
     }
     Ok(info.clone())

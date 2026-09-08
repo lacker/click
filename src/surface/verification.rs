@@ -3126,8 +3126,8 @@ pub(in crate::surface) fn composite_resource_definitions(
     let mut definitions = Vec::new();
     for definition in resource_environment.definitions.values() {
         // Field-bearing declarations are checked schemas, not legacy counted
-        // composites. All instance uses are rejected during declaration
-        // expansion until instance binding and field establishment land.
+        // composites. Named instances remain opaque until checked instance
+        // body fold/unfold rules land; do not erase their identity or fields.
         if !definition.is_countable() {
             continue;
         }
@@ -3241,6 +3241,18 @@ fn resource_clause_to_resource_spec_with_parameters(
     result_type: Option<crate::kernel::CType>,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
+            identity: binding.identity,
+            schema: binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
+            resource: Box::new(resource_clause_to_resource_spec_with_parameters(
+                resource,
+                parameters,
+                result_type,
+            )?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec_with_parameters(
@@ -3339,6 +3351,13 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: Box::new(substitute_resource_clause_for_summary(
+                resource,
+                substitutions,
+            )?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
             quantity: substitute_contract_expression(quantity, substitutions)?,
             resource: Box::new(substitute_resource_clause_for_summary(
@@ -3405,6 +3424,14 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
     resource: &ResourceClause,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
+            identity: binding.identity,
+            schema: binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
+            resource: Box::new(resource_clause_to_resource_spec(resource)?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec(resource)?),

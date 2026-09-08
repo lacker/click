@@ -3205,6 +3205,11 @@ pub enum CResourceAccessMode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
+    Instance {
+        identity: Variable,
+        schema: ResourceFieldSchema,
+        resource: Box<CResourceSpec>,
+    },
     ViewMemory(CMemorySegment),
     OwnMemory(CMemorySegment),
     Quantified {

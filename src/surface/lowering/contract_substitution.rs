@@ -591,7 +591,9 @@ fn collect_contract_expression_binding_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {}
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => {}
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_contract_expression_binding_names(argument, names);
@@ -696,6 +698,10 @@ fn collect_resource_subject_binding_names(
 
 fn collect_resource_clause_binding_names(resource: &ResourceClause, names: &mut BTreeSet<String>) {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            names.insert(binding.name.clone());
+            collect_resource_clause_binding_names(resource, names);
+        }
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_contract_segment_binding_names(segment, names)
         }
@@ -993,6 +999,16 @@ fn rewrite_resource_clause_exact(
     target: &ContractExpression,
 ) -> (ResourceClause, bool) {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            let (resource, changed) = rewrite_resource_clause_exact(resource, source, target);
+            (
+                ResourceClause::Named {
+                    binding: binding.clone(),
+                    resource: Box::new(resource),
+                },
+                changed,
+            )
+        }
         ResourceClause::ViewMemory(segment) => (ResourceClause::ViewMemory(segment.clone()), false),
         ResourceClause::OwnMemory(segment) => (ResourceClause::OwnMemory(segment.clone()), false),
         ResourceClause::MemoryAggregate { access, segments } => (
@@ -1062,9 +1078,9 @@ fn rewrite_contract_expression_exact(
         (left, right, left_changed || right_changed)
     };
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => {
-            (expression.clone(), false)
-        }
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => (expression.clone(), false),
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -1389,6 +1405,10 @@ pub(in crate::surface) fn apply_contract_lets_to_resource_clause(
     bindings: &[ContractLetBinding],
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
+            binding,
+            resource: Box::new(apply_contract_lets_to_resource_clause(*resource, bindings)?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
             quantity: apply_contract_lets_to_expression(quantity, bindings)?,
             resource: Box::new(apply_contract_lets_to_resource_clause(*resource, bindings)?),
@@ -1760,6 +1780,7 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::ResourceField(_) => {}
         ContractExpression::AlgebraicVariable { name, .. } => {
             names.insert(name.clone());
         }
@@ -1956,6 +1977,7 @@ pub(in crate::surface) fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
+        ContractExpression::ResourceField(_) => Ok(expression.clone()),
         ContractExpression::AlgebraicVariable { name, .. } => Ok(substitutions
             .get(name)
             .cloned()
@@ -2379,6 +2401,7 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::ResourceField(_) => None,
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,
@@ -2464,6 +2487,7 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
+        ContractExpression::ResourceField(_) => None,
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,

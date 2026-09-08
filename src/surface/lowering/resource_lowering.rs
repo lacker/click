@@ -296,6 +296,7 @@ fn materialize_symbolic_access_resource_cells(
             continue;
         };
         match resource {
+            ResourceClause::Named { .. } => {}
             ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
                 memory = materialize_access_segment_cells(memory, segment, parameters, arguments)?;
             }
@@ -775,6 +776,34 @@ fn lower_resource_clause_with_values(
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            let lowered =
+                lower_resource_clause_with_values(resource, parameters, values, state, result)?;
+            let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
+                return Err(ClickError::new(
+                    "named instance requires an owned resource definition",
+                ));
+            };
+            let schema = binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource instance has no checked schema"))?;
+            let fields = binding
+                .fields
+                .clone()
+                .ok_or_else(|| ClickError::new("resource instance has no symbolic field state"))?;
+            let instance = crate::kernel::ResourceInstance::new(
+                binding.identity,
+                name,
+                arguments,
+                schema,
+                fields,
+            )
+            .ok_or_else(|| {
+                ClickError::new("resource instance fields do not match the declared schema")
+            })?;
+            Ok(CResourceFact::own(CResource::Instance(instance)))
+        }
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses require batch lowering",
         )),
@@ -973,6 +1002,9 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
+        ContractExpression::ResourceField(_) => Err(ClickError::new(
+            "resource fields are symbolic Click values, not C arguments",
+        )),
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => Err(ClickError::new(
@@ -1157,6 +1189,7 @@ pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
     state: &CState,
 ) -> Result<Option<Proposition>, ClickError> {
     let ranges = match resource {
+        ResourceClause::Named { .. } => return Ok(None),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
             let lowered = lower_resource_clause_at_state(resource, parameters, arguments, state)?;
             vec![
@@ -1266,6 +1299,7 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
     arguments: &[CExpression],
 ) -> Result<Vec<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segments = match resource {
+        ResourceClause::Named { .. } => return Ok(vec![]),
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             vec![segment]
         }

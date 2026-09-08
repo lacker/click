@@ -905,6 +905,9 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResourceSpec::Instance { resource, .. } => {
+            collect_resource_spec_bitvector_variables(resource, variables)
+        }
         CResourceSpec::Quantified { quantity, resource } => {
             collect_c_expression_bitvector_variables(quantity, variables);
             collect_resource_spec_bitvector_variables(resource, variables);

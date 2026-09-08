@@ -3,6 +3,185 @@ use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
 #[test]
+fn named_resource_bindings_preserve_symbolic_fields_and_recheck_expansion() {
+    let source = r#"verifying "identity.c";
+        spec enum Mark { Clear, Set }
+        resource marked_cell() {
+            field model: Mark;
+            field revision: int32;
+            field contents: List<int32>;
+        }
+        int32 identity(int32 value) {
+            owns cell: marked_cell();
+            ensures result == value;
+            ensures cell.model == old(cell.model);
+            ensures cell.revision == old(cell.revision);
+            ensures cell.contents == old(cell.contents);
+            ensures list_length(cell.contents) == old(list_length(cell.contents));
+        } by { execute(); simp(); }
+    "#;
+    let sources = [(
+        "identity.c",
+        "int32 identity(int32 value) { return value; }",
+    )];
+    let verified = verify_c0_sources(source, &sources).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let expanded_source = source.replacen("by { execute(); simp(); }", &expanded, 1);
+    verify_c0_sources(&expanded_source, &sources)
+        .expect("expanded resource-field proof must recheck");
+    for false_claim in [
+        "cell.model == Mark::Clear",
+        "cell.revision == 0",
+        "cell.contents == List::Nil",
+    ] {
+        let wrong = source.replace("cell.model == old(cell.model)", false_claim);
+        assert!(
+            verify_c0_sources(&wrong, &sources).is_err(),
+            "an arbitrary field cannot prove {false_claim}"
+        );
+    }
+}
+
+#[test]
+fn named_resource_bindings_are_scoped_and_have_distinct_state() {
+    let header = "spec enum Mark { Clear, Set } resource marked_cell() { field model: Mark; }";
+    for body in [
+        "int32 f() { owns cell: marked_cell(); owns cell: marked_cell(); }",
+        "int32 f(int32 cell) { owns cell: marked_cell(); }",
+        "int32 f() { owns cell: marked_cell(); ensures cell.missing == 0; }",
+        "int32 f() { owns cell: marked_cell(); ensures cell->model == Mark::Clear; }",
+        "abstract resource credit(); int32 f() { owns cell: credit(); }",
+    ] {
+        assert!(
+            parser::parse(&format!("{header} {body}")).is_err(),
+            "must reject {body}"
+        );
+    }
+    let out_of_scope = format!(
+        r#"verifying "g.c"; {header}
+        extern int32 f() {{ owns cell: marked_cell(); }}
+        int32 g() {{ ensures cell.model == Mark::Clear; }} by {{ execute(); simp(); }}"#
+    );
+    assert!(verify_c0_sources(&out_of_scope, &[("g.c", "int32 g(void) { return 0; }")]).is_err());
+    let source = format!(
+        r#"verifying "f.c"; {header}
+        int32 f() {{ owns first: marked_cell(); owns second: marked_cell();
+            ensures first.model == second.model;
+        }} by {{ execute(); simp(); }}"#
+    );
+    assert!(verify_c0_sources(&source, &[("f.c", "int32 f(void) { return 0; }")]).is_err());
+    let file = parser::parse(&source).unwrap();
+    let function = &file.function_blocks()[0];
+    let Requirement::Resource(ResourceClause::Named { binding: first, .. }) =
+        &function.requires()[0]
+    else {
+        panic!("missing named binding")
+    };
+    let Requirement::Resource(ResourceClause::Named {
+        binding: second, ..
+    }) = &function.requires()[1]
+    else {
+        panic!("missing named binding")
+    };
+    assert_ne!(first.identity, second.identity);
+    assert_ne!(first.fields, second.fields);
+    let Ensure::Resource(ResourceClause::Named {
+        binding: returned, ..
+    }) = function.ensures()[0].ensure()
+    else {
+        panic!("missing returned instance")
+    };
+    assert_eq!(first.identity, returned.identity);
+    assert!(std::sync::Arc::ptr_eq(
+        first.fields.as_ref().unwrap(),
+        returned.fields.as_ref().unwrap()
+    ));
+}
+
+#[test]
+fn named_resource_field_metadata_is_shared_at_multiple_sizes() {
+    for size in [8, 32, 128, 512] {
+        let fields = (0..size)
+            .map(|i| format!("field f{i}: int32;"))
+            .collect::<String>();
+        let claims = (0..size)
+            .map(|i| format!("ensures cell.f{i} == old(cell.f{i});"))
+            .collect::<String>();
+        let file = parser::parse(&format!(
+            "resource record() {{ {fields} }} int32 f() {{ owns cell: record(); {claims} }}"
+        ))
+        .unwrap();
+        let function = &file.function_blocks()[0];
+        let Requirement::Resource(ResourceClause::Named { binding, .. }) = &function.requires()[0]
+        else {
+            panic!("missing instance")
+        };
+        let Ensure::Resource(ResourceClause::Named {
+            binding: returned, ..
+        }) = function.ensures()[0].ensure()
+        else {
+            panic!("missing returned instance")
+        };
+        assert_eq!(binding.fields.as_ref().unwrap().len(), size);
+        assert!(std::sync::Arc::ptr_eq(
+            binding.fields.as_ref().unwrap(),
+            returned.fields.as_ref().unwrap()
+        ));
+        assert_eq!(function.ensures().len(), size + 1);
+        for (i, ensure) in function.ensures()[1..].iter().enumerate() {
+            let Ensure::Proposition(ClickProposition::Comparison {
+                left: ContractExpression::ResourceField(access),
+                ..
+            }) = ensure.ensure()
+            else {
+                panic!("missing projected field")
+            };
+            assert_eq!(access.field_index, i);
+        }
+    }
+}
+
+#[test]
+fn named_resource_binding_does_not_expose_its_memory_body() {
+    let source = r#"verifying "read.c";
+        resource cell(p: int32*) { field model: List<int32>; owns p[0..1]; }
+        int32 read(int32* p) {
+            owns cell: cell(p);
+            ensures cell.model == old(cell.model);
+        } by { execute(); simp(); }
+    "#;
+    assert!(
+        verify_c0_sources(source, &[("read.c", "int32 read(int32* p) { return *p; }")]).is_err(),
+        "binding an opaque instance must not grant its unopened memory body"
+    );
+}
+
+#[test]
+fn named_resource_calls_reject_missing_binder_transport() {
+    let source = r#"verifying "calls.c";
+        resource marker() { field revision: int32; }
+        extern int32 callee() { owns cell: marker(); }
+        int32 caller() {
+            owns cell: marker();
+            ensures cell.revision == old(cell.revision);
+        } by { execute(); simp(); }
+    "#;
+    let error = verify_c0_sources(
+        source,
+        &[(
+            "calls.c",
+            "int32 callee(void); int32 caller(void) { return callee(); }",
+        )],
+    )
+    .unwrap_err();
+    assert!(
+        error.message().contains("checked binder transport"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn resource_fields_preserve_checked_types_and_do_not_lower_to_legacy_resources() {
     let file = parser::parse(
         r#"
@@ -120,7 +299,7 @@ fn resource_fields_reject_counting_and_unimplemented_instance_operations() {
         let error = parser::parse(&source).unwrap_err();
         assert_eq!(
             error.message(),
-            "resource `cell` has fields; resource instance binding and field establishment are not supported yet",
+            "resource `cell` has fields; bind it with `owns name: cell(...);`",
             "{clause}"
         );
     }
@@ -131,7 +310,7 @@ fn resource_fields_reject_counting_and_unimplemented_instance_operations() {
         let error = parser::parse(&source).unwrap_err();
         assert_eq!(
             error.message(),
-            "resource `cell` has fields; resource instance binding and field establishment are not supported yet",
+            "resource `cell` has fields; bind it with `owns name: cell(...);`",
             "{tactic}"
         );
     }

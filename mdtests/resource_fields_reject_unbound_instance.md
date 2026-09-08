@@ -1,7 +1,7 @@
 # Field metadata cannot be erased during resource transfer
 
-Until resource instance binding and field establishment are implemented,
-an ordinary resource call must not silently forget the declared fields.
+Field-bearing resources require a named ownership binding. An ordinary
+resource call must not silently forget the declared fields.
 
 ```click
 resource cell(p: int32*) {
@@ -16,5 +16,5 @@ int32 read_cell(int32* p) {
 ```
 
 ```expect
-fail: resource `cell` has fields; resource instance binding and field establishment are not supported yet
+fail: resource `cell` has fields; bind it with `owns name: cell(...);`
 ```

@@ -49,5 +49,6 @@ theorem ordinary_pure_law(x: int32) {
 pass
 ```
 
-This checks declarations only. Resource instance binding, field projections,
-and proofs establishing fields against memory remain unsupported.
+This checks declarations only. [Named instance bindings](resource_instance_bindings.md)
+cover symbolic field projections. Opening bodies and establishing fields
+against memory remain unsupported.

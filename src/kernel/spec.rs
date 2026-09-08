@@ -585,10 +585,16 @@ fn lower_spec_algebraic_comparison_at_state(
             ) else {
                 continue;
             };
-            let equality = Proposition::Equal(
-                Term::Algebraic(left_path.value.clone()),
-                Term::Algebraic(right_path.value),
-            );
+            // State-dependent projections must be resolved (and their ownership
+            // checked) before reflexivity can close a symbolic application.
+            let equality = if left_path.value == right_path.value {
+                Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+            } else {
+                Proposition::Equal(
+                    Term::Algebraic(left_path.value.clone()),
+                    Term::Algebraic(right_path.value),
+                )
+            };
             paths.push(SpecPropositionPath {
                 proposition: if equal {
                     equality

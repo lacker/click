@@ -243,7 +243,31 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         .assume_proposition(Proposition::Equal(Term::Algebraic(n), Term::Algebraic(m)));
     assert!(equal.proves(&paths[0].proposition));
     let missing = CState::new();
+    let application = |at_entry| SpecAlgebraicExpression {
+        algebraic_type: ty.clone(),
+        node: SpecAlgebraicExpressionNode::PureFunctionApplication {
+            name: "symbolic_model_function".into(),
+            arguments: vec![SpecPureFunctionArgument::Algebraic(projection(at_entry))],
+        },
+    };
+    let application_claim = SpecProposition::AlgebraicComparison {
+        left: application(false),
+        equal: true,
+        right: application(true),
+    };
+    for (state, should_hold) in [(&entry, true), (&current, false)] {
+        let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            &application_claim,
+            Some(&entry),
+            &empty,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(empty.proves(&paths[0].proposition), should_hold);
+    }
     for (state, old, claim) in [
+        (&missing, Some(&entry), application_claim),
         (&current, None, claim.clone()),
         (&missing, Some(&entry), claim),
         (
@@ -292,6 +316,47 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn resource_instance_contract_selects_current_fields_without_promising_preservation() {
+    let ty = resource_index_type("Mark", vec![]);
+    let before = field_instance(10, resource_index_variable(&ty, 1), 3);
+    let after = field_instance(10, resource_index_variable(&ty, 2), 4);
+    let requirement = CResourceSpec::Instance {
+        identity: before.identity(),
+        schema: before.schema().clone(),
+        resource: Box::new(CResourceSpec::Composite {
+            access: CResourceAccessMode::Own,
+            name: "marked_cell".into(),
+            arguments: vec![CExpression::Value(int32(7))],
+            parameter_types: vec![CType::Int32],
+        }),
+    };
+    for instance in [before, after] {
+        let fact = CResourceFact::own(CResource::Instance(instance));
+        let state = CState::new()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(fact.clone()));
+        let selected = crate::kernel::functions::evaluate_function_resource_spec(
+            &state,
+            &requirement,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected, fact);
+    }
+    assert!(
+        crate::kernel::functions::evaluate_function_resource_spec(
+            &CState::new(),
+            &requirement,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+        .is_err()
+    );
 }
 
 #[test]

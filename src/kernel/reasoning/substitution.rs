@@ -1032,6 +1032,9 @@ fn collect_c_resource_spec_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResourceSpec::Instance { resource, .. } => {
+            collect_c_resource_spec_bound_variables(resource, variables)
+        }
         CResourceSpec::Quantified { quantity, resource } => {
             collect_c_expression_bound_variables(quantity, variables);
             collect_c_resource_spec_bound_variables(resource, variables);
@@ -2886,6 +2889,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     to: &Bitvector32Term,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+        } => CResourceSpec::Instance {
+            identity: *identity,
+            schema: schema.clone(),
+            resource: Box::new(substitute_bitvector_variable_in_resource_spec(
+                resource, from, to,
+            )),
+        },
         CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
             quantity: substitute_bitvector_variable_in_c_expression(quantity, from, to),
             resource: Box::new(substitute_bitvector_variable_in_resource_spec(
@@ -5635,6 +5649,17 @@ fn substitute_pointer_variable_in_resource_spec(
     to: &Pointer,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+        } => CResourceSpec::Instance {
+            identity: *identity,
+            schema: schema.clone(),
+            resource: Box::new(substitute_pointer_variable_in_resource_spec(
+                resource, from, to,
+            )),
+        },
         CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
             quantity: substitute_pointer_variable_in_c_expression(quantity, from, to),
             resource: Box::new(substitute_pointer_variable_in_resource_spec(

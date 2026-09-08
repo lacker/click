@@ -49,15 +49,21 @@ ownership of the unchanged C tree.
   type-checked and retained as shared kernel-checked schemas. Field-bearing
   resources are non-countable: `count(...)` and quantity clauses reject them.
   [resource_fields.md](../mdtests/resource_fields.md) checks declarations only;
-  instance use and field establishment remain explicitly unsupported.
+  field establishment remains explicitly unsupported.
 - The kernel has a separate exclusive instance representation with identity,
   shared typed field state, equality-checked linear transfer, and indexed
   lookup. It rejects duplicate identity, views, and counted quantities.
   Kernel spec projections distinguish current state from an explicitly supplied
   entry snapshot; ownership alone does not prove preservation. Fields and
   arguments grant no memory authority. Kernel tests cover these rules,
-  substitution, and deterministic multi-size scaling. This does not yet expose
-  named instances or field projections in Click source.
+  substitution, and deterministic multi-size scaling.
+- Source contracts accept `owns cell: marked_cell(p);`, `cell.model`, and
+  `old(cell.model)`. Fields start as arbitrary typed symbolic values, not
+  concrete constructors. [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
+  verifies preservation through C execution. Tests also cover nested generic
+  fields, symbolic pure applications, expansion/rechecking, binder scope,
+  distinct instance state, and rejection of unproved field values. These
+  instances remain opaque: binding does not expose their memory bodies.
 
 Pure Click expressions define symbolic terms; only C executes. A pure `match`
 does not automatically split a proof or introduce proof-scope bindings.
@@ -72,8 +78,12 @@ checks conditional reductions against explicitly cited premises.
   lowering, C-contract model inputs/outputs, and checked body instantiation
   must carry symbolic arguments without encoding them as C values. C-only
   body evaluators reject a model argument rather than treating it as a scalar.
-- Resource fields cannot yet be bound, projected, established, or updated in
-  ownership proofs. Field-bearing declarations must not enter the legacy
+- Named resource bodies cannot yet be folded/unfolded, nor can fields be
+  established or updated. Modular calls involving named instances explicitly
+  reject unsupported binder transport rather than assume field preservation.
+  Fixed ADT snapshots currently support the arbitrary variables introduced
+  at entry; future state updates must also support arbitrary symbolic terms.
+  Field-bearing declarations must not enter the legacy
   counted/composite instance representation with their fields erased.
 - Resource bodies support one load-free `if` guard with an empty false case,
   but no `else` or constructor `match`. Resource-body witnesses are restricted
@@ -107,12 +117,12 @@ Implement and check the following slices in order:
 
 1. **Resource fields and instance binding.** Declaration parsing, type checking,
    shared kernel schemas, rejection of counting, and the exclusive kernel
-   identity/field-state representation are implemented. The agreed binding is
+   identity/field-state representation are implemented. Source supports
    `owns cell: marked_cell(p);`, with current `cell.model` and entry-state
-   `old(cell.model)` projections. Wire these into source contracts and checked
-   fold/unfold; field establishment/update syntax remains deferred. Check a
-   small nonrecursive resource with an arbitrary field
-   value, not only concrete constructors. The earlier kernel symbolic-index
+   `old(cell.model)` projections. Next implement checked body fold/unfold and
+   binder transport across calls; field establishment/update syntax remains
+   deferred. Opaque nonrecursive resources already preserve arbitrary field
+   values, not only concrete constructors. The earlier kernel symbolic-index
    infrastructure remains available but does not implement instance fields.
    [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
    current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
@@ -156,7 +166,7 @@ Returning the instance does not itself promise unchanged fields: that requires
 a postcondition such as `ensures cell.model == old(cell.model);`.
 
 The next implementation must connect these source bindings to checked
-ownership and body unfolding, preserving binder scope across calls and keeping
+body unfolding, preserving binder scope across calls and keeping
 function-entry snapshots distinct from loop-entry snapshots. The intended
 first C regression is an unchanged `return *p;` function using a field-bearing
 cell resource, with a proof that returns the same instance and preserves an

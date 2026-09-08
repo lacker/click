@@ -438,6 +438,7 @@ impl Names {
     }
     fn resource_spec(&mut self, resource: &mut CResourceSpec) {
         match resource {
+            CResourceSpec::Instance { resource, .. } => self.resource_spec(resource),
             CResourceSpec::ViewMemory(s) | CResourceSpec::OwnMemory(s) => self.segment(s),
             CResourceSpec::Quantified { quantity, resource } => {
                 self.c(quantity);

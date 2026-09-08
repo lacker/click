@@ -690,6 +690,10 @@ pub enum Ensure {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceClause {
+    Named {
+        binding: ResourceInstanceBinding,
+        resource: Box<ResourceClause>,
+    },
     ViewMemory(ContractSegment),
     OwnMemory(ContractSegment),
     /// A source-level aggregate place expanded into its typed leaf memory
@@ -711,6 +715,24 @@ pub enum ResourceClause {
         arguments: Vec<ContractExpression>,
         parameter_types: Vec<C0Type>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceInstanceBinding {
+    name: String,
+    identity: Variable,
+    schema: Option<crate::kernel::ResourceFieldSchema>,
+    fields: Option<crate::kernel::ResourceArguments>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldAccess {
+    owner: String,
+    resource_name: String,
+    identity: Variable,
+    field: String,
+    field_index: usize,
+    click_type: Option<ClickType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -932,6 +954,9 @@ fn collect_current_resource_clause_variables(
     names: &mut BTreeSet<String>,
 ) {
     match resource {
+        ResourceClause::Named { resource, .. } => {
+            collect_current_resource_clause_variables(resource, names)
+        }
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_current_segment_variables(segment, names);
         }
@@ -971,6 +996,7 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::ResourceField(_) => {}
         ContractExpression::AlgebraicVariable { name, .. } => {
             names.insert(name.clone());
         }
@@ -1423,6 +1449,7 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    ResourceField(ResourceFieldAccess),
     /// A fully type-applied constructor of a specification-only algebraic
     /// datatype. The first slice permits C scalar and data-pointer fields.
     AlgebraicConstructor {
