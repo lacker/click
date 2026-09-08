@@ -469,12 +469,38 @@ state has both `original.first == 4` and `original.first == 5`.
 **Acceptance criteria.**
 - `call_bump`'s claim is rejected, and so is any other value: after the call
   the only provable fact about `original.first` is that it is still 4.
-- Either bind by-value aggregate parameters to fresh blocks on the caller side
-  of instantiation too, or reject post-state mentions of a by-value parameter
-  in `ensures` and expose only `old(value.field)`. If the latter, the
-  diagnostic must say which clause is at fault.
 - `mdtests/struct_by_value_scalar_copy.md` and the rest of the by-value family
   still pass.
+
+**Attempted and reverted: a fresh post-state block.** Binding the parameter to
+a fresh, empty block in the call's post-contract state
+(`with_contract_argument_views` keeps the caller's object; the two ensures
+lowerings at `src/kernel/functions.rs:1193` and `:1245` would rebind) does fix
+this section's regression and leaves the caller's state consistent. It is too
+destructive as it stands:
+
+- `mdtests/struct_conditional_value.md` fails. `choose_packet` states
+  `ensures result.tag == right.tag` over by-value parameters it never
+  modifies, and the caller needs that to chain into `sum_packet`'s
+  precondition. With an unconstrained post-state parameter the chain is lost.
+- `old(value.field)` breaks with it, so the migration those contracts would
+  need is not available: `old` resolves the parameter's address in the *post*
+  state and then reads it in entry memory, so an empty fresh block reads as
+  nothing. A fresh block would have to carry the argument's entry image for
+  `old` to keep working, while staying unconstrained in the post state.
+
+**A better direction, not yet implemented.** The existing reading of a
+by-value parameter in `ensures` is sound exactly when the callee does not
+modify its copy, which is the case for every by-value contract in the tree
+today (`choose_packet`, `sum_packet`, `struct_by_value_pointer_copy.md`).
+Only a callee that writes to its copy, as `bump` does here, can state
+something the caller must not believe. So certification can keep the current
+call-site behaviour and instead reject an `ensures` that mentions a by-value
+aggregate parameter outside `old(...)` when the body writes to that
+parameter's storage. That preserves every contract in the tree and rejects
+this regression, and it needs no surface migration. The check belongs where
+the callee's body is certified, comparing the parameter's copy block between
+entry and exit, or by walking `source_body` for stores into it.
 
 ---
 
