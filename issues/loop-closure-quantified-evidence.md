@@ -115,6 +115,59 @@ expansion regressions remain the integration requirement.
 
 ## Remaining implementation sequence
 
+### Explicit preparation and the binder boundary (2026-09-07)
+
+An experiment removed the legacy prefix probe and its public wrapper, making
+region `simp` attempt checked `have` proofs for every named invariant.
+The bubble-pass and two-pass original/expanded tests passed, but the full
+fixture gate failed on `copy3_array_demo.md` and `loop_entry_snapshot.md`.
+The former lost the proof of invariant 2 after the additional facts; the latter
+failed to lower a `have` because the loop-entry label `drain` was unavailable
+in that ordinary scope. The probe removal was therefore reverted too. The
+existing runtime remains unchanged; only the defensive binder regression and
+this investigation are retained.
+
+An experiment also emitted `have` proofs for separately collected read-safety
+obligations. Those proofs verified, including after expansion, but introduced
+substantial extra search in the two-pass fixture. Filtering out value goals
+whose premises merely mention read safety reduced that cost, but did not
+eliminate it. That planner addition was removed rather than accepting the
+slowdown. Finishing should not rely on repeated generic `have` search for
+every collected obligation.
+
+In the bubble-pass census, the remaining legacy value tree was a universal
+introduction, implication introduction, and typed universal instantiation.
+The read-safety tree ended in a legacy atomic leaf. With the experimental
+surface safety proofs, both goals had binder-equivalent facts in the context, but not facts
+with the invariant lowerer's exact bound-variable identities.
+
+A prototype replaced preparation's derivation builders with exact fact
+consumption plus a snapshot-sensitive binder key. The bubble-pass original
+and expanded proofs passed. A new adversarial test then rejected that design:
+bound variables can occur inside the saved snapshot itself. Let memory `M(i)`
+have a cell whose stored value is variable `i`. These are not equivalent:
+
+```text
+forall i. load(M(i), cell) <= i
+forall j. load(M(i), cell) <= j
+```
+
+The first binds the occurrence inside memory; the second leaves it free.
+A key containing the same memory identity and an ordinal for the outer binder
+incorrectly equates them. The existing full substitution comparison correctly
+distinguishes them. Its negative regression is retained in
+`quantified_binder_comparison_respects_occurrences_inside_snapshots`.
+The unsafe key/index and exact-only preparation prototype were removed; no
+new binder comparison or derivation-builder replacement landed from it.
+
+Finishing now needs a proof-interface decision: preferably expose the actual
+lowered value/safety goals as proof-object scopes, so their proofs already use
+the retained binder identities. The alternative is a typed renaming proof with
+explicitly checked snapshot freshness/dependency evidence. Do not use the old
+snapshot-blind key as authority, or add a whole-memory traversal per simple
+step to repair the failed key. Any new renaming rule must reject the example
+above and include deterministic scaling with growing unrelated snapshots.
+
 ### Prepared-bundle consumption (2026-09-07)
 
 The loop planner now calls `prepare_loop_invariant_bundle` before closure.
@@ -133,7 +186,8 @@ charged to the supplied evidence. A four-size deterministic regression covers
 the whole kernel consumer against growing unrelated fact stores.
 
 This separates construction from consumption; it does **not** remove the
-general/simp construction ladder from preparation or the legacy prefix probe.
+general/simp construction ladder from preparation. The prefix probe was
+retained after the failed explicit-preparation experiment described above.
 Expanded source still prepares internal lowering records while being checked.
 Removing that discovery, and replacing the independent state-join reasoning,
 remain separate migration work. Do-while paths proven unable to continue need
@@ -141,11 +195,11 @@ no back-edge bundle and retain the existing exit classification.
 
 ### Still outstanding
 
-1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Construct an explicit
-   surface proof of the updated quantified invariant and its lowering safety
-   obligations using the existing statement evidence. Identify any missing
-   simple rule before broadening smart search. Do not call the legacy closer
-   as a successful preflight that skips generating this proof.
+1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Connect the newly
+   explicit value/safety proofs to the exact lowered goals without
+   an unsafe binder shortcut. Prefer exact lowered-goal scopes; if using
+   renaming evidence instead, implement the snapshot-dependency regression
+   and scaling requirements above before consuming it as authority.
 2. Replace the planner's internal general/simp derivation construction with
    explicit proof operations while preserving complete path and safety coverage.
    Retain actual proofs without trusting surface spellings or requiring

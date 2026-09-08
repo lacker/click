@@ -1627,6 +1627,39 @@ mod tests {
     };
 
     #[test]
+    fn quantified_binder_comparison_respects_occurrences_inside_snapshots() {
+        let pointer = Pointer {
+            block: "cell".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("cell", 4).store(
+            pointer.clone(),
+            CValue::Int32(Bitvector32Term::Variable(Variable(11))),
+        );
+        let proposition = |binder| Proposition::ForAll {
+            var: Variable(binder),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(Bitvector32Term::MemoryLoad(
+                        memory.clone().into(),
+                        Box::new(pointer.clone()),
+                    )),
+                    Box::new(Bitvector32Term::Variable(Variable(binder))),
+                ),
+                true,
+            )),
+        };
+        // Both formulas name the same snapshot, but 11 is bound inside its
+        // stored value only in the first formula. Snapshot identity plus an
+        // outer-binder key cannot establish their equivalence.
+        assert!(!quantified_binder_equivalent(
+            &proposition(11),
+            &proposition(22)
+        ));
+    }
+
+    #[test]
     fn canonical_origin_transport_uses_explicit_memory_derivations() {
         let preserved = Pointer {
             block: PointerBlock::ExternalArgument,
