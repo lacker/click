@@ -149,7 +149,23 @@ pub fn c0_smart_tactic_source_sites(
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
     let mut sites = Vec::new();
     for theorem in file.theorem_definitions() {
+        // These declarations are checked against kernel axioms, not expanded
+        // by an implicit auto tactic. Keep genuine callback refinement proofs
+        // (which run before the arithmetic-axiom branch) in the inventory.
+        let kernel_axiom_name = proof::is_kernel_standard_theorem_name(theorem.name())
+            && theorem
+                .parameters()
+                .iter()
+                .all(|parameter| parameter.click_type() == &ClickType::C(C0Type::Int32));
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
+            if kernel_axiom_name
+                && !matches!(
+                    ensure.ensure(),
+                    Ensure::Proposition(ClickProposition::PredicateCall { .. })
+                )
+            {
+                continue;
+            }
             let label = ensure.name().map_or_else(
                 || format!("{}.ensures_{ensure_index}", theorem.name()),
                 |name| format!("{}.{name}", theorem.name()),

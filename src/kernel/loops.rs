@@ -598,7 +598,6 @@ fn execute_c_indirect_call_paths(
                                 !contract.template().return_pointee_is_constant()
                                     && contract.function_pointer_type() == function_type
                             })
-                            .cloned()
                             .collect::<Vec<_>>();
                         if contracts.is_empty() {
                             paths.push(CFunctionPath {
@@ -612,23 +611,21 @@ fn execute_c_indirect_call_paths(
                             });
                             continue;
                         }
-                        for contract in contracts {
-                            for mut call_path in execute_c_function_contract_paths(
-                                state,
-                                &contract,
-                                arguments,
-                                &target_assumptions,
-                                environment,
-                                budget,
-                            )? {
-                                let mut merged_facts = facts.clone();
-                                merged_facts.extend(call_path.facts);
-                                let mut merged_obligations = obligations.clone();
-                                merged_obligations.extend(call_path.obligations);
-                                call_path.facts = merged_facts;
-                                call_path.obligations = merged_obligations;
-                                paths.push(call_path);
-                            }
+                        for mut call_path in execute_c_function_contracts_paths(
+                            state,
+                            &contracts,
+                            arguments,
+                            &target_assumptions,
+                            environment,
+                            budget,
+                        )? {
+                            let mut merged_facts = facts.clone();
+                            merged_facts.extend(call_path.facts);
+                            let mut merged_obligations = obligations.clone();
+                            merged_obligations.extend(call_path.obligations);
+                            call_path.facts = merged_facts;
+                            call_path.obligations = merged_obligations;
+                            paths.push(call_path);
                         }
                         continue;
                     }

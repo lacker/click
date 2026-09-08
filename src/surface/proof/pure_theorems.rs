@@ -1205,45 +1205,7 @@ fn verify_theorem_ensure(
         ))
     })?;
 
-    if matches!(
-        theorem.name(),
-        "int32_increment_upper_bound"
-            | "int32_increment_strictly_increases"
-            | "int32_increment_lower_bound"
-            | "int32_increment_greater_equal_lower_bound"
-            | "int32_increment_strict_greater_lower_bound"
-            | "int32_increment_preserves_order"
-            | "int32_le_lt_transitive"
-            | "int32_le_transitive"
-            | "int32_lt_le_transitive"
-            | "int32_lt_transitive"
-            | "int32_ge_transitive"
-            | "int32_ge_implies_reversed_le"
-            | "int32_le_implies_reversed_ge"
-            | "int32_le_and_not_lt_implies_eq"
-            | "int32_le_and_neq_implies_lt"
-            | "int32_ge_and_not_gt_implies_eq"
-            | "int32_le_antisymmetric"
-            | "int32_positive_is_nonnegative"
-            | "int32_lt_implies_le"
-            | "int32_lt_implies_neq"
-            | "int32_not_lt_implies_ge"
-            | "int32_strictly_positive_is_nonnegative"
-            | "int32_increment_below_max_is_defined"
-            | "int32_one_plus_below_max_is_defined"
-            | "int32_one_plus_strictly_increases"
-            | "int32_nonnegative_add_within_max_is_defined"
-            | "int32_nonnegative_subtract_within_value_is_defined"
-            | "int32_move_one_from_right_to_left_preserves_sum"
-            | "int32_add_nonnegative_right_is_at_least_left"
-            | "int32_add_nonnegative_left_is_at_least_right"
-            | "int32_above_one_predecessor_is_at_least_one"
-            | "int32_positive_predecessor_is_nonnegative"
-            | "int32_positive_predecessor_strictly_decreases"
-            | "int32_nonnegative_predecessor_upper_bound"
-            | "int32_successor_le_implies_lt"
-            | "int32_lt_successor_implies_le"
-    ) {
+    if is_kernel_standard_theorem_name(theorem.name()) {
         return verify_kernel_standard_theorem_axiom(
             theorem,
             ensure_index,
@@ -1796,6 +1758,49 @@ fn check_direct_pure_goal_with_proof(
         return Ok(None);
     };
     Ok(Some(proof.completed_certificate()?))
+}
+
+/// Names whose declarations are checked directly against kernel arithmetic axioms.
+pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int32_increment_upper_bound"
+            | "int32_increment_strictly_increases"
+            | "int32_increment_lower_bound"
+            | "int32_increment_greater_equal_lower_bound"
+            | "int32_increment_strict_greater_lower_bound"
+            | "int32_increment_preserves_order"
+            | "int32_le_lt_transitive"
+            | "int32_le_transitive"
+            | "int32_lt_le_transitive"
+            | "int32_lt_transitive"
+            | "int32_ge_transitive"
+            | "int32_ge_implies_reversed_le"
+            | "int32_le_implies_reversed_ge"
+            | "int32_le_and_not_lt_implies_eq"
+            | "int32_le_and_neq_implies_lt"
+            | "int32_ge_and_not_gt_implies_eq"
+            | "int32_le_antisymmetric"
+            | "int32_positive_is_nonnegative"
+            | "int32_lt_implies_le"
+            | "int32_lt_implies_neq"
+            | "int32_not_lt_implies_ge"
+            | "int32_strictly_positive_is_nonnegative"
+            | "int32_increment_below_max_is_defined"
+            | "int32_one_plus_below_max_is_defined"
+            | "int32_one_plus_strictly_increases"
+            | "int32_nonnegative_add_within_max_is_defined"
+            | "int32_nonnegative_subtract_within_value_is_defined"
+            | "int32_move_one_from_right_to_left_preserves_sum"
+            | "int32_add_nonnegative_right_is_at_least_left"
+            | "int32_add_nonnegative_left_is_at_least_right"
+            | "int32_above_one_predecessor_is_at_least_one"
+            | "int32_positive_predecessor_is_nonnegative"
+            | "int32_positive_predecessor_strictly_decreases"
+            | "int32_nonnegative_predecessor_upper_bound"
+            | "int32_successor_le_implies_lt"
+            | "int32_lt_successor_implies_le"
+    )
 }
 
 fn verify_kernel_standard_theorem_axiom(
