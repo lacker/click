@@ -33,11 +33,9 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
-    for fact in execution.presentation.surface_propositions.kernel_facts() {
-        if !have_facts.contains(fact) {
-            have_facts.push(fact.clone());
-        }
-    }
+    // Surface spellings are not proof authority: a lowering may have been
+    // recorded while considering a goal or an unselected conditional fact.
+    // Only retained proof facts and checked effect facts may justify `have`.
     let checked_proof_result = checked_have_with_proof(
         have,
         theorem_environment,

@@ -2159,7 +2159,7 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
 }
 
 #[test]
-fn selected_branched_post_execution_apply_merges_path_certificates() {
+fn selected_branched_post_execution_apply_shares_identical_path_certificates() {
     let c_source = r#"
             int32 choose(int32 flag) {
                 if (flag) {
@@ -2205,28 +2205,28 @@ fn selected_branched_post_execution_apply_merges_path_certificates() {
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
             .expect("branched post-execution apply should produce path certificates");
+    verify_c0_sources(&expanded, &[("choose.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "expanded apply must verify before checking its formatting: {}\n{expanded}",
+            error.message()
+        )
+    });
     assert!(!expanded.contains("apply(retain_one_or_two(result));"));
     assert!(
-        expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
+        !expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
         "{expanded}"
     );
     assert_eq!(
         expanded
             .matches("apply(retain_one_or_two(result)) using {")
             .count(),
-        2,
+        1,
         "{expanded}"
     );
-    verify_c0_sources(&expanded, &[("choose.c", c_source)]).unwrap_or_else(|error| {
-        panic!(
-            "branched post-execution apply certificates should check: {}\n{expanded}",
-            error.message()
-        )
-    });
 }
 
 #[test]
-fn selected_branched_post_execution_have_merges_path_certificates() {
+fn selected_branched_post_execution_have_shares_identical_path_certificates() {
     let c_source = r#"
             int32 choose(int32 flag) {
                 if (flag) {
@@ -2265,20 +2265,20 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
             .expect("branched post-execution have should produce path certificates");
+    verify_c0_sources(&expanded, &[("choose.c", c_source)])
+        .expect("expanded have must verify before checking its formatting");
     assert!(!expanded.contains("have result == 1 or result == 2 by simp"));
     assert!(
-        expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
+        !expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
         "{expanded}"
     );
     assert_eq!(
         expanded
             .matches("have result == 1 or result == 2 by {")
             .count(),
-        2,
+        1,
         "{expanded}"
     );
-    verify_c0_sources(&expanded, &[("choose.c", c_source)])
-        .expect("branched post-execution have certificates should check");
 }
 
 #[test]
@@ -9311,6 +9311,34 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
     .expect("the retained terminal branch should expand");
     verify_c0_sources(&expanded, &[("choose_one_or_two.c", c_source)])
         .expect("the explicit terminal arm steps should independently re-derive");
+}
+
+#[test]
+fn callback_status_proofs_expand_at_every_smart_site() {
+    let markdown = include_str!("../../../mdtests/c_contract_executes_status.md");
+    let mdtest = crate::cli::parse_mdtest(std::path::Path::new("status.md"), markdown).unwrap();
+    let source = mdtest.click_source.as_deref().unwrap();
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &c_sources).expect("ordinary status proofs verify");
+    for site in c0_smart_tactic_source_sites(source, &c_sources).unwrap() {
+        let position =
+            c0_tactic_source_position(source, &c_sources, &site.claim_label, site.source_index)
+                .unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(source, &c_sources, position.line, position.column).unwrap();
+        if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+            panic!(
+                "{}:{}: {}\n{expanded}",
+                position.line,
+                position.column,
+                error.message()
+            );
+        }
+    }
 }
 
 #[test]
