@@ -495,13 +495,24 @@ checked result is a reusable contract implication: `apply(raw_is_buffered(f))`
 establishes `Buffered(f)`, after which an ordinary caller can use
 `step(Buffered)`. Expansion preserves the explicit contract selection.
 
-This slice supports one nongeneric, void-returning callback theorem parameter,
+Return-valued callbacks use the same syntax: the theorem parameter's C
+function-pointer type supplies the return type. `step(Contract)` performs the
+call and forwards its actual return value to `result` in one checked step.
+The proof may relate `result` to current or `old` memory and to guarantees
+from other applicable contracts. There is no extra proof step to expose the
+result, and no new result-binding syntax. Existing supported scalar and pointer
+return types retain their C types. See the
+[end-to-end return-valued buffer proof](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_return_buffer.md).
+
+This slice supports one nongeneric callback theorem parameter,
 one target-contract conclusion, and one or more source-contract premises for
 that same pointer. The `executes` arguments use C parameter spelling, match
 the callback signature, and are bound only inside the execution proof; they
 cannot escape into theorem premises or conclusions. Their names must be
-distinct from the callback and from `result`. Non-void callback theorems and
-additional theorem parameters remain outside this slice.
+distinct from the callback and from `result`; a return-valued callback parameter
+also cannot be named `result`. Additional theorem parameters remain outside
+this slice. The existing callback-type limitations (such as const-qualified
+callback returns) are unchanged.
 
 ## Requirements
 

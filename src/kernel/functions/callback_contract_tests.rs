@@ -2,8 +2,20 @@ use super::*;
 
 #[test]
 fn executed_refinement_checks_the_exact_call_and_source_premises() {
+    check_executed_refinement_shape(CType::Void, false);
+}
+
+#[test]
+fn executed_refinement_requires_forwarding_the_exact_typed_call_result() {
+    for return_type in [CType::Int32, CType::Int64, CType::Int32Pointer] {
+        check_executed_refinement_shape(return_type, false);
+        check_executed_refinement_shape(return_type, true);
+    }
+}
+
+fn check_executed_refinement_shape(return_type: CType, alter_result: bool) {
     let template = c_function(
-        CType::Void,
+        return_type,
         "interface",
         vec![c_parameter("x", CType::Int32)],
         CStatement::Skip,
@@ -49,15 +61,26 @@ fn executed_refinement_checks_the_exact_call_and_source_premises() {
             requirements.insert(0, premise.clone());
         }
         let function = c_function(
-            CType::Void,
+            return_type,
             "wrapper",
             vec![
                 c_parameter("x", CType::Int32),
                 c_parameter("callback", pointer_type),
             ],
-            CStatement::Call {
-                function_name: callee.to_string(),
-                arguments: vec![argument],
+            if return_type == CType::Void {
+                CStatement::Call {
+                    function_name: callee.to_string(),
+                    arguments: vec![argument],
+                }
+            } else {
+                c_seq(
+                    c_call_assign("result", callee, vec![argument]),
+                    c_return(if alter_result {
+                        c_int32_literal(0)
+                    } else {
+                        c_variable("result")
+                    }),
+                )
             },
         )
         .with_contract(requirements, vec![], vec![], vec![], true);
@@ -70,7 +93,7 @@ fn executed_refinement_checks_the_exact_call_and_source_premises() {
                 &CVerifiedFunctionRule { function },
             )
             .is_some(),
-            valid
+            valid && !alter_result
         );
     }
 }

@@ -1576,7 +1576,7 @@ fn execute_step_from_frontier_position_selecting_path(
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
     };
-    let (execution_start_state, current_state, source_statement, remaining) =
+    let (execution_start_state, current_state, mut source_statement, mut remaining) =
         next_top_level_statement_from_frontier_position(
             ExecutionView::new(
                 &execution.core.frontier,
@@ -1592,6 +1592,15 @@ fn execute_step_from_frontier_position_selecting_path(
             tactic_index,
             tactic_name,
         )?;
+    if function_block.one_call_proof
+        && matches!(
+            execution.core.frontier.position,
+            FrontierPosition::FunctionEntry
+        )
+    {
+        source_statement = function.body().clone();
+        remaining = None;
+    }
     if matches!(source_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source loop at statement({statement_index})"

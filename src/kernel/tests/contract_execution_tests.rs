@@ -2844,6 +2844,46 @@ fn recording_covers_a_loadability_premise_from_the_retained_context() {
 }
 
 #[test]
+fn recording_complete_sequence_requires_exact_remaining_source() {
+    let body = c_seq(c_return(c_int32_literal(0)), c_return(c_int32_literal(1)));
+    let function = c_function(CType::Int32, "sequence", Vec::new(), body.clone());
+    let entry = c_function_entry_state(&CState::new(), &function, &[]).expect("entry");
+    for (statement, accepted) in [
+        (body, true),
+        (
+            c_seq(c_return(c_int32_literal(0)), c_return(c_int32_literal(2))),
+            false,
+        ),
+        (c_seq(CStatement::Skip, c_return(c_int32_literal(1))), false),
+    ] {
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            CState::new(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        let evidence = Theorem::new(Proposition::CStatementVerifies {
+            state: entry.clone(),
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(0),
+                state: entry.clone(),
+            },
+        });
+        let recorded = core.record_statement_transition(
+            &function,
+            &[],
+            evidence,
+            PureFactContext::new(),
+            &[],
+            &[],
+        );
+        assert_eq!(recorded.is_ok(), accepted);
+        if accepted {
+            assert!(core.evidence_source.is_none());
+        }
+    }
+}
+
+#[test]
 fn recording_statement_evidence_checks_it_advances_the_frontier() {
     // The record call itself applies the judgment the end-of-proof walk
     // applies: the theorem proves the frontier's next source statement

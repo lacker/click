@@ -562,6 +562,9 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     external: bool,
+    /// Internal source grouping for an `executes` theorem's call and return.
+    /// The kernel still checks the complete ordinary statement sequence.
+    one_call_proof: bool,
     requires: Vec<Requirement>,
     /// Parsed once so a simple `choose(... from requirement label)` step does
     /// not linearly rescan every function requirement.

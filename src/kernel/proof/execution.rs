@@ -3385,6 +3385,15 @@ impl ExecutionProofCore {
                 }
                 None => None,
             }
+        } else if matches!(proved_statement, CStatement::Seq(..))
+            && self
+                .current_source(function)
+                .is_some_and(|source| source == proved_statement)
+        {
+            // A checked sequence may cover the entire remaining source. This
+            // is exact structural identity, not a search through the suffix.
+            // In particular an executes proof checks call + return together.
+            None
         } else {
             let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
                 return Err(

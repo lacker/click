@@ -79,6 +79,13 @@ pub(super) fn verify_execution_theorem(
     let target = predicates
         .contract_definition(target_name)
         .ok_or_else(|| error("the conclusion must name a function contract"))?;
+    if callback.name() == "result"
+        && target.function_block().signature().return_type() != C0Type::Void
+    {
+        return Err(error(
+            "a return-valued callback parameter must not be named result",
+        ));
+    }
     if theorem.requires().is_empty() {
         return Err(error("requires at least one source-contract assumption"));
     }
@@ -121,9 +128,6 @@ pub(super) fn verify_execution_theorem(
             "executes signature does not match the callback and target contract",
         ));
     }
-    if target.function_block().signature().return_type() != C0Type::Void {
-        return Err(error("this execution-proof slice requires a void callback"));
-    }
     let SourceProof::Script(tactics) = ensure.proof() else {
         return Err(error("requires an explicit execution proof block"));
     };
@@ -141,6 +145,7 @@ pub(super) fn verify_execution_theorem(
         })
         .collect::<BTreeMap<_, _>>();
     let mut block = target.function_block().clone();
+    block.one_call_proof = true;
     block.signature.name = theorem.name().to_string();
     block.signature.parameters = execution.parameters.clone();
     block.signature.parameters.push(callback.clone());
@@ -172,16 +177,29 @@ pub(super) fn verify_execution_theorem(
         }
     }
     block.grouped_proof = Some(ensure.proof().clone());
-    let parsed = crate::surface::verification::external_c0_function(&block).with_proof_body(
+    let arguments = execution
+        .parameters
+        .iter()
+        .map(|p| syntax::C0Expression::Variable(p.name().to_string()))
+        .collect();
+    let body = if block.signature().return_type() == C0Type::Void {
         syntax::C0Statement::Call {
             function_name: execution.callback.clone(),
-            arguments: execution
-                .parameters
-                .iter()
-                .map(|p| syntax::C0Expression::Variable(p.name().to_string()))
-                .collect(),
-        },
-    );
+            arguments,
+        }
+    } else {
+        syntax::C0Statement::Seq(
+            Box::new(syntax::C0Statement::CallAssign {
+                target: "result".into(),
+                function_name: execution.callback.clone(),
+                arguments,
+            }),
+            Box::new(syntax::C0Statement::Return(syntax::C0Expression::Variable(
+                "result".into(),
+            ))),
+        )
+    };
+    let parsed = crate::surface::verification::external_c0_function(&block).with_proof_body(body);
     let claims = function_claims(&block);
     let verified = prove_claims_by_grouped_script(
         None,

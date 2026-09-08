@@ -1,4 +1,4 @@
-# Non-void execution theorems remain outside this slice
+# Non-void execution theorems expose the callback result
 
 ```click
 contract int32 Raw(int32 x) { ensures result == x; }
@@ -10,5 +10,5 @@ theorem lift(callback: int32 (*)(int32)) executes callback(int32 x) {
 ```
 
 ```expect
-fail: requires a void callback
+pass
 ```

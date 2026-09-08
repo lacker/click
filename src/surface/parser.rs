@@ -1418,6 +1418,7 @@ impl Parser {
         Ok(FunctionBlock {
             signature,
             external,
+            one_call_proof: false,
             requires,
             requirement_label_indices,
             decreases,

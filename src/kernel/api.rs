@@ -4669,17 +4669,28 @@ pub(crate) fn prove_executed_contract_refinement(
     let target = environment.get_function_contract(target_name)?;
     let mut function = rule.function.clone();
     let callback = function.parameters.pop()?;
-    if callback.c_type() != target.function_pointer_type() || function.return_type() != CType::Void
-    {
+    if callback.c_type() != target.function_pointer_type() {
         return None;
     }
-    let call = CStatement::Call {
-        function_name: callback.name().to_string(),
-        arguments: function
-            .parameters
-            .iter()
-            .map(|parameter| CExpression::Variable(parameter.name().to_string()))
-            .collect(),
+    let arguments = function
+        .parameters
+        .iter()
+        .map(|parameter| CExpression::Variable(parameter.name().to_string()))
+        .collect();
+    let call = if function.return_type() == CType::Void {
+        CStatement::Call {
+            function_name: callback.name().to_string(),
+            arguments,
+        }
+    } else {
+        CStatement::Seq(
+            Arc::new(CStatement::CallAssign {
+                target: "result".into(),
+                function_name: callback.name().to_string(),
+                arguments,
+            }),
+            Arc::new(CStatement::Return(CExpression::Variable("result".into()))),
+        )
     };
     if function.body() != &call || function.source_body() != &call {
         return None;
