@@ -24,12 +24,12 @@ spec enum OddList<T> {
     OddCons(T, EvenList<T>),
 }
 
-function list_length(xs: TestList<int32>) -> int32
+function example_list_length(xs: TestList<int32>) -> int32
     decreases xs
 {
     match xs {
         TestList::Nil => 0,
-        TestList::Cons(head, tail) => 1 + list_length(tail),
+        TestList::Cons(head, tail) => 1 + example_list_length(tail),
     }
 }
 
@@ -83,15 +83,15 @@ function odd_length(xs: OddList<int32>) -> int32
 }
 
 theorem empty_length_is_zero() {
-    ensures list_length(TestList<int32>::Nil) == 0 by {
-        unfold(list_length(TestList<int32>::Nil));
+    ensures example_list_length(TestList<int32>::Nil) == 0 by {
+        unfold(example_list_length(TestList<int32>::Nil));
         simp();
     }
 }
 
 theorem cons_length_opens_one_layer(head: int32, tail: TestList<int32>) {
-    ensures list_length(TestList<int32>::Cons(head, tail)) == 1 + list_length(tail) by {
-        unfold(list_length(TestList<int32>::Cons(head, tail)));
+    ensures example_list_length(TestList<int32>::Cons(head, tail)) == 1 + example_list_length(tail) by {
+        unfold(example_list_length(TestList<int32>::Cons(head, tail)));
         simp();
     }
 }

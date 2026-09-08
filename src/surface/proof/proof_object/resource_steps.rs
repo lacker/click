@@ -212,6 +212,38 @@ impl<'a> Proof<'a> {
                         ))
                         },
                     )?;
+                // Keep the retained goal aligned with the constructor-iota
+                // reduction performed by the kernel for this explicit unfold.
+                // Unknown scrutinees remain matches; no pure calls are evaluated.
+                // Walk selected arms by reference, substituting only their
+                // scrutinees and the final body, not the remaining subtree
+                // once per nested match.
+                let mut selected_body = &surface_body;
+                let mut bindings = BTreeMap::new();
+                while let ContractExpression::AlgebraicMatch { scrutinee, arms } = selected_body {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let scrutinee = substitute_contract_expression(scrutinee, &bindings)
+                        .map_err(|message| self.step_error(message))?;
+                    let ContractExpression::AlgebraicConstructor {
+                        algebraic_type,
+                        variant,
+                        arguments,
+                    } = &scrutinee
+                    else {
+                        break;
+                    };
+                    let Some(arm) = arms.iter().find(|arm| {
+                        arm.type_name == algebraic_type.name
+                            && arm.variant == *variant
+                            && arm.bindings.len() == arguments.len()
+                    }) else {
+                        break;
+                    };
+                    bindings.extend(arm.bindings.iter().cloned().zip(arguments.iter().cloned()));
+                    selected_body = &arm.body;
+                }
+                let surface_body = substitute_contract_expression(selected_body, &bindings)
+                    .map_err(|message| self.step_error(message))?;
                 let surface_application = ContractExpression::Call {
                     name: application.name.clone(),
                     arguments: application.arguments.clone(),

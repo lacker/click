@@ -786,7 +786,7 @@ fn check_pure_structural_induction(
         );
         let Some(proof) = root.try_authoritative_linear_script(&prepared)? else {
             return Err(ClickError::new(format!(
-                "structural induction arm `{}::{}` did not close its goal",
+                "`{claim_label}` structural induction arm `{}::{}` did not close its goal",
                 arm.type_name, arm.variant
             )));
         };

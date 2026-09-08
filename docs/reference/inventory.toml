@@ -2024,6 +2024,54 @@ id = "stdlib.theorem.int32_ge_and_not_gt_implies_eq"
 path = "reference/library/index.md#int32_ge_and_not_gt_implies_eq"
 
 [[item]]
+id = "stdlib.type.Nat"
+path = "reference/library/index.md#nat"
+
+[[item]]
+id = "stdlib.function.nat_add"
+path = "reference/library/index.md#nat_add"
+
+[[item]]
+id = "stdlib.theorem.nat_add_left_identity"
+path = "reference/library/index.md#nat_add_left_identity"
+
+[[item]]
+id = "stdlib.theorem.nat_add_succ_left"
+path = "reference/library/index.md#nat_add_succ_left"
+
+[[item]]
+id = "stdlib.theorem.nat_add_right_identity"
+path = "reference/library/index.md#nat_add_right_identity"
+
+[[item]]
+id = "stdlib.theorem.nat_add_succ_right"
+path = "reference/library/index.md#nat_add_succ_right"
+
+[[item]]
+id = "stdlib.theorem.nat_add_associative"
+path = "reference/library/index.md#nat_add_associative"
+
+[[item]]
+id = "stdlib.theorem.nat_add_commutative"
+path = "reference/library/index.md#nat_add_commutative"
+
+[[item]]
+id = "stdlib.function.list_length"
+path = "reference/library/index.md#list_length"
+
+[[item]]
+id = "stdlib.theorem.list_length_nil"
+path = "reference/library/index.md#list_length_nil"
+
+[[item]]
+id = "stdlib.theorem.list_length_cons"
+path = "reference/library/index.md#list_length_cons"
+
+[[item]]
+id = "stdlib.theorem.list_length_append"
+path = "reference/library/index.md#list_length_append"
+
+[[item]]
 id = "stdlib.type.List"
 path = "reference/library/index.md#list"
 

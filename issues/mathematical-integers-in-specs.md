@@ -2,6 +2,12 @@
 
 Found by the 2026-09-01 kernel audit at cb034b21.
 
+The standard library now offers an ordinary ADT `Nat`, recursive `nat_add`,
+and Nat-valued `list_length`, with checked induction laws. This supports exact
+structural sizes without machine overflow. It does not provide signed mathematical
+integers, arithmetic automation, or checked conversions to/from C integers;
+the requirements below remain open.
+
 Every integer-valued specification term is a `Bitvector32Term`
 (`src/kernel/primitives.rs:82-116`),
 so contracts and invariants are stated modulo 2^32. A claim such as "result

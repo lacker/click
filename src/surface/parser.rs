@@ -9,6 +9,7 @@ use super::*;
 /// supported surface depth explicit and reject deeper input before recursive
 /// parsing begins.
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
+pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
@@ -154,6 +155,7 @@ impl Token {
 }
 
 struct Parser {
+    match_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -347,6 +349,7 @@ impl Parser {
             tokens,
             positions,
             matching_parentheses,
+            match_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -4635,67 +4638,79 @@ impl Parser {
         false
     }
 
-    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
-        if self.peek_ident() == Some("match") {
-            self.position += 1;
-            let scrutinee = self.parse_contract_expression()?;
-            self.expect(Token::LBrace)?;
-            let mut arms = Vec::new();
-            while self.peek() != Some(&Token::RBrace) {
-                let type_name = self.expect_ident("match pattern datatype")?;
-                self.expect(Token::ColonColon)?;
-                let variant = self.expect_ident("match pattern variant")?;
-                let mut bindings = Vec::new();
-                if self.peek() == Some(&Token::LParen) {
-                    self.position += 1;
-                    if self.peek() != Some(&Token::RParen) {
-                        loop {
-                            bindings.push(self.expect_ident("match pattern binding")?);
-                            match self.peek() {
-                                Some(Token::Comma) => self.position += 1,
-                                Some(Token::RParen) => break,
-                                Some(token) => {
-                                    return Err(self.error(format!(
-                                        "expected `,` or `)` after match binding, got {}",
-                                        token.describe()
-                                    )));
-                                }
-                                None => {
-                                    return Err(self.error("expected `)` after match bindings"));
-                                }
+    fn parse_contract_match(&mut self) -> Result<ContractExpression, ClickError> {
+        self.position += 1;
+        let scrutinee = self.parse_contract_expression()?;
+        self.expect(Token::LBrace)?;
+        let mut arms = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let type_name = self.expect_ident("match pattern datatype")?;
+            self.expect(Token::ColonColon)?;
+            let variant = self.expect_ident("match pattern variant")?;
+            let mut bindings = Vec::new();
+            if self.peek() == Some(&Token::LParen) {
+                self.position += 1;
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        bindings.push(self.expect_ident("match pattern binding")?);
+                        match self.peek() {
+                            Some(Token::Comma) => self.position += 1,
+                            Some(Token::RParen) => break,
+                            Some(token) => {
+                                return Err(self.error(format!(
+                                    "expected `,` or `)` after match binding, got {}",
+                                    token.describe()
+                                )));
+                            }
+                            None => {
+                                return Err(self.error("expected `)` after match bindings"));
                             }
                         }
                     }
-                    self.expect(Token::RParen)?;
                 }
-                self.expect(Token::FatArrow)?;
-                let newly_bound = bindings
-                    .iter()
-                    .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let body = self.parse_contract_expression();
-                for binding in newly_bound {
-                    self.current_contract_bindings.remove(&binding);
-                }
-                let body = body?;
-                arms.push(AlgebraicMatchArm {
-                    type_name,
-                    variant,
-                    bindings,
-                    body,
-                });
-                if self.peek() == Some(&Token::Comma) {
-                    self.position += 1;
-                } else if self.peek() != Some(&Token::RBrace) {
-                    return Err(self.error("expected `,` or `}` after match arm"));
-                }
+                self.expect(Token::RParen)?;
             }
-            self.expect(Token::RBrace)?;
-            return Ok(ContractExpression::AlgebraicMatch {
-                scrutinee: Box::new(scrutinee),
-                arms,
+            self.expect(Token::FatArrow)?;
+            let newly_bound = bindings
+                .iter()
+                .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let body = self.parse_contract_expression();
+            for binding in newly_bound {
+                self.current_contract_bindings.remove(&binding);
+            }
+            let body = body?;
+            arms.push(AlgebraicMatchArm {
+                type_name,
+                variant,
+                bindings,
+                body,
             });
+            if self.peek() == Some(&Token::Comma) {
+                self.position += 1;
+            } else if self.peek() != Some(&Token::RBrace) {
+                return Err(self.error("expected `,` or `}` after match arm"));
+            }
+        }
+        self.expect(Token::RBrace)?;
+        return Ok(ContractExpression::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        });
+    }
+
+    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("match") {
+            if self.match_nesting >= MATCH_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "match nesting exceeds Click's supported depth of {MATCH_NESTING_LIMIT}"
+                )));
+            }
+            self.match_nesting += 1;
+            let result = self.parse_contract_match();
+            self.match_nesting -= 1;
+            return result;
         }
 
         if self.looks_like_algebraic_constructor() {

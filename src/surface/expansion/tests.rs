@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn successive_constructor_unfolds_retain_a_checked_goal() {
+    let source = r#"
+theorem add_two(n: Nat) {
+    ensures nat_add(Nat::Succ(Nat::Succ(Nat::Zero)), n) == Nat::Succ(Nat::Succ(n)) by {
+        unfold(nat_add(Nat::Succ(Nat::Succ(Nat::Zero)), n));
+        unfold(nat_add(Nat::Succ(Nat::Zero), n));
+        unfold(nat_add(Nat::Zero, n));
+        normalize();
+    }
+}
+theorem singleton<T>(x: T) {
+    ensures list_length(List<T>::Cons(x, List<T>::Nil)) == Nat::Succ(Nat::Zero) by {
+        unfold(list_length(List<T>::Cons(x, List<T>::Nil)));
+        unfold(list_length(List<T>::Nil));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("successive explicit unfolds verify");
+    let smart_source = source.replace("normalize();", "simp();");
+    verify_c0_sources(&smart_source, &[]).expect("smart closers have checked certificates");
+    for (claim, index) in [("add_two.ensures_0", 3), ("singleton.ensures_0", 2)] {
+        let position = c0_tactic_source_position(&smart_source, &[], claim, index).unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(&smart_source, &[], position.line, position.column).unwrap();
+        verify_c0_sources(&expanded, &[]).expect("successive unfolds expand and recheck");
+    }
+    let tampered = source.replace("== Nat::Succ(Nat::Succ(n))", "== Nat::Succ(n)");
+    assert!(verify_c0_sources(&tampered, &[]).is_err());
+}
+
+#[test]
 fn generic_smart_proofs_expand_without_concrete_clients() {
     let source = r#"
 theorem independent<T, U>(x: T, y: U) {

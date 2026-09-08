@@ -14,6 +14,50 @@ int32 docs_identity(int32 value) {
 ```
 
 ```click
+theorem nat_laws(a: Nat, b: Nat, c: Nat) {
+    ensures nat_add(Nat::Zero, a) == a by { apply(nat_add_left_identity(a)); }
+    ensures nat_add(a, Nat::Zero) == a by { apply(nat_add_right_identity(a)); }
+    ensures nat_add(Nat::Succ(a), b) == Nat::Succ(nat_add(a, b)) by { apply(nat_add_succ_left(a, b)); }
+    ensures nat_add(a, Nat::Succ(b)) == Nat::Succ(nat_add(a, b)) by { apply(nat_add_succ_right(a, b)); }
+    ensures nat_add(nat_add(a, b), c) == nat_add(a, nat_add(b, c)) by { apply(nat_add_associative(a, b, c)); }
+    ensures nat_add(a, b) == nat_add(b, a) by { apply(nat_add_commutative(a, b)); }
+}
+
+theorem one_plus_one() {
+    ensures nat_add(Nat::Succ(Nat::Zero), Nat::Succ(Nat::Zero))
+        == Nat::Succ(Nat::Succ(Nat::Zero)) by {
+        unfold(nat_add(Nat::Succ(Nat::Zero), Nat::Succ(Nat::Zero)));
+        unfold(nat_add(Nat::Zero, Nat::Succ(Nat::Zero)));
+        simp();
+    }
+}
+
+theorem length_laws<T>(head: T, xs: List<T>, ys: List<T>) {
+    ensures list_length(List<T>::Nil) == Nat::Zero by {
+        apply(list_length_nil(List<T>::Nil));
+    }
+    ensures list_length(List<T>::Cons(head, xs)) == Nat::Succ(list_length(xs)) by {
+        apply(list_length_cons(head, xs));
+    }
+    ensures list_length(list_append(xs, ys)) == nat_add(list_length(xs), list_length(ys)) by {
+        apply(list_length_append(xs, ys));
+    }
+}
+
+theorem nested_length(xs: List<List<int32>>, ys: List<List<int32>>) {
+    ensures list_length(list_append(xs, ys)) == nat_add(list_length(xs), list_length(ys)) by {
+        apply(list_length_append(xs, ys));
+    }
+}
+
+theorem singleton_length(value: int32) {
+    ensures list_length(List<int32>::Cons(value, List<int32>::Nil)) == Nat::Succ(Nat::Zero) by {
+        unfold(list_length(List<int32>::Cons(value, List<int32>::Nil)));
+        unfold(list_length(List<int32>::Nil));
+        simp();
+    }
+}
+
 verifying "stdlib_every_symbol.c";
 
 theorem list_laws(xs: List<int32>, ys: List<int32>, zs: List<int32>, value: int32) {

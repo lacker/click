@@ -1,5 +1,116 @@
 abstract resource allocation(base: int32*, bytes: int32);
 
+spec enum Nat {
+    Zero,
+    Succ(Nat),
+}
+
+function nat_add(left: Nat, right: Nat) -> Nat
+    decreases left
+{
+    match left {
+        Nat::Zero => right,
+        Nat::Succ(previous) => Nat::Succ(nat_add(previous, right)),
+    }
+}
+
+theorem nat_add_left_identity(n: Nat) {
+    ensures nat_add(Nat::Zero, n) == n by {
+        unfold(nat_add(Nat::Zero, n));
+        normalize();
+    }
+}
+
+theorem nat_add_succ_left(n: Nat, m: Nat) {
+    ensures nat_add(Nat::Succ(n), m) == Nat::Succ(nat_add(n, m)) by {
+        unfold(nat_add(Nat::Succ(n), m));
+        normalize();
+    }
+}
+
+theorem nat_add_right_identity(n: Nat) {
+    ensures nat_add(n, Nat::Zero) == n by {
+        induct(n) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, Nat::Zero));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), Nat::Zero));
+                rewrite(nat_add(previous, Nat::Zero) == previous);
+                normalize();
+            }
+        }
+    }
+}
+
+theorem nat_add_succ_right(n: Nat, m: Nat) {
+    ensures nat_add(n, Nat::Succ(m)) == Nat::Succ(nat_add(n, m)) by {
+        induct(n) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, Nat::Succ(m)));
+                unfold(nat_add(Nat::Zero, m));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), Nat::Succ(m)));
+                unfold(nat_add(Nat::Succ(previous), m));
+                rewrite(nat_add(previous, Nat::Succ(m)) == Nat::Succ(nat_add(previous, m)));
+                normalize();
+            }
+        }
+    }
+}
+
+theorem nat_add_associative(a: Nat, b: Nat, c: Nat) {
+    ensures nat_add(nat_add(a, b), c) == nat_add(a, nat_add(b, c)) by {
+        induct(a) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, b));
+                unfold(nat_add(Nat::Zero, nat_add(b, c)));
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                apply(nat_add_succ_left(previous, b));
+                rewrite(nat_add(Nat::Succ(previous), b) == Nat::Succ(nat_add(previous, b)));
+                apply(nat_add_succ_left(nat_add(previous, b), c));
+                rewrite(nat_add(Nat::Succ(nat_add(previous, b)), c)
+                    == Nat::Succ(nat_add(nat_add(previous, b), c)));
+                apply(nat_add_succ_left(previous, nat_add(b, c)));
+                rewrite(nat_add(Nat::Succ(previous), nat_add(b, c))
+                    == Nat::Succ(nat_add(previous, nat_add(b, c))));
+                rewrite(nat_add(nat_add(previous, b), c) == nat_add(previous, nat_add(b, c)));
+                normalize();
+            }
+        }
+    }
+}
+
+theorem nat_add_commutative(a: Nat, b: Nat) {
+    ensures nat_add(a, b) == nat_add(b, a) by {
+        induct(a) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, b));
+                apply(nat_add_right_identity(b));
+                rewrite(nat_add(b, Nat::Zero) == b);
+                normalize();
+            }
+            Nat::Succ(previous) => {
+                apply(ih(previous));
+                unfold(nat_add(Nat::Succ(previous), b));
+                apply(nat_add_succ_right(b, previous));
+                rewrite(nat_add(b, Nat::Succ(previous)) == Nat::Succ(nat_add(b, previous)));
+                rewrite(nat_add(previous, b) == nat_add(b, previous));
+                normalize();
+            }
+        }
+    }
+}
+
+
 spec enum List<T> {
     Nil,
     Cons(T, List<T>),
@@ -132,6 +243,60 @@ theorem list_contains_append<T>(xs: List<T>, ys: List<T>, value: T) {
                         == if list_contains(tail, value) == 1 { 1 } else { list_contains(ys, value) });
                     normalize() using { not(head == value); }
                 }
+            }
+        }
+    }
+}
+
+function list_length<T>(xs: List<T>) -> Nat
+    decreases xs
+{
+    match xs {
+        List::Nil => Nat::Zero,
+        List::Cons(head, tail) => Nat::Succ(list_length(tail)),
+    }
+}
+
+theorem list_length_nil<T>(xs: List<T>) {
+    requires xs == List<T>::Nil;
+    ensures list_length(xs) == Nat::Zero by {
+        rewrite(xs == List<T>::Nil);
+        unfold(list_length(List<T>::Nil));
+        normalize();
+    }
+}
+
+theorem list_length_cons<T>(head: T, tail: List<T>) {
+    ensures list_length(List<T>::Cons(head, tail)) == Nat::Succ(list_length(tail)) by {
+        unfold(list_length(List<T>::Cons(head, tail)));
+        normalize();
+    }
+}
+
+theorem list_length_append<T>(xs: List<T>, ys: List<T>) {
+    ensures list_length(list_append(xs, ys)) == nat_add(list_length(xs), list_length(ys)) by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_length(List<T>::Nil));
+                unfold(nat_add(Nat::Zero, list_length(ys)));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                apply(list_length_cons(head, list_append(tail, ys)));
+                rewrite(list_length(List<T>::Cons(head, list_append(tail, ys)))
+                    == Nat::Succ(list_length(list_append(tail, ys))));
+                apply(list_length_cons(head, tail));
+                rewrite(list_length(List<T>::Cons(head, tail)) == Nat::Succ(list_length(tail)));
+                apply(nat_add_succ_left(list_length(tail), list_length(ys)));
+                rewrite(nat_add(Nat::Succ(list_length(tail)), list_length(ys))
+                    == Nat::Succ(nat_add(list_length(tail), list_length(ys))));
+                rewrite(list_length(list_append(tail, ys)) == nat_add(list_length(tail), list_length(ys)));
+                normalize();
             }
         }
     }

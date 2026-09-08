@@ -115,12 +115,12 @@ bound by that arm:
 
 <!-- verified-example: mdtests/algebraic_structural_recursion.md -->
 ```click
-function list_length(xs: List<int32>) -> int32
+function example_list_length(xs: List<int32>) -> int32
     decreases xs
 {
     match xs {
         List::Nil => 0,
-        List::Cons(head, tail) => 1 + list_length(tail),
+        List::Cons(head, tail) => 1 + example_list_length(tail),
     }
 }
 ```
