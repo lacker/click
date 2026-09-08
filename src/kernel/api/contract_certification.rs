@@ -1366,6 +1366,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                         }
                         CResource::Composite { name, .. } => format!("composite {name}"),
                         CResource::Token { name, .. } => format!("token {name}"),
+                        CResource::Instance(instance) => format!("instance {}", instance.name()),
                     };
                     format!("{index}: {kind}")
                 })
@@ -1393,7 +1394,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         let Some(count) = entry_state.counted_population(name, arguments) else {
             continue;

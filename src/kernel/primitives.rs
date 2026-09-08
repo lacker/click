@@ -679,6 +679,10 @@ pub enum SpecMemory {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecExpression {
     Value(CValue),
+    ResourceField {
+        projection: ResourceFieldProjection,
+        c_type: CType,
+    },
     AlgebraicMatch {
         scrutinee: Box<SpecAlgebraicExpression>,
         arms: Vec<SpecAlgebraicMatchArm>,
@@ -746,6 +750,7 @@ pub struct SpecAlgebraicExpression {
 pub enum SpecAlgebraicExpressionNode {
     Variable(Variable),
     Binding(String),
+    ResourceField(ResourceFieldProjection),
     Constructor {
         variant: String,
         fields: Vec<SpecAlgebraicValue>,
@@ -758,6 +763,15 @@ pub enum SpecAlgebraicExpressionNode {
         name: String,
         arguments: Vec<SpecPureFunctionArgument>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceFieldProjection {
+    pub identity: Variable,
+    pub field_index: usize,
+    /// Select the explicit entry state supplied to spec evaluation. There is
+    /// no fallback to the current state when that snapshot is unavailable.
+    pub at_entry: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -817,16 +831,15 @@ pub enum AlgebraicValueType {
 }
 
 /// A resource field has a logical type, never a C storage location.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFieldType {
     C(CType),
     Algebraic(AlgebraicType),
 }
 
-/// Checked declaration metadata only. This does not create an owned instance
-/// or authorize a memory access. Field-bearing instances require their own
-/// identity/state representation before they can enter the resource algebra.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Checked declaration metadata. This does not create an owned instance or
+/// authorize a memory access; `ResourceInstance` carries identity and state.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceFieldSchema {
     fields: std::sync::Arc<[(String, ResourceFieldType)]>,
 }
@@ -2938,6 +2951,7 @@ pub(super) struct ResourceContextChange {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
+    pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
     pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
@@ -3027,10 +3041,75 @@ pub enum CResource {
         name: String,
         arguments: ResourceArguments,
     },
+    Instance(ResourceInstance),
+}
+
+/// A proof-only, exclusive resource instance. Identity is independent of its
+/// field state; equal fields do not identify distinct instances. This is an
+/// opaque ownership atom: its arguments and fields grant no memory authority.
+/// Constructing an atom is not a proof that it is owned or that a resource
+/// definition's body holds.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceInstance {
+    pub(super) identity: Variable,
+    pub(super) name: String,
+    pub(super) arguments: ResourceArguments,
+    pub(super) schema: ResourceFieldSchema,
+    pub(super) fields: ResourceArguments,
+}
+
+impl ResourceInstance {
+    pub fn new(
+        identity: Variable,
+        name: String,
+        arguments: ResourceArguments,
+        schema: ResourceFieldSchema,
+        fields: ResourceArguments,
+    ) -> Option<Self> {
+        if schema.is_countable() || schema.fields().len() != fields.len() {
+            return None;
+        }
+        for ((_, ty), value) in schema.fields().iter().zip(fields.iter()) {
+            let valid = match (ty, value) {
+                (ResourceFieldType::C(ty), AlgebraicValue::C(value)) => *ty == value.c_type(),
+                (ResourceFieldType::Algebraic(ty), AlgebraicValue::Algebraic(value)) => {
+                    *ty == value.algebraic_type && value.is_well_formed()
+                }
+                _ => false,
+            };
+            if !valid {
+                return None;
+            }
+        }
+        Some(Self {
+            identity,
+            name,
+            arguments,
+            schema,
+            fields,
+        })
+    }
+
+    pub fn identity(&self) -> Variable {
+        self.identity
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn arguments(&self) -> &[AlgebraicValue] {
+        &self.arguments
+    }
+    pub fn fields(&self) -> &[AlgebraicValue] {
+        &self.fields
+    }
+    pub fn schema(&self) -> &ResourceFieldSchema {
+        &self.schema
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
+    InvalidInstanceAccess(CResourceFact),
     DuplicateOwnedResourceFact(CResourceFact),
     OverlappingOwnedMemoryResources {
         left: CMemoryRange,
@@ -3100,10 +3179,12 @@ struct TokenResourceAlgebra;
 /// viewing. Source-declared body equivalences are applied as fold, unfold, and
 /// observation laws by the Click proof layer.
 struct CompositeResourceAlgebra;
+struct InstanceResourceAlgebra;
 
 static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
+static INSTANCE_RESOURCE_ALGEBRA: InstanceResourceAlgebra = InstanceResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
 /// `ResourceFamilyAlgebra` implementation in `resource_family_algebra`.
@@ -3112,6 +3193,7 @@ pub enum ResourceFamily {
     Memory,
     Composite,
     Token,
+    Instance,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

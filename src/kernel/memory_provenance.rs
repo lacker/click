@@ -119,6 +119,19 @@ pub(crate) fn c_resources_directly_match(
                     || pointers_match_for_resource_check(left.base(), right.base(), assumptions),
                 ))
         }
+        (CResource::Instance(left), CResource::Instance(right)) => {
+            left.identity() == right.identity()
+                && left.name() == right.name()
+                && left.schema() == right.schema()
+                && left.arguments().len() == right.arguments().len()
+                && left.fields().len() == right.fields().len()
+                && left
+                    .arguments()
+                    .iter()
+                    .chain(left.fields())
+                    .zip(right.arguments().iter().chain(right.fields()))
+                    .all(|(a, b)| resource_arguments_proven_equal(a, b, assumptions))
+        }
         (
             CResource::Composite {
                 name: left_name,

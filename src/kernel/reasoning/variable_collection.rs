@@ -494,6 +494,7 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match expression {
+        SpecExpression::ResourceField { .. } => {}
         SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
         SpecExpression::AlgebraicMatch { scrutinee, arms } => {
             collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
@@ -665,6 +666,7 @@ fn collect_spec_algebraic_expression_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(_) => {}
         SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {}
         SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
             for field in fields {
@@ -854,6 +856,11 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResource::Instance(instance) => {
+            for value in instance.arguments.iter().chain(instance.fields.iter()) {
+                collect_algebraic_value_bitvector_variables(value, variables);
+            }
+        }
         CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
             for argument in arguments.iter() {

@@ -50,6 +50,14 @@ ownership of the unchanged C tree.
   resources are non-countable: `count(...)` and quantity clauses reject them.
   [resource_fields.md](../mdtests/resource_fields.md) checks declarations only;
   instance use and field establishment remain explicitly unsupported.
+- The kernel has a separate exclusive instance representation with identity,
+  shared typed field state, equality-checked linear transfer, and indexed
+  lookup. It rejects duplicate identity, views, and counted quantities.
+  Kernel spec projections distinguish current state from an explicitly supplied
+  entry snapshot; ownership alone does not prove preservation. Fields and
+  arguments grant no memory authority. Kernel tests cover these rules,
+  substitution, and deterministic multi-size scaling. This does not yet expose
+  named instances or field projections in Click source.
 
 Pure Click expressions define symbolic terms; only C executes. A pure `match`
 does not automatically split a proof or introduce proof-scope bindings.
@@ -98,10 +106,12 @@ a model automatically.
 Implement and check the following slices in order:
 
 1. **Resource fields and instance binding.** Declaration parsing, type checking,
-   shared kernel schemas, and rejection of counting are implemented. Decide
-   instance-binding and field-establishment syntax, then carry identity and
-   typed field state through contracts, equality, substitution, and checked
-   fold/unfold. Check a small nonrecursive resource with an arbitrary field
+   shared kernel schemas, rejection of counting, and the exclusive kernel
+   identity/field-state representation are implemented. The agreed binding is
+   `owns cell: marked_cell(p);`, with current `cell.model` and entry-state
+   `old(cell.model)` projections. Wire these into source contracts and checked
+   fold/unfold; field establishment/update syntax remains deferred. Check a
+   small nonrecursive resource with an arbitrary field
    value, not only concrete constructors. The earlier kernel symbolic-index
    infrastructure remains available but does not implement instance fields.
    [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
@@ -137,12 +147,25 @@ Resource `match` and the modeled C contracts remain unimplemented. The kernel
 identity tests and existing pure tree proofs must not be reported as
 verification of the C tree.
 
-### Next design decision: binding and establishing resource instances
+### Agreed binding; deferred field establishment
 
-Decide how a contract binds an owned instance as `cell`, how `cell.model` and
-`old(cell.model)` refer to its state, and how fold/return proofs establish field
-values. Fields are ordinary symbolic Click values, not freely assignable ghost
-storage. No field value itself grants memory authority. A model change must
+The agreed contract syntax is `owns cell: marked_cell(p);`. It binds the
+exclusive instance entering and leaving the function. `cell.model` denotes
+its current field state, while `old(cell.model)` denotes its entry state.
+Returning the instance does not itself promise unchanged fields: that requires
+a postcondition such as `ensures cell.model == old(cell.model);`.
+
+The next implementation must connect these source bindings to checked
+ownership and body unfolding, preserving binder scope across calls and keeping
+function-entry snapshots distinct from loop-entry snapshots. The intended
+first C regression is an unchanged `return *p;` function using a field-bearing
+cell resource, with a proof that returns the same instance and preserves an
+arbitrary `Mark` field. Missing ownership, a different instance, or an unproved
+field change must fail.
+
+Syntax for initially establishing or changing fields remains deferred. Fields
+are ordinary symbolic Click values, not freely assignable ghost storage.
+No field value itself grants memory authority. A model change must
 re-establish the resource's relation to the concrete memory.
 
 The existing contract `let ... where` introduces separate existential witnesses

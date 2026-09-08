@@ -1114,6 +1114,11 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
 
 fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
     match resource {
+        CResource::Instance(instance) => {
+            for value in instance.arguments.iter().chain(instance.fields.iter()) {
+                collect_algebraic_value_bound_variables(value, variables);
+            }
+        }
         CResource::Memory(range) => {
             collect_pointer_bound_variables(&range.base, variables);
             collect_bitvector_bound_variables(&range.start, variables);
@@ -1969,6 +1974,9 @@ fn substitute_bitvector_variable_in_spec_algebraic_expression(
     to: &Bitvector32Term,
 ) -> SpecAlgebraicExpression {
     let node = match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(projection) => {
+            SpecAlgebraicExpressionNode::ResourceField(projection.clone())
+        }
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
@@ -2035,6 +2043,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
     to: &Bitvector32Term,
 ) -> SpecExpression {
     match expression {
+        SpecExpression::ResourceField { .. } => expression.clone(),
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
@@ -2727,6 +2736,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
+        CResource::Instance(instance) => {
+            let mut result = instance.clone();
+            result.arguments = instance
+                .arguments
+                .iter()
+                .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.fields = instance
+                .fields
+                .iter()
+                .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
+                .collect();
+            CResource::Instance(result)
+        }
         CResource::Memory(range) => CResource::Memory(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
@@ -4794,6 +4817,20 @@ fn substitute_pointer_variable_in_c_resource(
     to: &Pointer,
 ) -> CResource {
     match resource {
+        CResource::Instance(instance) => {
+            let mut result = instance.clone();
+            result.arguments = instance
+                .arguments
+                .iter()
+                .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.fields = instance
+                .fields
+                .iter()
+                .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
+                .collect();
+            CResource::Instance(result)
+        }
         CResource::Memory(range) => CResource::Memory(
             substitute_pointer_variable_in_c_memory_range(range, from, to),
         ),
@@ -5003,6 +5040,9 @@ fn substitute_pointer_variable_in_spec_algebraic_expression(
     to: &Pointer,
 ) -> SpecAlgebraicExpression {
     let node = match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(projection) => {
+            SpecAlgebraicExpressionNode::ResourceField(projection.clone())
+        }
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
@@ -5069,6 +5109,7 @@ fn substitute_pointer_variable_in_spec_expression(
     to: &Pointer,
 ) -> SpecExpression {
     match expression {
+        SpecExpression::ResourceField { .. } => expression.clone(),
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_pointer_variable_in_c_value(value, from, to))
         }

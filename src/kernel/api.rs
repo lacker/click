@@ -2902,7 +2902,7 @@ pub fn prove_owned_resource_count_lower_bound(
         CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
             (name, arguments)
         }
-        CResource::Memory(_) => return None,
+        CResource::Memory(_) | CResource::Instance(_) => return None,
     };
     let count = match state.counted_population(name, arguments) {
         Some(count) => count.clone(),
@@ -2971,6 +2971,7 @@ fn describe_contract_reuse_premise(premise: &Proposition) -> String {
         match resource {
             CResource::Composite { name, .. } | CResource::Token { name, .. } => name,
             CResource::Memory(_) => "memory",
+            CResource::Instance(instance) => instance.name(),
         }
     }
     match premise {

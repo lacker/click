@@ -2293,7 +2293,7 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
     resources.facts().iter().all(|resource| {
         matches!(
             resource,
-            CResourceFact::Own(CResource::Memory(_), quantity)
+            CResourceFact::Own(CResource::Memory(_) | CResource::Instance(_), quantity)
                 if quantity.as_const() == Some(1)
         ) || matches!(
             resource,
@@ -2986,6 +2986,7 @@ fn spec_sequence_supports_stateful_memory_refinement(sequence: &SpecSequenceExpr
 
 fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpression) -> bool {
     match expression {
+        SpecExpression::ResourceField { .. } => false,
         SpecExpression::Value(_) => true,
         SpecExpression::CExpression(expression) => {
             c_expression_supports_stateful_memory_refinement(expression)
@@ -3165,8 +3166,11 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
     }
 }
 
-fn spec_algebraic_expression_is_state_independent(expression: &SpecAlgebraicExpression) -> bool {
+pub(super) fn spec_algebraic_expression_is_state_independent(
+    expression: &SpecAlgebraicExpression,
+) -> bool {
     match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(_) => false,
         SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => true,
         SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
             fields.iter().all(|field| match field {
@@ -5038,7 +5042,7 @@ fn evaluate_resource_population_body_resources(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         let Some(definition) = definitions
             .iter()
@@ -5430,7 +5434,7 @@ fn counted_population_quantities(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
             continue;
@@ -6802,7 +6806,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         let Some(quantity) = fact.owned_quantity_term() else {
             continue;
@@ -7566,6 +7570,9 @@ fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRunti
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             CRuntimeError::DuplicateResource { resource }
         }
+        ResourceContextValidityError::InvalidInstanceAccess(_) => CRuntimeError::FunctionContract(
+            "field-bearing resource instances require exclusive ownership with quantity one".into(),
+        ),
         ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
             CRuntimeError::OverlappingOwnedMemoryResources {
                 left: Box::new(left),
@@ -7835,7 +7842,7 @@ fn evaluate_function_declared_resource_spec(
             name: name.to_string(),
             arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
-        ResourceFamily::Memory => {
+        ResourceFamily::Memory | ResourceFamily::Instance => {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "declared resources cannot use the raw memory family".to_string(),
             )));
@@ -7851,7 +7858,10 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
     match resource {
         CResourceFact::View(_) => 0,
         CResourceFact::Own(CResource::Memory(_), _) => 1,
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _) => 2,
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            _,
+        ) => 2,
     }
 }
 

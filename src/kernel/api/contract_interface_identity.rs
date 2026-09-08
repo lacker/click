@@ -96,6 +96,34 @@ mod tests {
             assert_eq!(names.visits, 5 * size);
         }
     }
+
+    #[test]
+    fn lexical_identity_preserves_resource_projection_identity_and_snapshot() {
+        let interface = |identity, at_entry| {
+            c_function(CType::Void, "interface", vec![], CStatement::Skip).with_contract(
+                vec![],
+                vec![SpecProposition::Comparison {
+                    left: SpecExpression::ResourceField {
+                        projection: ResourceFieldProjection {
+                            identity: Variable(identity),
+                            field_index: 0,
+                            at_entry,
+                        },
+                        c_type: CType::Int32,
+                    },
+                    operator: CComparisonOperator::Equal,
+                    right: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                }],
+                vec![],
+                vec![],
+                true,
+            )
+        };
+        let target = CFunctionContract::new("Target", interface(1, false)).unwrap();
+        assert!(same_interface(&target, &interface(1, false)));
+        assert!(!same_interface(&target, &interface(2, false)));
+        assert!(!same_interface(&target, &interface(1, true)));
+    }
 }
 
 #[derive(Default)]
@@ -196,7 +224,8 @@ impl Names {
         self.visit();
         use SpecExpression::*;
         match expression {
-            Value(_) => {}
+            // Instance identities are not lexical C parameter names.
+            Value(_) | ResourceField { .. } => {}
             CExpression(e) => self.c(e),
             CountedResourceCount { arguments, .. } => {
                 for e in arguments.iter_mut().flatten() {
@@ -277,7 +306,7 @@ impl Names {
     fn algebraic(&mut self, expression: &mut SpecAlgebraicExpression) {
         use SpecAlgebraicExpressionNode::*;
         match &mut expression.node {
-            Variable(_) => {}
+            Variable(_) | ResourceField(_) => {}
             Binding(name) => self.reference(name),
             Constructor { fields, .. } => {
                 for field in fields {
