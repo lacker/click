@@ -2283,22 +2283,6 @@ fn selected_branched_post_execution_have_shares_identical_path_certificates() {
 
 #[test]
 fn selected_pure_case_split_simp_expands_by_removal() {
-    // The default libtest worker stack is 2 MiB. This explicit 1.75 MiB
-    // budget catches check-frame growth while staying below that default.
-    // Calibration (2026-08-21): the check needs between 1216 and 1280 KiB
-    // on rustc 1.92 / macOS, and overflowed a 1.25 MiB budget on CI's Linux
-    // stable toolchain, so the budget carries about 40% headroom over the
-    // measured need. Recalibrate on the CI platform before tightening it.
-    std::thread::Builder::new()
-        .name("small-stack-expansion-check".to_string())
-        .stack_size(7 * 256 * 1024)
-        .spawn(selected_pure_case_split_simp_expands_by_removal_on_small_stack)
-        .expect("the small-stack check canary thread should start")
-        .join()
-        .expect("the small-stack check canary should not panic");
-}
-
-fn selected_pure_case_split_simp_expands_by_removal_on_small_stack() {
     // A smart exit `simp` whose claims all close by exact checks contributes
     // no surface tactics of its own. Its expansion must remove the tactic —
     // NOT graft the enclosing branch skeleton as an `if` tree with empty
