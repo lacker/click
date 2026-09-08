@@ -4776,6 +4776,19 @@ struct Parser {
 struct ScopeBinding {
     source_name: String,
     kernel_name: String,
+    shadowed: Option<VariableMetadata>,
+}
+
+#[derive(Clone, Debug)]
+struct VariableMetadata {
+    c_type: C0Type,
+    struct_name: Option<String>,
+    struct_value: Option<String>,
+    array_shape: Option<Vec<u32>>,
+    function_pointer: Option<C0FunctionPointerSignature>,
+    constant: bool,
+    pointee_constant: bool,
+    incomplete_array: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4902,6 +4915,32 @@ impl Parser {
             self.variable_function_pointers.remove(&binding.kernel_name);
             self.variable_constants.remove(&binding.kernel_name);
             self.variable_pointee_constants.remove(&binding.kernel_name);
+            self.incomplete_array_names.remove(&binding.kernel_name);
+            if let Some(metadata) = binding.shadowed {
+                let name = binding.kernel_name;
+                self.variable_types.insert(name.clone(), metadata.c_type);
+                if let Some(value) = metadata.struct_name {
+                    self.variable_structs.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.struct_value {
+                    self.variable_struct_values.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.array_shape {
+                    self.variable_array_shapes.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.function_pointer {
+                    self.variable_function_pointers.insert(name.clone(), value);
+                }
+                if metadata.constant {
+                    self.variable_constants.insert(name.clone());
+                }
+                if metadata.pointee_constant {
+                    self.variable_pointee_constants.insert(name.clone());
+                }
+                if metadata.incomplete_array {
+                    self.incomplete_array_names.insert(name);
+                }
+            }
         }
     }
 
@@ -5295,14 +5334,31 @@ impl Parser {
         } else {
             name.to_string()
         };
+        // A parameter may keep the source spelling of a file-scope object.
+        // Save only that object's metadata, not the translation-unit tables.
+        let shadowed = self
+            .variable_types
+            .remove(&kernel_name)
+            .map(|c_type| VariableMetadata {
+                c_type,
+                struct_name: self.variable_structs.remove(&kernel_name),
+                struct_value: self.variable_struct_values.remove(&kernel_name),
+                array_shape: self.variable_array_shapes.remove(&kernel_name),
+                function_pointer: self.variable_function_pointers.remove(&kernel_name),
+                constant: self.variable_constants.remove(&kernel_name),
+                pointee_constant: self.variable_pointee_constants.remove(&kernel_name),
+                incomplete_array: self.incomplete_array_names.remove(&kernel_name),
+            });
         match self.scopes.last_mut() {
             Some(scope) => scope.push(ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed,
             }),
             None => self.scopes.push(vec![ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed,
             }]),
         }
         Ok(kernel_name)
@@ -5332,10 +5388,12 @@ impl Parser {
             Some(scope) => scope.push(ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed: None,
             }),
             None => self.scopes.push(vec![ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed: None,
             }]),
         }
         Ok(kernel_name)
@@ -14704,4 +14762,42 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+#[cfg(test)]
+mod scope_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn shadow_metadata_storage_is_independent_of_unrelated_globals() {
+        for count in [16, 64, 256] {
+            let mut parser = Parser::new("", CAbi::SUPPORTED).unwrap();
+            for index in 0..count {
+                parser
+                    .variable_types
+                    .insert(format!("global{index}"), C0Type::UInt64);
+            }
+            parser
+                .variable_types
+                .insert("p".into(), C0Type::UInt32Array(2));
+            parser.variable_array_shapes.insert("p".into(), vec![2]);
+            parser.variable_constants.insert("p".into());
+            parser.push_scope();
+            assert_eq!(parser.declare_name("p").unwrap(), "p");
+            assert_eq!(parser.scopes.last().unwrap().len(), 1);
+            let saved = parser.scopes.last().unwrap()[0].shadowed.as_ref().unwrap();
+            assert_eq!(saved.c_type, C0Type::UInt32Array(2));
+            assert_eq!(saved.array_shape.as_deref(), Some([2].as_slice()));
+            assert!(saved.constant);
+            assert_eq!(parser.variable_types.len(), count);
+            parser
+                .variable_types
+                .insert("p".into(), C0Type::Int32Pointer);
+            parser.pop_scope();
+            assert_eq!(parser.variable_types.len(), count + 1);
+            assert_eq!(parser.variable_types["p"], C0Type::UInt32Array(2));
+            assert_eq!(parser.variable_array_shapes["p"], vec![2]);
+            assert!(parser.variable_constants.contains("p"));
+        }
+    }
 }

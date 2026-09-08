@@ -588,11 +588,11 @@ impl<'a> ProofScope<'a> {
                 &execution.core.unfolded_predicates,
                 *preserve_exposed_body,
             )?;
-            let selected = lower_resource_clause(
+            let selected = lower_resource_clause_at_state(
                 resource,
                 context.parsed_function.parameters(),
                 context.arguments,
-                checked.state.memory(),
+                &checked.state,
             )?;
             execution
                 .core
@@ -1129,11 +1129,11 @@ impl<'a> ProofScope<'a> {
                         &execution.core.unfolded_predicates,
                         preserve_exposed_body,
                     )?;
-                    let selected = lower_resource_clause(
+                    let selected = lower_resource_clause_at_state(
                         &resource,
                         context.parsed_function.parameters(),
                         context.arguments,
-                        checked.state.memory(),
+                        &checked.state,
                     )?;
                     execution
                         .core

@@ -8,7 +8,8 @@ mod claim_proofs;
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
 pub(in crate::surface) use fixed_state_proofs::{
     evaluate_c_fragment_through_kernel, evaluate_fixed_state_array_ref_through_kernel,
-    evaluate_fixed_state_expression_through_kernel, lower_fixed_state_proposition_through_kernel,
+    evaluate_fixed_state_expression_through_kernel, evaluate_resource_fragment_through_kernel,
+    lower_fixed_state_proposition_through_kernel,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls,
 };
 mod cursor_execution;
@@ -2038,15 +2039,11 @@ pub(super) fn initial_claim_context(
             vec![],
         )
     } else {
-        let (state, arguments) =
-            initial_call_state(function_block.requires(), parsed_function.parameters())?;
-        (
-            crate::kernel::initialize_c_function_globals(
-                &state,
-                &parsed_function.to_kernel_function(),
-            ),
-            arguments,
-        )
+        initial_call_state(
+            function_block.requires(),
+            parsed_function.parameters(),
+            &parsed_function.to_kernel_function(),
+        )?
     };
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();

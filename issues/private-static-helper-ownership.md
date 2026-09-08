@@ -42,9 +42,10 @@ those helpers. The integer-narrowing prerequisite is separate from this gap.
 The startup policy is now chosen: a distinguished, parameterless `main`
 proof starts with the program's initialized static ownership and is not
 published as a reusable call contract. This is not a module abstraction.
-The remaining surface integration includes
-[static resource proof bindings](static-resource-proof-bindings.md).
-The private wrapper/PCG acceptance tests below are still outstanding.
+Resource proof steps now retain static bindings, and unsigned composite ranges
+preserve their element types. The private wrapper/PCG acceptance tests below
+are still outstanding. A reduced 64-bit wrapper client now reaches the
+[symbolic wide return conversion gap](symbolic-wide-return-to-int.md).
 
 - Choose and document a checked mechanism for private static ownership at
   public call boundaries; do not unconditionally mint ownership on every call.

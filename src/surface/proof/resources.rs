@@ -628,7 +628,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     tactic_index: usize,
 ) -> Result<(CState, CResourceFact), ClickError> {
     let requested_resource =
-        lower_resource_clause(resource, parameters, arguments, state.memory())?;
+        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
     let abstract_resource = state
@@ -949,7 +949,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     if !active {
         return Ok(());
     }
-    let parent = lower_resource_clause(resource, parameters, arguments, fact_state.memory())
+    let parent = lower_resource_clause_at_state(resource, parameters, arguments, fact_state)
         .map_err(|error| error.message().to_string())?;
     let parent_subject = resource_clause_subject(resource);
     let mut owned_children = Vec::new();
@@ -961,7 +961,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
                     definition.name()
                 )
             })?;
-        let lowered = lower_resource_clause(&contained, parameters, arguments, fact_state.memory())
+        let lowered = lower_resource_clause_at_state(&contained, parameters, arguments, fact_state)
             .map_err(|error| error.message().to_string())?;
         if let Some(child) = lowered.owned_resource() {
             let child_subject = resource_clause_subject(&contained);
@@ -984,7 +984,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
             continue;
         };
         if let Some(kernel) =
-            resource_clause_loadable_prop(&contained, parameters, arguments, fact_state.memory())
+            resource_clause_loadable_prop_at_state(&contained, parameters, arguments, fact_state)
                 .map_err(|error| error.message().to_string())?
         {
             surface_propositions
@@ -2002,7 +2002,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         &[]
     };
     let mut abstract_resource =
-        lower_resource_clause(resource, parameters, arguments, state.memory())?;
+        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     if let Some(authority) = state
         .resources()
@@ -2104,7 +2104,8 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                         describe_resource_clause(resource)
                     ))
                 })?;
-            let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+            let lowered =
+                lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
             let Some(next) = remaining.without_fact(&lowered, &assumptions) else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
@@ -2148,7 +2149,8 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 describe_resource_clause(resource)
             ))
         })?;
-        let mut lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+        let mut lowered =
+            lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
         if opening_view {
             lowered = CResourceFact::View(lowered.resource().clone());
         }
@@ -3090,7 +3092,7 @@ fn extend_substitutions_with_witnesses(
         Some(result) => lower_resource_clause_at_state_with_result(
             resource, parameters, arguments, state, result,
         )?,
-        None => lower_resource_clause(resource, parameters, arguments, state.memory())?,
+        None => lower_resource_clause_at_state(resource, parameters, arguments, state)?,
     };
     let definitions = crate::surface::verification::composite_resource_definitions(
         resource_environment,
@@ -3323,11 +3325,10 @@ fn materialize_composite_resource_cells(
             crate::kernel::intern_c_memory(base_memory.clone()),
             pointer.clone(),
         );
-        // A scalar field cell takes the field's own type, so a `uint64` word
-        // reads back as itself; pointer fields and plain ranges keep the
-        // int32 words this projection uses everywhere.
-        let value = match segment.field_element_type() {
-            Some(element_type) if !element_type.is_pointer() => {
+        // Preserve scalar pointee types, including substituted pointer values.
+        // Pointer cells retain the word representation used for load origins.
+        let value = match contract_segment_element_type(parameters, segment) {
+            element_type if !element_type.is_pointer() => {
                 crate::surface::lowering::symbolic_value_from_load(&pointer, element_type, load)
             }
             _ => match element_width {

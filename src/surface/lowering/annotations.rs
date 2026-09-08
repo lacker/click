@@ -642,7 +642,18 @@ pub(in crate::surface) fn function_contract_summary(
         snapshots: None,
         count_assumptions: None,
     };
-    let context = SpecElaborationContext::for_function_contract();
+    let mut context = SpecElaborationContext::for_function_contract();
+    // Parameters shadow file-scope spellings in both current and old clauses.
+    // Keep them as C bindings, not loads from same-named global storage.
+    context
+        .values
+        .extend(parsed_function.parameters().iter().map(|parameter| {
+            let name = parameter.name().to_string();
+            (
+                name.clone(),
+                SpecExpression::CExpression(CExpression::Variable(name)),
+            )
+        }));
     let all_predicates = predicate_environment
         .definitions
         .keys()
@@ -2779,7 +2790,9 @@ impl AnnotationLowerer<'_> {
             CExpression::Load(pointer) => Ok(SpecExpression::MemoryLoad {
                 memory: environment.current_memory.clone(),
                 pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
-                value_type: CType::Int32,
+                value_type: self
+                    .c_expression_array_element_type(pointer, environment)
+                    .unwrap_or(CType::Int32),
             }),
             expression => Ok(SpecExpression::CExpression(expression.clone())),
         }

@@ -328,7 +328,52 @@ pub(in crate::surface) fn evaluate_c_fragment_through_kernel(
     state: &CState,
     result: Option<&CValue>,
 ) -> Result<CValue, String> {
-    let states = FixedStateLowering::new(values, array_refs, state, state, result);
+    evaluate_c_fragment_with_binding_policy(
+        expression,
+        assumptions,
+        values,
+        array_refs,
+        state,
+        result,
+        false,
+    )
+}
+
+/// Resource clauses use stable logical arguments even after the C parameter
+/// changes; static addresses and memory still belong to the exact frontier.
+pub(in crate::surface) fn evaluate_resource_fragment_through_kernel(
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    state: &CState,
+    result: Option<&CValue>,
+) -> Result<CValue, String> {
+    evaluate_c_fragment_with_binding_policy(
+        expression,
+        assumptions,
+        values,
+        array_refs,
+        state,
+        result,
+        true,
+    )
+}
+
+fn evaluate_c_fragment_with_binding_policy(
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    state: &CState,
+    result: Option<&CValue>,
+    logical_arguments: bool,
+) -> Result<CValue, String> {
+    let mut states = FixedStateLowering::new(values, array_refs, state, state, result);
+    if logical_arguments {
+        states.entry_values.extend(values.clone());
+        states.current_values.extend(values.clone());
+    }
     let spec = crate::surface::lowering::elaborate_fixed_state_expression(
         &ContractExpression::CFragment(expression.clone()),
         states.element_types,
