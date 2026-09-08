@@ -196,10 +196,13 @@ that fixing this one arm alone will complete quantified planning.
 
 The chosen exact child-goal construct is now `both { ... } and { ... }`.
 It opens the exact kernel conjuncts in isolated sibling scopes and retains
-their proof bodies through expansion. The current `split()` remains unchanged:
-it checks a conjunction from already-established facts. The remaining work is
-to use `both` in structural conjunction planning and connect the approved
-closure body to exact lowered obligations. Do not silently make
+their proof bodies through expansion. Structural conjunction planning now uses
+these scopes too, including after rewrites and within proof branches. The
+current `split()` remains unchanged: it checks a conjunction from
+already-established facts. The remaining work is to connect the approved
+`close_invariants by { ... }` body to exact lowered obligations. The `by`
+distinguishes a proof of closure obligations from an execution region. This
+syntax is selected but is not yet implemented. Do not silently make
 `have` select a kernel goal by a same-written surface formula: that revives
 the snapshot/binder ambiguity this interface is intended to remove.
 

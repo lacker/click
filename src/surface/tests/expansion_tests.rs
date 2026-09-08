@@ -1071,7 +1071,7 @@ fn post_execution_simp_builds_recursive_conjunction_on_proof() {
         2,
         "{expanded}"
     );
-    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(expanded.contains("both {"), "{expanded}");
     verify_c0_sources(&expanded, &[("first.c", c_source)])
         .expect("the retained conjunction should verify independently");
 }
@@ -1174,7 +1174,7 @@ fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
         2,
         "{expanded}"
     );
-    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(expanded.contains("both {"), "{expanded}");
     verify_c0_sources(&expanded, &[("first.c", c_source)])
         .expect("the retained smart have should verify independently");
 }
@@ -2338,7 +2338,7 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
             expected_applications,
             "{expanded}"
         );
-        assert!(expanded.contains("split();"), "{expanded}");
+        assert!(expanded.contains("both {"), "{expanded}");
         verify_click_theorems(&expanded)
             .expect("the retained pure conjunction should verify independently");
     }
@@ -2428,7 +2428,7 @@ fn pure_rewrite_retains_a_structural_surface_successor_for_simp() {
     let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
         .expect("the retained rewrite successor should expand");
     assert_eq!(expanded.matches("rewrite(").count(), 3, "{expanded}");
-    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(expanded.contains("both {"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_click_theorems(&expanded)
         .expect("the expanded rewrite and structural child proofs should verify independently");
@@ -12443,7 +12443,7 @@ fn pure_folded_constant_successor_simp_expands_to_successor_bound() {
 }
 
 #[test]
-fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
+fn unfolded_conjunction_have_simp_expands_to_both_scopes() {
     let c_source = r#"
             struct pair {
                 int32 low;
@@ -12499,11 +12499,12 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
         position.line,
         position.column,
     )
-    .expect("the unfolded conjunction have simp should expand to a split certificate");
-    assert!(expanded.contains("split();"), "{expanded}");
-    assert!(expanded.contains("have 0 <= pair->low"), "{expanded}");
+    .expect("the unfolded conjunction have simp should expand to exact child scopes");
+    assert!(expanded.contains("both {"), "{expanded}");
+    assert!(expanded.contains("} and {"), "{expanded}");
+    assert!(!expanded.contains("have 0 <= pair->low"), "{expanded}");
     assert!(
-        expanded.contains("have pair->low <= pair->high"),
+        !expanded.contains("have pair->low <= pair->high"),
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("set_pair.c", c_source)]).unwrap_or_else(|error| {
@@ -12556,7 +12557,7 @@ fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
         position.column,
     )
     .expect("the predecessor bound simp should expand to the named rule");
-    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(expanded.contains("both {"), "{expanded}");
     assert!(
         expanded.contains("apply(int32_nonnegative_predecessor_upper_bound("),
         "{expanded}"

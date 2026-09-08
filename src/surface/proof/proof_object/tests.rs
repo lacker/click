@@ -2397,9 +2397,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
             closed.certificate().steps(),
             [
                 ProofStep::Rewrite(root_equality),
-                ProofStep::Have { proof: left, .. },
-                ProofStep::Have { proof: right, .. },
-                ProofStep::Split,
+                ProofStep::Both { left_proof: left, right_proof: right },
             ] if root_equality == &equality
                 && matches!(left.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
                 && matches!(right.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
@@ -6598,11 +6596,10 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 "conjunction" => assert!(
                     matches!(
                         retained_steps.steps(),
-                        [
-                            ProofStep::Have { proof: left, .. },
-                            ProofStep::Have { proof: right, .. },
-                            ProofStep::Split,
-                        ] if matches!(
+                        [ProofStep::Both {
+                            left_proof: left,
+                            right_proof: right,
+                        }] if matches!(
                             left.steps(),
                             [ProofStep::ApplyTheoremUsing { .. }]
                         ) && matches!(

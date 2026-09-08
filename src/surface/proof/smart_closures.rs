@@ -1105,30 +1105,22 @@ impl<'a> Proof<'a> {
                 }
                 introduced.try_simp_closure_with_surfaces(&available_surfaces)
             }
-            (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
-                let Some(left) =
-                    attempt::candidate_outcome(self.begin_have(surface_left.as_ref().clone()))?
+            (ClickProposition::And(_, _), Proposition::And(_, _)) => {
+                let (split_proof, split, ids) = self.split_focused_both()?;
+                let marker = split_proof.checkpoint();
+                let Some(left) = split_proof
+                    .focus_branch(ids[0])?
+                    .try_simp_closure_with_surfaces(introduced_surfaces)?
                 else {
                     return Ok(None);
                 };
-                let Some(left) = left.try_simp_closure_with_surfaces(introduced_surfaces)? else {
-                    return Ok(None);
-                };
-                let Some(proof) = attempt::candidate_outcome(left.join())? else {
-                    return Ok(None);
-                };
-                let Some(right) =
-                    attempt::candidate_outcome(proof.begin_have(surface_right.as_ref().clone()))?
+                let Some(right) = left
+                    .focus_branch(ids[1])?
+                    .try_simp_closure_with_surfaces(introduced_surfaces)?
                 else {
                     return Ok(None);
                 };
-                let Some(right) = right.try_simp_closure_with_surfaces(introduced_surfaces)? else {
-                    return Ok(None);
-                };
-                let Some(joined) = attempt::candidate_outcome(right.join())? else {
-                    return Ok(None);
-                };
-                attempt::candidate_outcome(joined.apply_step(ProofStep::Split))
+                attempt::candidate_outcome(right.join_focused_both(&marker, split, ids))
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat

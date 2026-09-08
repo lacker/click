@@ -336,8 +336,9 @@ and expansion, but the quantified census still failed: conjunction planning
 uses ordinary `have` scopes, re-lowering the child goals. Exact child-goal
 scopes are therefore required, not just an outer proof body. The new
 `both { ... } and { ... }` construct now supplies exact isolated conjunct
-scopes, including retained proof bodies for expansion. Wiring it into
-structural conjunction planning and restoring the closure body remain next.
+scopes, including retained proof bodies for expansion. Structural conjunction
+planning now uses those scopes directly. Restoring the selected
+`close_invariants by { ... }` body remains next.
 That closure-body prototype was reverted. A rejected key
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
