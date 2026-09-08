@@ -79,8 +79,9 @@ checks conditional reductions against explicitly cited premises.
   must carry symbolic arguments without encoding them as C values. C-only
   body evaluators reject a model argument rather than treating it as a scalar.
 - Named resource bodies cannot yet be folded/unfolded, nor can fields be
-  established or updated. Modular calls involving named instances explicitly
-  reject unsupported binder transport rather than assume field preservation.
+  established or updated through body proofs. Explicit named-contract callback
+  applications transport opaque instances; ordinary inline calls and concrete
+  function refinement for resource-parameterized contracts remain unsupported.
   Fixed ADT snapshots currently support the arbitrary variables introduced
   at entry; future state updates must also support arbitrary symbolic terms.
   Field-bearing declarations must not enter the legacy
@@ -119,8 +120,9 @@ Implement and check the following slices in order:
    shared kernel schemas, rejection of counting, and the exclusive kernel
    identity/field-state representation are implemented. Source supports
    `owns cell: marked_cell(p);`, with current `cell.model` and entry-state
-   `old(cell.model)` projections. Next implement checked body fold/unfold and
-   binder transport across calls; field establishment/update syntax remains
+   `old(cell.model)` projections. Explicit callback applications now transport
+   opaque instances. Next implement checked body fold/unfold and ordinary
+   inline-call binder transport; field establishment/update syntax remains
    deferred. Opaque nonrecursive resources already preserve arbitrary field
    values, not only concrete constructors. The earlier kernel symbolic-index
    infrastructure remains available but does not implement instance fields.
@@ -187,19 +189,23 @@ resource handles; the signature after `for` supplies the actual C parameters.
 There are no defaults, inferred application arguments, or positional lists
 derived from ownership clauses. Ordinary inline contracts retain their form.
 
-Empty explicit applications verify and expand to recheckable proofs.
-Nonempty applications check arity, resource family, scope, and duplicate
-exclusive arguments, then reject missing checked transport. Unused declared
+Explicit applications verify and expand to recheckable proofs, including
+opaque resource arguments. Applications check arity, resource family, scope,
+exclusive ownership, duplicate arguments, and resource arguments against the
+actual C call values. Unused declared
 parameters must not be erased to make a contract callable with no arguments.
 See [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
 and [contract_explicit_empty_application.md](../mdtests/contract_explicit_empty_application.md).
 
-Next connect explicitly selected caller identities to callee binders, check
-resource arguments against the C call values, and return the same identities
-with post-state fields constrained only by the callee's guarantees. Regressions
-must distinguish two same-family instances, frame the unselected one, reject
-missing ownership and aliasing, and reject unpromised field preservation.
-Preserve exact call-entry snapshots and recheck expanded certificates.
+The selected caller identities bind callee parameters and return with fresh
+post-state fields constrained only by the callee's guarantees. Regressions
+distinguish two same-family instances, frame the unselected one, reject missing
+ownership and aliasing, and reject unpromised field preservation. Repeated-call
+tests preserve exact call-entry snapshots and recheck expanded certificates.
+See [contract_resource_call_transport.md](../mdtests/contract_resource_call_transport.md)
+and [contract_resource_call_no_implicit_preservation.md](../mdtests/contract_resource_call_no_implicit_preservation.md).
+Next extend concrete function contract formation/refinement and ordinary
+inline-call transport; opaque instance passing does not establish a memory body.
 
 The existing contract `let ... where` introduces separate existential witnesses
 per clause; it must not silently become a shared instance binding. Do not

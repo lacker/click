@@ -788,9 +788,12 @@ fn lower_resource_clause_with_values(
                 .schema
                 .clone()
                 .ok_or_else(|| ClickError::new("resource instance has no checked schema"))?;
-            let fields = binding
-                .fields
-                .clone()
+            // Ownership names select current fields, but the clause still
+            // determines the required resource family, arguments, and schema.
+            let fields = state
+                .owned_resource_instance(binding.identity)
+                .map(|instance| instance.fields().to_vec().into())
+                .or_else(|| binding.fields.clone())
                 .ok_or_else(|| ClickError::new("resource instance has no symbolic field state"))?;
             let instance = crate::kernel::ResourceInstance::new(
                 binding.identity,

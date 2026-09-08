@@ -1287,11 +1287,8 @@ impl CFunctionSpecification {
 impl CFunctionContract {
     const PREDICATE_PREFIX: &'static str = "__click_function_contract::";
 
-    /// Retain the explicit proof arity even when the body does not use its
-    /// parameters. Until checked instantiation exists, such an interface must
-    /// not accidentally be applied as a zero-argument contract.
-    pub(crate) fn with_proof_parameter_count(mut self, count: usize) -> Self {
-        self.proof_parameter_count = count;
+    pub(crate) fn with_proof_parameters(mut self, parameters: Vec<CResourceSpec>) -> Self {
+        self.proof_parameters = parameters.into();
         self
     }
 
@@ -1300,7 +1297,7 @@ impl CFunctionContract {
         (function.opaque_contract_supported() && !name.is_empty()).then_some(Self {
             name,
             function,
-            proof_parameter_count: 0,
+            proof_parameters: Default::default(),
         })
     }
 
@@ -1332,7 +1329,7 @@ impl CFunctionContract {
     /// same normalized interface. Behavioral refinement is intentionally a
     /// later rule; exact equality is restrictive but sound.
     pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
-        self.proof_parameter_count == 0
+        self.proof_parameters.is_empty()
             && self.function.return_type == function.return_type
             && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
@@ -1358,7 +1355,7 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.proof_parameter_count == 0
+        self.proof_parameters.is_empty()
             && self.function.return_type == function.return_type
             && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
@@ -1392,6 +1389,15 @@ impl CExecutionEnvironment {
     /// project tables and their variable index remain shared.
     pub(crate) fn with_selected_call_contract(mut self, name: &str) -> Self {
         self.selected_call_contract = Some(std::sync::Arc::from(name));
+        self.selected_call_resource_arguments = None;
+        self
+    }
+
+    pub(crate) fn with_selected_call_resource_arguments(
+        mut self,
+        arguments: Vec<Variable>,
+    ) -> Self {
+        self.selected_call_resource_arguments = Some(arguments.into());
         self
     }
     pub fn new() -> Self {

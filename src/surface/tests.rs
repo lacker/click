@@ -3,6 +3,81 @@ use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
 #[test]
+fn checked_original_claim_can_close_after_rewrite_but_unrelated_have_cannot() {
+    let source = r#"verifying "identity.c";
+        int32 identity(int32 x) {
+            requires x == 1;
+            ensures result == 1;
+        } by {
+            execute(); rewrite(x == 1);
+            have result == 1 by { rewrite(x == 1); normalize(); }
+            assumption();
+        }
+    "#;
+    let c = [("identity.c", "int32 identity(int32 x) { return x; }")];
+    verify_c0_sources(source, &c).unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace("ensures result == 1;", "ensures result == 2;"),
+            &c
+        )
+        .is_err()
+    );
+    assert!(
+        verify_c0_sources(
+            &source.replace("have result == 1 by", "have result == 2 by"),
+            &c
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn opaque_resource_call_transports_only_the_selected_instance() {
+    let source = r#"verifying "invoke.c";
+        spec enum Mark { Clear, Set }
+        resource marker() { field model: Mark; field revision: int32; }
+        contract Touch(cell: marker()) for int32() {
+            owns cell;
+            ensures cell.model == old(cell.model);
+            ensures cell.revision == 1;
+            ensures result == 0;
+        }
+        int32 invoke(int32 (*callback)()) {
+            requires Touch(callback);
+            owns first: marker(); owns second: marker();
+            ensures first.model == old(first.model);
+            ensures first.revision == 1;
+            ensures second.model == old(second.model);
+            ensures second.revision == old(second.revision);
+            ensures result == 0;
+        } by { step(Touch(first)); execute(); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)()) { return callback(); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    assert!(expanded.contains("step(Touch(first));"));
+    verify_c0_sources(
+        &source.replace("by { step(Touch(first)); execute(); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    for bad in [
+        source.replace(
+            "ensures first.revision == 1;",
+            "ensures first.revision == old(first.revision);",
+        ),
+        source.replace("ensures cell.model == old(cell.model);", ""),
+        source.replace("Touch(first)", "Touch(second)"),
+    ] {
+        assert!(verify_c0_sources(&bad, &c).is_err());
+    }
+}
+
+#[test]
 fn explicit_contract_parameters_are_declared_not_implicit_ownership() {
     let file = parser::parse(
         r#"
@@ -101,7 +176,7 @@ fn explicit_contract_empty_application_verifies_and_expands() {
 }
 
 #[test]
-fn explicit_contract_application_checks_arguments_and_does_not_fake_transport() {
+fn explicit_contract_application_checks_arguments_and_ownership() {
     let source = r#"verifying "invoke.c";
         resource marker() { field revision: int32; }
         resource other() { field revision: int32; }
@@ -110,7 +185,7 @@ fn explicit_contract_application_checks_arguments_and_does_not_fake_transport() 
             requires Touch(callback);
             owns first: marker(); owns second: other();
             ensures result == 0;
-        } by { step(Touch(first)); simp(); }
+        } by { step(Touch(first)); execute(); simp(); }
     "#;
     // C0 spells the empty function-pointer parameter list `()`.
     let c = [(
@@ -122,12 +197,12 @@ fn explicit_contract_application_checks_arguments_and_does_not_fake_transport() 
         ("Touch()", "expects 1 proof argument(s), got 0"),
         ("Touch(first, second)", "expects 1 proof argument(s), got 2"),
         ("Touch(second)", "expects resource `marker`, got `other`"),
-        ("Touch(first)", "require checked call transport"),
     ] {
         let error =
             verify_c0_sources(&source.replace("Touch(first)", application), &c).unwrap_err();
         assert!(error.message().contains(diagnostic), "{}", error.message());
     }
+    verify_c0_sources(source, &c).unwrap();
     let duplicate = source
         .replace("cell: marker()", "cell: marker(), another: marker()")
         .replace("owns cell;", "owns cell; owns another;")
@@ -145,9 +220,66 @@ fn explicit_contract_application_checks_arguments_and_does_not_fake_transport() 
         .replace("step(Touch(first))", "step()");
     let error = verify_c0_sources(&unowned, &c).unwrap_err();
     assert!(
-        error.message().contains("require checked call transport"),
+        error
+            .message()
+            .contains("requires explicit proof arguments"),
         "{}",
         error.message()
+    );
+}
+
+#[test]
+fn opaque_resource_call_checks_actual_c_arguments_and_call_entry_snapshots() {
+    let source = r#"verifying "invoke.c";
+        resource marker(p: int32*) { field revision: int32; }
+        contract Touch(cell: marker(p)) for int32(int32* p) {
+            owns cell;
+            ensures cell.revision == 1;
+            ensures result == old(cell.revision);
+        }
+        int32 invoke(int32 (*callback)(int32*), int32* p, int32* q) {
+            requires Touch(callback);
+            owns first: marker(p); owns second: marker(q);
+            ensures first.revision == 1;
+            ensures second.revision == old(second.revision);
+            ensures result == 1;
+        } by { step(Touch(first)); step(Touch(first)); execute();
+            rewrite(result == at(statement(0).exit, first.revision));
+            rewrite(at(statement(0).exit, first.revision) == 1); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)(int32*), int32* p, int32* q) { callback(p); return callback(p); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(
+        &source.replace(
+            "by { step(Touch(first)); step(Touch(first)); execute();\n            rewrite(result == at(statement(0).exit, first.revision));\n            rewrite(at(statement(0).exit, first.revision) == 1); simp(); }",
+            &expanded,
+        ),
+        &c,
+    )
+    .unwrap();
+    let error =
+        verify_c0_sources(&source.replace("Touch(first)", "Touch(second)"), &c).unwrap_err();
+    assert!(
+        error.message().contains("does not match its contract"),
+        "{}",
+        error.message()
+    );
+    assert!(!error.message().contains("AlgebraicSchemas"));
+    assert!(!error.message().contains("ResourceFieldSchema"));
+    assert!(!error.message().contains("diagnostic truncated"));
+    assert!(
+        verify_c0_sources(
+            &source.replace(
+                "ensures result == 1;",
+                "ensures result == old(first.revision);"
+            ),
+            &c
+        )
+        .is_err()
     );
 }
 

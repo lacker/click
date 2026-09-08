@@ -703,8 +703,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                 state
             };
             let Some(AlgebraicValue::Algebraic(value)) = snapshot
-                .resources()
-                .owned_instance(projection.identity)
+                .owned_resource_instance(projection.identity)
                 .and_then(|instance| instance.fields().get(projection.field_index))
             else {
                 return Err(ExecutionLimit::Paths);
@@ -2715,8 +2714,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                 state
             };
             let Some(AlgebraicValue::C(value)) = snapshot
-                .resources()
-                .owned_instance(projection.identity)
+                .owned_resource_instance(projection.identity)
                 .and_then(|instance| instance.fields().get(projection.field_index))
             else {
                 return Err(ExecutionLimit::Paths);

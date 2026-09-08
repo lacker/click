@@ -1,6 +1,102 @@
 use super::*;
 
 #[test]
+fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
+    let schema = ResourceFieldSchema::new(vec![(
+        "revision".into(),
+        ResourceFieldType::C(CType::Int32),
+    )])
+    .unwrap();
+    let parameter = |identity| CResourceSpec::Instance {
+        identity: Variable(identity),
+        schema: schema.clone(),
+        resource: Box::new(CResourceSpec::Composite {
+            access: CResourceAccessMode::Own,
+            name: "marker".into(),
+            arguments: vec![],
+            parameter_types: vec![],
+        }),
+    };
+    let function = c_function(CType::Void, "touch", vec![], CStatement::Skip)
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(vec![parameter(0)], vec![parameter(0)]);
+    let contract = CFunctionContract::new("Touch", function)
+        .unwrap()
+        .with_proof_parameters(vec![parameter(0)]);
+    // Reserve the identifier immediately after the call's memory/result IDs.
+    // Post-field generation must skip it, not accidentally preserve the field.
+    let before = ResourceInstance::new(
+        Variable(10),
+        "marker".into(),
+        vec![].into(),
+        schema.clone(),
+        vec![AlgebraicValue::C(symbolic_call_result(
+            CType::Int32,
+            Variable(1_000_002),
+        ))]
+        .into(),
+    )
+    .unwrap();
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(before.clone()))),
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_selected_call_contract("Touch")
+        .with_selected_call_resource_arguments(vec![Variable(10)]);
+    let run =
+        |state: &CState, contract: &CFunctionContract, environment: &CExecutionEnvironment| {
+            execute_c_function_contracts_paths(
+                state,
+                &[contract],
+                &[],
+                &PureFactContext::new(),
+                environment,
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+        };
+    let paths = run(&state, &contract, &environment);
+    let CFunctionOutcome::Return { state: after, .. } = &paths[0].outcome else {
+        panic!("call failed: {:?}", paths[0].outcome);
+    };
+    assert!(after.resource_bindings.is_none());
+    let returned = after.owned_resource_instance(Variable(10)).unwrap();
+    assert_ne!(returned.fields(), before.fields());
+    for (state, contract, environment) in [
+        (CState::new(), contract.clone(), environment.clone()),
+        (
+            state.clone(),
+            contract.clone(),
+            environment
+                .clone()
+                .with_selected_call_resource_arguments(vec![]),
+        ),
+        (
+            state.clone(),
+            contract
+                .clone()
+                .with_proof_parameters(vec![parameter(0), parameter(1)]),
+            environment
+                .clone()
+                .with_selected_call_resource_arguments(vec![Variable(10), Variable(10)]),
+        ),
+        (
+            state.clone(),
+            contract.clone(),
+            environment
+                .clone()
+                .with_selected_call_resource_arguments(vec![Variable(99)]),
+        ),
+    ] {
+        assert!(matches!(
+            run(&state, &contract, &environment)[0].outcome,
+            CFunctionOutcome::RuntimeError(_)
+        ));
+    }
+}
+
+#[test]
 fn executed_refinement_checks_the_exact_call_and_source_premises() {
     check_executed_refinement_shape(CType::Void, false);
 }

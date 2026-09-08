@@ -2688,6 +2688,36 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &assumptions_from_propositions(&path_requirements),
                                         &unfolded_predicates,
                                     );
+                                    // Expansion can emit a checked `have` of
+                                    // the original claim after rewriting it.
+                                    // Independently prove that exact original
+                                    // claim on the current root; never treat a
+                                    // failed rewritten proof as a success.
+                                    if rewritten_claim_proofs[claim_index].is_some() {
+                                        if let Some(root) = &fixed_state_root {
+                                            for (original, _) in &kernel_goals {
+                                                let candidate = root
+                                                    .focus_fixed_state_goal_with_surface(
+                                                        original.clone(),
+                                                        Some(surface_goal.clone()),
+                                                    )?
+                                                    .apply_step(ProofStep::Assumption);
+                                                if let Ok(proof) = candidate {
+                                                    retained_certificate =
+                                                        Some(proof.certificate());
+                                                    closures[claim_index] =
+                                                        ClaimClosure::by_exact_check_completing(
+                                                            proof.completed_proposition().ok(),
+                                                        );
+                                                    closed_any = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if closed_any {
+                                            break;
+                                        }
+                                    }
                                     let goal_candidates = match (
                                         &rewritten_claim_goals[claim_index],
                                         kernel_goals.is_empty(),

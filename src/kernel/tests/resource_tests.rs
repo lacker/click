@@ -388,7 +388,35 @@ fn resource_instance_lookup_and_transfer_scale_by_identity() {
             context
         });
         assert!(context.shares_storage_with(&context.clone()));
+        let bindings = std::sync::Arc::new(
+            (1..=size)
+                .map(|id| (Variable(size + id), Variable(id)))
+                .collect(),
+        );
+        let mut state = CState::new().with_resource_context(context.clone());
+        state.resource_bindings = Some(bindings);
+        let snapshot = state.clone();
+        assert!(std::sync::Arc::ptr_eq(
+            state.resource_bindings.as_ref().unwrap(),
+            snapshot.resource_bindings.as_ref().unwrap()
+        ));
         let (remaining, query_work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                state
+                    .owned_resource_instance(Variable(size + 1))
+                    .unwrap()
+                    .identity(),
+                Variable(1)
+            );
+            // A formal absent from the map must not fall back to a caller ID.
+            assert!(state.owned_resource_instance(Variable(1)).is_none());
+            let mut missing = snapshot.clone();
+            missing.resources = ResourceContext::new();
+            assert!(
+                missing
+                    .owned_resource_instance(Variable(size + 1))
+                    .is_none()
+            );
             assert!(context.owned_instance(Variable(1)).is_some());
             assert!(context.owned_instance(Variable(size + 1)).is_none());
             assert!(context.satisfies_fact(&selected, &assumptions));

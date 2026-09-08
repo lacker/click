@@ -918,6 +918,7 @@ fn execute_verified_function_rule(
         caller_state,
         &[&rule.function],
         None,
+        None,
         arguments,
         assumptions,
         environment,
@@ -929,18 +930,20 @@ fn execute_verified_function_templates(
     caller_state: &CState,
     functions: &[&CFunction],
     selected_contract: Option<usize>,
+    resource_application: Option<&ResourceCallApplication>,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = functions[0];
-    if functions.iter().any(|function| {
-        function
-            .resource_requires()
-            .iter()
-            .chain(function.resource_ensures())
-            .any(|resource| matches!(resource, CResourceSpec::Instance { .. }))
+    if functions.iter().enumerate().any(|(index, function)| {
+        !(selected_contract == Some(index) && resource_application.is_some())
+            && function
+                .resource_requires()
+                .iter()
+                .chain(function.resource_ensures())
+                .any(|resource| matches!(resource, CResourceSpec::Instance { .. }))
     }) {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
@@ -1002,6 +1005,7 @@ fn execute_verified_function_templates(
                 assumptions,
                 environment,
                 budget,
+                resource_application.filter(|_| selected_contract == Some(index)),
             )?;
             match prepared {
                 Ok(prepared) => {
@@ -1151,6 +1155,65 @@ fn execute_verified_function_templates(
                 }
             };
         post_state.resources = caller_resources_after_requirements.clone();
+        // Returned ownership keeps its identity, not its old field values.
+        // Only the ensures below relate fresh post-fields to the entry snapshot.
+        for resource in function.resource_ensures() {
+            let CResourceSpec::Instance { identity, .. } = resource else {
+                continue;
+            };
+            let Some(before) = entry_contract_state.owned_resource_instance(*identity) else {
+                return Ok(vec![resource_call_failure(
+                    "returned resource parameter is not owned at call entry",
+                )]);
+            };
+            let fields = before
+                .schema()
+                .fields()
+                .iter()
+                .map(|(_, ty)| {
+                    variables.next = budget.next_kernel_variable;
+                    let variable = variables.next();
+                    budget.next_kernel_variable = variables.next;
+                    match ty {
+                        ResourceFieldType::C(ty) => {
+                            AlgebraicValue::C(symbolic_call_result(*ty, variable))
+                        }
+                        ResourceFieldType::Algebraic(ty) => {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: ty.clone(),
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
+                        }
+                    }
+                })
+                .collect();
+            let after = ResourceInstance::new(
+                before.identity,
+                before.name.clone(),
+                before.arguments.clone(),
+                before.schema.clone(),
+                fields,
+            )
+            .expect("fresh symbolic fields have their declared types");
+            post_state.resources = match post_state
+                .resources
+                .clone()
+                .try_compose_into_valid_context_delaying_normalization(
+                    [CResourceFact::own(CResource::Instance(after))],
+                    &effective_assumptions,
+                ) {
+                Ok(resources) => resources,
+                Err(error) => {
+                    return Ok(vec![CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(resource_context_runtime_error(
+                            error,
+                        )),
+                        facts,
+                        obligations,
+                    }]);
+                }
+            };
+        }
         let output_resource_state =
             with_contract_argument_views(&post_state, function, &argument_values);
 
@@ -1331,6 +1394,7 @@ fn prepare_verified_function_call<'a>(
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
+    resource_application: Option<&ResourceCallApplication>,
 ) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
     let initial_obligation_count = arguments_path.obligations.len();
     let path_assumptions = assumptions_with_path_context(
@@ -1366,6 +1430,20 @@ fn prepare_verified_function_call<'a>(
     };
     let path_assumptions =
         assumptions_with_path_context(assumptions, &arguments_path.facts, &argument_obligations);
+    if let Some(application) = resource_application {
+        entry_state.resource_bindings = Some(application.bindings.clone());
+        for parameter in application.parameters.iter() {
+            if let Err(error) =
+                evaluate_function_resource_spec(&entry_state, parameter, &path_assumptions, budget)?
+            {
+                return Ok(Err(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts: arguments_path.facts,
+                    obligations: argument_obligations,
+                }));
+            }
+        }
+    }
     let transfer = match crate::instrumentation::measure_operation(
         function.name(),
         "verified function rule application",
@@ -1637,17 +1715,68 @@ pub(super) fn execute_c_function_contracts_paths(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    if contracts
+    let selected = environment.selected_call_contract.as_deref();
+    let contracts = contracts
         .iter()
-        .any(|contract| contract.proof_parameter_count != 0)
-    {
-        return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "explicit resource arguments require checked call transport, which is not supported yet".into(),
-            )),
-            facts: vec![], obligations: vec![],
-        }]);
+        .copied()
+        .filter(|contract| {
+            contract.proof_parameters.is_empty() || selected == Some(contract.name())
+        })
+        .collect::<Vec<_>>();
+    if contracts.is_empty() {
+        return Ok(vec![resource_call_failure(
+            "resource contract requires explicit proof arguments",
+        )]);
     }
+    let selected_index = selected.and_then(|name| {
+        contracts
+            .iter()
+            .position(|contract| contract.name() == name)
+    });
+    if selected.is_some() && selected_index.is_none() {
+        return Ok(vec![resource_call_failure(
+            "selected contract is not available at this call",
+        )]);
+    }
+    let resource_application = if let Some(index) = selected_index {
+        let contract = contracts[index];
+        let arguments = environment
+            .selected_call_resource_arguments
+            .as_deref()
+            .unwrap_or(&[]);
+        if arguments.len() != contract.proof_parameters.len() {
+            return Ok(vec![resource_call_failure(
+                "resource contract proof argument arity mismatch",
+            )]);
+        }
+        let mut bindings = BTreeMap::new();
+        let mut actuals = BTreeSet::new();
+        for (parameter, argument) in contract.proof_parameters.iter().zip(arguments) {
+            let CResourceSpec::Instance { identity, .. } = parameter else {
+                return Ok(vec![resource_call_failure(
+                    "resource proof parameter must be an exclusive instance",
+                )]);
+            };
+            let Some(instance) = caller_state.owned_resource_instance(*argument) else {
+                return Ok(vec![resource_call_failure(
+                    "resource proof argument is not owned",
+                )]);
+            };
+            if !actuals.insert(instance.identity())
+                || bindings.insert(*identity, instance.identity()).is_some()
+            {
+                return Ok(vec![resource_call_failure(
+                    "duplicate exclusive resource proof argument",
+                )]);
+            }
+        }
+        Some(ResourceCallApplication {
+            parameters: contract.proof_parameters.clone(),
+            bindings: std::sync::Arc::new(bindings),
+        })
+    } else {
+        None
+    };
     let functions = contracts
         .iter()
         .map(|contract| contract.template())
@@ -1655,17 +1784,26 @@ pub(super) fn execute_c_function_contracts_paths(
     execute_verified_function_templates(
         caller_state,
         &functions,
-        environment.selected_call_contract.as_ref().map(|name| {
-            contracts
-                .iter()
-                .position(|contract| contract.name() == name.as_ref())
-                .expect("selected contract membership was checked at the call")
-        }),
+        selected_index,
+        resource_application.as_ref(),
         arguments,
         assumptions,
         environment,
         budget,
     )
+}
+
+struct ResourceCallApplication {
+    parameters: std::sync::Arc<[CResourceSpec]>,
+    bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
+}
+
+fn resource_call_failure(message: &str) -> CFunctionPath {
+    CFunctionPath {
+        outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message.into())),
+        facts: vec![],
+        obligations: vec![],
+    }
 }
 
 fn function_contract_requirement_is_proven(
@@ -5777,10 +5915,12 @@ fn apply_counted_population_transitions(
     track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
-    let Some(entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
+    let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
+    // Resource formals belong to this call, just like the C argument views.
+    entry_state.resource_bindings = post_state.resource_bindings.clone();
     let required = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
@@ -7716,7 +7856,7 @@ pub(super) fn evaluate_function_resource_spec(
                     Ok(resource) => resource,
                     Err(error) => return Ok(Err(error)),
                 };
-            let Some(instance) = state.resources().owned_instance(*identity) else {
+            let Some(instance) = state.owned_resource_instance(*identity) else {
                 return Ok(Err(CRuntimeError::FunctionContract(
                     "named resource instance is not owned".into(),
                 )));

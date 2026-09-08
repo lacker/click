@@ -750,8 +750,10 @@ state. Returning ownership does not itself promise unchanged fields; use an
 explicit postcondition. Instance identity is distinct from field state, and
 fields are symbolic Click values, not executable C ghost parameters.
 
-These instances remain opaque. Checked body fold/unfold, field establishment
-and updates, and binder transport across modular calls are not yet supported.
+These instances remain opaque. Explicit callback applications such as
+`step(Read(first))` transport ownership with fresh post-call fields constrained
+by the selected contract. Checked body fold/unfold, field establishment and
+updates through body proofs, and ordinary inline-call transport are not yet supported.
 Field names are not yet in scope in body expressions. A declaration alone
 grants no ownership, and binding an instance does not expose its memory body.
 

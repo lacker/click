@@ -1959,6 +1959,7 @@ pub struct CFunctionSpecification {
 pub struct CExecutionEnvironment {
     // A proof-local rule choice. This is not installed in the project environment.
     pub(crate) selected_call_contract: Option<std::sync::Arc<str>>,
+    pub(crate) selected_call_resource_arguments: Option<std::sync::Arc<[Variable]>>,
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
     pub(super) function_contracts: std::sync::Arc<BTreeMap<String, CFunctionContract>>,
     pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
@@ -1974,6 +1975,10 @@ impl std::fmt::Debug for CExecutionEnvironment {
         formatter
             .debug_struct("CExecutionEnvironment")
             .field("selected_call_contract", &self.selected_call_contract)
+            .field(
+                "selected_call_resource_arguments",
+                &self.selected_call_resource_arguments,
+            )
             .field("functions", &self.functions)
             .field("function_contracts", &self.function_contracts)
             .field("external_function_rules", &self.external_function_rules)
@@ -1990,6 +1995,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
         self.selected_call_contract == other.selected_call_contract
+            && self.selected_call_resource_arguments == other.selected_call_resource_arguments
             && self.functions == other.functions
             && self.function_contracts == other.function_contracts
             && self.external_function_rules == other.external_function_rules
@@ -2050,7 +2056,7 @@ pub struct CVerifiedFunctionRule {
 pub struct CFunctionContract {
     pub(super) name: String,
     pub(super) function: CFunction,
-    pub(super) proof_parameter_count: usize,
+    pub(super) proof_parameters: std::sync::Arc<[CResourceSpec]>,
 }
 
 /// A contract supplied for a C function whose implementation is outside the
@@ -2884,6 +2890,8 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    /// Call-local formal identities; the ledger retains actual caller identities.
+    pub(super) resource_bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
     pub(super) locals: CLocalEnvironment,
     pub(super) memory: CMemory,
     pub(super) resources: ResourceContext,

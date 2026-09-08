@@ -2517,6 +2517,13 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn owned_resource_instance(&self, identity: Variable) -> Option<&ResourceInstance> {
+        let actual = match &self.resource_bindings {
+            Some(bindings) => *bindings.get(&identity)?,
+            None => identity,
+        };
+        self.resources.owned_instance(actual)
+    }
     pub fn new() -> Self {
         Self::default()
     }

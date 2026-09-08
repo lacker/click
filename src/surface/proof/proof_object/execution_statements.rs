@@ -59,13 +59,13 @@ impl<'a> Proof<'a> {
                     ));
                 }
             }
-            if !arguments.is_empty() {
-                return Err(self.step_error("explicit resource arguments require checked call transport, which is not supported yet"));
-            }
             selected_environment = context
                 .function_environment
                 .clone()
-                .with_selected_call_contract(name);
+                .with_selected_call_contract(name)
+                .with_selected_call_resource_arguments(
+                    arguments.iter().map(|argument| argument.identity).collect(),
+                );
             selected_context = context.with_loop_binding(
                 context.function_block,
                 context.function,

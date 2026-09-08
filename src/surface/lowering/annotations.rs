@@ -62,6 +62,24 @@ pub(in crate::surface) fn check_resource_field_schemas(
     // variables are collected from the entry resource state by the kernel's
     // fresh-variable allocator, so later execution cannot reuse their IDs.
     let mut next_field_variable = 9_000_000_000u64;
+    for contract in &mut file.contract_definitions {
+        for parameter in contract.proof_parameters.iter_mut().flatten() {
+            let ResourceClause::Named { binding, resource } = parameter else {
+                unreachable!()
+            };
+            let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                unreachable!()
+            };
+            binding.schema = Some(
+                schemas
+                    .get(name)
+                    .ok_or_else(|| {
+                        ClickError::new("resource proof parameter has no checked schema")
+                    })?
+                    .clone(),
+            );
+        }
+    }
     for function in file.function_blocks.iter_mut().chain(
         file.contract_definitions
             .iter_mut()
