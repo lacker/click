@@ -155,6 +155,8 @@ impl Token {
 }
 
 struct Parser {
+    pending_contract_name: Option<String>,
+    contract_resource_parameters: BTreeMap<String, ResourceClause>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
     match_nesting: usize,
@@ -349,6 +351,8 @@ impl Parser {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
+            pending_contract_name: None,
+            contract_resource_parameters: BTreeMap::new(),
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
             tokens,
@@ -431,7 +435,68 @@ impl Parser {
 
     fn parse_contract_definition(&mut self) -> Result<ContractDefinition, ClickError> {
         self.expect_ident_spelling("contract")?;
+        let proof_parameters = if self.peek_next() == Some(&Token::LParen) {
+            let name = self.expect_ident("contract name")?;
+            self.expect(Token::LParen)?;
+            let mut parameters = Vec::new();
+            while self.peek() != Some(&Token::RParen) {
+                if self.peek_next() != Some(&Token::Colon) {
+                    return Err(
+                        self.error("contract proof parameters require `name: resource(...)`")
+                    );
+                }
+                let parameter = self.parse_owned_resource_binding()?;
+                let ResourceClause::Named { binding, .. } = &parameter else {
+                    return Err(
+                        self.error("contract proof parameters require `name: resource(...)`")
+                    );
+                };
+                self.contract_resource_parameters
+                    .insert(binding.name.clone(), parameter.clone());
+                parameters.push(parameter);
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+            }
+            self.expect(Token::RParen)?;
+            self.expect_ident_spelling("for")?;
+            self.current_resource_bindings.clear();
+            self.pending_contract_name = Some(name);
+            Some(parameters)
+        } else {
+            None
+        };
         let function_block = self.parse_function_block(false)?;
+        if let Some(parameters) = &proof_parameters {
+            let identities = parameters
+                .iter()
+                .filter_map(|parameter| match parameter {
+                    ResourceClause::Named { binding, .. } => Some(binding.identity),
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>();
+            let mut owned_parameters = BTreeSet::new();
+            for requirement in function_block.requires() {
+                if let Requirement::Resource(ResourceClause::Named { binding, .. }) =
+                    requirement.inner()
+                {
+                    if !identities.contains(&binding.identity) {
+                        return Err(self.error(format!(
+                            "resource `{}` must be declared in the contract proof-parameter list",
+                            binding.name
+                        )));
+                    }
+                    if !owned_parameters.insert(binding.identity) {
+                        return Err(self.error(format!(
+                            "duplicate ownership of proof parameter `{}`",
+                            binding.name
+                        )));
+                    }
+                }
+            }
+        }
+        self.contract_resource_parameters.clear();
         if function_block.decreases().is_some()
             || function_block.grouped_proof().is_some()
             || !function_block.constructs().is_empty()
@@ -448,7 +513,10 @@ impl Parser {
                 "named contracts cannot carry proofs, `decreases`, or `constructs` clauses",
             ));
         }
-        Ok(ContractDefinition { function_block })
+        Ok(ContractDefinition {
+            proof_parameters,
+            function_block,
+        })
     }
 
     fn parse_algebraic_type_definition(&mut self) -> Result<AlgebraicTypeDefinition, ClickError> {
@@ -1125,6 +1193,20 @@ impl Parser {
 
     fn parse_function_block(&mut self, external: bool) -> Result<FunctionBlock, ClickError> {
         let previous_resource_bindings = std::mem::take(&mut self.current_resource_bindings);
+        for (name, parameter) in &self.contract_resource_parameters {
+            let ResourceClause::Named { binding, resource } = parameter else {
+                unreachable!()
+            };
+            let ResourceClause::Declared {
+                name: resource_name,
+                ..
+            } = resource.as_ref()
+            else {
+                unreachable!()
+            };
+            self.current_resource_bindings
+                .insert(name.clone(), (binding.identity, resource_name.clone()));
+        }
         if external {
             self.expect_ident_spelling("extern")?;
         }
@@ -1488,7 +1570,10 @@ impl Parser {
         } else {
             parsed_return_type.c_type
         };
-        let name = self.expect_ident("function name")?;
+        let name = match self.pending_contract_name.take() {
+            Some(name) => name,
+            None => self.expect_ident("function name")?,
+        };
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
@@ -2167,6 +2252,13 @@ impl Parser {
     }
 
     fn parse_owned_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        if let Some(name) = self.peek_ident()
+            && self.peek_next() != Some(&Token::Colon)
+            && let Some(parameter) = self.contract_resource_parameters.get(name).cloned()
+        {
+            self.position += 1;
+            return Ok(parameter);
+        }
         if !matches!(self.peek(), Some(Token::Ident(_))) || self.peek_next() != Some(&Token::Colon)
         {
             return self.parse_owned_resource_target();
@@ -2988,7 +3080,35 @@ impl Parser {
                 let step = if self.peek() == Some(&Token::RParen) {
                     ProofTactic::Step
                 } else {
-                    ProofTactic::StepContract(self.expect_ident("call contract name")?)
+                    let name = self.expect_ident("call contract name")?;
+                    let arguments = if self.peek() == Some(&Token::LParen) {
+                        self.position += 1;
+                        let mut arguments = Vec::new();
+                        while self.peek() != Some(&Token::RParen) {
+                            let name = self.expect_ident("owned resource argument")?;
+                            let (identity, resource_name) = self
+                                .current_resource_bindings
+                                .get(&name)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    self.error(format!("unknown resource instance `{name}`"))
+                                })?;
+                            arguments.push(ContractResourceArgument {
+                                name,
+                                resource_name,
+                                identity,
+                            });
+                            if self.peek() != Some(&Token::Comma) {
+                                break;
+                            }
+                            self.position += 1;
+                        }
+                        self.expect(Token::RParen)?;
+                        Some(arguments)
+                    } else {
+                        None
+                    };
+                    ProofTactic::StepContract(ContractApplication { name, arguments })
                 };
                 self.expect(Token::RParen)?;
                 step

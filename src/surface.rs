@@ -549,7 +549,53 @@ pub struct TheoremExecution {
 /// `FunctionBlock`, it is not attached to a C definition and carries no proof.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractDefinition {
+    proof_parameters: Option<Vec<ResourceClause>>,
     function_block: FunctionBlock,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractApplication {
+    name: String,
+    arguments: Option<Vec<ContractResourceArgument>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractResourceArgument {
+    name: String,
+    resource_name: String,
+    identity: Variable,
+}
+
+impl From<String> for ContractApplication {
+    fn from(name: String) -> Self {
+        Self {
+            name,
+            arguments: None,
+        }
+    }
+}
+
+impl From<&str> for ContractApplication {
+    fn from(name: &str) -> Self {
+        name.to_string().into()
+    }
+}
+
+impl std::fmt::Display for ContractApplication {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(arguments) = &self.arguments {
+            write!(f, "(")?;
+            for (index, argument) in arguments.iter().enumerate() {
+                if index != 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", argument.name)?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2171,7 +2217,7 @@ pub enum ProofTactic {
     CloseInvariantsBy(Vec<ProofTactic>),
     Mark(String),
     Step,
-    StepContract(String),
+    StepContract(ContractApplication),
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -2336,6 +2382,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step-contract",
         syntax: "step(Contract)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step-contract-application",
+        syntax: "step(Contract(...))",
         class: "simple",
     },
     PublicTacticForm {
@@ -2591,7 +2642,7 @@ pub enum ProofStep {
     },
     Mark(String),
     Step,
-    StepContract(String),
+    StepContract(ContractApplication),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -3944,6 +3995,9 @@ impl TheoremDefinition {
 }
 
 impl ContractDefinition {
+    pub fn proof_parameters(&self) -> Option<&[ResourceClause]> {
+        self.proof_parameters.as_deref()
+    }
     pub fn name(&self) -> &str {
         self.function_block.signature().name()
     }

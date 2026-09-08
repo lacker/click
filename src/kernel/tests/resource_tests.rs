@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn owned_range_access_survives_learning_a_symbolic_pointer_alias() {
+    let cell = Pointer::symbolic(Variable(100));
+    let slot = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(101)), 4),
+    };
+    let unrelated = Pointer::symbolic(Variable(102));
+    let range = CMemoryRange::new(
+        cell.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(cell.clone(), slot.clone()),
+        true,
+    );
+    for pointer in [&cell, &slot] {
+        assert!(
+            resources
+                .memory_write_range(pointer, 4, &assumptions)
+                .is_some()
+        );
+    }
+    assert!(
+        resources
+            .memory_write_range(&unrelated, 4, &assumptions)
+            .is_none()
+    );
+    assert!(
+        resources
+            .memory_write_range(&cell, 16, &assumptions)
+            .is_none()
+    );
+}
+
 fn field_instance(identity: u64, model: AlgebraicTerm, revision: u32) -> ResourceInstance {
     let schema = ResourceFieldSchema::new(vec![
         (
@@ -388,7 +425,35 @@ fn resource_instance_lookup_and_transfer_scale_by_identity() {
             context
         });
         assert!(context.shares_storage_with(&context.clone()));
+        let bindings = std::sync::Arc::new(
+            (1..=size)
+                .map(|id| (Variable(size + id), Variable(id)))
+                .collect(),
+        );
+        let mut state = CState::new().with_resource_context(context.clone());
+        state.resource_bindings = Some(bindings);
+        let snapshot = state.clone();
+        assert!(std::sync::Arc::ptr_eq(
+            state.resource_bindings.as_ref().unwrap(),
+            snapshot.resource_bindings.as_ref().unwrap()
+        ));
         let (remaining, query_work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                state
+                    .owned_resource_instance(Variable(size + 1))
+                    .unwrap()
+                    .identity(),
+                Variable(1)
+            );
+            // A formal absent from the map must not fall back to a caller ID.
+            assert!(state.owned_resource_instance(Variable(1)).is_none());
+            let mut missing = snapshot.clone();
+            missing.resources = ResourceContext::new();
+            assert!(
+                missing
+                    .owned_resource_instance(Variable(size + 1))
+                    .is_none()
+            );
             assert!(context.owned_instance(Variable(1)).is_some());
             assert!(context.owned_instance(Variable(size + 1)).is_none());
             assert!(context.satisfies_fact(&selected, &assumptions));

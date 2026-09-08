@@ -1876,6 +1876,20 @@ pub(super) fn finish_ordered_proof<'a>(
                             .extend(proof_execution.presentation.post_execution_tactics.iter());
                     }
                     let mut selected_post_choices = selected_post_choices.into_iter().peekable();
+                    // An expansion replaces one source occurrence. Outcomes
+                    // that never reach it must not contribute empty sibling
+                    // certificates or reintroduce their enclosing C guard.
+                    let visits_selected_capture = proof_execution
+                        .presentation
+                        .expansion
+                        .deferred_tactic_capture
+                        .as_ref()
+                        .is_some_and(|capture| {
+                            selected_post_execution_tactics.iter().any(|tactic| {
+                                tactic.tactic_index == capture.tactic_index
+                                    && tactic.source_index == capture.source_index
+                            })
+                        });
                     let mut surface_post_choices = Vec::new();
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
@@ -1929,15 +1943,21 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                         });
                         match post_tactic {
-                            PostExecutionTactic::Fold(resource) => {
+                            PostExecutionTactic::Fold(resource)
+                            | PostExecutionTactic::Unfold(resource) => {
                                 let Some(evolving) = outcome_proof.take() else {
                                     return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `fold` has no Proof goal"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome resource operation has no Proof goal"
                                     )));
                                 };
                                 let before = evolving.checkpoint();
-                                let folded = evolving
-                                    .apply_step(ProofStep::FoldResource(resource.clone()))?;
+                                let step = if matches!(post_tactic, PostExecutionTactic::Unfold(_))
+                                {
+                                    ProofStep::UnfoldResource(resource.clone())
+                                } else {
+                                    ProofStep::FoldResource(resource.clone())
+                                };
+                                let folded = evolving.apply_step(step)?;
                                 outcome = folded.focused_outcome_snapshot()?;
                                 let surface_tactics =
                                     folded.certificate_since(&before)?.to_proof_tactics();
@@ -2688,6 +2708,36 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &assumptions_from_propositions(&path_requirements),
                                         &unfolded_predicates,
                                     );
+                                    // Expansion can emit a checked `have` of
+                                    // the original claim after rewriting it.
+                                    // Independently prove that exact original
+                                    // claim on the current root; never treat a
+                                    // failed rewritten proof as a success.
+                                    if rewritten_claim_proofs[claim_index].is_some() {
+                                        if let Some(root) = &fixed_state_root {
+                                            for (original, _) in &kernel_goals {
+                                                let candidate = root
+                                                    .focus_fixed_state_goal_with_surface(
+                                                        original.clone(),
+                                                        Some(surface_goal.clone()),
+                                                    )?
+                                                    .apply_step(ProofStep::Assumption);
+                                                if let Ok(proof) = candidate {
+                                                    retained_certificate =
+                                                        Some(proof.certificate());
+                                                    closures[claim_index] =
+                                                        ClaimClosure::by_exact_check_completing(
+                                                            proof.completed_proposition().ok(),
+                                                        );
+                                                    closed_any = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if closed_any {
+                                            break;
+                                        }
+                                    }
                                     let goal_candidates = match (
                                         &rewritten_claim_goals[claim_index],
                                         kernel_goals.is_empty(),
@@ -4422,9 +4472,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     }
                                     _ => true,
                                 }));
-                    implicit_closure_by_path.push(implicitly_closable);
-                    deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
-                    deferred_capture_branches_by_path.push(deferred_capture_branch_path);
+                    if visits_selected_capture {
+                        implicit_closure_by_path.push(implicitly_closable);
+                        deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
+                        deferred_capture_branches_by_path.push(deferred_capture_branch_path);
+                    }
                     drop(_path_certification_timing);
                 }
                 Ok(())
