@@ -57,8 +57,9 @@ steps are charged as deterministic work per instance. Deterministic work over
 the profiled examples fell or held during that cleanup.
 
 The structural, canonicalization, finite-splitting, and load-equality
-migrations described below are complete. The remaining work is the
-reentrancy/incomplete-answer audit and the authoritative-caller audit.
+migrations described below are complete, as is the incomplete-answer audit.
+The authoritative-caller audit is recorded below; migrating its remaining
+searching authority boundaries is still open.
 
 The load-equality migration replaced every successful global-fallback use
 with consumer-owned evidence. Fixed-state restricted `simp` retains a
@@ -241,18 +242,102 @@ these dispositions:
    exits the deadline scope, and confirms the same query can subsequently prove
    and cache its positive answer. This audit covers the existing checkpoint
    sites, not the responsiveness of every checkpoint-free structural walk.
-3. **Authoritative callers of the general proposition prover**. Removing the
-   two split rules does not by itself establish "the kernel does not search."
-   `verify_lowered_invariant_path` in `src/kernel/loops.rs` calls
-   `derive_proposition_without_premise_minimization`, and
-   the remaining loop and effect-certification paths still construct
-   derivations from ambient facts. The former
-   `theorem_from_contextual_proof` resource path is complete: its constructors
-   now accept only exact recorded facts and perform no proof search. Inventory
-   the remaining callers and either move their planning to the surface,
-   replace them with named checked evidence, or explicitly narrow this issue's
-   claimed invariant. Contract certification's existing ban on
-   `PureFactContext::proves` is necessary but not a complete authority audit.
+3. **Audit complete; migration open: general-prover authority**. The static
+   audit below finds more than loop and effect certification: proof-object
+   event checks, quantified fact availability, pure-theorem construction,
+   contract execution/refinement, and termination also retain general reasoning.
+   The former `theorem_from_contextual_proof` resource constructors remain
+   complete (exact recorded facts only); that does not make all resource-event
+   validation search-free. Do not narrow the issue's invariant merely to close
+   it, or treat a ban on direct `PureFactContext::proves` calls as a transitive
+   authority check.
+
+### General-prover authority inventory (2026-09-07)
+
+Audited at `8cdf0b69`. This is a static caller/consumer audit, not a dynamic
+success census. It inventories `proves`, `derive_proposition`,
+`derive_proposition_without_premise_minimization`, and `derive_simp_proposition`
+outside their recursive implementation, follows wrappers to consumers, and
+separates test-only and metadata callers. It does not certify every lower-level
+`decide`, atomic-theory, resource-matching, or derivation-checking helper as
+search-free. Those helpers still need review when their consumer is migrated.
+
+`PureFactContext::proves` is not an exact membership test: after direct rules
+it can try context inconsistency and singleton substitution; logical goals
+also recurse through alternatives and extended contexts. The derivation
+builders explicitly search for proof trees. A positive result may be sound
+while still violating the search/checking boundary.
+
+| Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
+| --- | --- | --- |
+| Loop closure: `loops.rs::verify_lowered_invariant_path`, reached through `api.rs::c_loop_invariants_hold_at_back_edge_using` | Tries general derivation then simp for every missing path obligation and invariant goal, checks the result, and discards the tree. Surface uses this both for legacy preflight and for actual invariant closure. | Move planning to surface; consume explicit per-path goal and obligation evidence. Start here. |
+| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join`, `checked_evidence_premises_hold` | Validates introduced facts, interface facts on both arms, branch obligations, and theorem premises by contextual proof. In particular, an already checked theorem's unavailable premise can still be rediscovered at application time. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
+| Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
+| Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
+| Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
+| Effect equality: `memory_provenance.rs::c_pointer_offsets_proven_equal_for_effect` | After exact-load normalization and restricted equality fail, calls `proves(PointerOffsetEqual)`. Reached by resource equality and by `api/contract_certification/contract_claims.rs::memories_equal_by_execution_provenance`. | Census the final fallback, then delete it if unused or retain an explicit offset-equality witness. The contract module has no direct general-prover call but still reaches this one. |
+| Calls, refinement, and resources: `functions.rs`, `primitives/resource_algebra.rs`, `primitives/contracts.rs::applicable_verified_loop_rule` | Proves guarded requirements, footprint guards, refinement obligations/conclusions, quantity relations, population transitions, resource facts, and loop-rule prerequisites. Results affect accepted calls, resources, or selected rules. | Split by consumer; retain guard, quantity, and refinement evidence. Do not replace every call with an exact lookup in one large completeness-breaking change. |
+| Lowering/execution: `spec.rs`, `reasoning/path_facts.rs`, and remaining `loops.rs` helpers | Decides spec branches, overflow obligations, invariant paths, segment containment, and whether an obligation or fact can be omitted. Some paths have explicit no-search modes, but they are not universal. | Propagate unresolved obligations and retain branch/containment evidence. Separate proof-relevant discharge from redundant-fact suppression. |
+| Termination: `termination.rs::assume_structural_path`, `ranking_proves`, `ranking_proves_lexicographic_decrease` | Discharges structural-path obligations and ranking conditions before `c_verified_function_termination_rules` issues authority. `ranking_proves` also collects ambient condition facts for an arithmetic fallback; lexicographic checking tries pivots. | Keep the named ranking expression/tuple as input, but move proof and pivot selection to planning and retain their evidence. |
+| Legacy public theorem constructors: `api.rs::prove_c_function_satisfies_specification_and_propositions`, `prove_c_statement_executes_and_propositions` | Proves arbitrary added propositions and issues a theorem. No non-test in-repository caller was found. | Candidate deletions after checking all exports/callers; public but unused is not the same as test-fenced. |
+
+Additional distinctions that matter for the migration:
+
+- `assumptions.rs::record_reasoning_provenance` constructs a general derivation
+  only while collecting planning metadata. The returned premises are not
+  theorem authority. Moving this helper is organizational work, not an
+  independent soundness boundary repair.
+- `proof/fact_reasoning.rs::fact_conflicts_with_assumptions` has surface
+  consumers, rather than a direct kernel proof-object consumer in this audit.
+  Inspect the selected transition's retained evidence before classifying an
+  individual surface use; a helper's directory alone is not the boundary.
+- `ProofFacts::with_selected_resource_separation` also has surface callers,
+  but returns augmented facts rather than inert planning metadata. It needs
+  consumer/evidence review; it cannot be waived merely because its caller is
+  surface code.
+- `assumptions/memory_reasoning.rs::pointer_access_in_range` calls `proves`
+  internally for bounds. It is part of the reasoning engine, not another root;
+  a replacement loadability checker must not inadvertently retain that route.
+- `api.rs::prove_c_while_invariant_rule` and the new deadline-memo regression
+  are test-only. They are not production migrations. Likewise, occurrences in
+  source-ban strings are not calls.
+- Atomic derivation entry points were inspected separately: explicit guard
+  checks and single-premise loadability checks use them too. This audit does
+  not equate every atomic check with global search, nor certify its internals
+  solely from the word "atomic".
+- Pure-theorem surface checking already validates a proof before requesting
+  `kernel_authority` through the general constructor. This is redundant proof
+  discovery, not a missing user proof: retain authority from the checked proof
+  instead of asking another solver to establish the same claim.
+
+Recommended migration sequence after this audit:
+
+1. Replace the legacy loop closer using the existing
+   `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
+   checked proofs for the named paths; closure checks that each required fact
+   is present for that exact state/path. Regression: a multi-path invariant
+   with a non-assumable lowering obligation; removing the obligation evidence
+   must reject, even if unrelated ambient facts could prove it. Expanded and
+   unexpanded proofs must agree without editing C. Include the actual
+   proof-object boundary: `close_frontier_invariants` currently marks the
+   frontier closed without taking invariant evidence. Merely moving the old
+   solver call above that flag update would not complete this migration.
+2. Census the residual pointer-offset effect fallback, recording attempts and
+   first successful decisions. Delete or replace it with a named witness;
+   reject a witness for another offset pair or memory state. Keep the existing
+   retained load-equality evidence intact.
+3. Migrate proof-object boundary consumers in separate chunks: theorem-premise
+   application, resource deltas, then branch interfaces. Reject omitted,
+   unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
+   fact histories so exact validation does not become an ambient scan.
+4. Separate quantified conversion and context-free normalization from implicit
+   proof construction, then migrate pure-theorem authority, call/refinement
+   guards and quantities, and termination by their own evidence types.
+
+Completion requires checking these consumers transitively, not just obtaining
+a zero grep count in `contract_certification.rs`. A retained exact rule must
+have named inputs and input/output-sized work; a retained planner must be
+non-authoritative and its selected result checked without rediscovery.
 
 ## Pointer-distinctness disposition
 
@@ -296,10 +381,11 @@ comparison now use only that narrower predicate for distinctness.
    31 deadline checkpoints record incomplete reasoning, with outer limit-error
    propagation audited above. `inside_condition_decision` is memo-scope policy, not an
    answer-suppressing tier.
-8. Finish the authoritative general-prover caller audit, or narrow the stated
-   invariant with an explicit rationale for any retained kernel planner. The
-   resource-invariant theorem constructors are complete; loop and effect
-   certification callers remain.
+8. **Audit complete; implementation open:** migrate the general-prover authority
+   consumers in the inventory above, starting with loop closure. The
+   resource-invariant theorem constructors are complete, but the remaining
+   boundaries extend beyond loop and effect certification. Preserve the stated
+   invariant; do not relabel internal proof construction as checking.
 
 Each numbered step should be a coherent green change. A later step must not be
 used to excuse an opaque bound introduced by an earlier one.
