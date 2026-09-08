@@ -171,6 +171,8 @@ struct Parser {
     contract_proof_bindings: BTreeMap<String, Vec<(String, Variable, String)>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
+    current_resource_fields: BTreeMap<String, ResourceFieldAccess>,
+    current_resource_targets: BTreeMap<String, ResourceClause>,
     match_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
@@ -370,6 +372,8 @@ impl Parser {
             contract_proof_bindings: BTreeMap::new(),
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
+            current_resource_fields: BTreeMap::new(),
+            current_resource_targets: BTreeMap::new(),
             tokens,
             positions,
             matching_parentheses,
@@ -904,7 +908,7 @@ impl Parser {
                 return Err(self
                     .error("a resource without a body must be declared with `abstract resource`"));
             }
-            Some(Token::LBrace) if !is_abstract => Some(self.parse_composite_resource_body()?),
+            Some(Token::LBrace) if !is_abstract => Some(self.parse_composite_resource_body(&name)?),
             Some(Token::LBrace) => {
                 return Err(self.error("an `abstract resource` cannot have a body"));
             }
@@ -926,7 +930,10 @@ impl Parser {
         })
     }
 
-    fn parse_composite_resource_body(&mut self) -> Result<CompositeResourceBody, ClickError> {
+    fn parse_composite_resource_body(
+        &mut self,
+        resource_name: &str,
+    ) -> Result<CompositeResourceBody, ClickError> {
         self.expect(Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek_ident() == Some("field") {
@@ -945,6 +952,23 @@ impl Parser {
             self.expect(Token::Semicolon)?;
             fields.push(ResourceFieldDefinition { name, click_type });
         }
+        self.current_resource_fields = fields
+            .iter()
+            .enumerate()
+            .map(|(field_index, field)| {
+                (
+                    field.name.clone(),
+                    ResourceFieldAccess {
+                        owner: "__body".into(),
+                        resource_name: resource_name.into(),
+                        identity: Variable(u64::MAX),
+                        field: field.name.clone(),
+                        field_index,
+                        click_type: Some(field.click_type.clone()),
+                    },
+                )
+            })
+            .collect();
         let condition = if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -1032,6 +1056,7 @@ impl Parser {
             .into_iter()
             .flat_map(expand_aggregate_resource_clause)
             .collect();
+        self.current_resource_fields.clear();
         Ok(CompositeResourceBody {
             fields,
             condition,
@@ -1331,6 +1356,10 @@ impl Parser {
     }
 
     fn parse_function_block(&mut self, external: bool) -> Result<FunctionBlock, ClickError> {
+        let previous_resource_targets = std::mem::replace(
+            &mut self.current_resource_targets,
+            self.contract_resource_parameters.clone(),
+        );
         let previous_resource_bindings = std::mem::take(&mut self.current_resource_bindings);
         for (name, parameter) in &self.contract_resource_parameters {
             let ResourceClause::Named { binding, resource } = parameter else {
@@ -1603,6 +1632,7 @@ impl Parser {
         }
         self.current_struct_params = previous_struct_params;
         self.current_resource_bindings = previous_resource_bindings;
+        self.current_resource_targets = previous_resource_targets;
         self.current_aggregate_objects = previous_aggregate_objects;
         self.current_global_array_shapes = previous_global_array_shapes;
         self.current_struct_array_params = previous_struct_array_params;
@@ -2426,18 +2456,28 @@ impl Parser {
         self.next_resource_identity += 1;
         self.current_resource_bindings
             .insert(name.clone(), (identity, resource_name.clone()));
-        Ok(ResourceClause::Named {
+        let target = ResourceClause::Named {
             binding: ResourceInstanceBinding {
-                name,
+                name: name.clone(),
                 identity,
                 schema: None,
                 fields: None,
             },
             resource: Box::new(resource),
-        })
+        };
+        self.current_resource_targets.insert(name, target.clone());
+        Ok(target)
     }
 
     fn parse_owned_resource_target(&mut self) -> Result<ResourceClause, ClickError> {
+        if let Some(target) = self
+            .peek_ident()
+            .and_then(|name| self.current_resource_targets.get(name))
+            .cloned()
+        {
+            self.position += 1;
+            return Ok(target);
+        }
         let start = self.position;
         if let Ok(quantity) = self.parse_contract_expression()
             && self.peek_ident() == Some("of")
@@ -3318,7 +3358,12 @@ impl Parser {
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
-                let tactic = if matches!(self.peek(), Some(Token::Ident(_)))
+                let tactic = if self
+                    .peek_ident()
+                    .is_some_and(|name| self.current_resource_targets.contains_key(name))
+                {
+                    ProofTactic::UnfoldResource(self.parse_owned_resource_target()?)
+                } else if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
                 {
                     let (name, arguments) =
@@ -5436,6 +5481,9 @@ impl Parser {
                 Err(self.error("expected contract expression, got `by`"))
             }
             Some(Token::Ident(name)) => {
+                if let Some(field) = self.current_resource_fields.get(&name) {
+                    return Ok(ContractExpression::ResourceField(field.clone()));
+                }
                 if self.current_contract_bindings.contains(&name) {
                     Ok(ContractExpression::Binding(name))
                 } else {

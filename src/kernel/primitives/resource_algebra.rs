@@ -318,6 +318,44 @@ impl ResourceContext {
         self.changed_facts_since(ancestor).is_some()
     }
 
+    /// Compare only the explicit exchanges since a shared proof frontier.
+    /// Supported projections and cached expansions are checked at each changed
+    /// key as well; neither can be smuggled in as an ownership-equivalent delta.
+    pub(crate) fn same_exchange_from(&self, other: &Self, ancestor: &Self) -> bool {
+        let Some(mut changed) = self.changed_facts_since(ancestor) else {
+            return false;
+        };
+        let Some(other_changed) = other.changed_facts_since(ancestor) else {
+            return false;
+        };
+        changed.extend(other_changed);
+        for fact in changed {
+            let representations = |context: &Self| {
+                let mut counts = BTreeMap::new();
+                for entry in context
+                    .storage
+                    .index
+                    .exact
+                    .get(&fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                {
+                    *counts
+                        .entry(context.storage.supported_by.get(entry).cloned())
+                        .or_insert(0usize) += 1;
+                }
+                counts
+            };
+            if representations(self) != representations(other)
+                || self.storage.expansions_by_support.get(&fact)
+                    != other.storage.expansions_by_support.get(&fact)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Exact common resource representation of two descendants.
     ///
     /// Only keys changed after `ancestor` are inspected. Starting from the

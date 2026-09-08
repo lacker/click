@@ -810,10 +810,21 @@ impl CFunction {
 
     pub fn with_composite_resource_definitions(
         mut self,
-        definitions: Vec<CCompositeResourceDefinition>,
+        mut definitions: Vec<CCompositeResourceDefinition>,
     ) -> Self {
+        definitions.sort_by(|left, right| left.name().cmp(right.name()));
         self.composite_resource_definitions = definitions;
         self
+    }
+
+    pub(crate) fn composite_resource_definition(
+        &self,
+        name: &str,
+    ) -> Option<&CCompositeResourceDefinition> {
+        self.composite_resource_definitions
+            .binary_search_by(|definition| definition.name().cmp(name))
+            .ok()
+            .map(|index| &self.composite_resource_definitions[index])
     }
 
     pub fn with_predicate_unfoldings(mut self, unfoldings: Vec<CPredicateUnfolding>) -> Self {
@@ -976,6 +987,10 @@ impl CPredicateUnfolding {
 }
 
 impl CCompositeResourceDefinition {
+    pub(crate) fn with_instance_schema(mut self, schema: Option<ResourceFieldSchema>) -> Self {
+        self.instance_schema = schema;
+        self
+    }
     pub fn new(
         name: impl Into<String>,
         parameters: Vec<CParameter>,
@@ -985,6 +1000,7 @@ impl CCompositeResourceDefinition {
         facts: Vec<SpecProposition>,
     ) -> Self {
         Self {
+            instance_schema: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),
@@ -1013,6 +1029,7 @@ impl CCompositeResourceDefinition {
         facts: Vec<SpecProposition>,
     ) -> Self {
         Self {
+            instance_schema: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),

@@ -2517,6 +2517,15 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn resource_instance_fields(&self, identity: Variable) -> Option<&ResourceInstance> {
+        let actual = match &self.resource_bindings {
+            Some(bindings) => *bindings.get(&identity)?,
+            None => identity,
+        };
+        self.resources
+            .owned_instance(actual)
+            .or_else(|| self.open_instances.owned_instance(actual))
+    }
     pub(crate) fn owned_resource_instance(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
             Some(bindings) => *bindings.get(&identity)?,

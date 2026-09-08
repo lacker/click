@@ -1943,6 +1943,7 @@ pub struct CPredicateUnfolding {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
+    pub(super) instance_schema: Option<ResourceFieldSchema>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     /// Existential witnesses bound inside the body (`let next: T where P`).
@@ -2921,6 +2922,9 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    /// Exclusive handles retained by explicit unfolding. These permit pure
+    /// field projections, never folded ownership or modular call transfer.
+    pub(super) open_instances: ResourceContext,
     /// Call-local formal identities; the ledger retains actual caller identities.
     pub(super) resource_bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
     pub(super) locals: CLocalEnvironment,
@@ -3016,6 +3020,9 @@ impl std::fmt::Debug for ResourceContext {
 
 impl PartialEq for ResourceContext {
     fn eq(&self, other: &Self) -> bool {
+        if std::sync::Arc::ptr_eq(&self.storage, &other.storage) {
+            return true;
+        }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
             && self.storage.expansions_by_support == other.storage.expansions_by_support

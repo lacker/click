@@ -2675,6 +2675,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
         resource_bindings: state.resource_bindings.clone(),
+        open_instances: substitute_bitvector_variable_in_resource_context(
+            &state.open_instances,
+            from,
+            to,
+        ),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
         counted_populations: std::sync::Arc::new(
@@ -2842,6 +2847,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             .composite_resource_definitions
             .iter()
             .map(|definition| CCompositeResourceDefinition {
+                instance_schema: definition.instance_schema.clone(),
                 name: definition.name.clone(),
                 parameters: definition.parameters.clone(),
                 witnesses: definition.witnesses.clone(),
@@ -4776,6 +4782,11 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         locals: CLocalEnvironment { bindings, slots },
         memory: substitute_pointer_variable_in_memory(&state.memory, from, to),
         resource_bindings: state.resource_bindings.clone(),
+        open_instances: substitute_pointer_variable_in_resource_context(
+            &state.open_instances,
+            from,
+            to,
+        ),
         resources: substitute_pointer_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
         counted_populations: std::sync::Arc::new(
@@ -5603,6 +5614,7 @@ fn substitute_pointer_variable_in_c_function(
             .composite_resource_definitions
             .iter()
             .map(|definition| CCompositeResourceDefinition {
+                instance_schema: definition.instance_schema.clone(),
                 name: definition.name.clone(),
                 parameters: definition.parameters.clone(),
                 witnesses: definition.witnesses.clone(),

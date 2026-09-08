@@ -6564,6 +6564,164 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
     }
 }
 
+/// Exchange one exclusive instance for its immediate memory body, or back.
+/// The open handle is linear proof state, not folded ownership or ghost storage.
+pub(crate) fn rewrite_resource_instance(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+    unfold: bool,
+) -> Result<(CState, Vec<Proposition>), &'static str> {
+    if definition.name() != instance.name()
+        || definition.instance_schema.as_ref() != Some(instance.schema())
+        || definition.condition.is_some()
+        || definition.recursive
+        || definition.counted_population
+        || !definition.witnesses.is_empty()
+        || definition.parameters.len() != instance.arguments.len()
+        || definition
+            .contains
+            .iter()
+            .any(|body| !matches!(body, CResourceSpec::OwnMemory(_)))
+    {
+        return Err("instance fold/unfold requires an unguarded, witness-free memory body");
+    }
+    let folded = CResourceFact::own(CResource::Instance(instance.clone()));
+    if unfold {
+        if state
+            .open_instances
+            .owned_instance(instance.identity)
+            .is_some()
+            || state.resources.owned_instance(instance.identity) != Some(instance)
+        {
+            return Err("instance is not exclusively owned in folded form");
+        }
+    } else if state.open_instances.owned_instance(instance.identity) != Some(instance)
+        || state.resources.owned_instance(instance.identity).is_some()
+    {
+        return Err("instance has no matching open handle");
+    }
+    let mut evaluation = state.clone();
+    evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
+        Variable(u64::MAX),
+        instance.identity,
+    )])));
+    for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
+        let value = value
+            .as_c_value()
+            .ok_or("resource argument is not a C value")?;
+        if value.c_type() != parameter.c_type() {
+            return Err("resource argument type mismatch");
+        }
+        evaluation.locals.set_typed(
+            parameter.name().to_owned(),
+            value.clone(),
+            parameter.c_type(),
+        );
+    }
+    let mut budget = ExecutionBudget::default();
+    let body = evaluate_function_resource_context(
+        &evaluation,
+        &definition.contains,
+        assumptions,
+        &mut budget,
+    )
+    .map_err(|_| "instance body evaluation exceeded its budget")?
+    .map_err(|_| "could not evaluate instance memory body")?;
+    let mut next = state.clone();
+    if unfold {
+        next.resources = next
+            .resources
+            .without_fact_delaying_normalization(&folded, assumptions)
+            .ok_or("instance ownership is missing")?
+            .try_compose_into_valid_context_delaying_normalization(
+                body.facts().iter().cloned(),
+                assumptions,
+            )
+            .map_err(|_| "instance body overlaps existing ownership")?;
+        next.open_instances = next.open_instances.unchecked_with_fact(folded);
+    } else {
+        for fact in body.facts() {
+            next.resources = next
+                .resources
+                .without_fact_delaying_normalization(fact, assumptions)
+                .ok_or("fold requires ownership of the complete instance body")?;
+        }
+        next.resources = next
+            .resources
+            .try_compose_into_valid_context_delaying_normalization([folded.clone()], assumptions)
+            .map_err(|_| "fold would duplicate instance ownership")?;
+        next.open_instances = next
+            .open_instances
+            .without_exact_representation(&folded)
+            .ok_or("open handle is missing")?;
+    }
+    evaluation.resources = if unfold {
+        next.resources.clone()
+    } else {
+        state.resources.clone()
+    };
+    evaluation.open_instances = if unfold {
+        next.open_instances.clone()
+    } else {
+        state.open_instances.clone()
+    };
+    let mut facts = body.observable_facts_assuming_valid(assumptions);
+    for fact in body.facts() {
+        let range = fact
+            .memory_range()
+            .ok_or("instance body is not memory ownership")?;
+        let width = range.element_width();
+        facts.push(Proposition::CMemoryLoadable {
+            memory: state.memory.clone(),
+            base: range
+                .base()
+                .offset_by_elements(range.start().clone(), width),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+                Bitvector32Term::Constant(width),
+            ),
+        });
+    }
+    facts.push(Proposition::CResourceComposition(body));
+    let mut body_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    for fact in &facts {
+        body_assumptions = body_assumptions.assume_proposition(fact.clone());
+    }
+    for fact in &definition.facts {
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &evaluation,
+            fact,
+            None,
+            &body_assumptions,
+            &mut budget,
+        )
+        .map_err(|_| "could not evaluate instance body fact")?;
+        if paths.len() != 1
+            || paths[0]
+                .facts
+                .iter()
+                .any(|fact| !body_assumptions.proves(fact.proposition()))
+            || paths[0]
+                .obligations
+                .iter()
+                .any(|goal| !body_assumptions.proves(goal.proposition()))
+        {
+            return Err("instance body fact needs an unsupported conditional proof");
+        }
+        let proposition = paths[0].proposition.clone();
+        if !unfold && !assumptions.proves(&proposition) {
+            return Err("fold requires the unchanged instance body facts");
+        }
+        facts.push(proposition);
+    }
+    Ok((next, if unfold { facts } else { vec![] }))
+}
+
 pub(super) fn expand_composite_resource_fact(
     context: &ResourceContext,
     composite: &CResourceFact,
@@ -6594,6 +6752,9 @@ pub(super) fn expand_composite_resource_fact_with_children(
     let definition = definitions
         .iter()
         .find(|definition| definition.name() == name)?;
+    if definition.instance_schema.is_some() {
+        return None;
+    }
     if definition.parameters().len() != arguments.len() {
         return None;
     }
@@ -8689,6 +8850,9 @@ pub(super) fn function_outcome_from_body(
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
+            if return_resources.is_none() {
+                caller_state.open_instances = state.open_instances;
+            }
             caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;

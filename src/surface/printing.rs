@@ -144,7 +144,14 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::FoldResource(resource) => line(
             output,
             &prefix,
-            &format!("fold({});", format_resource_target(resource)),
+            &format!(
+                "fold({});",
+                if matches!(resource, ResourceClause::Named { .. }) {
+                    format_resource_call(resource)
+                } else {
+                    format_resource_target(resource)
+                }
+            ),
         ),
         ProofTactic::ConstructResource(resource) => line(
             output,
@@ -570,6 +577,9 @@ fn write_premise_list(output: &mut String, facts: &[ClickProposition], indent: u
 }
 
 fn format_resource_call(resource: &ResourceClause) -> String {
+    if let ResourceClause::Named { binding, .. } = resource {
+        return binding.name.clone();
+    }
     let ResourceClause::Declared {
         name, arguments, ..
     } = resource
