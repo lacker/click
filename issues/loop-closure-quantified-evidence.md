@@ -160,13 +160,54 @@ distinguishes them. Its negative regression is retained in
 The unsafe key/index and exact-only preparation prototype were removed; no
 new binder comparison or derivation-builder replacement landed from it.
 
-Finishing now needs a proof-interface decision: preferably expose the actual
-lowered value/safety goals as proof-object scopes, so their proofs already use
-the retained binder identities. The alternative is a typed renaming proof with
+The selected interface is to expose the actual lowered value/safety goals as
+proof-object scopes, so their proofs already use the retained binder identities.
+Adding a proof body to `close_invariants` was approved on 2026-09-08; see the
+prototype findings below. The alternative is a typed renaming proof with
 explicitly checked snapshot freshness/dependency evidence. Do not use the old
 snapshot-blind key as authority, or add a whole-memory traversal per simple
 step to repair the failed key. Any new renaming rule must reject the example
 above and include deterministic scaling with growing unrelated snapshots.
+
+### Closure proof-body prototype (2026-09-08)
+
+A task-worktree prototype added `close_invariants by { ... }`, retaining the
+existing `close_invariants();` form. It collected the exact lowered value and
+read-safety goals into one conjunction and checked the body against that
+kernel goal. Provisional safety obligations remained separate goals, not
+premises of their own proofs. The completed proof was bound to its exact root
+premise store, current execution snapshot, and checked execution facts.
+
+A scalar counting-loop regression passed ordinary verification, whole-claim
+expansion, and verification of the expanded source. An empty closure body was
+rejected instead of falling back to legacy discovery. These are focused
+prototype results, not a completed migration or a full-gate result.
+
+The unchanged C from `bubble_pass3_max_suffix.md` exposed a further interface
+gap. Its ordinary expanded proof verified; replacing its bare closers with
+`close_invariants by { simp(); }` promptly failed. The exact combined goal did
+have a synthesized surface presentation. However, the structural conjunction
+arm of `try_structural_simp_closure_with_surfaces` proves each conjunct through
+an ordinary `begin_have(surface)` before applying `split()`. Those nested
+`have` scopes lower the surface proposition again. Opening only the outer
+exact goal therefore does not preserve exact goal identities throughout its
+subproofs. This identifies a remaining architectural gap; it does not establish
+that fixing this one arm alone will complete quantified planning.
+
+The next design must include exact child-goal scopes. The current `split()`
+checks a conjunction from already-established facts; it does not open child
+goals. Options are to give logical decomposition an explicit scoped body, or
+to let the closure body contain separately addressed exact obligation proofs.
+Whichever form is chosen, expansion must retain those child scopes rather
+than reconstructing them as ordinary `have` statements. Do not silently make
+`have` select a kernel goal by a same-written surface formula: that revives
+the snapshot/binder ambiguity this interface is intended to remove.
+
+All runtime and syntax changes from this prototype were reverted. The
+scalar prototype's success is not evidence that the new syntax is available.
+The acceptance tests must include original and expanded quantified proofs,
+incomplete bodies, substituted child proofs, changed premises/snapshots, and
+four-size deterministic scaling of scope entry and completion.
 
 ### Prepared-bundle consumption (2026-09-07)
 

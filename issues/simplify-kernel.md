@@ -330,7 +330,12 @@ explicitly only a request. The attempted prefix-probe removal and surface
 safety-proof planner were reverted: ordinary haves lost loop-entry context,
 regressed copy3, and added excessive search. Legacy discovery therefore remains
 in preparation and the prefix probe. Connecting explicit proofs to the exact
-lowered goals needs a loop-specific scope/renaming interface. A rejected key
+lowered goals needs a loop-specific scope interface. A proof body on
+`close_invariants` is approved. Its first prototype passed scalar verification
+and expansion, but the quantified census still failed: conjunction planning
+uses ordinary `have` scopes, re-lowering the child goals. Exact child-goal
+scopes are therefore part of the remaining interface design, not just an
+outer proof body. That prototype was reverted. A rejected key
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
 
