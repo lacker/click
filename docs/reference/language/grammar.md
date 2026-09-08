@@ -50,7 +50,7 @@ documentation inventory keep the following accepted words synchronized.
 | `defined`, `loadable`, `separate`, `aligned` | Definedness, readable-memory, resource-separation, and pointer-alignment propositions. |
 | `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
 | `sizeof`, `byte_offset`, `address` | Supported scalar, pointer, and struct-layout sizes, byte-granularity pointer-offset expressions, and the LP64 integer representation of an object pointer. |
-| `load_int32`, `load_uint8`, `load_uint32`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
+| `load_int32`, `load_uint8`, `load_uint32`, `load_int64`, `load_uint64`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |

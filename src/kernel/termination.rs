@@ -1766,6 +1766,10 @@ fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpre
         SpecExpression::BitwiseNot(value) => Some(CExpression::BitwiseNot(Box::new(
             spec_expression_to_c_expression(value)?,
         ))),
+        SpecExpression::Cast(value, target_type) => Some(CExpression::Cast {
+            expression: Box::new(spec_expression_to_c_expression(value)?),
+            target_type: *target_type,
+        }),
         _ => None,
     }
 }

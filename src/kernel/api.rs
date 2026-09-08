@@ -4771,6 +4771,7 @@ fn rewrite_int32_term_by_exact_equality(
         | Bitvector32Term::Int64From32(_)
         | Bitvector32Term::Int64FromUInt32(_)
         | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::UInt32From64(_)
         | Bitvector32Term::UInt64FromInt32(_)
         | Bitvector32Term::UInt64FromInt64(_)
         | Bitvector32Term::Int64Add(_, _)

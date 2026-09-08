@@ -131,7 +131,13 @@ fn execute_c_lvalue_update_paths(
         };
         let supported_integer_update = matches!(
             lvalue.value_type,
-            CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+            CType::Int16
+                | CType::Int32
+                | CType::UInt8
+                | CType::UInt16
+                | CType::UInt32
+                | CType::Int64
+                | CType::UInt64
         );
         let supported_float_update = matches!(
             (lvalue.value_type, operator),

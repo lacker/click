@@ -155,6 +155,9 @@ pub enum Bitvector32Term {
     PointerAddress(Box<Pointer>),
     Int64From32(Box<Bitvector32Term>),
     UInt64From32(Box<Bitvector32Term>),
+    /// Unsigned narrowing modulo 2^32; the operand is a signed or unsigned
+    /// 64-bit integer and the result is a 32-bit bitvector.
+    UInt32From64(Box<Bitvector32Term>),
     Int64FromUInt32(Box<Bitvector32Term>),
     UInt64FromInt32(Box<Bitvector32Term>),
     UInt64FromInt64(Box<Bitvector32Term>),
@@ -697,6 +700,7 @@ pub enum SpecExpression {
     BitwiseOr(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseXor(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseNot(Box<SpecExpression>),
+    Cast(Box<SpecExpression>, CType),
     If {
         condition: Box<SpecProposition>,
         then_branch: Box<SpecExpression>,

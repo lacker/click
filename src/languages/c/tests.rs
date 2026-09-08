@@ -2989,6 +2989,28 @@ fn c0_syntax_accepts_omitted_for_initializer_and_step() {
 }
 
 #[test]
+fn c0_syntax_accepts_omitted_for_condition() {
+    syntax::parse_function("int once(void) { for (;;) { return 7; } }")
+        .expect("an omitted for condition is true");
+}
+
+#[test]
+fn c0_global_struct_addresses_retain_nominal_type_for_calls() {
+    let source = "struct counter { int value; }; static struct counter state = {7}; int bump(struct counter *p) { p->value += 1; return p->value; } int twice(void) { bump(&state); return bump(&state); }";
+    let functions =
+        syntax::parse_functions(source).expect("global struct address should retain its tag");
+    assert_eq!(functions.len(), 2);
+    let wrong_tag = source.replace(
+        "static struct counter state = {7};",
+        "struct other { int value; }; static struct other state = {7};",
+    );
+    assert!(
+        syntax::parse_functions(&wrong_tag).is_err(),
+        "identical layout does not erase the struct tag"
+    );
+}
+
+#[test]
 fn c0_syntax_accepts_unary_plus_and_a_for_initializer_list() {
     syntax::parse_function(
         r#"

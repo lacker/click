@@ -2724,6 +2724,13 @@ impl AnnotationLowerer<'_> {
             CExpression::BitwiseNot(expression) => Ok(SpecExpression::BitwiseNot(Box::new(
                 self.lower_c_fragment_to_spec(expression, environment)?,
             ))),
+            CExpression::Cast {
+                expression,
+                target_type,
+            } if *target_type == CType::UInt32 => Ok(SpecExpression::Cast(
+                Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
+                *target_type,
+            )),
             CExpression::Index(base, index) => {
                 let element_type = self
                     .c_expression_array_element_type(base, environment)

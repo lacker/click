@@ -28,6 +28,29 @@ mod tests {
     };
 
     #[test]
+    fn narrowing_rewrite_visits_scale_with_selected_expression() {
+        let from = Bitvector32Term::Variable(Variable(91));
+        let to = Bitvector32Term::Variable(Variable(92));
+        let make = |value: &Bitvector32Term, size| {
+            Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![
+                    PureFunctionArgument::Value(CValue::UInt32(
+                        Bitvector32Term::UInt32From64(Box::new(value.clone()))
+                    ));
+                    size
+                ],
+            })
+        };
+        for size in [16, 64, 256] {
+            let mut rewrite = TermRewrite::for_bits(&from, &to);
+            assert_eq!(rewrite.term(&make(&from, size)), make(&to, size));
+            assert!(rewrite.changed);
+            assert_eq!(rewrite.visits, 2 + 2 * size);
+        }
+    }
+
+    #[test]
     fn conditional_reduction_work_scales_with_selected_expression() {
         let condition = ConditionTerm::Variable(Variable(51));
         let conditions = HashMap::from([(condition.clone(), true)]);
@@ -605,6 +628,9 @@ impl<'a> TermRewrite<'a> {
             Bitvector32Term::Int64From32(v) => Bitvector32Term::Int64From32(Box::new(self.bits(v))),
             Bitvector32Term::UInt64From32(v) => {
                 Bitvector32Term::UInt64From32(Box::new(self.bits(v)))
+            }
+            Bitvector32Term::UInt32From64(v) => {
+                Bitvector32Term::UInt32From64(Box::new(self.bits(v)))
             }
             Bitvector32Term::Int64FromUInt32(v) => {
                 Bitvector32Term::Int64FromUInt32(Box::new(self.bits(v)))

@@ -4372,6 +4372,24 @@ impl Parser {
     }
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::LParen)
+            && matches!(self.peek_next(), Some(Token::Ident(name)) if name == "uint32")
+        {
+            self.position += 1;
+            let target_type = self.parse_type()?.c_type.to_kernel_type();
+            if target_type.is_pointer() {
+                return Err(self.error("contract scalar casts do not accept pointer target types"));
+            }
+            self.expect(Token::RParen)?;
+            let operand = self.parse_contract_unary()?;
+            let Some(expression) = contract_expression_as_c_fragment(&operand) else {
+                return Err(self.error("scalar cast expects a current C expression; put old(...) around the whole cast for an entry-state value"));
+            };
+            return Ok(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(expression),
+                target_type,
+            }));
+        }
         if self.peek() == Some(&Token::Minus) {
             if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
@@ -4916,6 +4934,8 @@ impl Parser {
             Some("load_int32") => Some(CType::Int32),
             Some("load_uint8") => Some(CType::UInt8),
             Some("load_uint32") => Some(CType::UInt32),
+            Some("load_int64") => Some(CType::Int64),
+            Some("load_uint64") => Some(CType::UInt64),
             Some("load_int32_pointer") => Some(CType::Int32Pointer),
             Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
             Some("load_int32_pointer_pointer") => Some(CType::Int32PointerPointer),

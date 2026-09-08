@@ -3096,6 +3096,25 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                 )
             },
         )?,
+        SpecExpression::Cast(expression, target_type) => evaluate_spec_scalar_unary_paths(
+            state,
+            expression,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            |value, facts, mut obligations| {
+                let outcome =
+                    cast_c_value_to_type(value, *target_type, &mut obligations, assumptions)
+                        .map(CExpressionOutcome::Value)
+                        .unwrap_or_else(CExpressionOutcome::RuntimeError);
+                vec![CExpressionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                }]
+            },
+        )?,
         SpecExpression::BitwiseNot(expression) => evaluate_spec_scalar_unary_paths(
             state,
             expression,

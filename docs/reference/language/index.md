@@ -855,6 +855,13 @@ ensures forall (k: int32) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto
 
 Inside `old(...)`, `result` is unavailable.
 
+Contract expressions accept the unsigned narrowing cast `(uint32)x`, including
+`old((uint32)p->value)`. The operand must be
+a current C expression; put `old(...)` or `at(...)` around the whole cast to
+select another snapshot. A 64-to-`uint32` cast retains the low 32 bits, rather
+than requiring the source value to fit. Casts retain their selected memory
+snapshot even when the underlying field is subsequently updated.
+
 When `old(p)` is passed as an array argument to a pure Click function or
 predicate, it becomes an entry-state Click array ref. For example,
 `permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.
@@ -1117,6 +1124,7 @@ Surface Click also has documented low-level memory reads for addresses that do
 not have a recoverable C source place:
 
 - `load_int32(pointer)` and `load_uint8(pointer)`
+- `load_uint32(pointer)`, `load_int64(pointer)`, and `load_uint64(pointer)`
 - `load_int32_pointer(pointer)` and `load_uint8_pointer(pointer)`
 - `byte_offset(pointer, bytes)`
 

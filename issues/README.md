@@ -86,7 +86,7 @@ normal tooling-first policy and should then be added to this list.
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 27
+## Functionality gaps: 28
 
 C language coverage:
 
@@ -94,6 +94,7 @@ C language coverage:
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
+- [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
 - [Preserve const-qualified callback returns](const-qualified-callback-returns.md)
 - [Model signed eight-bit integers](signed-byte-integers.md)
 - [Model forward and backward goto edges](goto.md)

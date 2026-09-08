@@ -208,6 +208,7 @@ fn bitvector_term_exceeds_depth_limit(root: &Bitvector32Term) -> bool {
             | Bitvector32Term::Int64From32(value)
             | Bitvector32Term::Int64FromUInt32(value)
             | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::UInt32From64(value)
             | Bitvector32Term::UInt64FromInt32(value)
             | Bitvector32Term::UInt64FromInt64(value)
             | Bitvector32Term::Int64BitwiseNot(value)
@@ -1373,6 +1374,20 @@ fn synthesize_surface_bitvector(
                 target_type: CType::UInt64,
             }))
         }
+        Bitvector32Term::UInt32From64(value) => {
+            Some(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(contract_expression_to_c_fragment(
+                    &synthesize_surface_bitvector(
+                        value,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
+                    )?,
+                )?),
+                target_type: CType::UInt32,
+            }))
+        }
         Bitvector32Term::Int64Add(left, right) => {
             let (left, right) = binary(left, right)?;
             Some(ContractExpression::Add(left, right))
@@ -1665,6 +1680,7 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
             | Bitvector32Term::UInt64BitwiseNot(value)
             | Bitvector32Term::Int64From32(value)
             | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::UInt32From64(value)
             | Bitvector32Term::Int64FromUInt32(value)
             | Bitvector32Term::UInt64FromInt32(value)
             | Bitvector32Term::UInt64FromInt64(value)

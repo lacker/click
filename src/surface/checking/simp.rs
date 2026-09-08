@@ -524,6 +524,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 Bitvector32Term::UInt64From32(value) => {
                     Bitvector32Term::uint64_from_32(rewrite_term_offset(value, left, right))
                 }
+                Bitvector32Term::UInt32From64(value) => {
+                    Bitvector32Term::uint32_from_64(rewrite_term_offset(value, left, right))
+                }
                 Bitvector32Term::Int64FromUInt32(value) => {
                     Bitvector32Term::int64_from_uint32(rewrite_term_offset(value, left, right))
                 }
@@ -941,15 +944,24 @@ fn rewrite_atomic_proposition_by_exact_equality(
         }
         return Ok(rewritten);
     }
-    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = equality
-    else {
-        return Err("`rewrite` currently expects an int32 equality".to_string());
+    let (left, right, wide) = match equality {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+            (left, right, false)
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), true) => {
+            (left, right, true)
+        }
+        _ => return Err("`rewrite` expects a 32-bit or 64-bit integer equality".to_string()),
     };
     let reverse = Proposition::ConditionIs(
-        ConditionTerm::Bitvector32Equal(
-            Box::new(right.as_ref().clone()),
-            Box::new(left.as_ref().clone()),
-        ),
+        if wide {
+            ConditionTerm::Bitvector64Equal(right.clone(), left.clone())
+        } else {
+            ConditionTerm::Bitvector32Equal(
+                Box::new(right.as_ref().clone()),
+                Box::new(left.as_ref().clone()),
+            )
+        },
         true,
     );
     if !is_available(equality) && !is_available(&reverse) {
@@ -1070,6 +1082,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
             Bitvector32Term::UInt64From32(value) => {
                 Bitvector32Term::uint64_from_32(rewrite_term(value, from, to))
+            }
+            Bitvector32Term::UInt32From64(value) => {
+                Bitvector32Term::uint32_from_64(rewrite_term(value, from, to))
             }
             Bitvector32Term::Int64FromUInt32(value) => {
                 Bitvector32Term::int64_from_uint32(rewrite_term(value, from, to))
@@ -1304,6 +1319,12 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 }
                 ConditionTerm::Bitvector32Equal(goal_left, goal_right) => {
                     ConditionTerm::Bitvector32Equal(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector64Equal(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector64Equal(
                         Box::new(rewrite_term(goal_left, left, right)),
                         Box::new(rewrite_term(goal_right, left, right)),
                     )
@@ -2120,6 +2141,7 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
         | Bitvector32Term::UInt64Constant(_)
         | Bitvector32Term::Int64From32(_)
         | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::UInt32From64(_)
         | Bitvector32Term::Int64FromUInt32(_)
         | Bitvector32Term::UInt64FromInt32(_)
         | Bitvector32Term::UInt64FromInt64(_)
@@ -2244,6 +2266,9 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
         }
         Bitvector32Term::UInt64From32(value) => {
             Bitvector32Term::uint64_from_32(simp_bitvector(value))
+        }
+        Bitvector32Term::UInt32From64(value) => {
+            Bitvector32Term::uint32_from_64(simp_bitvector(value))
         }
         Bitvector32Term::Int64FromUInt32(value) => {
             Bitvector32Term::int64_from_uint32(simp_bitvector(value))
