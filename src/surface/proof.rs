@@ -83,13 +83,13 @@ use language_context::*;
 #[cfg(test)]
 pub(in crate::surface) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;
+pub(super) use pure_theorems::{
+    is_kernel_standard_theorem_name, pure_theorem_array_refs, pure_theorem_parameter_values,
+    verify_concrete_theorem_definition, verify_theorem_definitions,
+};
 #[cfg(test)]
 use pure_theorems::{
     lower_pure_theorem_proposition, pure_theorem_context, validate_pure_theorem_certificate,
-};
-pub(super) use pure_theorems::{
-    pure_theorem_array_refs, pure_theorem_parameter_values, verify_concrete_theorem_definition,
-    verify_theorem_definitions,
 };
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;

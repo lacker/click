@@ -2229,7 +2229,7 @@ fn evaluate_spec_resource_at_state(
                 Box::new(move |arguments| {
                     Some(CResource::Composite {
                         name: name.clone(),
-                        arguments,
+                        arguments: arguments.into_iter().map(AlgebraicValue::C).collect(),
                     })
                 }),
             )
@@ -2241,7 +2241,7 @@ fn evaluate_spec_resource_at_state(
                 Box::new(move |arguments| {
                     Some(CResource::Token {
                         name: name.clone(),
-                        arguments,
+                        arguments: arguments.into_iter().map(AlgebraicValue::C).collect(),
                     })
                 }),
             )
@@ -2874,7 +2874,8 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                 .collect()
         }
         SpecExpression::CountedResourceCount { name, arguments } => {
-            let mut argument_paths = vec![(Vec::<Option<CValue>>::new(), Vec::new(), Vec::new())];
+            let mut argument_paths =
+                vec![(Vec::<Option<AlgebraicValue>>::new(), Vec::new(), Vec::new())];
             for argument in arguments {
                 let mut next = Vec::new();
                 for (values, facts, obligations) in argument_paths {
@@ -2906,7 +2907,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             continue;
                         };
                         let mut next_values = values.clone();
-                        next_values.push(Some(argument_path.value));
+                        next_values.push(Some(AlgebraicValue::C(argument_path.value)));
                         next.push((next_values, merged_facts, merged_obligations));
                     }
                 }
@@ -2924,7 +2925,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             && population.arguments.iter().zip(&arguments).all(
                                 |(actual, pattern)| {
                                     pattern.as_ref().is_none_or(|expected| {
-                                        c_values_proven_equal_for_memory_resolution(
+                                        crate::kernel::resource_arguments_proven_equal(
                                             actual,
                                             expected,
                                             &path_assumptions,

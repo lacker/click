@@ -69,8 +69,8 @@ full-gate failure and the subsequent focused failures are not green results.
 ## Checked-lowering retention (2026-09-07)
 
 The chosen representation is a typed, kernel-owned checked-lowering record.
-The legacy planner now retains the exact lowered path, its non-assumable
-obligation targets, their derivations, the goal derivation, and the persistent
+The legacy planner now retains the exact lowered path, its obligation targets,
+their derivations, the goal derivation, and the persistent
 path context. Record validation checks supplied derivations and their exact
 conclusions; it does not invoke a derivation builder. Keeping the actual
 lowered binders avoids a second lowering and alpha-equivalence lookup.
@@ -82,11 +82,32 @@ success token or permission to close a different snapshot. It does not clone
 the C state or entire ambient fact history to attach a record.
 
 This is the retention foundation, **not the completed closure migration**.
-The legacy general/simp planner still constructs these proofs; source-level
-explicit-invariant bypasses and the existing closure-intent flag remain.
-The retained paths cover checks sent to the legacy planner, not yet every
-invariant in the source bundle. The records must next become the complete
+The legacy general/simp planner still constructs these proofs, and the
+existing closure-intent flag remains. The records must next become the
 input to closure validation, with construction moved to proof planning.
+
+### Complete bundle coverage
+
+Every invariant now goes through retained lowering, including invariants
+already established by explicit `have` steps. Removing the old bypass alone
+exposed another discarded result: an unfolded predicate `have` proved its
+structural body but published only the opaque predicate name. At a loop
+frontier, joining that completed scope now retains both the named predicate
+and its actually proved unfolded body, with surface mappings for expansion.
+Incomplete scopes publish neither; other scope interfaces are unchanged.
+No new binder-equivalence rule or global search heuristic was needed.
+
+Records also prove provisional lowering obligations, not just obligations
+already marked non-assumable. Their proof context excludes those obligations:
+a read-safety requirement cannot serve as its own premise. A known value fact
+with missing read safety is rejected. Existing checked execution/resource
+facts supply safety without additional user bookkeeping.
+
+The original and expanded bubble-pass fixtures cover this path. Focused tests
+also check complete mixed explicit/legacy bundles, missing provisional safety,
+incomplete scope rejection, independent explicit `have` checking, and four-size scaling of
+the retained-body scope join. This completes coverage, not the removal of
+legacy derivation building at closure.
 
 Regressions cover missing/replaced safety evidence, changed goal/context, and
 multi-size ambient-fact scaling of record rechecking. The existing bubble-pass
@@ -99,10 +120,10 @@ expansion regressions remain the integration requirement.
    obligations using the existing statement evidence. Identify any missing
    simple rule before broadening smart search. Do not call the legacy closer
    as a successful preflight that skips generating this proof.
-2. Extend the retained checked-lowering records to cover the complete bundle,
-   including currently bypassed explicit invariants. Keep their construction
-   separate from validation, without trusting a surface spelling as proof.
-   Avoid requiring users to write redundant safety bookkeeping for each read.
+2. Move construction of the complete checked-lowering bundle into proof
+   planning, keeping it separate from validation. Retain the actual proofs
+   without trusting surface spellings or requiring redundant read-safety
+   bookkeeping from users.
 3. Bind record consumption to the exact path/snapshot and selected checks.
    Reject changed free variables, pointer/byte ranges, and memory snapshots.
    Include deterministic multi-size scaling tests for complete closure, not

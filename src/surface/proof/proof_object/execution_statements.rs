@@ -240,9 +240,9 @@ impl<'a> Proof<'a> {
     ///
     /// The legacy source driver may arrive with the surface closer already
     /// reflected in cursor metadata. That metadata is not authority for the
-    /// invariant judgment: this operation accepts only invariants already
-    /// established by checked proof steps in the current facts, and sends the
-    /// remainder through the kernel's legacy invariant checker.
+    /// invariant judgment. Every invariant goes through checked lowering,
+    /// including those already established by explicit proof steps: their
+    /// value facts do not replace the lowering's safety evidence.
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         loop_entry_state: &CState,
@@ -298,20 +298,9 @@ impl<'a> Proof<'a> {
                 "explicit invariant evidence does not align with the invariant bundle",
             ));
         }
-        let mut unchecked_invariants = Vec::new();
-        for (check, surface) in invariant_checks.iter().zip(invariant_surfaces) {
-            let explicitly_proved = execution
-                .presentation
-                .surface_propositions
-                .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
-                .is_some();
-            if !explicitly_proved {
-                unchecked_invariants.push(check.clone());
-            }
-        }
         let state = self
             .state
-            .retain_checked_invariant_lowerings(loop_entry_state, &unchecked_invariants)
+            .retain_checked_invariant_lowerings(loop_entry_state, invariant_checks)
             .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
         let proof = self.with_kernel_state(state);
 

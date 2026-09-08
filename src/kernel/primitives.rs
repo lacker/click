@@ -3,11 +3,10 @@ use super::api::{
 };
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
-    bitvector_terms_proven_equal_for_memory_resolution, bitvector_variable,
-    c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
-    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
-    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
-    signed_bitvector_constant, signed_i64_bitvector_constant,
+    bitvector_terms_proven_equal_for_memory_resolution, bitvector_variable, collect_or_cases,
+    instantiate_range_fold_step, memory_snapshots_proven_equal_at_pointer,
+    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
+    resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1162,7 +1161,20 @@ impl Ord for AlgebraicType {
     }
 }
 
+impl From<CValue> for AlgebraicValue {
+    fn from(value: CValue) -> Self {
+        Self::C(value)
+    }
+}
+
 impl AlgebraicValue {
+    pub fn as_c_value(&self) -> Option<&CValue> {
+        match self {
+            Self::C(value) => Some(value),
+            Self::Algebraic(_) => None,
+        }
+    }
+
     pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
         match self {
             Self::C(value) => AlgebraicValueType::C(value.c_type()),
@@ -2809,7 +2821,7 @@ pub struct CState {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCountedPopulation {
     pub(super) name: String,
-    pub(super) arguments: Vec<CValue>,
+    pub(super) arguments: ResourceArguments,
     pub(super) count: Bitvector32Term,
     /// Marks observation of a resource family even while its exact population
     /// is zero. Marker entries are not themselves resource populations.
@@ -2939,16 +2951,20 @@ pub enum CResourceFact {
     View(CResource),
 }
 
+/// Immutable logical indices shared by resource snapshots and population keys.
+/// Cloning a resource must not clone a recursive model stored in its indices.
+pub type ResourceArguments = std::sync::Arc<[AlgebraicValue]>;
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResource {
     Memory(CMemoryRange),
     Composite {
         name: String,
-        arguments: Vec<CValue>,
+        arguments: ResourceArguments,
     },
     Token {
         name: String,
-        arguments: Vec<CValue>,
+        arguments: ResourceArguments,
     },
 }
 

@@ -1,6 +1,9 @@
 use super::prelude::*;
 
 #[cfg(test)]
+mod callback_contract_tests;
+
+#[cfg(test)]
 mod pointee_const_return_tests {
     use super::*;
 
@@ -902,7 +905,25 @@ fn execute_verified_function_rule(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    let function = &rule.function;
+    execute_verified_function_templates(
+        caller_state,
+        &[&rule.function],
+        arguments,
+        assumptions,
+        environment,
+        budget,
+    )
+}
+
+fn execute_verified_function_templates(
+    caller_state: &CState,
+    functions: &[&CFunction],
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    let function = functions[0];
     budget.consume_function_call()?;
     let existing_variables = crate::instrumentation::measure_operation(
         function.name(),
@@ -911,7 +932,9 @@ fn execute_verified_function_rule(
         || {
             let mut existing_variables = BTreeSet::new();
             collect_c_state_bitvector_variables(caller_state, &mut existing_variables);
-            collect_c_function_bitvector_variables(function, &mut existing_variables);
+            for function in functions {
+                collect_c_function_bitvector_variables(function, &mut existing_variables);
+            }
             for argument in arguments {
                 collect_c_expression_bitvector_variables(argument, &mut existing_variables);
             }
@@ -940,285 +963,68 @@ fn execute_verified_function_rule(
             });
             continue;
         }
-        let path_assumptions = assumptions_with_path_context(
-            assumptions,
-            &arguments_path.facts,
-            &arguments_path.obligations,
-        );
-        let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
-            function,
-            &arguments_path.values,
-            &arguments_path.obligations,
-            &path_assumptions,
-        ) else {
+
+        let mut applicable = Vec::new();
+        let mut first_failure = None;
+        for function in functions {
+            let prepared = prepare_verified_function_call(
+                caller_state,
+                function,
+                arguments_path.clone(),
+                functions.len() > 1,
+                assumptions,
+                environment,
+                budget,
+            )?;
+            match prepared {
+                Ok(prepared) => {
+                    applicable.push(prepared);
+                }
+                Err(failure) => {
+                    if first_failure.is_none() {
+                        first_failure = Some(failure);
+                    }
+                }
+            }
+        }
+        if applicable.is_empty() {
+            paths.push(first_failure.expect("a nonempty set of callback contracts"));
+            continue;
+        }
+        // Pure conjunction does not duplicate an ownership ledger. Arbitrary
+        // alternative owned postconditions need a resource-algebra extension;
+        // do not represent them as either paths or separating ownership.
+        if applicable.len() > 1
+            && applicable.iter().any(|call| {
+                !call.function.resource_requires.is_empty()
+                    || !call.function.resource_ensures.is_empty()
+                    || !call.function.resource_constructors.is_empty()
+                    || !call.mutable_ranges.is_empty()
+            })
+        {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &arguments_path.values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    "combining resource-bearing callback contracts is not yet supported"
+                        .to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
             continue;
-        };
-        let Some(mut entry_state) =
-            bind_c_function_arguments(caller_state, function, &argument_values)
-        else {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &argument_values)
-                ))),
-                facts: arguments_path.facts,
-                obligations: argument_obligations,
-            });
-            continue;
-        };
-        let path_assumptions = assumptions_with_path_context(
-            assumptions,
-            &arguments_path.facts,
-            &argument_obligations,
-        );
-        let transfer = match crate::instrumentation::measure_operation(
-            function.name(),
-            "verified function rule application",
-            "verified call resource transfer preparation",
-            || {
-                prepare_function_resource_transfer(
-                    caller_state,
-                    &entry_state,
-                    function,
-                    &path_assumptions,
-                    budget,
-                    false,
-                )
-            },
-        )? {
-            Ok(transfer) => transfer,
-            Err(error) => {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts: arguments_path.facts,
-                    obligations: argument_obligations,
-                });
-                continue;
-            }
-        };
-        entry_state.resources = transfer.callee_resources.clone();
-        let entry_contract_state =
-            with_contract_argument_views(&entry_state, function, &argument_values);
-
-        let mut obligations = argument_obligations;
-        let mut facts = arguments_path.facts;
-        let mut established_requirements = Vec::new();
-        let requirement_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
-            "verified function rule application",
-            "verified call requirement checking",
-        );
-        for requirement in function.contract_requires() {
-            let requirement_assumptions =
-                assumptions_with_path_context(&path_assumptions, &facts, &obligations);
-            let requirement_assumptions =
-                assumptions_with_propositions(&requirement_assumptions, &established_requirements);
-            let lowering_assumptions = requirement_assumptions
-                .clone()
-                .allow_symbolic_contract_loads();
-            let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
-                &entry_contract_state,
-                requirement,
-                Some(&entry_contract_state),
-                &lowering_assumptions,
-                budget,
-            )?;
-            if requirement_paths.is_empty() {
-                obligations.push(
-                    ProofObligation::verification_condition(false_equals_true_proposition())
-                        .with_context(format!("{} precondition", function.name())),
-                );
-                continue;
-            }
-            for requirement_path in requirement_paths {
-                let path_assumptions = assumptions_with_path_context(
-                    &requirement_assumptions,
-                    &requirement_path.facts,
-                    &requirement_path.obligations,
-                );
-                for path_obligation in &requirement_path.obligations {
-                    let guarded = wrap_path_context(
-                        path_obligation.proposition().clone(),
-                        &requirement_path.facts,
-                        &[],
-                    );
-                    let obligation_is_proven =
-                        super::assumptions::capture_implicit_reasoning_provenance(|| {
-                            requirement_assumptions.proves(&guarded)
-                        });
-                    if obligation_is_proven {
-                        super::assumptions::record_reasoning_provenance(
-                            &requirement_assumptions,
-                            &guarded,
-                        );
-                    } else {
-                        obligations.push(
-                            ProofObligation::verification_condition(guarded.clone())
-                                .with_context(format!("{} precondition", function.name())),
-                        );
-                    }
-                    established_requirements.push(guarded);
-                }
-                let contract_requirement_is_proven = function_contract_requirement_is_proven(
-                    &requirement_path.proposition,
-                    environment,
-                    budget,
-                )?;
-                let requirement_is_proven =
-                    super::assumptions::capture_implicit_reasoning_provenance(|| {
-                        if contract_requirement_is_proven {
-                            return true;
-                        }
-                        match &requirement_path.proposition {
-                            Proposition::ConditionIs(condition, value) => {
-                                path_assumptions.proves_exact(&requirement_path.proposition)
-                                    || path_assumptions
-                                        .has_matching_condition_fact_for_memory_resolution(
-                                            condition, *value,
-                                        )
-                            }
-                            Proposition::CResourceSeparate {
-                                left: CResource::Memory(left),
-                                right: CResource::Memory(right),
-                            } => path_assumptions.proves_exact(&requirement_path.proposition)
-                                || path_assumptions
-                                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-                                        left, right,
-                                    ),
-                            proposition => path_assumptions.proves_exact(proposition),
-                        }
-                    });
-                if requirement_is_proven {
-                    super::assumptions::record_reasoning_provenance(
-                        &path_assumptions,
-                        &requirement_path.proposition,
-                    );
-                }
-                let guarded_requirement = wrap_path_context(
-                    requirement_path.proposition,
-                    &requirement_path.facts,
-                    &requirement_path.obligations,
-                );
-                if !requirement_is_proven {
-                    let guarded_is_proven =
-                        super::assumptions::capture_implicit_reasoning_provenance(|| {
-                            requirement_assumptions.proves(&guarded_requirement)
-                        });
-                    if guarded_is_proven {
-                        super::assumptions::record_reasoning_provenance(
-                            &requirement_assumptions,
-                            &guarded_requirement,
-                        );
-                    } else {
-                        obligations.push(
-                            ProofObligation::verification_condition(guarded_requirement.clone())
-                                .with_context(format!("{} precondition", function.name())),
-                        );
-                    }
-                }
-                established_requirements.push(guarded_requirement);
-            }
         }
-        drop(requirement_timing);
-
-        let effective_assumptions =
-            assumptions_with_path_context(assumptions, &facts, &obligations);
-        let mut effective_assumptions =
-            assumptions_with_propositions(&effective_assumptions, &established_requirements)
-                .transport_memory_load_condition_facts();
-        let footprint_state = entry_contract_state.clone();
-        let mut mutable_ranges = Vec::new();
-        let mut footprint_error = None;
-        let footprint_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
-            "verified function rule application",
-            "verified call mutable footprint lowering",
-        );
-        for segment in function.contract_mutable() {
-            let element_width = segment.element_width();
-            if segment.guard().is_some_and(|guard| {
-                evaluate_guarded_contract_condition(
-                    guard,
-                    &entry_contract_state,
-                    &effective_assumptions,
-                    budget,
-                ) == Some(false)
-            }) {
-                continue;
-            }
-            match evaluate_loop_effect_segment_with_facts(
-                &footprint_state,
-                segment,
-                &effective_assumptions,
-                budget,
-            )? {
-                Ok((segment, segment_facts)) => {
-                    for fact in &segment_facts {
-                        if !facts.contains(fact) {
-                            facts.push(fact.clone());
-                        }
-                    }
-                    effective_assumptions =
-                        assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
-                    // The call derivation and its effect summary share one
-                    // assumption-free canonical footprint. Proof-specific
-                    // vocabulary belongs in an explicit derived view, not in
-                    // the stored identity of the call.
-                    mutable_ranges.push(canonical_memory_range(
-                        CMemoryRange::new_with_element_width(
-                            segment.base,
-                            segment.start,
-                            segment.end,
-                            element_width,
-                        ),
-                    ))
-                }
-                Err(message) => {
-                    footprint_error = Some(message);
-                    break;
-                }
-            }
-        }
-        drop(footprint_timing);
-        if let Some(message) = footprint_error {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not evaluate mutable footprint: {message}"
-                ))),
-                facts,
-                obligations,
-            });
-            continue;
-        }
-        // A direct store into read-only storage is rejected where it is
-        // executed, but a modular call performs its writes abstractly through
-        // this footprint. Without the same check, passing read-only storage to
-        // a callee that declares it mutable would let the call store there:
-        // string-literal bytes are the reachable case, since C0 models a
-        // literal as an ordinary `uint8*` and no qualifier catches it.
-        if let Some(range) = mutable_ranges
-            .iter()
-            .find(|range| entry_state.memory.is_read_only_block(&range.base().block))
-        {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "mutable footprint covers read-only storage `{}`",
-                    range.base().block
-                ))),
-                facts,
-                obligations,
-            });
-            continue;
-        }
-
+        let mut calls = applicable.into_iter();
+        let PreparedVerifiedFunctionCall {
+            function,
+            argument_values,
+            entry_state,
+            entry_contract_state,
+            transfer,
+            mut facts,
+            obligations,
+            effective_assumptions,
+            mutable_ranges,
+        } = calls.next().unwrap();
+        let additional_calls = calls;
         let memory = if mutable_ranges.is_empty() {
             entry_state.memory.clone()
         } else {
@@ -1404,6 +1210,35 @@ fn execute_verified_function_rule(
         )?;
         drop(ensure_timing);
 
+        // The applicable interfaces share the result and post-call memory,
+        // but bind their own argument names against the original entry state.
+        for additional in additional_calls {
+            let mut additional_facts = additional.facts;
+            let entry_fact_count = additional_facts.len();
+            let mut additional_post = additional
+                .entry_state
+                .clone()
+                .with_memory(post_state.memory.clone());
+            if additional.function.return_type() != CType::Void {
+                set_function_result(&mut additional_post, additional.function, result.clone());
+            }
+            let additional_post = with_contract_argument_views(
+                &additional_post,
+                additional.function,
+                &additional.argument_values,
+            );
+            add_verified_function_ensure_facts(
+                &mut additional_facts,
+                &additional.obligations,
+                &additional_post,
+                &additional.entry_contract_state,
+                additional.function,
+                &additional.effective_assumptions,
+                budget,
+            )?;
+            facts.extend(additional_facts.into_iter().skip(entry_fact_count));
+        }
+
         let mut return_state = caller_state.clone();
         return_state.memory = post_state.memory;
         return_state.resources = return_resources;
@@ -1424,19 +1259,339 @@ fn execute_verified_function_rule(
     Ok(paths)
 }
 
-pub(super) fn execute_c_function_contract_paths(
+struct PreparedVerifiedFunctionCall<'a> {
+    function: &'a CFunction,
+    argument_values: Vec<CValue>,
+    entry_state: CState,
+    entry_contract_state: CState,
+    transfer: CFunctionResourceTransfer,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    effective_assumptions: PureFactContext,
+    mutable_ranges: Vec<CMemoryRange>,
+}
+
+fn prepare_verified_function_call<'a>(
     caller_state: &CState,
-    contract: &CFunctionContract,
+    function: &'a CFunction,
+    arguments_path: CArgumentsPath,
+    require_established: bool,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
+    let initial_obligation_count = arguments_path.obligations.len();
+    let path_assumptions = assumptions_with_path_context(
+        assumptions,
+        &arguments_path.facts,
+        &arguments_path.obligations,
+    );
+    let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
+        function,
+        &arguments_path.values,
+        &arguments_path.obligations,
+        &path_assumptions,
+    ) else {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "{}",
+                argument_binding_error(function, &arguments_path.values)
+            ))),
+            facts: arguments_path.facts,
+            obligations: arguments_path.obligations,
+        }));
+    };
+    let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, &argument_values)
+    else {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "{}",
+                argument_binding_error(function, &argument_values)
+            ))),
+            facts: arguments_path.facts,
+            obligations: argument_obligations,
+        }));
+    };
+    let path_assumptions =
+        assumptions_with_path_context(assumptions, &arguments_path.facts, &argument_obligations);
+    let transfer = match crate::instrumentation::measure_operation(
+        function.name(),
+        "verified function rule application",
+        "verified call resource transfer preparation",
+        || {
+            prepare_function_resource_transfer(
+                caller_state,
+                &entry_state,
+                function,
+                &path_assumptions,
+                budget,
+                false,
+            )
+        },
+    )? {
+        Ok(transfer) => transfer,
+        Err(error) => {
+            return Ok(Err(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(error),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
+            }));
+        }
+    };
+    entry_state.resources = transfer.callee_resources.clone();
+    let entry_contract_state =
+        with_contract_argument_views(&entry_state, function, &argument_values);
+
+    let mut obligations = argument_obligations;
+    let mut facts = arguments_path.facts;
+    let mut established_requirements = Vec::new();
+    let requirement_timing = crate::instrumentation::OperationTiming::new(
+        function.name(),
+        "verified function rule application",
+        "verified call requirement checking",
+    );
+    for requirement in function.contract_requires() {
+        let requirement_assumptions =
+            assumptions_with_path_context(&path_assumptions, &facts, &obligations);
+        let requirement_assumptions =
+            assumptions_with_propositions(&requirement_assumptions, &established_requirements);
+        let lowering_assumptions = requirement_assumptions
+            .clone()
+            .allow_symbolic_contract_loads();
+        let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
+            &entry_contract_state,
+            requirement,
+            Some(&entry_contract_state),
+            &lowering_assumptions,
+            budget,
+        )?;
+        if requirement_paths.is_empty() {
+            obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(format!("{} precondition", function.name())),
+            );
+            continue;
+        }
+        for requirement_path in requirement_paths {
+            let path_assumptions = assumptions_with_path_context(
+                &requirement_assumptions,
+                &requirement_path.facts,
+                &requirement_path.obligations,
+            );
+            for path_obligation in &requirement_path.obligations {
+                let guarded = wrap_path_context(
+                    path_obligation.proposition().clone(),
+                    &requirement_path.facts,
+                    &[],
+                );
+                let obligation_is_proven =
+                    super::assumptions::capture_implicit_reasoning_provenance(|| {
+                        requirement_assumptions.proves(&guarded)
+                    });
+                if obligation_is_proven {
+                    super::assumptions::record_reasoning_provenance(
+                        &requirement_assumptions,
+                        &guarded,
+                    );
+                } else {
+                    obligations.push(
+                        ProofObligation::verification_condition(guarded.clone())
+                            .with_context(format!("{} precondition", function.name())),
+                    );
+                }
+                established_requirements.push(guarded);
+            }
+            let contract_requirement_is_proven = function_contract_requirement_is_proven(
+                &requirement_path.proposition,
+                environment,
+                budget,
+            )?;
+            let requirement_is_proven = super::assumptions::capture_implicit_reasoning_provenance(
+                || {
+                    if contract_requirement_is_proven {
+                        return true;
+                    }
+                    match &requirement_path.proposition {
+                            Proposition::ConditionIs(condition, value) => {
+                                path_assumptions.proves_exact(&requirement_path.proposition)
+                                    || path_assumptions
+                                        .has_matching_condition_fact_for_memory_resolution(
+                                            condition, *value,
+                                        )
+                            }
+                            Proposition::CResourceSeparate {
+                                left: CResource::Memory(left),
+                                right: CResource::Memory(right),
+                            } => path_assumptions.proves_exact(&requirement_path.proposition)
+                                || path_assumptions
+                                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                        left, right,
+                                    ),
+                            proposition => path_assumptions.proves_exact(proposition),
+                        }
+                },
+            );
+            if requirement_is_proven {
+                super::assumptions::record_reasoning_provenance(
+                    &path_assumptions,
+                    &requirement_path.proposition,
+                );
+            }
+            let guarded_requirement = wrap_path_context(
+                requirement_path.proposition,
+                &requirement_path.facts,
+                &requirement_path.obligations,
+            );
+            if !requirement_is_proven {
+                let guarded_is_proven =
+                    super::assumptions::capture_implicit_reasoning_provenance(|| {
+                        requirement_assumptions.proves(&guarded_requirement)
+                    });
+                if guarded_is_proven {
+                    super::assumptions::record_reasoning_provenance(
+                        &requirement_assumptions,
+                        &guarded_requirement,
+                    );
+                } else {
+                    obligations.push(
+                        ProofObligation::verification_condition(guarded_requirement.clone())
+                            .with_context(format!("{} precondition", function.name())),
+                    );
+                }
+            }
+            established_requirements.push(guarded_requirement);
+        }
+    }
+    drop(requirement_timing);
+
+    // Applicability is determined entirely at entry. In particular, pending
+    // obligations must not be assumed to authorize this interface's effects
+    // or make its guarantees available to another candidate.
+    if require_established && obligations.len() != initial_obligation_count {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "no callback contract has established preconditions".to_string(),
+            )),
+            facts,
+            obligations,
+        }));
+    }
+
+    let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let mut effective_assumptions =
+        assumptions_with_propositions(&effective_assumptions, &established_requirements)
+            .transport_memory_load_condition_facts();
+    let footprint_state = entry_contract_state.clone();
+    let mut mutable_ranges = Vec::new();
+    let mut footprint_error = None;
+    let footprint_timing = crate::instrumentation::OperationTiming::new(
+        function.name(),
+        "verified function rule application",
+        "verified call mutable footprint lowering",
+    );
+    for segment in function.contract_mutable() {
+        let element_width = segment.element_width();
+        if segment.guard().is_some_and(|guard| {
+            evaluate_guarded_contract_condition(
+                guard,
+                &entry_contract_state,
+                &effective_assumptions,
+                budget,
+            ) == Some(false)
+        }) {
+            continue;
+        }
+        match evaluate_loop_effect_segment_with_facts(
+            &footprint_state,
+            segment,
+            &effective_assumptions,
+            budget,
+        )? {
+            Ok((segment, segment_facts)) => {
+                for fact in &segment_facts {
+                    if !facts.contains(fact) {
+                        facts.push(fact.clone());
+                    }
+                }
+                effective_assumptions =
+                    assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
+                // The call derivation and its effect summary share one
+                // assumption-free canonical footprint. Proof-specific
+                // vocabulary belongs in an explicit derived view, not in
+                // the stored identity of the call.
+                mutable_ranges.push(canonical_memory_range(
+                    CMemoryRange::new_with_element_width(
+                        segment.base,
+                        segment.start,
+                        segment.end,
+                        element_width,
+                    ),
+                ))
+            }
+            Err(message) => {
+                footprint_error = Some(message);
+                break;
+            }
+        }
+    }
+    drop(footprint_timing);
+    if let Some(message) = footprint_error {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "could not evaluate mutable footprint: {message}"
+            ))),
+            facts,
+            obligations,
+        }));
+    }
+    // A direct store into read-only storage is rejected where it is
+    // executed, but a modular call performs its writes abstractly through
+    // this footprint. Without the same check, passing read-only storage to
+    // a callee that declares it mutable would let the call store there:
+    // string-literal bytes are the reachable case, since C0 models a
+    // literal as an ordinary `uint8*` and no qualifier catches it.
+    if let Some(range) = mutable_ranges
+        .iter()
+        .find(|range| entry_state.memory.is_read_only_block(&range.base().block))
+    {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "mutable footprint covers read-only storage `{}`",
+                range.base().block
+            ))),
+            facts,
+            obligations,
+        }));
+    }
+
+    Ok(Ok(PreparedVerifiedFunctionCall {
+        function,
+        argument_values,
+        entry_state,
+        entry_contract_state,
+        transfer,
+        facts,
+        obligations,
+        effective_assumptions,
+        mutable_ranges,
+    }))
+}
+
+pub(super) fn execute_c_function_contracts_paths(
+    caller_state: &CState,
+    contracts: &[&CFunctionContract],
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    execute_verified_function_rule(
+    let functions = contracts
+        .iter()
+        .map(|contract| contract.template())
+        .collect::<Vec<_>>();
+    execute_verified_function_templates(
         caller_state,
-        &CVerifiedFunctionRule {
-            function: contract.template().clone(),
-        },
+        &functions,
         arguments,
         assumptions,
         environment,
@@ -4835,7 +4990,10 @@ fn evaluate_resource_population_body_resources(
             ))));
         }
         let mut population_state = callee_state.clone();
-        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            let Some(argument) = argument.as_c_value() else {
+                return Ok(Err(CRuntimeError::TypeMismatch));
+            };
             if parameter.c_type() != argument.c_type() {
                 return Ok(Err(CRuntimeError::TypeMismatch));
             }
@@ -4889,6 +5047,14 @@ fn prepare_function_resource_transfer(
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    // In particular, preparing several pure callback interfaces must not
+    // repeatedly enumerate the caller's unrelated resource frame.
+    if function.resource_requires().is_empty() && !preserve_explicit_representation {
+        return Ok(Ok(CFunctionResourceTransfer {
+            callee_resources: ResourceContext::new(),
+            caller_resources_after_requirements: caller_state.resources().clone(),
+        }));
+    }
     let preserve_explicit_representation = preserve_explicit_representation
         && function
             .composite_resource_definitions()
@@ -5192,8 +5358,8 @@ fn counted_population_quantities(
     tracked_state: &CState,
     assumptions: &PureFactContext,
     track_ordinary_populations: bool,
-) -> BTreeMap<(String, Vec<CValue>), Bitvector32Term> {
-    let mut quantities = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
+) -> BTreeMap<(String, ResourceArguments), Bitvector32Term> {
+    let mut quantities = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in resources.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -5891,7 +6057,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
 /// deterministically from the variables already in use.
 pub(super) fn bind_composite_witnesses(
     definition: &CCompositeResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     state: &mut CState,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CValue>> {
@@ -5903,7 +6069,7 @@ pub(super) fn bind_composite_witnesses(
 /// separately, for callers whose evaluation state carries no resources.
 pub(super) fn bind_composite_witnesses_with_held(
     definition: &CCompositeResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     state: &mut CState,
     held: &ResourceContext,
     assumptions: &PureFactContext,
@@ -5989,7 +6155,7 @@ pub(super) fn bind_composite_witnesses_with_held(
 fn held_child_witness(
     definition: &CCompositeResourceDefinition,
     witness: &str,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     resources: &ResourceContext,
     assumptions: &PureFactContext,
 ) -> Option<Pointer> {
@@ -5997,7 +6163,7 @@ fn held_child_witness(
     let own_pointers = arguments
         .iter()
         .filter_map(|argument| match argument {
-            CValue::Pointer(pointer) => Some(pointer.pointer().clone()),
+            AlgebraicValue::C(CValue::Pointer(pointer)) => Some(pointer.pointer().clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -6014,8 +6180,10 @@ fn held_child_witness(
         .iter()
         .filter_map(|fact| match fact.resource() {
             CResource::Composite { name, arguments } if name == child_name => {
-                match arguments.as_slice() {
-                    [CValue::Pointer(pointer)] => Some(pointer.pointer().clone()),
+                match arguments.as_ref() {
+                    [AlgebraicValue::C(CValue::Pointer(pointer))] => {
+                        Some(pointer.pointer().clone())
+                    }
                     _ => None,
                 }
             }
@@ -6109,7 +6277,8 @@ pub(super) fn expand_composite_resource_fact_with_children(
     let mut state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(expansion_base.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -6439,7 +6608,7 @@ fn composite_names_pointer_base(composite: &CResourceFact, pointer: &Pointer) ->
         return false;
     };
     arguments.iter().any(|argument| {
-        let CValue::Pointer(argument) = argument else {
+        let AlgebraicValue::C(CValue::Pointer(argument)) = argument else {
             return false;
         };
         argument.pointer() == pointer
@@ -6562,7 +6731,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
     assumptions: &PureFactContext,
     include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
-    let mut populations = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
+    let mut populations = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in context.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -6616,7 +6785,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
         let body_active = match population_count {
             Some(_) => {
                 let mut population_state = state.clone();
-                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+                    let argument = argument.as_c_value()?;
                     if parameter.c_type() != argument.c_type() {
                         return None;
                     }
@@ -6646,7 +6816,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             }
             None if !definition.is_counted_population() && !include_ordinary => {
                 let mut population_state = state.clone();
-                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+                    let argument = argument.as_c_value()?;
                     if parameter.c_type() != argument.c_type() {
                         return None;
                     }
@@ -6683,7 +6854,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             return None;
         }
         let mut population_state = state.clone();
-        for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+        for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            let argument = argument.as_c_value()?;
             if parameter.c_type() != argument.c_type() {
                 return None;
             }
@@ -6822,7 +6994,8 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -6904,7 +7077,8 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -6983,7 +7157,8 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     let mut state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(resources.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -7589,11 +7764,11 @@ fn evaluate_function_declared_resource_spec(
     let resource = match family {
         ResourceFamily::Composite => CResource::Composite {
             name: name.to_string(),
-            arguments: values,
+            arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
         ResourceFamily::Token => CResource::Token {
             name: name.to_string(),
-            arguments: values,
+            arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
         ResourceFamily::Memory => {
             return Ok(Err(CRuntimeError::FunctionContract(

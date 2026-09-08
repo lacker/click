@@ -2360,3 +2360,44 @@ int32 set_cell(int32 p[], int32 value) {
         panic!("expanded qualified frame should check:\n{error:?}\n{expanded}")
     });
 }
+#[test]
+fn smart_inventory_does_not_invent_auto_sites_for_kernel_axiom_declarations() {
+    let source = r#"
+theorem int32_le_antisymmetric(left: int32, right: int32) {
+    requires left <= right;
+    requires right <= left;
+    ensures left == right;
+}
+
+theorem ordinary(x: int32) {
+    ensures x == x by { simp(); }
+}
+"#;
+    verify_click_theorems_with_c_sources(source, &[]).unwrap();
+    let sites = c0_smart_tactic_source_sites(source, &[]).unwrap();
+    assert_eq!(sites.len(), 1);
+    assert_eq!(sites[0].claim_label, "ordinary.ensures_0");
+    assert_eq!(sites[0].tactic_name, "simp");
+    assert!(
+        verify_click_theorems_with_c_sources(
+            &source.replace("ensures left == right", "ensures left != right"),
+            &[]
+        )
+        .is_err(),
+        "kernel axiom declarations must still be checked"
+    );
+}
+
+#[test]
+fn smart_inventory_keeps_refinement_proofs_named_like_arithmetic_axioms() {
+    let source = r#"
+contract int32 Identity(int32 x) { ensures result == x; }
+theorem int32_le_antisymmetric() {
+    ensures Identity(&identity) by { unfold(Identity); simp(); }
+}
+"#;
+    let sites = c0_smart_tactic_source_sites(source, &[]).unwrap();
+    assert_eq!(sites.len(), 1);
+    assert_eq!(sites[0].claim_label, "int32_le_antisymmetric.ensures_0");
+    assert_eq!(sites[0].tactic_name, "simp");
+}

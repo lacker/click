@@ -234,8 +234,13 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
                 && left_arguments.len() == right_arguments.len()
                 && left_arguments
                     .iter()
-                    .zip(right_arguments)
-                    .all(|(left, right)| values_match(left, right))
+                    .zip(right_arguments.iter())
+                    .all(|(left, right)| match (left, right) {
+                        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+                            values_match(left, right)
+                        }
+                        _ => left == right,
+                    })
         }
         _ => false,
     }

@@ -598,7 +598,6 @@ fn execute_c_indirect_call_paths(
                                 !contract.template().return_pointee_is_constant()
                                     && contract.function_pointer_type() == function_type
                             })
-                            .cloned()
                             .collect::<Vec<_>>();
                         if contracts.is_empty() {
                             paths.push(CFunctionPath {
@@ -612,23 +611,21 @@ fn execute_c_indirect_call_paths(
                             });
                             continue;
                         }
-                        for contract in contracts {
-                            for mut call_path in execute_c_function_contract_paths(
-                                state,
-                                &contract,
-                                arguments,
-                                &target_assumptions,
-                                environment,
-                                budget,
-                            )? {
-                                let mut merged_facts = facts.clone();
-                                merged_facts.extend(call_path.facts);
-                                let mut merged_obligations = obligations.clone();
-                                merged_obligations.extend(call_path.obligations);
-                                call_path.facts = merged_facts;
-                                call_path.obligations = merged_obligations;
-                                paths.push(call_path);
-                            }
+                        for mut call_path in execute_c_function_contracts_paths(
+                            state,
+                            &contracts,
+                            arguments,
+                            &target_assumptions,
+                            environment,
+                            budget,
+                        )? {
+                            let mut merged_facts = facts.clone();
+                            merged_facts.extend(call_path.facts);
+                            let mut merged_obligations = obligations.clone();
+                            merged_obligations.extend(call_path.obligations);
+                            call_path.facts = merged_facts;
+                            call_path.obligations = merged_obligations;
+                            paths.push(call_path);
                         }
                         continue;
                     }
@@ -1504,7 +1501,6 @@ impl CheckedInvariantLowering {
         self.path
             .obligations
             .iter()
-            .filter(|obligation| !obligation.is_assumable())
             .all(|obligation| required.contains(obligation.proposition()))
             && self.required.len() == self.obligation_proofs.len()
             && self
@@ -1585,6 +1581,41 @@ mod checked_lowering_tests {
     }
 
     #[test]
+    fn checked_lowering_does_not_assume_its_own_read_safety() {
+        let goal = predicate("already_proved_value");
+        let safety = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: "missing".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let path = SpecPropositionPath {
+            proposition: goal.clone(),
+            facts: vec![],
+            // The expression lowerer marks provisional read obligations as
+            // assumable; record construction must not trust that flag.
+            obligations: vec![ProofObligation::new(safety.clone())],
+        };
+        let context = PureFactContext::new().assume_proposition(goal);
+        let error = verify_lowered_invariant_path(0, &[], &[], path.clone(), &context)
+            .err()
+            .expect("a value proof alone cannot establish read safety");
+        assert!(error.contains("missing path obligation"));
+        let (_, _, record) =
+            verify_lowered_invariant_path(0, &[], &[], path, &context.assume_proposition(safety))
+                .unwrap()
+                .unwrap();
+        assert_eq!(record.obligation_proofs.len(), 1);
+        assert!(record.recheck());
+        let mut missing = (*record).clone();
+        missing.required.clear();
+        missing.obligation_proofs.clear();
+        assert!(!missing.recheck());
+    }
+
+    #[test]
     fn checked_lowering_recheck_does_not_scan_ambient_facts() {
         let samples = [16, 32, 64, 128].map(|size| {
             let record = record(size);
@@ -1620,17 +1651,16 @@ fn verify_lowered_invariant_path(
     ) else {
         return Ok(None);
     };
-    let local = assumptions_with_path_context(assumptions, &merged_facts, &merged_obligations);
+    // Lowering may provisionally assume read safety while constructing its
+    // value. The retained proof must establish that safety independently;
+    // otherwise its own obligation would become an exact premise.
+    let local = assumptions_with_path_context(assumptions, &merged_facts, &[]);
     let mut required = Vec::new();
     let mut obligation_proofs = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     // Path merging may discharge an obligation from exact ambient facts.
     // Retain that proof too: the original lowered path still requires it.
-    for obligation in merged_obligations
-        .iter()
-        .chain(path.obligations.iter())
-        .filter(|obligation| !obligation.is_assumable())
-    {
+    for obligation in merged_obligations.iter().chain(path.obligations.iter()) {
         let proposition = obligation.proposition();
         if !seen.insert(proposition.clone()) {
             continue;

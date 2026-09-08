@@ -485,6 +485,9 @@ so they cannot supply successful expansions. The ordinary `cargo test` and
 nextest gates keep fast unit, timing-parser, expansion, and markdown smoke
 coverage; they do not run the exhaustive audit.
 
+Kernel arithmetic axiom declarations are checked by verification but do not
+contain an implicit smart proof, so they contribute no expansion-audit sites.
+
 The audit first parses every proof container and builds a deterministic
 inventory of smart source sites without executing any proof, printing its
 size. Locations in mdtests use markdown coordinates, like `click profile` and

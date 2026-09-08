@@ -49,7 +49,12 @@ pub(crate) fn contract_resource_condition_cases(
         let mut condition_state = CState::new()
             .with_memory(entry_state.memory().clone())
             .with_resource_context(required_resources.clone());
-        for (parameter, value) in definition.parameters().iter().zip(resource_arguments) {
+        for (parameter, value) in definition
+            .parameters()
+            .iter()
+            .zip(resource_arguments.iter())
+        {
+            let value = value.as_c_value()?;
             if parameter.c_type() != value.c_type() {
                 return None;
             }

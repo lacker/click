@@ -922,11 +922,11 @@ fn lower_resource_clause_with_values(
             let resource = match kind {
                 ResourceKind::Composite => CResource::Composite {
                     name: name.clone(),
-                    arguments: resource_values,
+                    arguments: resource_values.into_iter().map(AlgebraicValue::C).collect(),
                 },
                 ResourceKind::Token => CResource::Token {
                     name: name.clone(),
-                    arguments: resource_values,
+                    arguments: resource_values.into_iter().map(AlgebraicValue::C).collect(),
                 },
             };
             Ok(match access {

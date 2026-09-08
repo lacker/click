@@ -382,6 +382,8 @@ enum ProofScopeStructure {
     Have {
         proposition: ClickProposition,
         kernel: Proposition,
+        /// The initial unfolded goal, published only after the body closes.
+        retained_body: Option<(ClickProposition, Proposition)>,
     },
     Open {
         resource: ResourceClause,

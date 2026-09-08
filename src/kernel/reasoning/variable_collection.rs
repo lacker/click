@@ -826,8 +826,8 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
     collect_memory_bitvector_variables(&state.memory, variables);
     collect_resource_context_bitvector_variables(&state.resources, variables);
     for population in state.counted_populations.iter() {
-        for argument in &population.arguments {
-            collect_c_value_bitvector_variables(argument, variables);
+        for argument in population.arguments.iter() {
+            collect_algebraic_value_bitvector_variables(argument, variables);
         }
         collect_c_value_bitvector_variables(&CValue::Int32(population.count.clone()), variables);
     }
@@ -856,8 +856,8 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
     match resource {
         CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
-            for argument in arguments {
-                collect_c_value_bitvector_variables(argument, variables);
+            for argument in arguments.iter() {
+                collect_algebraic_value_bitvector_variables(argument, variables);
             }
         }
     }

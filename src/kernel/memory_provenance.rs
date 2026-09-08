@@ -2,6 +2,38 @@ use super::primitives::*;
 use super::reasoning::*;
 use std::collections::BTreeSet;
 
+/// Resource indices are logical values. ADT indices can only be exchanged
+/// using equality evidence of the same algebraic type; they are never cast
+/// to C scalars or interpreted as memory authority.
+pub(crate) fn resource_arguments_proven_equal(
+    left: &AlgebraicValue,
+    right: &AlgebraicValue,
+    assumptions: &PureFactContext,
+) -> bool {
+    match (left, right) {
+        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        (AlgebraicValue::Algebraic(left), AlgebraicValue::Algebraic(right)) => {
+            left.algebraic_type == right.algebraic_type
+                && (left == right
+                    || assumptions.proves_exact(&Proposition::Equal(
+                        Term::Algebraic(left.clone()),
+                        Term::Algebraic(right.clone()),
+                    ))
+                    || assumptions.proves_exact(&Proposition::Equal(
+                        Term::Algebraic(right.clone()),
+                        Term::Algebraic(left.clone()),
+                    ))
+                    || assumptions.decide(&ConditionTerm::AlgebraicEqual(
+                        Box::new(left.clone()),
+                        Box::new(right.clone()),
+                    )) == Some(true))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
     canonical_memory_for_pointer_load(memory, pointer)
 }
@@ -111,8 +143,13 @@ pub(crate) fn c_resources_directly_match(
                 && left_arguments.len() == right_arguments.len()
                 && left_arguments
                     .iter()
-                    .zip(right_arguments)
-                    .all(|(left, right)| values_match(left, right))
+                    .zip(right_arguments.iter())
+                    .all(|(left, right)| match (left, right) {
+                        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+                            values_match(left, right)
+                        }
+                        _ => resource_arguments_proven_equal(left, right, assumptions),
+                    })
         }
         _ => false,
     }

@@ -8148,6 +8148,137 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
 }
 
 #[test]
+fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
+    let file = crate::surface::parse(
+        r#"
+        predicate selected(x: int32) { x == x }
+        int32 identity(int32 x) { ensures result == x; }
+    "#,
+    )
+    .unwrap();
+    let parsed = syntax::parse_function("int32 identity(int32 x) { return x; }").unwrap();
+    let function = parsed.to_kernel_function();
+    let predicates = PredicateEnvironment::new(file.predicate_definitions());
+    let click_functions = ClickFunctionEnvironment::new(file.click_function_definitions());
+    let theorems = TheoremEnvironment::new(file.theorem_definitions());
+    let resources = ResourceEnvironment::new(file.resource_definitions());
+    let environment = CExecutionEnvironment::new();
+    let arguments = vec![CExpression::Value(int32(7))];
+    let value = ContractExpression::CFragment(CExpression::Value(int32(7)));
+    let surface = ClickProposition::PredicateCall {
+        name: "selected".into(),
+        arguments: vec![value.clone()],
+    };
+    let body_surface = ClickProposition::Comparison {
+        left: value.clone(),
+        operator: ComparisonOperator::Equal,
+        right: value,
+    };
+    let spec = crate::kernel::SpecProposition::Comparison {
+        left: crate::kernel::SpecExpression::Value(int32(7)),
+        operator: crate::kernel::CComparisonOperator::Equal,
+        right: crate::kernel::SpecExpression::Value(int32(7)),
+    };
+    let checks = vec![
+        CLoopInvariantCheck::new(spec, None, None),
+        CLoopInvariantCheck::new(
+            crate::kernel::SpecProposition::Comparison {
+                left: crate::kernel::SpecExpression::Value(int32(7)),
+                operator: crate::kernel::CComparisonOperator::LessEqual,
+                right: crate::kernel::SpecExpression::Value(int32(8)),
+            },
+            None,
+            None,
+        ),
+    ];
+    let legacy_surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        operator: ComparisonOperator::LessEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(8))),
+    };
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut frontier = ExecutionFrontier::default();
+        frontier.region = ExecutionRegionKind::LoopBody;
+        let root = Proof::for_execution_frontier(
+            "checked loop have",
+            0,
+            ExecutionProofState::at_entry(
+                CState::new(),
+                frontier,
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
+            ExecutionProofConstants::default(),
+            &file.function_blocks()[0],
+            &function,
+            &parsed,
+            &arguments,
+            &environment,
+            &resources,
+            &predicates,
+            &click_functions,
+            &theorems,
+        )
+        .apply_step(ProofStep::UnfoldPredicate("selected".into()))
+        .unwrap();
+        let body_kernel = root.lower_surface_goal(&body_surface, "test body").unwrap();
+        let scope = root.begin_have(surface.clone()).unwrap();
+        assert!(scope.clone().join().is_err());
+        let closed = scope.apply_step(ProofStep::Normalize).unwrap();
+        let (joined, work) =
+            crate::instrumentation::measure_deterministic_work(|| closed.join().unwrap());
+        samples.push(work);
+        assert!(joined.facts().contains(&body_kernel));
+        assert!(!root.facts().contains(&body_kernel));
+        assert_eq!(joined.added_facts().len(), 2);
+        assert!(
+            joined
+                .execution()
+                .unwrap()
+                .presentation
+                .surface_propositions
+                .available_kernel_matching(&surface, |kernel| joined.facts().contains(kernel))
+                .is_some()
+        );
+        let explicit = root
+            .apply_step(ProofStep::Have {
+                proposition: surface.clone(),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
+            })
+            .unwrap();
+        assert!(explicit.facts().contains(&body_kernel));
+        let certified = joined
+            .certify_loop_invariant_bundle(
+                &CState::new(),
+                &CExpression::Value(int32(1)),
+                &checks,
+                &[surface.clone(), legacy_surface.clone()],
+                &[],
+                false,
+            )
+            .unwrap();
+        let execution = certified.execution().unwrap();
+        let record = execution.core.checked_invariant_lowerings.as_ref().unwrap();
+        assert_eq!(record._checks, checks);
+        assert_eq!(
+            record._paths.len(),
+            2,
+            "the explicit have must not bypass retained lowering"
+        );
+        assert!(record._paths.iter().all(|path| path.recheck()));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+            "loop have join work: {samples:?}"
+        );
+    }
+}
+
+#[test]
 fn close_invariants_is_a_transactional_constant_local_proof_step() {
     let click_file = crate::surface::parse(
         r#"
@@ -9503,7 +9634,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let represented_quantity = CResourceFact::own_quantity(
         CResource::Token {
             name: "marker".to_string(),
-            arguments: Vec::new(),
+            arguments: Vec::new().into(),
         },
         Bitvector32Term::Constant(2),
     );

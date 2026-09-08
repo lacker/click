@@ -971,7 +971,17 @@ impl<'a> Proof<'a> {
         // the nested goal; a `have` stated at a function outcome borrows that
         // outcome's result-aware outcome proof data the same way. The nested goal
         // cannot publish a changed frontier or outcome: `join` restores the
-        // exact root state and exposes only the stated proposition.
+        // exact root state. At a loop frontier it also retains the unfolded
+        // proposition that the nested proof established.
+        // Loop closure needs the actual statement proved by an unfolded
+        // predicate `have`, not only its opaque name. Retain this local
+        // output at a loop frontier; other scope interfaces are unchanged.
+        let retained_body = (at_frontier
+            && self.execution().is_some_and(|execution| {
+                execution.core.frontier.region == ExecutionRegionKind::LoopBody
+            })
+            && structural_proposition != proposition)
+            .then(|| (structural_proposition.clone(), body_kernel.clone()));
         let mut body_goal = match self.focused_outcome_data() {
             Some(outcome_data) => OpenBranch::surface_proposition_at_outcome(
                 body_context,
@@ -1005,6 +1015,7 @@ impl<'a> Proof<'a> {
             structure: Box::new(ProofScopeStructure::Have {
                 proposition,
                 kernel,
+                retained_body,
             }),
             body,
             introduced_facts: Vec::new(),

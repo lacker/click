@@ -158,7 +158,7 @@ pub(super) fn materialize_counted_population_bodies(
     _click_function_environment: &ClickFunctionEnvironment,
     _claim_label: &str,
 ) -> Result<(CState, Vec<Proposition>), ClickError> {
-    let mut populations = Vec::<(String, Vec<CValue>, Bitvector32Term)>::new();
+    let mut populations = Vec::<(String, ResourceArguments, Bitvector32Term)>::new();
     for fact in state.resources().facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -1325,7 +1325,7 @@ fn composite_resource_body_is_active_with_assumptions(
 pub(super) fn apply_composite_observation_law(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1355,7 +1355,7 @@ pub(super) fn apply_composite_observation_law(
 fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1436,7 +1436,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         composite_body,
         &CResource::Composite {
             name: definition.name().to_string(),
-            arguments: resource_arguments.to_vec(),
+            arguments: resource_arguments.to_vec().into(),
         },
         &substitutions,
         &contained_resources,
@@ -1748,7 +1748,7 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
 
 fn resource_value_substitutions(
     definition: &ResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
 ) -> Result<BTreeMap<String, ContractExpression>, String> {
     if definition.parameters().len() != arguments.len() {
         return Err(format!(
@@ -1763,12 +1763,15 @@ fn resource_value_substitutions(
         .iter()
         .zip(arguments)
         .map(|(parameter, argument)| {
-            (
+            let argument = argument
+                .as_c_value()
+                .ok_or_else(|| "algebraic resource bodies are not supported yet".to_string())?;
+            Ok((
                 parameter.name().to_string(),
                 ContractExpression::CFragment(CExpression::Value(argument.clone())),
-            )
+            ))
         })
-        .collect())
+        .collect::<Result<_, String>>()?)
 }
 
 /// Value substitutions for a held composite resource fact, with its
@@ -1776,7 +1779,7 @@ fn resource_value_substitutions(
 /// `memory` and `assumptions`.
 fn resource_value_substitutions_with_witnesses(
     definition: &ResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     memory: &CMemory,
     resources: &ResourceContext,
     assumptions: &PureFactContext,
@@ -1799,7 +1802,7 @@ fn resource_value_substitutions_with_witnesses(
     .map_err(|error| error.message().to_string())?;
     let fact = CResourceFact::own(CResource::Composite {
         name: definition.name().to_string(),
-        arguments: arguments.to_vec(),
+        arguments: arguments.to_vec().into(),
     });
     let values = crate::kernel::composite_resource_witness_values(
         &fact,

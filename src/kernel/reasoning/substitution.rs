@@ -964,8 +964,8 @@ fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Vari
         collect_resource_bound_variables(fact.resource(), variables);
     }
     for population in state.counted_populations.iter() {
-        for argument in &population.arguments {
-            collect_c_value_bound_variables(argument, variables);
+        for argument in population.arguments.iter() {
+            collect_algebraic_value_bound_variables(argument, variables);
         }
         collect_bitvector_bound_variables(&population.count, variables);
     }
@@ -1120,8 +1120,8 @@ fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeS
             collect_bitvector_bound_variables(&range.end, variables);
         }
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
-            for argument in arguments {
-                collect_c_value_bound_variables(argument, variables);
+            for argument in arguments.iter() {
+                collect_algebraic_value_bound_variables(argument, variables);
             }
         }
     }
@@ -2674,7 +2674,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         .arguments
                         .iter()
                         .map(|argument| {
-                            substitute_bitvector_variable_in_c_value(argument, from, to)
+                            substitute_bitvector_variable_in_algebraic_value(argument, from, to)
                         })
                         .collect(),
                     count: match substitute_bitvector_variable_in_c_value(
@@ -2734,14 +2734,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .map(|argument| {
+                    substitute_bitvector_variable_in_algebraic_value(argument, from, to)
+                })
                 .collect(),
         },
         CResource::Token { name, arguments } => CResource::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .map(|argument| {
+                    substitute_bitvector_variable_in_algebraic_value(argument, from, to)
+                })
                 .collect(),
         },
     }
@@ -4743,7 +4747,9 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                     arguments: population
                         .arguments
                         .iter()
-                        .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                        .map(|argument| {
+                            substitute_pointer_variable_in_algebraic_value(argument, from, to)
+                        })
                         .collect(),
                     count: population.count.clone(),
                     family_observation_marker: population.family_observation_marker,
@@ -4795,14 +4801,14 @@ fn substitute_pointer_variable_in_c_resource(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                .map(|argument| substitute_pointer_variable_in_algebraic_value(argument, from, to))
                 .collect(),
         },
         CResource::Token { name, arguments } => CResource::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                .map(|argument| substitute_pointer_variable_in_algebraic_value(argument, from, to))
                 .collect(),
         },
     }

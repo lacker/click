@@ -1682,7 +1682,9 @@ impl AnnotationLowerer<'_> {
                         .iter()
                         .map(|argument| match argument {
                             None => Some(None),
-                            Some(SpecExpression::Value(value)) => Some(Some(value.clone())),
+                            Some(SpecExpression::Value(value)) => {
+                                Some(Some(AlgebraicValue::C(value.clone())))
+                            }
                             Some(_) => None,
                         })
                         .collect::<Option<Vec<_>>>()
