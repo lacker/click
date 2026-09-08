@@ -1034,7 +1034,15 @@ cell matched, which needs a concrete offset; heap blocks have an explicit
 initialization state across a `views`/`owns` transfer at a call, and
 block-scoped objects reuse one block for the whole function.
 
-**Regression A**, symbolic index
+**Regression A**, symbolic index. **Attempted and reverted**: flagging a
+symbolic-offset load from a `local:` block unless the whole block is written
+does reject this case, but it is not the right test. A load at an index the
+proof bounds to the written prefix, which is what an ordinary copy or
+initialization loop does, would be rejected with it. The attempt also could
+not see the writes: local array stores do not appear in the cell map under
+constant offsets, so a fully written `int32 a[3]` still looked uninitialized
+and even the sound cases were rejected. A real fix needs the load's index
+placed against the initialized region, not a whole-object test
 (`mdtests/uninit_local_symbolic_index_rejected.md`):
 
 ```c
