@@ -75,6 +75,29 @@ fn explicit_invariant_body_quantified_bubble_census() {
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
+/// Reproduces the stack crash independently of the automatic-planner prototype.
+#[test]
+#[ignore = "stack overflow: issues/quantified-invariant-body-planning.md"]
+fn explicit_invariant_body_copy3_planning_census() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/copy3_array_demo.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    verify_c0_sources(click, &sources).unwrap();
+    let expanded = expand_c0_claim_source(click, &sources, "copy3", CProofClaim::Grouped).unwrap();
+    assert!(expanded.contains("close_invariants();"));
+    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    verify_c0_sources(&explicit, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(&explicit, &sources, "copy3", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+}
+
 #[test]
 fn frontier_local_loop_verifies_and_advances_to_exit() {
     let c_source = r#"

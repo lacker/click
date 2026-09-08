@@ -272,6 +272,14 @@ no back-edge bundle and retain the existing exit classification.
 
 ### Still outstanding
 
+The automatic-planning experiment on 2026-09-08 passed scalar and bubble cases
+but did not handle copy3. Entry-aware presentation exposed a planner stack
+overflow, and the attempted iterative traversal still failed the proof with
+excessive search. The runtime experiment was reverted. An explicit copy3 body
+also reproduces a stack crash on the unchanged merged runtime; its ignored
+regression and next steps are in
+[quantified-invariant-body-planning.md](quantified-invariant-body-planning.md).
+
 1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Explicit bodies now
    connect the value/safety proofs to exact lowered goals. Make automatic
    preservation planning emit these bodies instead of bare closer requests,
