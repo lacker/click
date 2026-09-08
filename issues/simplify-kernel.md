@@ -312,6 +312,13 @@ Additional distinctions that matter for the migration:
 
 Recommended migration sequence after this audit:
 
+The attempted first migration exposed a prerequisite: the surface planner does
+not yet retain a complete explicit quantified loop proof for the bubble-pass
+fixtures. See [loop-closure-quantified-evidence.md](loop-closure-quantified-evidence.md)
+for the exact failures, safety-obligation/binder distinction, and acceptance
+criteria. The legacy closer is still present; the audit did not establish that
+the existing surface planner could replace all of its successful proofs.
+
 1. Replace the legacy loop closer using the existing
    `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
    checked proofs for the named paths; closure checks that each required fact

@@ -82,6 +82,7 @@ normal tooling-first policy and should then be added to this list.
 ## Architecture issues: 4
 
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
+- [Retain explicit quantified evidence for loop closure](loop-closure-quantified-evidence.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
