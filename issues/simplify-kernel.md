@@ -320,8 +320,10 @@ criteria. The legacy closer is still present; the audit did not establish that
 the existing surface planner could replace all of its successful proofs.
 Checked-lowering records now retain the legacy planner's actual paths, safety
 proofs, and goal proofs on the proof object with a shared execution snapshot.
-This preserves evidence but does not yet remove legacy proof discovery or
-cover the explicit-invariant bypass; the linked issue tracks that migration.
+The explicit-invariant bypass is now removed: unfolded predicate `have` scopes
+at loop frontiers retain their checked bodies, and all lowering obligations
+(including provisional read safety) receive proofs. Legacy proof discovery
+and the closure-intent flag remain; the linked issue tracks that migration.
 
 1. Replace the legacy loop closer using the existing
    `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits

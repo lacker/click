@@ -994,6 +994,7 @@ impl<'a> ProofScope<'a> {
             ProofScopeStructure::Have {
                 proposition,
                 kernel,
+                retained_body,
             } => {
                 if !self.body.is_complete() {
                     return Err(self
@@ -1003,6 +1004,11 @@ impl<'a> ProofScope<'a> {
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_kernel_checked_fact(kernel.clone());
+                let mut checked_facts = vec![kernel.clone()];
+                if let Some((_, body_kernel)) = &retained_body {
+                    facts = facts.with_kernel_checked_fact(body_kernel.clone());
+                    checked_facts.push(body_kernel.clone());
+                }
                 let mut obligation =
                     self.root.focused_obligation().cloned().ok_or_else(|| {
                         self.root.step_error("`have` scope goal is no longer open")
@@ -1024,6 +1030,13 @@ impl<'a> ProofScope<'a> {
                                     .step_error("`have` scope lost its execution frontier")
                             })?;
                         Self::carry_have_into_frontier(&mut execution, &proposition, &kernel)?;
+                        if let Some((body_surface, body_kernel)) = &retained_body {
+                            Self::carry_have_into_frontier(
+                                &mut execution,
+                                body_surface,
+                                body_kernel,
+                            )?;
+                        }
                         Some(Arc::new(execution))
                     }
                     _ => self
@@ -1049,8 +1062,8 @@ impl<'a> ProofScope<'a> {
                         obligation,
                         facts,
                         execution,
-                        vec![kernel.clone()],
-                        vec![kernel],
+                        checked_facts.clone(),
+                        checked_facts,
                     )
                     .map_err(|_| self.root.step_error("`have` scope goal is no longer open"))?;
                 Ok(Proof {
