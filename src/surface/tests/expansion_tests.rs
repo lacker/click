@@ -1,6 +1,61 @@
 use super::*;
 
 #[test]
+fn const_char_return_expansion_preserves_target_and_qualification() {
+    let c_source = "const char *version(void) { return \"0.17\"; }";
+    let click_source = r#"verifying "version.c";
+const char *version() {
+    ensures loadable(result[0..5]);
+    ensures result[0] == '0';
+    ensures result[4] == '\0';
+} by { execute(); simp(); }"#;
+    let sources = [("version.c", c_source)];
+    let verified = verify_c0_sources(click_source, &sources).unwrap();
+    let proof = verified[0].expanded_proof_source().unwrap();
+    let expanded = click_source.replacen("by { execute(); simp(); }", &proof, 1);
+    let checked = verify_c0_sources(&expanded, &sources).unwrap();
+    assert!(
+        checked
+            .iter()
+            .all(|theorem| { theorem.target() == crate::languages::c::target::CTarget::SUPPORTED })
+    );
+}
+
+#[test]
+fn source_locator_ignores_hash_comments_and_preserves_literals() {
+    let source =
+        "# Click's ü } verifying \"fake.c\"\r\nverifying \"real#file.c\"; # \"unterminated";
+    assert_eq!(
+        verifying_source_paths(source).expect("comments must not become source tokens"),
+        vec!["real#file.c"]
+    );
+}
+
+#[test]
+fn source_locator_hash_comments_preserve_proof_expansion_offsets() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = r#"# Click's proof: ü } identity() { "
+verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x;
+} by {
+    execute(); # unmatched ' } "
+    simp();
+}
+# trailing comment without newline: '"#;
+    let sources = [("identity.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("commented proof should verify");
+    let offset = click_source.find("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("comments must not disturb proof source offsets");
+    assert_eq!(&expanded[..offset], &click_source[..offset]);
+    assert!(expanded.ends_with("# trailing comment without newline: '"));
+    verify_c0_sources(&expanded, &sources).expect("expanded commented proof should verify");
+}
+
+#[test]
 fn smart_simp_expansion_checks_as_surface_click() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

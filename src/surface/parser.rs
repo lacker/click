@@ -222,6 +222,7 @@ pub(in crate::surface) fn algebraic_field_c_type_supported(c_type: C0Type) -> bo
             | C0Type::FunctionPointer(_)
             | C0Type::Int16Array(_)
             | C0Type::Int32Array(_)
+            | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
             | C0Type::UInt16Array(_)
             | C0Type::UInt32Array(_)
@@ -1427,7 +1428,7 @@ impl Parser {
 
     fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
         let parsed_return_type = self.parse_type()?;
-        if parsed_return_type.constant || parsed_return_type.pointee_constant {
+        if parsed_return_type.constant {
             return Err(
                 self.error("const-qualified function return types are not supported in this slice")
             );
@@ -1451,6 +1452,7 @@ impl Parser {
         Ok(ParsedFunctionSignature {
             signature: FunctionSignature {
                 return_type,
+                return_pointee_constant: parsed_return_type.pointee_constant,
                 name,
                 parameters: parsed_parameters.parameters,
                 declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
@@ -1544,24 +1546,36 @@ impl Parser {
                 object_constant = true;
             }
             if self.peek() == Some(&Token::Star) {
-                self.position += 1;
-                // `struct name**`: a pointer to a struct pointer, as for a
-                // link slot passed to `rb_link_node`.
-                let c_type = if self.peek() == Some(&Token::Star) {
-                    self.position += 1;
-                    if self.peek() == Some(&Token::Star) {
-                        return Err(self.error("pointer depth beyond `**` is not supported"));
+                let mut c_type = C0Type::Int32;
+                let mut pointee_constant = false;
+                let mut saw_pointer = false;
+                while self.peek() == Some(&Token::Star) {
+                    if saw_pointer && pointee_constant {
+                        return Err(self.error(
+                            "const qualification beyond the first pointer level is not supported",
+                        ));
                     }
-                    C0Type::Int32PointerPointer
-                } else {
-                    C0Type::Int32Pointer
-                };
+                    let base_constant = object_constant;
+                    object_constant = false;
+                    self.position += 1;
+                    c_type = match c_type {
+                        C0Type::Int32 => C0Type::Int32Pointer,
+                        C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                        _ => return Err(self.error("pointer depth beyond `**` is not supported")),
+                    };
+                    pointee_constant = base_constant;
+                    if self.peek_ident() == Some("const") {
+                        self.position += 1;
+                        object_constant = true;
+                    }
+                    saw_pointer = true;
+                }
                 return Ok(ParsedType {
                     c_type,
                     struct_name: Some(struct_name),
                     struct_pointer: true,
-                    constant: false,
-                    pointee_constant: object_constant,
+                    constant: object_constant,
+                    pointee_constant,
                 });
             }
             return Ok(ParsedType {
@@ -1630,11 +1644,7 @@ impl Parser {
                     ));
                 }
             }
-            "char" => {
-                return Err(self.error(
-                    "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
-                ));
-            }
+            "char" => C0Type::Char,
             "volatile" => {
                 return Err(self.error("the `volatile` qualifier is not supported in C0"));
             }
@@ -1651,7 +1661,12 @@ impl Parser {
             self.position += 1;
             object_constant = true;
         }
+        let mut saw_pointer = false;
         while self.peek() == Some(&Token::Star) {
+            if saw_pointer && pointee_constant {
+                return Err(self
+                    .error("const qualification beyond the first pointer level is not supported"));
+            }
             let base_constant = object_constant;
             object_constant = false;
             self.position += 1;
@@ -1660,6 +1675,7 @@ impl Parser {
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::UInt16 => C0Type::UInt16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::Char => C0Type::CharPointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
                 C0Type::UInt32 => C0Type::UInt32Pointer,
                 C0Type::Int64 => C0Type::Int64Pointer,
@@ -1667,6 +1683,7 @@ impl Parser {
                 C0Type::Int16Pointer => C0Type::Int16PointerPointer,
                 C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                C0Type::CharPointer => C0Type::CharPointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
                 C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
                 C0Type::Int64Pointer => C0Type::Int64PointerPointer,
@@ -1680,6 +1697,7 @@ impl Parser {
                 self.position += 1;
                 object_constant = true;
             }
+            saw_pointer = true;
         }
         Ok(ParsedType {
             c_type,
@@ -1766,6 +1784,7 @@ impl Parser {
                     field.c_type(),
                     C0Type::Int16
                         | C0Type::Int32
+                        | C0Type::Char
                         | C0Type::UInt8
                         | C0Type::UInt16
                         | C0Type::UInt32
@@ -1774,14 +1793,17 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
                         | C0Type::Int32Pointer
+                        | C0Type::CharPointer
                         | C0Type::UInt8Pointer
                         | C0Type::Float32Pointer
                         | C0Type::Float64Pointer
                         | C0Type::Int32PointerPointer
+                        | C0Type::CharPointerPointer
                         | C0Type::UInt8PointerPointer
                         | C0Type::Float32PointerPointer
                         | C0Type::Float64PointerPointer
@@ -1834,6 +1856,9 @@ impl Parser {
         &mut self,
         return_type: ParsedType,
     ) -> Result<(C0Type, syntax::C0FunctionPointerSignature), ClickError> {
+        if return_type.pointee_constant {
+            return Err(self.error("const-qualified callback returns are not supported"));
+        }
         self.expect(Token::LParen)?;
         let mut parameters = Vec::new();
         if self.peek() != Some(&Token::RParen) {
@@ -1956,6 +1981,7 @@ impl Parser {
         let (pointer_type, element_width) = match parsed_type.c_type {
             C0Type::Int16 => (C0Type::Int16Pointer, 2),
             C0Type::Int32 => (C0Type::Int32Pointer, 4),
+            C0Type::Char => (C0Type::CharPointer, 1),
             C0Type::UInt8 => (C0Type::UInt8Pointer, 1),
             C0Type::UInt16 => (C0Type::UInt16Pointer, 2),
             C0Type::UInt32 => (C0Type::UInt32Pointer, 4),
@@ -1964,6 +1990,7 @@ impl Parser {
             C0Type::Int16Pointer => (C0Type::Int16PointerPointer, 8),
             C0Type::UInt16Pointer => (C0Type::UInt16PointerPointer, 8),
             C0Type::Int32Pointer => (C0Type::Int32PointerPointer, 8),
+            C0Type::CharPointer => (C0Type::CharPointerPointer, 8),
             C0Type::UInt8Pointer => (C0Type::UInt8PointerPointer, 8),
             C0Type::UInt32Pointer => (C0Type::UInt32PointerPointer, 8),
             C0Type::Int64Pointer => (C0Type::Int64PointerPointer, 8),
@@ -3961,9 +3988,10 @@ impl Parser {
         field_name: &str,
         field: &ResolvedField,
     ) -> ContractSegment {
-        if let C0Type::Int32Array(_) | C0Type::UInt8Array(_) = field.c_type {
+        if let C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_) = field.c_type {
             let (element_width, element_type) = match field.c_type {
                 C0Type::Int32Array(_) => (4, CType::Int32),
+                C0Type::CharArray(_) => (1, CType::UInt8),
                 C0Type::UInt8Array(_) => (1, CType::UInt8),
                 _ => unreachable!("validated inline array field"),
             };
@@ -3986,6 +4014,7 @@ impl Parser {
             };
         }
         let element_width = match field.c_type {
+            C0Type::Char => 1,
             C0Type::UInt8 => 1,
             C0Type::Int16 | C0Type::UInt16 => 2,
             C0Type::Int64 | C0Type::UInt64 => 8,
@@ -4181,7 +4210,10 @@ impl Parser {
                 "aggregate struct and union field places are not supported; name a leaf field instead",
             ));
         }
-        if matches!(field.c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+        if matches!(
+            field.c_type,
+            C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_)
+        ) {
             if field.slot_end_bytes < field.offset_bytes
                 || (matches!(field.c_type, C0Type::Int32Array(_))
                     && (field.slot_end_bytes - field.offset_bytes) % 4 != 0)
@@ -4212,7 +4244,7 @@ impl Parser {
             }
             return Ok(());
         }
-        if field.c_type == C0Type::UInt8 {
+        if matches!(field.c_type, C0Type::Char | C0Type::UInt8) {
             if field.byte_width != 1 || field.slot_end_bytes < field.offset_bytes {
                 return Err(self.error("uint8 field places require one-byte width"));
             }
@@ -5597,12 +5629,14 @@ fn field_has_direct_memory_place(field: &ResolvedField) -> bool {
         field.c_type,
         C0Type::Int16
             | C0Type::Int32
+            | C0Type::Char
             | C0Type::UInt8
             | C0Type::UInt16
             | C0Type::UInt32
             | C0Type::Int64
             | C0Type::UInt64
             | C0Type::Int32Array(_)
+            | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
     )
 }
@@ -5613,6 +5647,7 @@ fn scalar_array_field_element(field: &ResolvedField) -> Option<(u32, CType)> {
     }
     match field.c_type {
         C0Type::Int32Array(_) => Some((4, CType::Int32)),
+        C0Type::CharArray(_) => Some((1, CType::UInt8)),
         C0Type::UInt8Array(_) => Some((1, CType::UInt8)),
         _ => None,
     }

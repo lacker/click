@@ -1683,6 +1683,7 @@ impl CAggregateLayout {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
     pub(super) return_type: CType,
+    pub(super) return_pointee_constant: bool,
     pub(super) return_aggregate_layout: Option<CAggregateLayout>,
     pub(super) name: String,
     /// Header-provided `static inline` or `static __always_inline` functions

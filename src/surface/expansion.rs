@@ -625,6 +625,10 @@ fn scan_source_tokens(source: &str) -> Result<Vec<SourceToken>, ClickError> {
             index += character.len_utf8();
             continue;
         }
+        if character == '#' {
+            index += source[index..].find('\n').unwrap_or(source.len() - index);
+            continue;
+        }
         let start = index;
         if character.is_ascii_alphabetic() || character == '_' {
             index += character.len_utf8();

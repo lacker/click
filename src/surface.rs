@@ -556,6 +556,7 @@ pub enum CFunctionDecrease {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionSignature {
     return_type: C0Type,
+    return_pointee_constant: bool,
     name: String,
     parameters: Vec<FunctionParameter>,
     /// Byte spans declared by sized array parameter spellings
@@ -3851,6 +3852,29 @@ impl FunctionBlock {
 }
 
 impl FunctionSignature {
+    pub fn new(
+        return_type: C0Type,
+        name: impl Into<String>,
+        parameters: Vec<FunctionParameter>,
+    ) -> Self {
+        Self {
+            return_type,
+            return_pointee_constant: false,
+            name: name.into(),
+            parameters,
+            declared_loadable_bytes: Vec::new(),
+        }
+    }
+
+    pub fn with_return_pointee_constant(mut self, return_pointee_constant: bool) -> Self {
+        self.return_pointee_constant = return_pointee_constant;
+        self
+    }
+
+    pub fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
+    }
+
     fn declared_loadable_bytes(&self) -> &[(String, u32)] {
         &self.declared_loadable_bytes
     }
@@ -4168,6 +4192,12 @@ fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>)
 }
 
 impl VerifiedCTheorem {
+    /// The concrete C implementation assumptions used by this verifier.
+    /// Results are not claims of portability to other target profiles.
+    pub fn target(&self) -> crate::languages::c::target::CTarget {
+        crate::languages::c::target::CTarget::SUPPORTED
+    }
+
     pub fn proof_kind(&self) -> ProofKind {
         self.proof_kind
     }

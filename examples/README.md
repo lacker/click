@@ -29,8 +29,8 @@ Examples have three distinct provenance classes:
 Most projects in this tree are synthetic. In particular, `jsonc-refcount/` is
 deliberately **json-c-shaped**, not copied from json-c. The
 `jsonc-existing-source/` project is the first unchanged-source fixture; its
-SHA-256 manifest is checked by the examples gate, while its parser-only status
-records the current C0 boundary.
+SHA-256 manifest is checked by the examples gate before verifying its numeric
+version and version-string bytes under the explicit kernel target.
 
 Current projects:
 
@@ -54,7 +54,7 @@ Current projects:
 - `jsonc-numeric/` verifies synthetic json-c-shaped `double` field reads and
   mixed integer/double scaling through pointer contracts and memory resources.
 - `jsonc-existing-source/` preserves the upstream json-c version helper and
-  reports its checked parser-only qualification.
+  proves its numeric and string results without editing the upstream C.
 - `owned-string/` verifies a length-tracked string with a trailing terminator
   whose composite resource ties metadata to a mutable backing-memory content
   invariant.

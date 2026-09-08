@@ -85,6 +85,19 @@ impl MacroDefinition {
     }
 }
 
+fn target_macros() -> BTreeMap<String, MacroDefinition> {
+    super::target::CTarget::SUPPORTED
+        .predefined_macros()
+        .iter()
+        .map(|&(name, value)| {
+            (
+                name.to_string(),
+                MacroDefinition::ObjectLike(value.to_string()),
+            )
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Conditional {
     Literal(bool),
@@ -162,8 +175,8 @@ pub fn expand_includes<'a>(
     let mut dependencies = BTreeSet::new();
     let mut stack = Vec::new();
     let mut expanded_once = BTreeSet::new();
-    let mut macros = BTreeMap::new();
-    let mut defined_macros = BTreeSet::new();
+    let mut macros = target_macros();
+    let mut defined_macros = macros.keys().cloned().collect();
     let mut expanded = String::new();
     expand_source(
         root_path,
@@ -392,8 +405,8 @@ fn collect_local_include_paths(
     analysis: &SourceAnalysis,
 ) -> Result<Vec<String>, CSourceError> {
     let mut includes = Vec::new();
-    let mut macros = BTreeMap::new();
-    let mut defined_macros = BTreeSet::new();
+    let mut macros = target_macros();
+    let mut defined_macros = macros.keys().cloned().collect();
     let mut conditional_stack = Vec::new();
     let mut active = ConditionalTruth::True;
     let mut may_have_external_macros = false;
@@ -2247,7 +2260,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_jsonc_header_reaches_the_char_type_boundary() {
+    fn pinned_jsonc_header_and_source_parse_for_kernel_target() {
         let sources = BTreeMap::from([
             (
                 "json_c_version.c",
@@ -2269,12 +2282,14 @@ mod tests {
                 .source()
                 .contains("return ((0 << 16) | (17 << 8) | 0);")
         );
-        let error = crate::languages::c::syntax::parse_functions_for_source(
+        let functions = crate::languages::c::syntax::parse_functions_for_source(
             expanded.source(),
             "json_c_version.c",
         )
-        .unwrap_err();
-        assert!(error.to_string().contains("unsupported C type `char`"));
+        .unwrap();
+        assert_eq!(functions.len(), 2);
+        assert!(functions[0].return_pointee_is_constant());
+        assert!(!functions[1].return_pointee_is_constant());
     }
 
     #[test]

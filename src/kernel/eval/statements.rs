@@ -307,7 +307,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     assumptions: &PureFactContext,
     next_kernel_variable: &mut u64,
 ) -> Vec<CStatementExecutionPath> {
-    if lvalue.is_constant() || lvalue.pointee_is_constant() {
+    if lvalue.is_constant() {
         return vec![CStatementExecutionPath {
             outcome: CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
@@ -332,6 +332,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     let is_volatile = lvalue.is_volatile();
     let value_type = lvalue.value_type;
     let pointee_volatile = lvalue.pointee_is_volatile();
+    let pointee_constant = lvalue.pointee_is_constant();
     let value = value.with_pointer_pointee_volatile(pointee_volatile);
     let volatile_pointer = is_volatile.then(|| lvalue.pointer(state)).flatten();
     if lvalue.value_type == CType::Int32 {
@@ -351,9 +352,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             return Vec::new();
         }
     }
-    let Some(value) = coerce_c_value_to_type(
+    let Some(value) = crate::kernel::functions::coerce_c_value_with_pointee_constant(
         value,
         lvalue.value_type,
+        pointee_constant,
         &mut obligations,
         &effective_assumptions,
     ) else {
@@ -377,12 +379,14 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     value.clone(),
                 ));
             }
-            state.locals.set_typed_with_qualifiers(
+            state.locals.set_typed_with_all_qualifiers(
                 name,
                 value,
                 value_type,
                 is_volatile,
                 pointee_volatile,
+                false,
+                pointee_constant,
             );
             vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
@@ -480,11 +484,14 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             if let Some(name) = state.locals.name_for_slot(&pointer)
                 && let Some(c_type) = state.locals.scalar_object_type(name)
             {
-                state.locals.set_typed_volatile(
+                state.locals.set_typed_with_all_qualifiers(
                     name.to_string(),
                     value.clone(),
                     c_type,
                     is_volatile,
+                    pointee_volatile,
+                    false,
+                    pointee_constant,
                 );
             }
             if is_volatile {

@@ -43,7 +43,7 @@ sidecar and project count.
 
 `--explain` without `--changed-since` is an error. A missing or invalid
 baseline marker forces a full rebuild rather than trusting an unattested
-result. A marker records the verifier binary, the commit, the sidecar, and
+result. A marker records the C target, the verifier binary, the commit, the sidecar, and
 every `CLICK_*` environment variable that was set, so a baseline attested
 with a switch such as `CLICK_DISABLE_TACTIC_BUDGETS` is not reused by a run
 without it. A full rebuild attests `HEAD`, and also the requested baseline
@@ -52,6 +52,11 @@ ones, so the next `--changed-since` run against the same baseline can select
 instead of rebuilding again.
 
 ## Output and exit behavior
+
+The command first prints its concrete C implementation target:
+`C target: x86_64-linux-kernel (LP64, 8-bit unsigned plain char)`.
+Successful verification is relative to that profile, not a portability claim.
+The profile is currently fixed; there is no target-selection flag.
 
 Successful file or location verification prints one `external assumptions:`
 line for each verified function whose transitive C call closure uses an

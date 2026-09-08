@@ -1,4 +1,5 @@
 use super::prelude::*;
+mod callback_signature_tests;
 
 fn checked_memory_load_equality(
     left: &CMemory,

@@ -413,6 +413,7 @@ fn sequence_element_type_supported(c_type: C0Type) -> bool {
         C0Type::Void
             | C0Type::FunctionPointer(_)
             | C0Type::Int32Array(_)
+            | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)
@@ -667,6 +668,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::VoidPointer => "void*".to_string(),
         C0Type::Int16 => "int16".to_string(),
         C0Type::Int32 => "int32".to_string(),
+        C0Type::Char => "char".to_string(),
         C0Type::UInt8 => "uint8".to_string(),
         C0Type::UInt16 => "uint16".to_string(),
         C0Type::UInt32 => "uint32".to_string(),
@@ -677,6 +679,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::Int16Pointer | C0Type::Int16Array(_) => "int16*".to_string(),
         C0Type::UInt16Pointer | C0Type::UInt16Array(_) => "uint16*".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
+        C0Type::CharPointer | C0Type::CharArray(_) => "char*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
         C0Type::UInt32Pointer | C0Type::UInt32Array(_) => "uint32*".to_string(),
         C0Type::Int64Pointer | C0Type::Int64Array(_) => "int64*".to_string(),
@@ -686,6 +689,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::Int16PointerPointer => "int16**".to_string(),
         C0Type::UInt16PointerPointer => "uint16**".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
+        C0Type::CharPointerPointer => "char**".to_string(),
         C0Type::UInt8PointerPointer => "uint8**".to_string(),
         C0Type::UInt32PointerPointer => "uint32**".to_string(),
         C0Type::Int64PointerPointer => "int64**".to_string(),
@@ -723,7 +727,9 @@ pub(in crate::surface) fn click_types_compatible(actual: C0Type, expected: C0Typ
     match (actual, expected) {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
-        (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
+        (C0Type::CharArray(_), C0Type::CharPointer)
+        | (C0Type::CharPointer, C0Type::CharArray(_))
+        | (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
         | (C0Type::UInt8Pointer, C0Type::UInt8Array(_))
         | (C0Type::Int16Array(_), C0Type::Int16Pointer)
         | (C0Type::Int16Pointer, C0Type::Int16Array(_))
@@ -762,6 +768,7 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
             C0Type::Int16Pointer
                 | C0Type::UInt16Pointer
                 | C0Type::Int32Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::UInt32Pointer
                 | C0Type::Int64Pointer
@@ -769,6 +776,7 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
@@ -778,6 +786,7 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer
                 | C0Type::Int32Array(_)
+                | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Int16Array(_)
                 | C0Type::UInt16Array(_)
@@ -1281,6 +1290,7 @@ fn type_is_scalar(c_type: C0Type) -> bool {
         c_type,
         C0Type::Int16
             | C0Type::Int32
+            | C0Type::Char
             | C0Type::UInt8
             | C0Type::UInt16
             | C0Type::UInt32
@@ -1310,6 +1320,7 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
         c_type,
         C0Type::Int32Pointer
             | C0Type::Int16Pointer
+            | C0Type::CharPointer
             | C0Type::UInt8Pointer
             | C0Type::UInt16Pointer
             | C0Type::UInt32Pointer
@@ -1318,11 +1329,13 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
             | C0Type::Int16PointerPointer
             | C0Type::UInt16PointerPointer
             | C0Type::Int32PointerPointer
+            | C0Type::CharPointerPointer
             | C0Type::UInt8PointerPointer
             | C0Type::UInt32PointerPointer
             | C0Type::Int64PointerPointer
             | C0Type::UInt64PointerPointer
             | C0Type::Int32Array(_)
+            | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)

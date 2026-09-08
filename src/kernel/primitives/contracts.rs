@@ -656,6 +656,7 @@ impl CFunction {
     ) -> Self {
         Self {
             return_type,
+            return_pointee_constant: false,
             return_aggregate_layout: None,
             name: name.into(),
             inline_body: false,
@@ -810,6 +811,15 @@ impl CFunction {
 
     pub fn return_type(&self) -> CType {
         self.return_type
+    }
+
+    pub fn with_return_pointee_constant(mut self, constant: bool) -> Self {
+        self.return_pointee_constant = constant;
+        self
+    }
+
+    pub fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
     }
 
     pub fn return_aggregate_layout(&self) -> Option<&CAggregateLayout> {
@@ -1302,6 +1312,7 @@ impl CFunctionContract {
     /// later rule; exact equality is restrictive but sound.
     pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
         self.function.return_type == function.return_type
+            && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
             && self.function.parameters == function.parameters
             && self.function.resource_requires == function.resource_requires
@@ -1326,6 +1337,7 @@ impl CFunctionContract {
         function: &CFunction,
     ) -> bool {
         self.function.return_type == function.return_type
+            && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
             && self.function.parameters.len() == function.parameters.len()
             && self

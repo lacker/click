@@ -295,6 +295,7 @@ pub(in crate::surface) fn annotated_function(
             .collect(),
         body,
     )
+    .with_return_pointee_constant(parsed_function.return_pointee_is_constant())
     .with_source_body(source_body);
     if let Some(struct_name) = parsed_function.return_struct_name() {
         let layout = parsed_function

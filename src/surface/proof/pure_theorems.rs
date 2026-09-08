@@ -862,6 +862,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::Int16 => CValue::Int16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt32 => CValue::UInt32(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Char => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
@@ -908,7 +909,10 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::Int32Pointer,
                 ),
-                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => CValue::typed_pointer(
+                C0Type::CharPointer
+                | C0Type::CharArray(_)
+                | C0Type::UInt8Pointer
+                | C0Type::UInt8Array(_) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
                         offset: scale_int32_offset(
@@ -981,6 +985,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     CType::Float64Pointer,
                 ),
                 C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer

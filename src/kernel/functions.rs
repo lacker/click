@@ -1,4 +1,151 @@
 use super::prelude::*;
+
+#[cfg(test)]
+mod pointee_const_return_tests {
+    use super::*;
+
+    fn function(constant: bool) -> CFunction {
+        CFunction::new(
+            CType::UInt8Pointer,
+            "text",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        )
+        .with_return_pointee_constant(constant)
+    }
+
+    fn pointer(constant: bool) -> CValue {
+        CValue::typed_pointer(Pointer::symbolic(Variable(910)), CType::UInt8Pointer)
+            .with_pointer_pointee_constant(constant)
+    }
+
+    #[test]
+    fn pointee_const_return_coercion_enforces_declared_qualifier() {
+        for source_const in [false, true] {
+            for return_const in [false, true] {
+                let result = coerce_function_return_value(
+                    pointer(source_const),
+                    &function(return_const),
+                    &mut Vec::new(),
+                    &PureFactContext::new(),
+                );
+                assert_eq!(result.is_some(), !source_const || return_const);
+                if let Some(CValue::Pointer(pointer)) = result {
+                    assert_eq!(pointer.pointee_constant(), return_const);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pointee_const_return_symbolic_result_and_binding_preserve_qualifier() {
+        let function = function(true);
+        let value = symbolic_function_result(&function, Variable(911));
+        assert!(matches!(&value, CValue::Pointer(pointer) if pointer.pointee_constant()));
+        let mut state = CState::new();
+        set_function_result(&mut state, &function, value);
+        assert!(
+            matches!(state.locals.binding("result"), Some(CLocalBinding::Object {
+            value: CValue::Pointer(pointer), pointee_constant: true, ..
+        }) if pointer.pointee_constant())
+        );
+    }
+
+    #[test]
+    fn pointee_const_return_contract_signature_checks_qualifier() {
+        let mutable = function(false);
+        assert!(!mutable.return_pointee_is_constant());
+        let constant = function(true);
+        let contract = CFunctionContract::new("text_contract", constant.clone()).unwrap();
+        assert!(contract.exactly_matches(&constant));
+        assert!(contract.has_compatible_signature_and_resource_vocabulary(&constant));
+        assert!(!contract.exactly_matches(&mutable));
+        assert!(!contract.has_compatible_signature_and_resource_vocabulary(&mutable));
+    }
+
+    #[test]
+    fn pointee_const_return_function_address_cannot_convert_to_mutable_callback() {
+        let target = function(true);
+        let parameter = c_parameter("callback", target.function_pointer_type());
+        let environment = CExecutionEnvironment::new().with_function(target);
+        let value = type_function_address_value(
+            &CExpression::FunctionAddress("text".to_string()),
+            CValue::typed_pointer(
+                Pointer {
+                    block: PointerBlock::Function("text".to_string()),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                CType::FunctionPointer(0),
+            ),
+            Some(&environment),
+        );
+        assert!(coerce_c_function_argument_without_obligations(&value, &parameter).is_none());
+    }
+
+    #[test]
+    fn pointee_const_return_arguments_cannot_discard_const() {
+        for constant in [false, true] {
+            let parameter =
+                c_parameter("text", CType::UInt8Pointer).with_pointee_constant(constant);
+            assert_eq!(
+                coerce_c_function_argument_without_obligations(&pointer(true), &parameter)
+                    .is_some(),
+                constant
+            );
+            let callee = CFunction::new(
+                CType::Void,
+                "consume",
+                vec![parameter],
+                c_return(c_int32_literal(0)),
+            );
+            assert_eq!(
+                coerce_c_function_arguments(
+                    &callee,
+                    &[pointer(true)],
+                    &[],
+                    &PureFactContext::new()
+                )
+                .is_some(),
+                constant
+            );
+        }
+    }
+
+    #[test]
+    fn pointee_const_return_string_literal_storage_is_read_only_but_type_is_mutable() {
+        let function = CFunction::new(
+            CType::UInt8Pointer,
+            "literal_source",
+            Vec::new(),
+            c_return(c_variable("literal")),
+        )
+        .with_string_literals(vec![CStringLiteral::new("literal", b"ok\0".to_vec())]);
+        let state = initialize_c_function_globals(&CState::new(), &function);
+        let paths = evaluate_c_expression_paths(
+            &state,
+            &c_variable("literal"),
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let CExpressionOutcome::Value(value) = &paths[0].outcome else {
+            panic!("literal must evaluate")
+        };
+        assert!(
+            matches!(value, CValue::Pointer(pointer) if !pointer.pointee_constant()
+            && state.memory.is_read_only_block(&pointer.block))
+        );
+        assert!(
+            coerce_function_return_value(
+                value.clone(),
+                &function,
+                &mut Vec::new(),
+                &PureFactContext::new()
+            )
+            .is_some()
+        );
+    }
+}
 use std::collections::VecDeque;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
@@ -1071,7 +1218,7 @@ fn execute_verified_function_rule(
                 .into_certified(),
             );
         }
-        let result = symbolic_call_result(function.return_type(), result_identity);
+        let result = symbolic_function_result(function, result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);
         if function.return_type() != CType::Void {
             set_function_result(&mut post_state, function, result.clone());
@@ -1506,7 +1653,7 @@ fn function_refines_named_contract_in_case(
             &preconditions,
         )
     };
-    let result = symbolic_call_result(function.return_type(), context.result_variable);
+    let result = symbolic_function_result(function, context.result_variable);
     let mut contract_post = contract_entry.clone().with_memory(post_memory.clone());
     let mut function_post = function_entry.clone().with_memory(post_memory);
     if function.return_type() != CType::Void {
@@ -3225,7 +3372,7 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // caller's int32 `0`, but the callee parameter is a pointer.  Using
         // the raw caller value would overwrite the correctly coerced binding
         // and make pointer preconditions impossible to lower.
-        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())
+        let value = coerce_c_function_argument_without_obligations(value, parameter)
             .expect("function arguments were type-checked before building contract views");
         let value = value
             .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
@@ -3284,9 +3431,15 @@ fn set_function_result(state: &mut CState, function: &CFunction, value: CValue) 
         );
         return;
     }
-    state
-        .locals
-        .set_typed("result".to_string(), value, function.return_type());
+    state.locals.set_typed_with_all_qualifiers(
+        "result".to_string(),
+        value.with_pointer_pointee_constant(function.return_pointee_is_constant()),
+        function.return_type(),
+        false,
+        false,
+        false,
+        function.return_pointee_is_constant(),
+    );
 }
 
 fn materialize_aggregate_return(
@@ -3336,7 +3489,39 @@ fn coerce_function_return_value(
             function.return_type(),
         ));
     }
-    coerce_c_value_to_type(value, function.return_type(), obligations, assumptions)
+    coerce_c_value_with_pointee_constant(
+        value,
+        function.return_type(),
+        function.return_pointee_is_constant(),
+        obligations,
+        assumptions,
+    )
+}
+
+pub(super) fn coerce_c_value_with_pointee_constant(
+    value: CValue,
+    c_type: CType,
+    pointee_constant: bool,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    // This is an implicit conversion boundary. Explicit C casts have their
+    // own rules; storage read-only status is independently checked on writes.
+    if matches!(&value, CValue::Pointer(pointer) if pointer.pointee_constant())
+        && c_type.is_pointer()
+        && !pointee_constant
+    {
+        return None;
+    }
+    Some(
+        coerce_c_value_to_type(value, c_type, obligations, assumptions)?
+            .with_pointer_pointee_constant(pointee_constant),
+    )
+}
+
+fn symbolic_function_result(function: &CFunction, variable: Variable) -> CValue {
+    symbolic_call_result(function.return_type(), variable)
+        .with_pointer_pointee_constant(function.return_pointee_is_constant())
 }
 
 pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
@@ -3504,7 +3689,11 @@ fn type_function_address_value(
         CValue::Pointer(pointer)
             if pointer.block.is_function() && pointer.c_type() == CType::FunctionPointer(0) =>
         {
+            // Callback signatures do not encode return qualifiers in this
+            // slice. Preserve the restriction through argument coercion;
+            // indirect dispatch also rejects the declared target explicitly.
             CValue::typed_pointer(pointer.into_pointer(), function.function_pointer_type())
+                .with_pointer_pointee_constant(function.return_pointee_is_constant())
         }
         value => value,
     }
@@ -3637,7 +3826,7 @@ pub(super) fn bind_c_function_arguments(
             );
             continue;
         }
-        let value = coerce_c_function_argument_without_obligations(value, parameter.c_type())?
+        let value = coerce_c_function_argument_without_obligations(value, parameter)?
             .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
             .with_pointer_pointee_constant(parameter.pointee_is_constant());
         if address_taken_parameters.contains(parameter.name()) {
@@ -3674,12 +3863,13 @@ pub(super) fn bind_c_function_arguments(
 
 fn coerce_c_function_argument_without_obligations(
     value: &CValue,
-    target_type: CType,
+    parameter: &CParameter,
 ) -> Option<CValue> {
     let mut obligations = Vec::new();
-    let value = coerce_c_value_to_type(
+    let value = coerce_c_value_with_pointee_constant(
         value.clone(),
-        target_type,
+        parameter.c_type(),
+        parameter.pointee_is_constant(),
         &mut obligations,
         &PureFactContext::new(),
     )?;
@@ -3701,9 +3891,10 @@ fn coerce_c_function_arguments(
         if parameter.aggregate_layout().is_some() {
             coerced.push(value.clone());
         } else {
-            coerced.push(coerce_c_value_to_type(
+            coerced.push(coerce_c_value_with_pointee_constant(
                 value.clone(),
                 parameter.c_type(),
+                parameter.pointee_is_constant(),
                 &mut obligations,
                 assumptions,
             )?);

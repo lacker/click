@@ -21,6 +21,11 @@ its target-dependent layout work belongs here.
 
 ## Violated invariant
 
+The initial concrete `CTarget` is now named `x86_64-linux-kernel` (LP64 and
+eight-bit unsigned plain char), and is exposed in CLI/theorem results and
+incremental markers. This centralizes the single supported profile; it does
+not yet implement target selection, compiler validation, or symbolic targets.
+
 Every byte offset, object size, alignment, pointer step, scalar conversion,
 and calling-interface fact used in a proof must come from the exact C
 implementation configuration that will compile the source. Click must not
@@ -64,7 +69,7 @@ or set of ABI-affecting flags.
   mismatched compiler features.
 - Existing LP64 behavior remains unchanged, and `scripts/check.sh` passes.
 
-Related: [integer-types.md](integer-types.md) for additional scalar widths;
+Related: [signed-byte-integers.md](signed-byte-integers.md) for signed-byte types;
 [struct-model.md](struct-model.md) for aggregate layout and field access;
 [multi-function-files-and-headers.md](multi-function-files-and-headers.md)
 for compiler/header integration boundaries.

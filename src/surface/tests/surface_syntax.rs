@@ -1,6 +1,113 @@
 use super::*;
 
 #[test]
+fn parser_deep_const_rejects_qualification_beyond_first_pointer_level() {
+    for spelling in [
+        "const int **",
+        "int const **",
+        "const char **",
+        "const int *const *",
+        "const struct node **",
+        "struct node const **",
+        "const struct node *const *",
+    ] {
+        for signature in [
+            format!("int probe({spelling} p)"),
+            format!("{spelling} probe()"),
+        ] {
+            let source = format!("{signature} {{ ensures result == 0; }}");
+            let error = parser::parse_file_items(&source).expect_err(
+                "deep pointee const must not be conflated with immediate pointee const",
+            );
+            assert!(
+                error.message().contains(
+                    "const qualification beyond the first pointer level is not supported"
+                ),
+                "{signature}: {}",
+                error.message()
+            );
+        }
+    }
+}
+
+#[test]
+fn parser_deep_const_preserves_supported_pointer_qualifier_levels() {
+    for (spelling, constant, pointee_constant) in [
+        ("int **", false, false),
+        ("int *const *", false, true),
+        ("int **const", true, false),
+        ("int *const *const", true, true),
+        ("const int *", false, true),
+        ("struct node **", false, false),
+        ("struct node *const *", false, true),
+        ("struct node **const", true, false),
+        ("struct node *const *const", true, true),
+        ("const struct node *", false, true),
+    ] {
+        let source = format!("int probe({spelling} p) {{ ensures result == 0; }}");
+        let file = parser::parse_file_items(&source).expect("supported qualifiers should parse");
+        let parameter = &file.function_blocks()[0].signature().parameters()[0];
+        assert_eq!(parameter.is_constant(), constant, "{spelling}");
+        assert_eq!(
+            parameter.pointee_is_constant(),
+            pointee_constant,
+            "{spelling}"
+        );
+        let c_source =
+            format!("struct node {{ int value; }}; int probe({spelling} p) {{ return 0; }}");
+        let function =
+            syntax::parse_function(&c_source).expect("C must accept the same qualifiers");
+        let c_parameter = &function.parameters()[0];
+        assert_eq!(parameter.c_type(), c_parameter.c_type(), "{spelling}");
+        assert_eq!(
+            parameter.is_constant(),
+            c_parameter.is_constant(),
+            "{spelling}"
+        );
+        assert_eq!(
+            parameter.pointee_is_constant(),
+            c_parameter.pointee_is_constant(),
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn parser_plain_char_sidecars_preserve_source_compatibility() {
+    use crate::surface::validation::click_types_compatible;
+    let file = parser::parse_file_items(
+        "char *identity(char *p, unsigned char *q, char bytes[], char **pp) { ensures result == p; }",
+    ).expect("plain char sidecar types should parse");
+    let signature = file.function_blocks()[0].signature();
+    assert_eq!(signature.return_type(), C0Type::CharPointer);
+    assert_eq!(
+        signature
+            .parameters()
+            .iter()
+            .map(FunctionParameter::c_type)
+            .collect::<Vec<_>>(),
+        vec![
+            C0Type::CharPointer,
+            C0Type::UInt8Pointer,
+            C0Type::CharPointer,
+            C0Type::CharPointerPointer
+        ]
+    );
+    assert!(!click_types_compatible(
+        C0Type::CharPointer,
+        C0Type::UInt8Pointer
+    ));
+    assert!(!click_types_compatible(
+        C0Type::CharPointerPointer,
+        C0Type::UInt8PointerPointer
+    ));
+    assert!(click_types_compatible(
+        C0Type::CharArray(2),
+        C0Type::CharPointer
+    ));
+}
+
+#[test]
 fn false_library_list_equality_has_a_bounded_diagnostic() {
     let error = verify_click_theorems(
         r#"

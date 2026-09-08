@@ -11,6 +11,11 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
         let position = char_positions[index];
         let tokens_before = tokens.len();
         match ch {
+            '#' => {
+                while chars.get(index).is_some_and(|ch| *ch != '\n') {
+                    index += 1;
+                }
+            }
             ch if ch.is_whitespace() => {
                 index += 1;
             }

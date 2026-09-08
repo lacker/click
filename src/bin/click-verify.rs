@@ -12,6 +12,7 @@ use click::cli::{
     looks_like_source_location, parse_duration, parse_source_location, read_verifying_sources,
     source_refs,
 };
+use click::languages::c::target::CTarget;
 use click::surface::{
     VerifiedCTheorem, c0_external_dependencies, c0_function_names, c0_incremental_selection,
     verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions, verifying_source_paths,
@@ -60,6 +61,10 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
+    println!(
+        "C target: {} (LP64, 8-bit unsigned plain char)",
+        CTarget::SUPPORTED.name()
+    );
     if let Some(revision) = &arguments.changed_since {
         let path = Path::new(&arguments.target);
         return verify_changed(path, revision, arguments.time_limit, arguments.explain);
@@ -439,7 +444,8 @@ fn environment_switches_from(variables: impl IntoIterator<Item = (String, String
 
 fn marker_contents(commit: &str, relative: &Path, fingerprint: &str, switches: &str) -> String {
     format!(
-        "{INCREMENTAL_CACHE_SCHEMA}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n{switches}",
+        "{INCREMENTAL_CACHE_SCHEMA}\ntarget={}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n{switches}",
+        CTarget::SUPPORTED.name(),
         relative.display()
     )
 }
@@ -739,6 +745,7 @@ mod tests {
     fn marker_contents_include_environment_switches() {
         let relative = Path::new("examples/tiny/tiny.click");
         let plain = marker_contents("abc", relative, "fp", "");
+        assert!(plain.contains("\ntarget=x86_64-linux-kernel\n"));
         let switches = environment_switches_from([(
             "CLICK_DISABLE_TACTIC_BUDGETS".to_string(),
             "1".to_string(),
@@ -800,6 +807,8 @@ mod tests {
         let path = Path::new("examples/sample.click");
         let valid = marker_contents("abc123", path, "verifier-a", &environment_switches());
         assert!(valid_marker(&valid, "abc123", path, "verifier-a"));
+        let other_target = valid.replace("target=x86_64-linux-kernel", "target=another-target");
+        assert!(!valid_marker(&other_target, "abc123", path, "verifier-a"));
         assert!(!valid_marker("truncated", "abc123", path, "verifier-a"));
         assert!(!valid_marker(&valid, "different", path, "verifier-a"));
         assert!(!valid_marker(&valid, "abc123", path, "verifier-b"));

@@ -13,7 +13,7 @@ contract expressions, calls, and the other parenthesized surface forms.
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
 features include broader structs, pointer and array forms of 64-bit and
-`size_t` integers, `char` and wider string-literal forms, unmodeled allocator
+`size_t` integers, signed `char` and wider string-literal forms, unmodeled allocator
 compatibility, and some
 operators. Supported scalar file-scope globals are described in [Supported
 C0](c0.md). The
@@ -34,6 +34,12 @@ declared as `void *`, unrelated custom allocator APIs, and `realloc` remain
 outside this surface description. Opaque `void *` identity conversions are
 supported, but dereference, indexing, arithmetic, and ownership through an
 untyped pointer are not.
+
+Plain `char *` and `unsigned char *` remain distinct for implicit conversions
+and function signatures. Explicit casts between these one-level byte pointers
+are supported and preserve pointer provenance. Casts between `char **` and
+`unsigned char **` remain unsupported; sharing byte storage does not make their
+pointer cells interchangeable.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`,

@@ -2211,10 +2211,10 @@ fn compare_float_bits(
 
 impl CType {
     pub(crate) fn function_pointer_signature(return_type: Self, parameter_types: &[Self]) -> u64 {
-        // Pack the finite modeled type alphabet into nibbles. This is exact,
-        // unlike a hash, so an incompatible callback can never be admitted by
-        // a signature collision. The high-level C parser caps callback arity
-        // at thirteen, which fits the key in one u64.
+        // Encode the twenty-type alphabet in base twenty with a leading one.
+        // The sentinel distinguishes arities, including leading zero codes.
+        // Return plus thirteen parameters uses at most 2 * 20^14 - 1, which
+        // fits u64. Four-bit slots are NOT sufficient for codes 16 through 19.
         fn code(c_type: CType) -> Option<u64> {
             Some(match c_type {
                 CType::Void => 0,
@@ -2267,12 +2267,12 @@ impl CType {
         let Some(return_code) = code(return_type) else {
             return 0;
         };
-        let mut signature = 1 | ((parameter_types.len() as u64) << 1) | (return_code << 5);
-        for (index, &parameter_type) in parameter_types.iter().enumerate() {
+        let mut signature = 20 + return_code;
+        for &parameter_type in parameter_types {
             let Some(parameter_code) = code(parameter_type) else {
                 return 0;
             };
-            signature |= parameter_code << (9 + index * 4);
+            signature = signature * 20 + parameter_code;
         }
         signature
     }

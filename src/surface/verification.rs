@@ -2291,6 +2291,25 @@ pub(in crate::surface) fn parse_verified_sources(
         units.insert(source_path.clone(), unit);
     }
 
+    // Check C source compatibility before kernel lowering erases distinctions
+    // such as plain char versus unsigned char. Retain declarations once per
+    // translation unit, including prototypes in files without a definition.
+    let mut function_declarations = BTreeMap::<&str, (&str, &syntax::C0FunctionHeader)>::new();
+    for (source_path, unit) in &units {
+        for declaration in unit.function_declarations.values() {
+            let name = declaration.linkage_name();
+            if let Some((previous_source, previous)) = function_declarations.get(name) {
+                if !previous.compatible_with(declaration) {
+                    return Err(ClickError::new(format!(
+                        "conflicting C function declarations for `{name}` in `{previous_source}` and `{source_path}`"
+                    )));
+                }
+            } else {
+                function_declarations.insert(name, (source_path, declaration));
+            }
+        }
+    }
+
     // Link declarations once per translation unit, including data-only files.
     // Every kernel function receives the same externally linked global layout.
     // File-scope `static` declarations stay in their own
@@ -2819,6 +2838,7 @@ fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
             })
             .collect(),
     )
+    .with_return_pointee_constant(function_block.signature().return_pointee_is_constant())
 }
 
 pub(in crate::surface) fn build_function_environment(
@@ -3385,6 +3405,15 @@ pub(in crate::surface) fn check_signature(
             signature.name(),
             signature.return_type(),
             parsed_function.return_type()
+        )));
+    }
+
+    if signature.return_pointee_is_constant() != parsed_function.return_pointee_is_constant() {
+        return Err(ClickError::new(format!(
+            "signature mismatch for `{}` in `{source_path}`: .click return pointee const is {}, C return pointee const is {}",
+            signature.name(),
+            signature.return_pointee_is_constant(),
+            parsed_function.return_pointee_is_constant()
         )));
     }
 

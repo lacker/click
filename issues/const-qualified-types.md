@@ -8,6 +8,13 @@ the Linux rbtree API uses `const struct rb_node *`,
 Several functions cast away qualification only when returning an existing
 node pointer.
 
+Direct const-pointer returns now retain qualification through declarations,
+sidecars, and calls. Qualified pointer cast destinations are explicitly
+rejected until cast nodes can preserve their qualifiers; for example,
+`char *f(char *p) { return (const char *)p; }` must never be accepted by
+silently erasing the cast's const qualification. Supporting a valid return
+from that cast with a `const char *` result remains part of this issue.
+
 ## Violated invariant
 
 Type qualification in accepted C must constrain writes through the qualified

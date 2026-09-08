@@ -1,5 +1,278 @@
 use super::prelude::*;
 
+#[cfg(test)]
+mod pointee_const_return_tests {
+    use super::*;
+
+    #[test]
+    fn pointee_const_return_rebinding_is_allowed_but_store_through_pointer_is_not() {
+        let value = CValue::typed_pointer(Pointer::symbolic(Variable(916)), CType::Int32Pointer);
+        let mut state = CState::new().with_local("p", value.clone());
+        state.locals.set_typed_with_all_qualifiers(
+            "q",
+            value,
+            CType::Int32Pointer,
+            false,
+            false,
+            false,
+            true,
+        );
+        let environment = CExecutionEnvironment::new();
+        let paths = execute_c_statement_paths(
+            &state,
+            &c_assign("q", c_variable("p")),
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let CStatementOutcome::Normal(state) = &paths[0].outcome else {
+            panic!("const pointee does not prohibit rebinding")
+        };
+        assert!(matches!(
+            state.locals.binding("q"),
+            Some(CLocalBinding::Object {
+                pointee_constant: true,
+                ..
+            })
+        ));
+        let paths = execute_c_statement_paths(
+            state,
+            &c_store(c_variable("q"), c_int32_literal(1)),
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            &paths[0].outcome,
+            CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+        ));
+    }
+
+    #[test]
+    fn pointee_const_return_inline_call_preserves_pointer_identity() {
+        let function = CFunction::new(
+            CType::Int32Pointer,
+            "view",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_variable("p")),
+        )
+        .with_return_pointee_constant(true)
+        .with_inline_body();
+        let value = CValue::typed_pointer(Pointer::symbolic(Variable(917)), CType::Int32Pointer);
+        let state = CState::new().with_local("p", value.clone());
+        let environment = CExecutionEnvironment::new().with_function(function);
+        let paths = execute_c_call_assign_paths(
+            &state,
+            "temporary",
+            "view",
+            &[c_variable("p")],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let CStatementOutcome::Normal(state) = &paths[0].outcome else {
+            panic!("inline call must return")
+        };
+        let result = state.locals.get("temporary").unwrap();
+        assert!(matches!(result, CValue::Pointer(pointer) if pointer.pointee_constant()));
+        let equality =
+            c_value_comparison_proposition(result, CComparisonOperator::Equal, &value).unwrap();
+        assert!(PureFactContext::new().proves(&equality));
+        assert!(paths[0].obligations.is_empty());
+    }
+
+    #[test]
+    fn pointee_const_return_direct_call_preserves_const_and_callback_dispatch_rejects_it() {
+        let function = CFunction::new(
+            CType::UInt8Pointer,
+            "text",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        )
+        .with_return_pointee_constant(true);
+        let function_type = function.function_pointer_type();
+        let environment = CExecutionEnvironment::new().with_function(function);
+        let paths = execute_c_call_assign_paths(
+            &CState::new(),
+            "temporary",
+            "text",
+            &[],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert!(matches!(&paths[0].outcome, CStatementOutcome::Normal(state)
+            if matches!(state.locals.binding("temporary"), Some(CLocalBinding::Object { pointee_constant: true, .. }))));
+        let state = CState::new().with_local(
+            "callback",
+            CValue::typed_pointer(
+                Pointer {
+                    block: PointerBlock::Function("text".to_string()),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                function_type,
+            ),
+        );
+        let paths = execute_c_call_assign_paths(
+            &state,
+            "temporary",
+            "callback",
+            &[],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            &paths[0].outcome,
+            CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(_))
+        ));
+    }
+
+    #[test]
+    fn pointee_const_return_assignment_preserves_destination_and_temporary_qualifiers() {
+        for source_const in [false, true] {
+            for destination_const in [false, true] {
+                for immutable in [false, true] {
+                    let value = CValue::typed_pointer(
+                        Pointer::symbolic(Variable(912)),
+                        CType::UInt8Pointer,
+                    )
+                    .with_pointer_pointee_constant(source_const);
+                    let mut state = CState::new();
+                    state.locals.set_typed_with_all_qualifiers(
+                        "text",
+                        value.clone(),
+                        CType::UInt8Pointer,
+                        false,
+                        false,
+                        immutable,
+                        destination_const,
+                    );
+                    let result = assign_call_result(
+                        &mut state,
+                        "text",
+                        value,
+                        &mut Vec::new(),
+                        &PureFactContext::new(),
+                    );
+                    assert_eq!(
+                        result.is_some(),
+                        !immutable && (!source_const || destination_const)
+                    );
+                    if result.is_some() {
+                        assert!(
+                            matches!(state.locals.binding("text"), Some(CLocalBinding::Object { value: CValue::Pointer(pointer), pointee_constant, .. })
+                            if *pointee_constant == destination_const && pointer.pointee_constant() == destination_const)
+                        );
+                    }
+                }
+            }
+        }
+        let value = CValue::typed_pointer(Pointer::symbolic(Variable(913)), CType::UInt8Pointer)
+            .with_pointer_pointee_constant(true);
+        let mut state = CState::new();
+        assert!(
+            assign_call_result(
+                &mut state,
+                "temporary",
+                value,
+                &mut Vec::new(),
+                &PureFactContext::new()
+            )
+            .is_some()
+        );
+        assert!(matches!(
+            state.locals.binding("temporary"),
+            Some(CLocalBinding::Object {
+                pointee_constant: true,
+                ..
+            })
+        ));
+    }
+}
+
+fn assign_call_result(
+    state: &mut CState,
+    target: &str,
+    value: CValue,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<()> {
+    if value == CValue::Void {
+        return None;
+    }
+    let (c_type, volatile, pointee_volatile, pointee_constant) = match state.locals.binding(target)
+    {
+        Some(
+            CLocalBinding::Object {
+                c_type,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            }
+            | CLocalBinding::UninitializedObject {
+                c_type,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            }
+            | CLocalBinding::GlobalObject {
+                c_type,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            },
+        ) => {
+            if *constant {
+                return None;
+            }
+            (*c_type, *volatile, *pointee_volatile, *pointee_constant)
+        }
+        Some(_) => return None,
+        None => (
+            value.c_type(),
+            false,
+            false,
+            matches!(&value, CValue::Pointer(pointer) if pointer.pointee_constant()),
+        ),
+    };
+    let value = super::functions::coerce_c_value_with_pointee_constant(
+        value,
+        c_type,
+        pointee_constant,
+        obligations,
+        assumptions,
+    )?
+    .with_pointer_pointee_volatile(pointee_volatile);
+    sync_stack_local(state, target, &value);
+    state.locals.set_typed_with_all_qualifiers(
+        target.to_string(),
+        value,
+        c_type,
+        volatile,
+        pointee_volatile,
+        false,
+        pointee_constant,
+    );
+    Some(())
+}
+
 pub(super) fn execute_c_call_assign_paths(
     state: &CState,
     target: &str,
@@ -48,7 +321,7 @@ pub(super) fn execute_c_call_assign_paths(
         budget,
     )?
     .into_iter()
-    .map(|path| {
+    .map(|mut path| {
         let outcome = match path.outcome {
             CFunctionOutcome::Return { value, mut state } => {
                 if value == CValue::Void {
@@ -59,6 +332,16 @@ pub(super) fn execute_c_call_assign_paths(
                     };
                 }
                 if let Some(layout) = function.return_aggregate_layout() {
+                    if matches!(
+                        state.locals.binding(target),
+                        Some(CLocalBinding::AggregateObject { constant: true, .. })
+                    ) {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    }
                     let Some(target_layout) = state.locals.aggregate_layout(target) else {
                         return CStatementExecutionPath {
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -109,13 +392,19 @@ pub(super) fn execute_c_call_assign_paths(
                         obligations: path.obligations,
                     };
                 }
-                sync_stack_local(&mut state, target, &value);
-                let c_type = state
-                    .locals
-                    .object_type(target)
-                    .unwrap_or_else(|| value.c_type());
-                state.locals.set_typed(target.to_string(), value, c_type);
-                CStatementOutcome::Normal(state)
+                if assign_call_result(
+                    &mut state,
+                    target,
+                    value,
+                    &mut path.obligations,
+                    assumptions,
+                )
+                .is_some()
+                {
+                    CStatementOutcome::Normal(state)
+                } else {
+                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
             }
             CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
             CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
@@ -233,19 +522,25 @@ fn execute_c_indirect_call_assign_paths(
     )?;
     Ok(paths
         .into_iter()
-        .map(|path| {
+        .map(|mut path| {
             let outcome = match path.outcome {
                 CFunctionOutcome::Return { value, mut state } => {
                     if value == CValue::Void || state.locals.is_array_object(target) {
                         CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                     } else {
-                        sync_stack_local(&mut state, target, &value);
-                        let c_type = state
-                            .locals
-                            .object_type(target)
-                            .unwrap_or_else(|| value.c_type());
-                        state.locals.set_typed(target.to_string(), value, c_type);
-                        CStatementOutcome::Normal(state)
+                        if assign_call_result(
+                            &mut state,
+                            target,
+                            value,
+                            &mut path.obligations,
+                            assumptions,
+                        )
+                        .is_some()
+                        {
+                            CStatementOutcome::Normal(state)
+                        } else {
+                            CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                        }
                     }
                 }
                 CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
@@ -299,7 +594,10 @@ fn execute_c_indirect_call_paths(
                         let contracts = target_assumptions
                             .function_contract_facts_for(pointer.pointer())
                             .filter_map(|(name, _)| environment.get_function_contract(name))
-                            .filter(|contract| contract.function_pointer_type() == function_type)
+                            .filter(|contract| {
+                                !contract.template().return_pointee_is_constant()
+                                    && contract.function_pointer_type() == function_type
+                            })
                             .cloned()
                             .collect::<Vec<_>>();
                         if contracts.is_empty() {
@@ -375,7 +673,9 @@ fn execute_c_indirect_call_paths(
                 });
                 continue;
             };
-            if function.function_pointer_type() != function_type {
+            if function.return_pointee_is_constant()
+                || function.function_pointer_type() != function_type
+            {
                 paths.push(CFunctionPath {
                     outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                         format!(

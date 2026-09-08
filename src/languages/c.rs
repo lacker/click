@@ -2,6 +2,7 @@
 
 pub mod source;
 pub mod syntax;
+pub mod target;
 
 #[cfg(test)]
 mod tests;

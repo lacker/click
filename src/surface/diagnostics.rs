@@ -724,9 +724,13 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
     match parameter.c_type() {
         C0Type::Void => 0,
         C0Type::VoidPointer => 8,
-        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
+        C0Type::CharPointer
+        | C0Type::CharArray(_)
+        | C0Type::UInt8Pointer
+        | C0Type::UInt8Array(_) => 1,
         C0Type::Int16 | C0Type::UInt16 | C0Type::Int16Array(_) | C0Type::UInt16Array(_) => 2,
         C0Type::Int32
+        | C0Type::Char
         | C0Type::UInt8
         | C0Type::UInt32
         | C0Type::Int32Pointer
@@ -743,6 +747,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::Int16PointerPointer
         | C0Type::UInt16PointerPointer
         | C0Type::Int32PointerPointer
+        | C0Type::CharPointerPointer
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int64PointerPointer
@@ -1602,7 +1607,7 @@ pub(super) fn describe_parameter_bitvector(
                 return Some(parameter.name().to_string());
             }
             CExpression::Value(CValue::UInt8(value))
-                if value == term && parameter.c_type() == C0Type::UInt8 =>
+                if value == term && matches!(parameter.c_type(), C0Type::Char | C0Type::UInt8) =>
             {
                 return Some(parameter.name().to_string());
             }

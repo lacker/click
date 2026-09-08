@@ -118,7 +118,7 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
     match (value, c_type) {
         (CValue::Int16(_), C0Type::Int16)
         | (CValue::Int32(_), C0Type::Int32)
-        | (CValue::UInt8(_), C0Type::UInt8)
+        | (CValue::UInt8(_), C0Type::Char | C0Type::UInt8)
         | (CValue::UInt16(_), C0Type::UInt16)
         | (CValue::UInt32(_), C0Type::UInt32)
         | (CValue::Int64(_), C0Type::Int64)

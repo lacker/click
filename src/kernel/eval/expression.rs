@@ -1580,7 +1580,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                                 value_type,
                                 pointer.pointee_volatile(),
                             )
-                            .with_pointee_constant(pointer.pointee_constant()),
+                            .with_constant(pointer.pointee_constant()),
                         ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -1620,7 +1620,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                                 *value_type,
                                 pointer.pointee_volatile(),
                             )
-                            .with_pointee_constant(pointer.pointee_constant()),
+                            .with_constant(pointer.pointee_constant()),
                         ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -1662,7 +1662,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                                 value_type,
                                 pointer.pointee_volatile(),
                             )
-                            .with_pointee_constant(pointer.pointee_constant()),
+                            .with_constant(pointer.pointee_constant()),
                         ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,

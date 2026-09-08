@@ -1,6 +1,198 @@
 use super::*;
 
 #[test]
+fn c0_plain_char_retains_source_types_and_unsigned_byte_lowering() {
+    use syntax::C0Type;
+    let functions = syntax::parse_functions(
+        r#"
+        typedef char byte;
+        struct packet { byte tag; byte data[2]; byte *next; };
+        byte global[2] = {255, 1};
+        char identity(char value, unsigned char other, char *p, char **pp) {
+            char local[2] = {255, 1};
+            char *q = p;
+            *pp = q;
+            return local[0] + value + other;
+        }
+        int fields(struct packet *p) { return p->data[0] + p->tag; }
+        char *literal() { return "ok"; }
+    "#,
+    )
+    .expect("plain char declarations and expressions should parse");
+    let function = &functions[0];
+    assert_eq!(function.return_type(), C0Type::Char);
+    assert_eq!(function.parameters()[0].c_type(), C0Type::Char);
+    assert_eq!(function.parameters()[1].c_type(), C0Type::UInt8);
+    assert_eq!(function.parameters()[2].c_type(), C0Type::CharPointer);
+    assert_eq!(
+        function.parameters()[3].c_type(),
+        C0Type::CharPointerPointer
+    );
+    assert_eq!(
+        function.global_arrays()["global"].element_type(),
+        C0Type::Char
+    );
+    assert_eq!(C0Type::Char.to_kernel_type(), crate::kernel::CType::UInt8);
+    assert_eq!(
+        C0Type::CharArray(2).to_kernel_type(),
+        crate::kernel::CType::UInt8Array(2)
+    );
+    assert_ne!(C0Type::CharPointer, C0Type::UInt8Pointer);
+    assert_eq!(
+        functions[2].to_kernel_function().string_literals()[0].bytes(),
+        b"ok\0"
+    );
+}
+
+#[test]
+fn c0_plain_char_rejects_unsigned_char_pointer_aliasing() {
+    for source in [
+        "void f(char *p, unsigned char *q) { p = q; }",
+        "void f(char *p, unsigned char *q) { unsigned char *r = p; }",
+        "void f(char **p, unsigned char **q) { p = q; }",
+        "void f(char **p, unsigned char *q) { *p = q; }",
+        "void f(unsigned char **p, char *q) { p[0] = q; }",
+        "char *f(unsigned char *q) { return q; }",
+        "void g(char *p); void f(unsigned char *q) { g(q); }",
+        "char *g(); void f(unsigned char *q) { q = g(); }",
+        "void f(unsigned char *q) { q = (char *)q; }",
+        "void f(char **p, unsigned char **q) { p = (char **)q; }",
+        "void f(char *p, unsigned char *q) { p = 1 ? p : q; }",
+        "void f(char *p, unsigned char *q) { char a[2]; p = 1 ? a : q; }",
+        "int f(char *p, unsigned char *q) { return p == q; }",
+        "long f(char *p, unsigned char *q) { return p - q; }",
+        "int f(char *p, unsigned char *q) { return p < q; }",
+        "struct s { char *p; }; void f(struct s *s, unsigned char *q) { s->p = q; }",
+        "void g(unsigned char *p); void f() { char a[2]; g(a); }",
+        "void g(char *p); void f() { unsigned char a[2]; g(a); }",
+    ] {
+        let error = syntax::parse_functions(source).expect_err(source);
+        assert!(
+            error.message().contains("incompatible C pointer types"),
+            "{source}: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_plain_char_declaration_signatures_remain_distinct() {
+    for source in [
+        "void f(char *p); void f(unsigned char *p);",
+        "char *f(); unsigned char *f();",
+        "typedef char byte; void f(byte *p); void f(unsigned char *p);",
+        "void f(char p[]); void f(unsigned char p[]);",
+        "void f(int (*cb)(char *p)); void f(int (*cb)(unsigned char *p));",
+    ] {
+        syntax::parse_functions(source).expect_err(source);
+    }
+}
+
+#[test]
+fn c0_plain_char_inline_call_assignments_preserve_source_compatibility() {
+    for body in [
+        "unsigned char *q = identity(p);",
+        "unsigned char *q; q = identity(p);",
+    ] {
+        let source = format!(
+            "static inline char *identity(char *p) {{ return p; }} void use(char *p) {{ {body} }}"
+        );
+        let error = syntax::parse_functions_for_source(&source, "inline.c")
+            .expect_err("mangled inline calls must retain source return types");
+        assert!(
+            error.message().contains("incompatible C pointer types"),
+            "{}",
+            error.message()
+        );
+    }
+    let functions = syntax::parse_functions_for_source(
+        "static inline char *identity(char *p) { return p; } char *use(char *p) { char *q = identity(p); q = identity(p); return q; }",
+        "inline.c",
+    ).expect("matching inline call assignments should remain supported");
+    assert!(functions[0].name().contains("#inline:"));
+}
+
+#[test]
+fn c0_plain_char_qualified_pointer_casts_are_explicitly_rejected() {
+    for source in [
+        "char *f(char *p) { return (const char *)p; }",
+        "char *f(char *p) { return (char const *)p; }",
+        "const char *f(char *p) { return (const char *)p; }",
+        "char *f(unsigned char *p) { return (const char *)p; }",
+        "void f(char *p) { char *q = (const char *)p; }",
+        "void f(char *p) { char *q; q = (const char *)p; }",
+        "char *f(char *p) { return (char * const)p; }",
+        "char *f(char *p) { return (volatile char *)p; }",
+        "typedef const char *text; char *f(char *p) { return (text)p; }",
+    ] {
+        let error = syntax::parse_functions(source).expect_err(source);
+        assert!(
+            error
+                .message()
+                .contains("qualified pointer cast destinations are not supported"),
+            "{source}: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_plain_char_unsigned_promotion_verifies() {
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "char.c";
+        int promote() { ensures result == 256 by auto; }
+        int compare() { ensures result == 1 by auto; }
+        "#,
+        &[("char.c", "int promote() { char c = 255; return c + 1; } int compare() { char c = 255; return c > 0; }")],
+    ).expect("plain char must promote as an unsigned byte to int");
+}
+
+#[test]
+fn c0_plain_char_explicit_byte_pointer_casts_preserve_source_identity() {
+    use syntax::{C0Expression, C0Statement, C0Type};
+    let functions = syntax::parse_functions(
+        "char *to_char(unsigned char *q) { return (char *)q; } unsigned char *to_byte(char *p) { return (unsigned char *)p; }",
+    ).expect("explicit casts between one-level byte pointers are valid C");
+    for (function, expected) in functions
+        .iter()
+        .zip([C0Type::CharPointer, C0Type::UInt8Pointer])
+    {
+        assert!(
+            matches!(function.body(), C0Statement::Return(C0Expression::Cast { c_type, .. }) if *c_type == expected)
+        );
+    }
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "cast.c";
+        int to_char() { ensures result == 255 by auto; }
+        int to_byte() { ensures result == 255 by auto; }
+        "#,
+        &[("cast.c", "int to_char() { unsigned char b = 255; char *p = (char *)&b; return *p; } int to_byte() { char b = 255; unsigned char *p = (unsigned char *)&b; return *p; }")],
+    ).expect("explicit byte pointer casts preserve byte memory semantics");
+}
+
+#[test]
+fn c0_plain_char_cross_file_signatures_remain_distinct() {
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "a.c";
+        verifying "b.c";
+        int f(char *p) { ensures result == 0 by auto; }
+        "#,
+        &[
+            ("a.c", "int f(char *p) { return 0; }"),
+            (
+                "b.c",
+                "int f(unsigned char *p); int g(unsigned char *p) { return f(p); }",
+            ),
+        ],
+    )
+    .err()
+    .expect("cross-file signatures must preserve plain char pointer identity");
+}
+
+#[test]
 fn c0_small_volatile_model_preserves_metadata_and_access_facts() {
     let functions = syntax::parse_functions(
         r#"
@@ -2348,11 +2540,8 @@ fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
 }
 
 #[test]
-fn c0_rejects_unmodeled_standard_integer_widths_and_char() {
-    for (source, spelling) in [
-        ("char unsupported() { return 0; }", "char"),
-        ("signed char unsupported() { return 0; }", "signed char"),
-    ] {
+fn c0_rejects_unmodeled_signed_char() {
+    for (source, spelling) in [("signed char unsupported() { return 0; }", "signed char")] {
         let error = syntax::parse_function(source)
             .expect_err("unmodeled standard C types should be rejected");
         assert!(

@@ -127,6 +127,7 @@ struct StaticAddress {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     return_type: C0Type,
+    return_pointee_constant: bool,
     return_struct_name: Option<String>,
     return_pointer_struct_name: Option<String>,
     name: String,
@@ -841,6 +842,7 @@ fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
     Some(match element_type {
         C0Type::Int16 => C0Type::Int16Array(length),
         C0Type::Int32 => C0Type::Int32Array(length),
+        C0Type::Char => C0Type::CharArray(length),
         C0Type::UInt8 => C0Type::UInt8Array(length),
         C0Type::UInt16 => C0Type::UInt16Array(length),
         C0Type::UInt32 => C0Type::UInt32Array(length),
@@ -871,6 +873,7 @@ fn kernel_integer_literal_value(
         },
         C0Type::Int16 => crate::kernel::int16(initializer_integer_bits(initializer)?),
         C0Type::Int32 => crate::kernel::int32(initializer_integer_bits(initializer)?),
+        C0Type::Char => crate::kernel::uint8(initializer_integer_bits(initializer)?),
         C0Type::UInt8 => crate::kernel::uint8(initializer_integer_bits(initializer)?),
         C0Type::UInt16 => crate::kernel::uint16(initializer_integer_bits(initializer)?),
         C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(initializer)?),
@@ -910,6 +913,7 @@ fn kernel_integer_literal_value(
         C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int32Pointer
+        | C0Type::CharPointer
         | C0Type::UInt8Pointer
         | C0Type::UInt32Pointer
         | C0Type::Int64Pointer
@@ -919,6 +923,7 @@ fn kernel_integer_literal_value(
         | C0Type::Int16PointerPointer
         | C0Type::UInt16PointerPointer
         | C0Type::Int32PointerPointer
+        | C0Type::CharPointerPointer
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int64PointerPointer
@@ -942,10 +947,12 @@ fn kernel_aggregate_initializer_value(
 ) -> Option<crate::kernel::CValue> {
     match c_type {
         C0Type::Int32Pointer
+        | C0Type::CharPointer
         | C0Type::UInt8Pointer
         | C0Type::Float32Pointer
         | C0Type::Float64Pointer
         | C0Type::Int32PointerPointer
+        | C0Type::CharPointerPointer
         | C0Type::UInt8PointerPointer
         | C0Type::Float32PointerPointer
         | C0Type::Float64PointerPointer
@@ -958,6 +965,7 @@ fn kernel_aggregate_initializer_value(
         }
         C0Type::Int16
         | C0Type::Int32
+        | C0Type::Char
         | C0Type::UInt8
         | C0Type::UInt16
         | C0Type::UInt32
@@ -1153,6 +1161,7 @@ impl C0StaticLocal {
             },
             C0Type::Int16 => crate::kernel::int16(initializer_integer_bits(&self.initializer)?),
             C0Type::Int32 => crate::kernel::int32(initializer_integer_bits(&self.initializer)?),
+            C0Type::Char => crate::kernel::uint8(initializer_integer_bits(&self.initializer)?),
             C0Type::UInt8 => crate::kernel::uint8(initializer_integer_bits(&self.initializer)?),
             C0Type::UInt16 => crate::kernel::uint16(initializer_integer_bits(&self.initializer)?),
             C0Type::UInt32 => crate::kernel::uint32(initializer_integer_bits(&self.initializer)?),
@@ -1573,6 +1582,12 @@ pub struct C0StructField {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
+    /// Plain char is distinct from unsigned char in C compatibility. The
+    /// supported x86_64 Linux kernel target gives it unsigned byte semantics.
+    Char,
+    CharPointer,
+    CharPointerPointer,
+    CharArray(u32),
     Void,
     /// An opaque pointer to an object of unknown type. It preserves pointer
     /// identity and provenance but deliberately has no pointee width, so it
@@ -1627,7 +1642,7 @@ pub enum CAbi {
 }
 
 impl CAbi {
-    pub const SUPPORTED: Self = Self::Lp64;
+    pub const SUPPORTED: Self = super::target::CTarget::SUPPORTED.abi();
 
     fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
         match (self, c_type) {
@@ -1635,7 +1650,7 @@ impl CAbi {
             (Self::Lp64, C0Type::VoidPointer) => (8, 8),
             (Self::Lp64, C0Type::Int16) => (2, 2),
             (Self::Lp64, C0Type::Int32) => (4, 4),
-            (Self::Lp64, C0Type::UInt8) => (1, 1),
+            (Self::Lp64, C0Type::Char | C0Type::UInt8) => (1, 1),
             (Self::Lp64, C0Type::UInt16) => (2, 2),
             (Self::Lp64, C0Type::UInt32) => (4, 4),
             (Self::Lp64, C0Type::Int64 | C0Type::UInt64) => (8, 8),
@@ -1646,6 +1661,7 @@ impl CAbi {
                 C0Type::Int32Pointer
                 | C0Type::Int16Pointer
                 | C0Type::UInt16Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::UInt32Pointer
                 | C0Type::Int64Pointer
@@ -1655,6 +1671,7 @@ impl CAbi {
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
@@ -1664,7 +1681,7 @@ impl CAbi {
             ) => (8, 8),
             (Self::Lp64, C0Type::FunctionPointer(_)) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
-            (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
+            (Self::Lp64, C0Type::CharArray(length) | C0Type::UInt8Array(length)) => (length, 1),
             (Self::Lp64, C0Type::Int16Array(length) | C0Type::UInt16Array(length)) => {
                 (length.saturating_mul(2), 2)
             }
@@ -1940,6 +1957,15 @@ pub struct C0SyntaxError {
 }
 
 impl C0Function {
+    pub(crate) fn with_return_pointee_constant(mut self, constant: bool) -> Self {
+        self.return_pointee_constant = constant;
+        self
+    }
+
+    pub fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
+    }
+
     pub(crate) fn external(
         return_type: C0Type,
         name: String,
@@ -1947,6 +1973,7 @@ impl C0Function {
     ) -> Self {
         Self {
             return_type,
+            return_pointee_constant: false,
             return_struct_name: None,
             return_pointer_struct_name: None,
             name,
@@ -2369,6 +2396,7 @@ impl C0Function {
                 .collect(),
             self.body.to_kernel_statement(),
         );
+        function = function.with_return_pointee_constant(self.return_pointee_constant);
         if self.inline_body {
             function = function.with_inline_body();
         }
@@ -2699,6 +2727,7 @@ impl C0Type {
                 | Self::Int32Pointer
                 | Self::Int16Pointer
                 | Self::UInt16Pointer
+                | Self::CharPointer
                 | Self::UInt8Pointer
                 | Self::UInt32Pointer
                 | Self::Int64Pointer
@@ -2708,6 +2737,7 @@ impl C0Type {
                 | Self::Int16PointerPointer
                 | Self::UInt16PointerPointer
                 | Self::Int32PointerPointer
+                | Self::CharPointerPointer
                 | Self::UInt8PointerPointer
                 | Self::UInt32PointerPointer
                 | Self::Int64PointerPointer
@@ -2727,6 +2757,7 @@ impl C0Type {
             self,
             Self::Int16Pointer
                 | Self::Int32Pointer
+                | Self::CharPointer
                 | Self::UInt8Pointer
                 | Self::UInt16Pointer
                 | Self::UInt32Pointer
@@ -2740,6 +2771,7 @@ impl C0Type {
             self,
             Self::Int16
                 | Self::Int32
+                | Self::Char
                 | Self::UInt8
                 | Self::UInt16
                 | Self::UInt32
@@ -2748,6 +2780,7 @@ impl C0Type {
                 | Self::Int16Pointer
                 | Self::UInt16Pointer
                 | Self::Int32Pointer
+                | Self::CharPointer
                 | Self::UInt8Pointer
                 | Self::UInt32Pointer
                 | Self::Int64Pointer
@@ -2757,6 +2790,7 @@ impl C0Type {
                 | Self::Int16PointerPointer
                 | Self::UInt16PointerPointer
                 | Self::Int32PointerPointer
+                | Self::CharPointerPointer
                 | Self::UInt8PointerPointer
                 | Self::UInt32PointerPointer
                 | Self::Int64PointerPointer
@@ -2768,6 +2802,7 @@ impl C0Type {
 
     pub fn pointee_type(self) -> Option<Self> {
         match self {
+            Self::CharPointer | Self::CharArray(_) => Some(Self::Char),
             Self::Int16Pointer | Self::Int16Array(_) => Some(Self::Int16),
             Self::Int32Pointer | Self::Int32Array(_) => Some(Self::Int32),
             Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
@@ -2780,6 +2815,7 @@ impl C0Type {
             Self::Int16PointerPointer => Some(Self::Int16Pointer),
             Self::UInt16PointerPointer => Some(Self::UInt16Pointer),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
+            Self::CharPointerPointer => Some(Self::CharPointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
             Self::UInt32PointerPointer => Some(Self::UInt32Pointer),
             Self::Int64PointerPointer => Some(Self::Int64Pointer),
@@ -2790,6 +2826,7 @@ impl C0Type {
             | Self::VoidPointer
             | Self::Int16
             | Self::Int32
+            | Self::Char
             | Self::UInt8
             | Self::UInt16
             | Self::UInt32
@@ -2805,6 +2842,7 @@ impl C0Type {
         Some(match self {
             Self::Int16 => Self::Int16Pointer,
             Self::Int32 => Self::Int32Pointer,
+            Self::Char => Self::CharPointer,
             Self::UInt8 => Self::UInt8Pointer,
             Self::UInt16 => Self::UInt16Pointer,
             Self::UInt32 => Self::UInt32Pointer,
@@ -2815,6 +2853,7 @@ impl C0Type {
             Self::Int16Pointer => Self::Int16PointerPointer,
             Self::UInt16Pointer => Self::UInt16PointerPointer,
             Self::Int32Pointer => Self::Int32PointerPointer,
+            Self::CharPointer => Self::CharPointerPointer,
             Self::UInt8Pointer => Self::UInt8PointerPointer,
             Self::UInt32Pointer => Self::UInt32PointerPointer,
             Self::Int64Pointer => Self::Int64PointerPointer,
@@ -2826,6 +2865,7 @@ impl C0Type {
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
             | Self::Int32PointerPointer
+            | Self::CharPointerPointer
             | Self::UInt8PointerPointer
             | Self::UInt32PointerPointer
             | Self::Int64PointerPointer
@@ -2834,6 +2874,7 @@ impl C0Type {
             | Self::Float64PointerPointer
             | Self::FunctionPointer(_)
             | Self::Int32Array(_)
+            | Self::CharArray(_)
             | Self::UInt8Array(_)
             | Self::Int16Array(_)
             | Self::UInt16Array(_)
@@ -2846,11 +2887,13 @@ impl C0Type {
     }
 
     pub fn to_kernel_type(self) -> crate::kernel::CType {
+        assert!(!super::target::CTarget::SUPPORTED.plain_char_is_signed());
         match self {
             Self::Void => crate::kernel::CType::Void,
             Self::VoidPointer => crate::kernel::CType::VoidPointer,
             Self::Int16 => crate::kernel::CType::Int16,
             Self::Int32 => crate::kernel::CType::Int32,
+            Self::Char => crate::kernel::CType::UInt8,
             Self::UInt8 => crate::kernel::CType::UInt8,
             Self::UInt16 => crate::kernel::CType::UInt16,
             Self::UInt32 => crate::kernel::CType::UInt32,
@@ -2861,6 +2904,7 @@ impl C0Type {
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::Int16Pointer => crate::kernel::CType::Int16Pointer,
             Self::UInt16Pointer => crate::kernel::CType::UInt16Pointer,
+            Self::CharPointer => crate::kernel::CType::UInt8Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
             Self::UInt32Pointer => crate::kernel::CType::UInt32Pointer,
             Self::Int64Pointer => crate::kernel::CType::Int64Pointer,
@@ -2870,6 +2914,7 @@ impl C0Type {
             Self::Int16PointerPointer => crate::kernel::CType::Int16PointerPointer,
             Self::UInt16PointerPointer => crate::kernel::CType::UInt16PointerPointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
+            Self::CharPointerPointer => crate::kernel::CType::UInt8PointerPointer,
             Self::UInt8PointerPointer => crate::kernel::CType::UInt8PointerPointer,
             Self::UInt32PointerPointer => crate::kernel::CType::UInt32PointerPointer,
             Self::Int64PointerPointer => crate::kernel::CType::Int64PointerPointer,
@@ -2878,6 +2923,7 @@ impl C0Type {
             Self::Float64PointerPointer => crate::kernel::CType::Float64PointerPointer,
             Self::FunctionPointer(signature) => crate::kernel::CType::FunctionPointer(signature),
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
+            Self::CharArray(length) => crate::kernel::CType::UInt8Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
             Self::Int16Array(length) => crate::kernel::CType::Int16Array(length),
             Self::UInt16Array(length) => crate::kernel::CType::UInt16Array(length),
@@ -3269,6 +3315,7 @@ pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
 
 pub(crate) struct C0TranslationUnit {
     pub functions: Vec<C0Function>,
+    pub function_declarations: BTreeMap<String, C0FunctionHeader>,
     pub structs: BTreeMap<String, C0StructLayout>,
     pub unions: BTreeMap<String, C0UnionLayout>,
     pub globals: BTreeMap<String, C0Global>,
@@ -3386,6 +3433,7 @@ fn validate_global_initializer(
     let valid = match c_type {
         C0Type::Int16 => bits <= i16::MAX as u64,
         C0Type::Int32 => bits <= i32::MAX as u64,
+        C0Type::Char => bits <= u8::MAX as u64,
         C0Type::UInt8 => bits <= u8::MAX as u64,
         C0Type::UInt16 => bits <= u16::MAX as u64,
         C0Type::UInt32 => true,
@@ -3424,7 +3472,12 @@ enum StaticIntegerKind {
 fn is_static_integer_type(c_type: C0Type) -> bool {
     matches!(
         c_type,
-        C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32
+        C0Type::Int16
+            | C0Type::Int32
+            | C0Type::Char
+            | C0Type::UInt8
+            | C0Type::UInt16
+            | C0Type::UInt32
     )
 }
 
@@ -3432,6 +3485,7 @@ fn static_integer_type_info(c_type: C0Type) -> Option<(StaticIntegerKind, u32)> 
     match c_type {
         C0Type::Int16 => Some((StaticIntegerKind::Signed, 16)),
         C0Type::Int32 => Some((StaticIntegerKind::Signed, 32)),
+        C0Type::Char => Some((StaticIntegerKind::Unsigned, 8)),
         C0Type::UInt8 => Some((StaticIntegerKind::Unsigned, 8)),
         C0Type::UInt16 => Some((StaticIntegerKind::Unsigned, 16)),
         C0Type::UInt32 => Some((StaticIntegerKind::Unsigned, 32)),
@@ -3881,6 +3935,7 @@ fn static_integer_literal_for_type(
     let (minimum, maximum) = match c_type {
         C0Type::Int16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
         C0Type::Int32 => (i128::from(i32::MIN), i128::from(i32::MAX)),
+        C0Type::Char => (0, i128::from(u8::MAX)),
         C0Type::UInt8 => (0, i128::from(u8::MAX)),
         C0Type::UInt16 => (0, i128::from(u16::MAX)),
         C0Type::UInt32 => (0, i128::from(u32::MAX)),
@@ -3989,6 +4044,7 @@ fn validate_static_initializer(
     let valid = match c_type {
         C0Type::Int16 => bits <= i16::MAX as u64,
         C0Type::Int32 => bits <= i32::MAX as u64,
+        C0Type::Char => bits <= u8::MAX as u64,
         C0Type::UInt8 => bits <= u8::MAX as u64,
         C0Type::UInt16 => bits <= u16::MAX as u64,
         C0Type::UInt32 => true,
@@ -4042,10 +4098,12 @@ fn validate_aggregate_initializer(
             }
         }
         C0Type::Int32Pointer
+        | C0Type::CharPointer
         | C0Type::UInt8Pointer
         | C0Type::Float32Pointer
         | C0Type::Float64Pointer
         | C0Type::Int32PointerPointer
+        | C0Type::CharPointerPointer
         | C0Type::UInt8PointerPointer
         | C0Type::Float32PointerPointer
         | C0Type::Float64PointerPointer => {
@@ -4093,6 +4151,7 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
 fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
     let (element_type, length) = match field.c_type {
         C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::CharArray(length) => (C0Type::Char, length),
         C0Type::UInt8Array(length) => (C0Type::UInt8, length),
         _ => return None,
     };
@@ -4107,6 +4166,7 @@ fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)
 
 fn zero_initializer_value(c_type: C0Type) -> C0Expression {
     match c_type {
+        C0Type::Char => C0Expression::UInt8Literal(0),
         C0Type::UInt8 => C0Expression::UInt8Literal(0),
         C0Type::UInt32 => C0Expression::UInt32Literal(0),
         C0Type::Int64 => C0Expression::Int64Literal(0),
@@ -4117,6 +4177,7 @@ fn zero_initializer_value(c_type: C0Type) -> C0Expression {
         | C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int32Pointer
+        | C0Type::CharPointer
         | C0Type::UInt8Pointer
         | C0Type::UInt32Pointer
         | C0Type::Int64Pointer
@@ -4124,6 +4185,7 @@ fn zero_initializer_value(c_type: C0Type) -> C0Expression {
         | C0Type::Int16PointerPointer
         | C0Type::UInt16PointerPointer
         | C0Type::Int32PointerPointer
+        | C0Type::CharPointerPointer
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int64PointerPointer
@@ -4654,8 +4716,10 @@ struct Parser {
     next_synthesized_call: u32,
     next_synthesized_aggregate: u32,
     next_string_literal: u32,
+    string_literal_names: BTreeSet<String>,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
+    function_source_names: BTreeMap<String, String>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
     global_arrays: BTreeMap<String, C0GlobalArray>,
@@ -4672,6 +4736,7 @@ struct Parser {
     current_return_struct_name: Option<String>,
     current_return_pointer_struct_name: Option<String>,
     current_return_type: C0Type,
+    current_return_pointee_constant: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -4681,8 +4746,9 @@ struct ScopeBinding {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct C0FunctionHeader {
+pub(crate) struct C0FunctionHeader {
     return_type: C0Type,
+    return_pointee_constant: bool,
     return_struct_name: Option<String>,
     return_pointer_struct_name: Option<String>,
     /// The C spelling used to resolve declarations and calls in this
@@ -4695,8 +4761,19 @@ struct C0FunctionHeader {
     parameters: Vec<C0Parameter>,
 }
 
+impl C0FunctionHeader {
+    pub(crate) fn linkage_name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn compatible_with(&self, other: &Self) -> bool {
+        function_headers_compatible(self, other)
+    }
+}
+
 fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader) -> bool {
     left.return_type == right.return_type
+        && left.return_pointee_constant == right.return_pointee_constant
         && left.return_struct_name == right.return_struct_name
         && left.return_pointer_struct_name == right.return_pointer_struct_name
         && left.parameters.len() == right.parameters.len()
@@ -4707,6 +4784,7 @@ fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader
             .all(|(left, right)| {
                 left.c_type == right.c_type
                     && left.struct_name == right.struct_name
+                    && left.function_pointer_signature == right.function_pointer_signature
                     && left.array_element_width == right.array_element_width
             })
 }
@@ -4752,8 +4830,10 @@ impl Parser {
             next_synthesized_call: 0,
             next_synthesized_aggregate: 0,
             next_string_literal: 0,
+            string_literal_names: BTreeSet::new(),
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
+            function_source_names: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
             global_arrays: BTreeMap::new(),
@@ -4770,6 +4850,7 @@ impl Parser {
             current_return_struct_name: None,
             current_return_pointer_struct_name: None,
             current_return_type: C0Type::Void,
+            current_return_pointee_constant: false,
         })
     }
 
@@ -4881,6 +4962,9 @@ impl Parser {
 
     fn expression_pointee_is_constant(&self, expression: &C0Expression) -> bool {
         match expression {
+            C0Expression::Call { function_name, .. } => self
+                .function_declaration_for_call(function_name)
+                .is_some_and(|function| function.return_pointee_constant),
             C0Expression::Variable(name) => {
                 self.variable_pointee_is_constant(name)
                     || (self.variable_is_constant(name)
@@ -4889,6 +4973,7 @@ impl Parser {
                                 matches!(
                                     c_type,
                                     C0Type::Int16Array(_)
+                                        | C0Type::CharArray(_)
                                         | C0Type::UInt8Array(_)
                                         | C0Type::UInt16Array(_)
                                         | C0Type::UInt32Array(_)
@@ -4933,6 +5018,7 @@ impl Parser {
         declared_pointee_constant: bool,
         expression: &C0Expression,
     ) -> Result<(), C0SyntaxError> {
+        self.validate_char_pointer_assignment(declared_type, expression)?;
         if declared_type.is_pointer()
             && !declared_pointee_constant
             && self.expression_pointee_is_constant(expression)
@@ -5129,9 +5215,9 @@ impl Parser {
     /// internal-linkage name rather than the declaration's source name.
     fn function_declaration_for_call(&self, function_name: &str) -> Option<&C0FunctionHeader> {
         self.function_declarations.get(function_name).or_else(|| {
-            self.function_declarations
-                .values()
-                .find(|function| function.name == function_name)
+            self.function_source_names
+                .get(function_name)
+                .and_then(|name| self.function_declarations.get(name))
         })
     }
 
@@ -5143,11 +5229,7 @@ impl Parser {
     }
 
     fn function_declaration(&self, name: &str) -> Option<&C0FunctionHeader> {
-        self.function_declarations.get(name).or_else(|| {
-            self.function_declarations
-                .values()
-                .find(|function| function.name == name)
-        })
+        self.function_declaration_for_call(name)
     }
 
     /// Records a parameter or local declaration in the innermost scope. A
@@ -5262,6 +5344,7 @@ impl Parser {
                     field.c_type,
                     C0Type::Int16
                         | C0Type::Int32
+                        | C0Type::Char
                         | C0Type::UInt8
                         | C0Type::UInt16
                         | C0Type::UInt32
@@ -5270,14 +5353,17 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
                         | C0Type::Int32Pointer
+                        | C0Type::CharPointer
                         | C0Type::UInt8Pointer
                         | C0Type::Float32Pointer
                         | C0Type::Float64Pointer
                         | C0Type::Int32PointerPointer
+                        | C0Type::CharPointerPointer
                         | C0Type::UInt8PointerPointer
                         | C0Type::Float32PointerPointer
                         | C0Type::Float64PointerPointer
@@ -5451,6 +5537,7 @@ impl Parser {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(C0TranslationUnit {
             functions,
+            function_declarations: self.function_declarations,
             structs: self.structs,
             unions: self.unions,
             globals: self.globals,
@@ -5565,10 +5652,15 @@ impl Parser {
         );
         let previous_return_type =
             std::mem::replace(&mut self.current_return_type, header.return_type);
+        let previous_return_pointee_constant = std::mem::replace(
+            &mut self.current_return_pointee_constant,
+            header.return_pointee_constant,
+        );
         let body_result = self.parse_block_statement();
         self.current_return_struct_name = previous_return_struct_name;
         self.current_return_pointer_struct_name = previous_return_pointer_struct_name;
         self.current_return_type = previous_return_type;
+        self.current_return_pointee_constant = previous_return_pointee_constant;
         let mut body = body_result?;
         self.pop_scope();
         validate_function_returns(&body, header.return_type)?;
@@ -5584,6 +5676,7 @@ impl Parser {
         let inline_body = header.name != header.source_name;
         Ok(C0Function {
             return_type: header.return_type,
+            return_pointee_constant: header.return_pointee_constant,
             return_struct_name: header.return_struct_name,
             return_pointer_struct_name: header.return_pointer_struct_name,
             name: header.name,
@@ -5610,7 +5703,7 @@ impl Parser {
         internal_linkage: bool,
     ) -> Result<C0FunctionHeader, C0SyntaxError> {
         let parsed_return_type = self.parse_type()?;
-        if parsed_return_type.is_constant || parsed_return_type.pointee_constant {
+        if parsed_return_type.is_constant {
             return Err(self.error_here(
                 "const-qualified function return types are not supported in this slice",
             ));
@@ -5672,6 +5765,7 @@ impl Parser {
         };
         Ok(C0FunctionHeader {
             return_type,
+            return_pointee_constant: parsed_return_type.pointee_constant,
             return_struct_name,
             return_pointer_struct_name,
             source_name,
@@ -5753,6 +5847,8 @@ impl Parser {
         } else {
             self.function_declarations
                 .insert(header.source_name.clone(), header.clone());
+            self.function_source_names
+                .insert(header.name.clone(), header.source_name.clone());
         }
         if definition && !self.defined_functions.insert(header.source_name.clone()) {
             return Err(self.error_here(format!(
@@ -7073,10 +7169,13 @@ impl Parser {
         if !matches!(
             c_type,
             C0Type::Int32
+                | C0Type::Char
                 | C0Type::UInt8
                 | C0Type::Int32Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
         ) {
             return Err(self.error_here(format!(
@@ -7353,7 +7452,11 @@ impl Parser {
             if base_type.struct_name.is_some()
                 || !matches!(
                     base_type.c_type,
-                    C0Type::Int32 | C0Type::UInt8 | C0Type::Float32 | C0Type::Float64
+                    C0Type::Int32
+                        | C0Type::Char
+                        | C0Type::UInt8
+                        | C0Type::Float32
+                        | C0Type::Float64
                 )
             {
                 return Err(self.error_here(
@@ -7406,6 +7509,7 @@ impl Parser {
             let array_shape = (dimensions.len() > 1).then_some(dimensions);
             let c_type = match base_type.c_type {
                 C0Type::Int32 => C0Type::Int32Array(element_count),
+                C0Type::Char => C0Type::CharArray(element_count),
                 C0Type::UInt8 => C0Type::UInt8Array(element_count),
                 C0Type::Float32 => C0Type::Float32Array(element_count),
                 C0Type::Float64 => C0Type::Float64Array(element_count),
@@ -7420,6 +7524,7 @@ impl Parser {
             c_type,
             C0Type::Int16
                 | C0Type::Int32
+                | C0Type::Char
                 | C0Type::UInt8
                 | C0Type::UInt16
                 | C0Type::UInt32
@@ -7428,14 +7533,17 @@ impl Parser {
                 | C0Type::Float32
                 | C0Type::Float64
                 | C0Type::Int32Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::Float32Pointer
                 | C0Type::Float64Pointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer
                 | C0Type::Int32Array(_)
+                | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Float32Array(_)
                 | C0Type::Float64Array(_)
@@ -7451,6 +7559,7 @@ impl Parser {
                 })?,
                 4,
             ),
+            C0Type::CharArray(length) => (length, 1),
             C0Type::UInt8Array(length) => (length, 1),
             _ => self.abi.size_and_alignment(c_type),
         };
@@ -7769,6 +7878,7 @@ impl Parser {
             c_type = match c_type {
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::Char => C0Type::CharPointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
                 C0Type::UInt16 => C0Type::UInt16Pointer,
                 C0Type::UInt32 => C0Type::UInt32Pointer,
@@ -7779,6 +7889,7 @@ impl Parser {
                 C0Type::Int16Pointer => C0Type::Int16PointerPointer,
                 C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                C0Type::CharPointer => C0Type::CharPointerPointer,
                 C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
                 C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
                 C0Type::Int64Pointer => C0Type::Int64PointerPointer,
@@ -7794,6 +7905,7 @@ impl Parser {
                 C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
@@ -7808,6 +7920,7 @@ impl Parser {
                     );
                 }
                 C0Type::Int32Array(_)
+                | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Int16Array(_)
                 | C0Type::UInt16Array(_)
@@ -7862,6 +7975,9 @@ impl Parser {
     ) -> Result<Option<(String, C0Type, C0FunctionPointerSignature)>, C0SyntaxError> {
         if self.peek() != Some(&Token::LParen) {
             return Ok(None);
+        }
+        if return_type.pointee_constant {
+            return Err(self.error_here("const-qualified callback returns are not supported"));
         }
         if return_type.struct_name.is_some() && !return_type.c_type.is_pointer() {
             return Err(self.error_here(
@@ -8026,11 +8142,7 @@ impl Parser {
                     ));
                 }
             }
-            "char" => {
-                return Err(self.error_at_previous(
-                    "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
-                ));
-            }
+            "char" => C0Type::Char,
             "volatile" => {
                 return Err(
                     self.error_at_previous("the `volatile` qualifier is not supported in C0")
@@ -8064,6 +8176,7 @@ impl Parser {
             C0Type::Int16 => C0Type::Int16Pointer,
             C0Type::UInt16 => C0Type::UInt16Pointer,
             C0Type::Int32 => C0Type::Int32Pointer,
+            C0Type::Char => C0Type::CharPointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
             C0Type::UInt32 => C0Type::UInt32Pointer,
             C0Type::Int64 => C0Type::Int64Pointer,
@@ -8073,6 +8186,7 @@ impl Parser {
             C0Type::Int16Pointer => C0Type::Int16PointerPointer,
             C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
             C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+            C0Type::CharPointer => C0Type::CharPointerPointer,
             C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
             C0Type::UInt32Pointer => C0Type::UInt32PointerPointer,
             C0Type::Int64Pointer => C0Type::Int64PointerPointer,
@@ -8126,6 +8240,7 @@ impl Parser {
                 C0Type::Int16 => (C0Type::Int16Array, 2u32, "int16".to_string(), false),
                 C0Type::UInt16 => (C0Type::UInt16Array, 2u32, "uint16".to_string(), false),
                 C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32".to_string(), false),
+                C0Type::Char => (C0Type::CharArray, 1u32, "char".to_string(), false),
                 C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8".to_string(), false),
                 C0Type::UInt32 => (C0Type::UInt32Array, 4u32, "uint32".to_string(), false),
                 C0Type::Int64 => (C0Type::Int64Array, 8u32, "int64".to_string(), false),
@@ -8423,6 +8538,11 @@ impl Parser {
                         Some(self.current_return_type),
                         &expression,
                     )?;
+                    self.reject_discarded_const_pointer(
+                        self.current_return_type,
+                        self.current_return_pointee_constant,
+                        &expression,
+                    )?;
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
                 }
@@ -8556,6 +8676,7 @@ impl Parser {
     ) -> Result<C0Statement, C0SyntaxError> {
         let (length, element_type) = match c_type {
             C0Type::Int32Array(length) => (length, C0Type::Int32),
+            C0Type::CharArray(length) => (length, C0Type::Char),
             C0Type::UInt8Array(length) => (length, C0Type::UInt8),
             C0Type::Int16Array(length) => (length, C0Type::Int16),
             C0Type::UInt16Array(length) => (length, C0Type::UInt16),
@@ -9793,6 +9914,7 @@ impl Parser {
                     || matches!(
                         c_type,
                         C0Type::Int16Array(_)
+                            | C0Type::CharArray(_)
                             | C0Type::UInt8Array(_)
                             | C0Type::UInt16Array(_)
                             | C0Type::UInt32Array(_)
@@ -9871,6 +9993,7 @@ impl Parser {
                 if matches!(
                     c_type,
                     C0Type::Int32Array(_)
+                        | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
@@ -10290,6 +10413,7 @@ impl Parser {
             let (element_type, element_count) = match field.c_type {
                 C0Type::Int16
                 | C0Type::Int32
+                | C0Type::Char
                 | C0Type::UInt8
                 | C0Type::UInt16
                 | C0Type::UInt32
@@ -10298,14 +10422,17 @@ impl Parser {
                 | C0Type::Float32
                 | C0Type::Float64 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
+                C0Type::CharArray(length) => (C0Type::Char, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Float32Array(length) => (C0Type::Float32, length),
                 C0Type::Float64Array(length) => (C0Type::Float64, length),
                 C0Type::Int32Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::Float32Pointer
                 | C0Type::Float64Pointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer => (field.c_type, 1),
@@ -10650,6 +10777,9 @@ impl Parser {
                 return self.aggregate_copy_statement(pointer.as_ref().clone(), struct_name, value);
             }
             let value = self.parse_expression()?;
+            if let Some(target_type) = self.source_expression_type(&target) {
+                self.validate_char_pointer_assignment(target_type, &value)?;
+            }
             return match target {
                 C0Expression::Load(pointer) => {
                     if let Some(struct_name) = self.struct_pointer_pointer_name(&pointer) {
@@ -10679,6 +10809,7 @@ impl Parser {
                             C0Type::Int16PointerPointer
                                 | C0Type::UInt16PointerPointer
                                 | C0Type::Int32PointerPointer
+                                | C0Type::CharPointerPointer
                                 | C0Type::UInt8PointerPointer
                                 | C0Type::UInt32PointerPointer
                                 | C0Type::Int64PointerPointer
@@ -10776,6 +10907,17 @@ impl Parser {
         function_name: String,
         arguments: Vec<C0Expression>,
     ) -> Result<C0Statement, C0SyntaxError> {
+        if self
+            .function_declaration_for_call(&function_name)
+            .is_some_and(|function| function.return_pointee_constant)
+            && self
+                .variable_types
+                .get(&target)
+                .is_some_and(|c_type| c_type.is_pointer())
+            && !self.variable_pointee_is_constant(&target)
+        {
+            return Err(self.error_here("cannot discard const qualification from a call result"));
+        }
         if function_name == "realloc" {
             if arguments.len() != 2 {
                 return Err(self.error_here(format!(
@@ -10790,7 +10932,7 @@ impl Parser {
             });
         }
         if !matches!(function_name.as_str(), "malloc" | "calloc") {
-            if self.function_declarations.contains_key(&function_name) {
+            if self.function_declaration_for_call(&function_name).is_some() {
                 self.validate_struct_pointer_assignment(
                     self.variable_structs.get(&target),
                     self.variable_types.get(&target).copied(),
@@ -10832,6 +10974,15 @@ impl Parser {
                 }
             } else {
                 let matches_target_element = match self.variable_types.get(&target).copied() {
+                    Some(C0Type::CharPointer) => matches!(
+                        element_size,
+                        C0Expression::Int32Literal(1)
+                            | C0Expression::SizeOfType {
+                                c_type: C0Type::Char,
+                                struct_name: None,
+                                ..
+                            }
+                    ),
                     Some(C0Type::UInt8Pointer) => matches!(
                         element_size,
                         C0Expression::Int32Literal(1)
@@ -10874,6 +11025,7 @@ impl Parser {
                         C0Type::Int16PointerPointer
                         | C0Type::UInt16PointerPointer
                         | C0Type::Int32PointerPointer
+                        | C0Type::CharPointerPointer
                         | C0Type::UInt8PointerPointer
                         | C0Type::UInt32PointerPointer
                         | C0Type::Int64PointerPointer
@@ -10887,6 +11039,7 @@ impl Parser {
                                 c_type: C0Type::Int16Pointer
                                     | C0Type::UInt16Pointer
                                     | C0Type::Int32Pointer
+                                    | C0Type::CharPointer
                                     | C0Type::UInt8Pointer
                                     | C0Type::UInt32Pointer
                                     | C0Type::Int64Pointer
@@ -11170,6 +11323,7 @@ impl Parser {
                 .insert(name.clone(), vec![length]);
             self.string_literals
                 .push(C0StringLiteral::new(name.clone(), bytes));
+            self.string_literal_names.insert(name.clone());
             return name;
         }
     }
@@ -11715,12 +11869,22 @@ impl Parser {
                     return Ok((prefix, C0Expression::Variable(target)));
                 }
                 let target = self.fresh_synthesized_call_name();
-                if let Some(function) = self.function_declarations.get(&function_name) {
-                    if let Some(struct_name) = &function.return_pointer_struct_name {
-                        self.variable_types
-                            .insert(target.clone(), function.return_type);
-                        self.variable_structs
-                            .insert(target.clone(), struct_name.clone());
+                if let Some((return_type, constant, struct_name)) = self
+                    .function_declaration_for_call(&function_name)
+                    .map(|function| {
+                        (
+                            function.return_type,
+                            function.return_pointee_constant,
+                            function.return_pointer_struct_name.clone(),
+                        )
+                    })
+                {
+                    self.variable_types.insert(target.clone(), return_type);
+                    if constant {
+                        self.variable_pointee_constants.insert(target.clone());
+                    }
+                    if let Some(struct_name) = struct_name {
+                        self.variable_structs.insert(target.clone(), struct_name);
                     }
                 } else if let Some(signature) = self.variable_function_pointers.get(&function_name)
                     && let Some(struct_name) = &signature.return_struct_name
@@ -12086,6 +12250,9 @@ impl Parser {
         let then_branch = self.parse_expression_allow_direct_aggregate()?;
         self.expect(Token::Colon)?;
         let else_branch = self.parse_expression_allow_direct_aggregate()?;
+        if let Some(then_type) = self.source_expression_type(&then_branch) {
+            self.validate_char_pointer_assignment(then_type, &else_branch)?;
+        }
         let then_struct = self.aggregate_struct_name(&then_branch);
         let else_struct = self.aggregate_struct_name(&else_branch);
         if then_struct != else_struct && (then_struct.is_some() || else_struct.is_some()) {
@@ -12337,11 +12504,17 @@ impl Parser {
                 Some(Token::EqualEqual) => {
                     self.position += 1;
                     let right = self.parse_relational()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::Equal(Box::new(expression), Box::new(right))
                 }
                 Some(Token::BangEqual) => {
                     self.position += 1;
                     let right = self.parse_relational()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::NotEqual(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -12356,21 +12529,33 @@ impl Parser {
                 Some(Token::LessThan) => {
                     self.position += 1;
                     let right = self.parse_shift()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::LessThan(Box::new(expression), Box::new(right))
                 }
                 Some(Token::LessEqual) => {
                     self.position += 1;
                     let right = self.parse_shift()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::LessEqual(Box::new(expression), Box::new(right))
                 }
                 Some(Token::GreaterThan) => {
                     self.position += 1;
                     let right = self.parse_shift()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::GreaterThan(Box::new(expression), Box::new(right))
                 }
                 Some(Token::GreaterEqual) => {
                     self.position += 1;
                     let right = self.parse_shift()?;
+                    if let Some(left_type) = self.source_expression_type(&expression) {
+                        self.validate_char_pointer_assignment(left_type, &right)?;
+                    }
                     C0Expression::GreaterEqual(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -12409,6 +12594,9 @@ impl Parser {
                 Some(Token::Minus) => {
                     self.position += 1;
                     let right = self.parse_multiply()?;
+                    if let Some(right_type) = self.source_expression_type(&right) {
+                        self.validate_char_pointer_assignment(right_type, &expression)?;
+                    }
                     self.scale_struct_pointer_arithmetic(expression, right, C0Expression::Subtract)?
                 }
                 _ => return Ok(expression),
@@ -12466,6 +12654,15 @@ impl Parser {
             self.position += 1;
             let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
+            if parsed_type.c_type.is_pointer()
+                && (parsed_type.pointee_constant
+                    || parsed_type.is_constant
+                    || parsed_type.is_volatile)
+            {
+                return Err(self.error_at_previous(
+                    "qualified pointer cast destinations are not supported; cast qualification cannot be discarded",
+                ));
+            }
             let (c_type, struct_name) = match (
                 parsed_type.c_type,
                 parsed_type.struct_name,
@@ -12474,6 +12671,7 @@ impl Parser {
                 (
                     C0Type::Int16
                     | C0Type::Int32
+                    | C0Type::Char
                     | C0Type::UInt8
                     | C0Type::UInt16
                     | C0Type::UInt32
@@ -12496,8 +12694,22 @@ impl Parser {
                     ));
                 }
             };
+            let expression = self.parse_unary()?;
+            let byte_pointer_cast = matches!(
+                (c_type, self.source_expression_type(&expression)),
+                (
+                    C0Type::CharPointer,
+                    Some(C0Type::UInt8Pointer | C0Type::UInt8Array(_))
+                ) | (
+                    C0Type::UInt8Pointer,
+                    Some(C0Type::CharPointer | C0Type::CharArray(_))
+                )
+            );
+            if !byte_pointer_cast {
+                self.validate_char_pointer_assignment(c_type, &expression)?;
+            }
             return Ok(C0Expression::Cast {
-                expression: Box::new(self.parse_unary()?),
+                expression: Box::new(expression),
                 c_type,
                 struct_name,
             });
@@ -12575,6 +12787,14 @@ impl Parser {
             if let Some(Token::Ident(name)) = self.peek().cloned()
                 && !self.variable_types.contains_key(&self.resolve_name(&name))
             {
+                if self
+                    .function_declaration_for_call(&name)
+                    .is_some_and(|function| function.return_pointee_constant)
+                {
+                    return Err(
+                        self.error_here("const-qualified callback returns are not supported")
+                    );
+                }
                 self.position += 1;
                 return Ok(C0Expression::FunctionAddress(
                     self.resolve_function_name(&name),
@@ -12875,7 +13095,7 @@ impl Parser {
 
     fn scalar_array_field_shape(&self, expression: &C0Expression) -> Option<Vec<u32>> {
         let C0Expression::Field {
-            field_type: C0Type::Int32Array(_) | C0Type::UInt8Array(_),
+            field_type: C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_),
             field_struct_name: None,
             array_shape: Some(shape),
             ..
@@ -13031,6 +13251,7 @@ impl Parser {
                         C0Type::Int16PointerPointer
                             | C0Type::UInt16PointerPointer
                             | C0Type::Int32PointerPointer
+                            | C0Type::CharPointerPointer
                             | C0Type::UInt8PointerPointer
                             | C0Type::UInt32PointerPointer
                             | C0Type::Int64PointerPointer
@@ -13057,6 +13278,7 @@ impl Parser {
                     C0Type::Int16PointerPointer
                     | C0Type::UInt16PointerPointer
                     | C0Type::Int32PointerPointer
+                    | C0Type::CharPointerPointer
                     | C0Type::UInt8PointerPointer
                     | C0Type::UInt32PointerPointer
                     | C0Type::Int64PointerPointer
@@ -13129,18 +13351,116 @@ impl Parser {
         }
     }
 
+    /// Retain source type identity before char and unsigned char lower to the
+    /// same kernel byte type. This only inspects the expression being checked.
+    fn source_expression_type(&self, expression: &C0Expression) -> Option<C0Type> {
+        match expression {
+            C0Expression::Variable(name) => {
+                let c_type = self.variable_types.get(name).copied()?;
+                if self.string_literal_names.contains(name) {
+                    if let C0Type::UInt8Array(length) = c_type {
+                        return Some(C0Type::CharArray(length));
+                    }
+                }
+                Some(c_type)
+            }
+            C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::Field { field_type, .. }
+            | C0Expression::UnionField { field_type, .. } => Some(*field_type),
+            C0Expression::Load(pointer) | C0Expression::Index(pointer, _) => {
+                self.source_expression_type(pointer)?.pointee_type()
+            }
+            C0Expression::AddressOf(value) => self.source_expression_type(value)?.pointer_type(),
+            C0Expression::PointerOffsetBytes { pointer, .. } => {
+                self.source_expression_type(pointer)
+            }
+            C0Expression::Add(left, right) => {
+                let left = self.source_expression_type(left);
+                if left.is_some_and(|ty| ty.is_pointer() || ty.pointee_type().is_some()) {
+                    left
+                } else {
+                    self.source_expression_type(right)
+                }
+            }
+            C0Expression::Subtract(left, _) => self.source_expression_type(left),
+            C0Expression::Conditional {
+                then_branch,
+                else_branch,
+                ..
+            } => self
+                .source_expression_type(then_branch)
+                .or_else(|| self.source_expression_type(else_branch)),
+            C0Expression::Call { function_name, .. } => self
+                .function_declaration_for_call(function_name)
+                .map(|header| header.return_type),
+            C0Expression::IndirectCall { signature, .. } => Some(signature.return_type),
+            _ => None,
+        }
+    }
+
+    fn validate_char_pointer_assignment(
+        &self,
+        expected: C0Type,
+        expression: &C0Expression,
+    ) -> Result<(), C0SyntaxError> {
+        if !expected.is_pointer() && expected.pointee_type().is_none() {
+            return Ok(());
+        }
+        let Some(actual) = self.source_expression_type(expression) else {
+            return Ok(());
+        };
+        let decay = |ty: C0Type| {
+            if ty.is_pointer() {
+                ty
+            } else {
+                ty.pointee_type()
+                    .and_then(C0Type::pointer_type)
+                    .unwrap_or(ty)
+            }
+        };
+        let actual = decay(actual);
+        let expected = decay(expected);
+        // Preserve the existing byte-string literal extension, narrowly for a
+        // literal itself. Its ordinary C source type remains char[], and no
+        // arbitrary char pointer gains unsigned-char pointer compatibility.
+        if expected == C0Type::UInt8Pointer
+            && actual == C0Type::CharPointer
+            && matches!(expression, C0Expression::Variable(name)
+                if self.string_literal_names.contains(name))
+        {
+            return Ok(());
+        }
+        let is_char_pointer = |ty| matches!(ty, C0Type::CharPointer | C0Type::CharPointerPointer);
+        if actual != expected
+            && actual.is_pointer()
+            && expected.is_pointer()
+            && actual != C0Type::VoidPointer
+            && expected != C0Type::VoidPointer
+            && (is_char_pointer(actual) || is_char_pointer(expected))
+        {
+            return Err(self.error_here(format!(
+                "incompatible C pointer types: expected {expected:?}, got {actual:?}; plain char and unsigned char are distinct types"
+            )));
+        }
+        Ok(())
+    }
+
     fn validate_struct_pointer_assignment(
         &self,
         expected_struct: Option<&String>,
         target_type: Option<C0Type>,
         expression: &C0Expression,
     ) -> Result<(), C0SyntaxError> {
+        if let Some(target_type) = target_type {
+            self.validate_char_pointer_assignment(target_type, expression)?;
+        }
         let Some(expected_struct) = expected_struct else {
             return Ok(());
         };
         match target_type {
             Some(
                 C0Type::Int32Pointer
+                | C0Type::CharPointer
                 | C0Type::UInt8Pointer
                 | C0Type::Float32Pointer
                 | C0Type::Float64Pointer,
@@ -13149,6 +13469,7 @@ impl Parser {
                 C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
+                | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int64PointerPointer
@@ -13502,7 +13823,7 @@ impl Parser {
     fn is_type_start_at(&self, offset: usize) -> bool {
         match self.peek_n(offset) {
             Some(Token::Ident(name)) => {
-                name == "volatile"
+                matches!(name.as_str(), "const" | "volatile")
                     || is_builtin_type_start(name)
                     || self.typedefs.contains_key(name)
             }
