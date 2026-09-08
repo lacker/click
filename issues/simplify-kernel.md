@@ -348,6 +348,14 @@ is the next step. The earlier outer-scope-only prototype was reverted. A rejecte
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
 
+The automatic-body census now has a concrete blocker:
+[quantified-invariant-body-planning.md](quantified-invariant-body-planning.md).
+Scalar and bubble prototypes worked, but copy3 needs complete snapshot-aware
+goal planning. Outlining bulky kernel reasoning frames fixes the independently
+reproduced explicit-copy3 stack overflow without changing search; that proof
+now reports a bounded local miss. The failed automatic-body runtime prototype
+was reverted; automatic preservation still uses legacy preparation.
+
 1. Replace the legacy loop closer using the existing
    `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
    checked proofs for the named paths; closure checks that each required fact

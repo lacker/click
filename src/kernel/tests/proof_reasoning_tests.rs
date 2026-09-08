@@ -1,6 +1,81 @@
 use super::*;
 
 #[test]
+fn nested_simp_derivations_keep_rule_temporaries_off_the_recursive_stack() {
+    std::thread::Builder::new()
+        .name("nested-simp-small-stack".into())
+        .stack_size(1792 * 1024)
+        .spawn(|| {
+            let samples = [1, 2, 4, 8].map(|depth| {
+                let variable = Variable(98_000);
+                let value = Bitvector32Term::Variable(variable);
+                let positive = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+                    true,
+                );
+                let nonnegative = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value),
+                    true,
+                );
+                // Keep real quantified/atomic work below the connective spine.
+                let mut goal = Proposition::ForAll {
+                    var: variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(Proposition::Implies(
+                        Box::new(positive),
+                        Box::new(nonnegative),
+                    )),
+                };
+                let truth = Proposition::ConditionIs(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                );
+                for _ in 0..depth {
+                    goal = Proposition::And(
+                        Box::new(truth.clone()),
+                        Box::new(Proposition::Implies(
+                            Box::new(truth.clone()),
+                            Box::new(Proposition::Implies(
+                                Box::new(truth.clone()),
+                                Box::new(goal),
+                            )),
+                        )),
+                    );
+                }
+                let assumptions = PureFactContext::new();
+                let (proof, planning_work) =
+                    crate::instrumentation::measure_deterministic_work(|| {
+                        assumptions
+                            .derive_simp_proposition(&goal)
+                            .expect("nested quantified proof")
+                    });
+                let (checked, checking_work) =
+                    crate::instrumentation::measure_deterministic_work(|| {
+                        proof.check(&assumptions)
+                    });
+                assert!(checked);
+                (depth, planning_work, checking_work)
+            });
+            for pair in samples.windows(2) {
+                assert!(
+                    pair[1].1 <= pair[0].1 * 3 + 16,
+                    "planning work: {samples:?}"
+                );
+                assert!(
+                    pair[1].2 <= pair[0].2 * 3 + 16,
+                    "checking work: {samples:?}"
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn rigid_parameters_are_typed_values_not_empty_datatypes() {
     let ty = AlgebraicType::parameter("T".into());
     let x = AlgebraicTerm {

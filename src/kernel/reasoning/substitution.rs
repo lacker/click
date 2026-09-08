@@ -2674,6 +2674,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             slots: state.locals.slots.clone(),
         },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
+        resource_bindings: state.resource_bindings.clone(),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
         counted_populations: std::sync::Arc::new(
@@ -4774,6 +4775,7 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
     CState {
         locals: CLocalEnvironment { bindings, slots },
         memory: substitute_pointer_variable_in_memory(&state.memory, from, to),
+        resource_bindings: state.resource_bindings.clone(),
         resources: substitute_pointer_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
         counted_populations: std::sync::Arc::new(

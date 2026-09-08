@@ -3061,7 +3061,20 @@ pub(in crate::surface) fn build_function_environment(
                 definition.name()
             ))
         })?;
-        environment = environment.with_function_contract(contract);
+        let proof_parameters = definition
+            .proof_parameters()
+            .unwrap_or(&[])
+            .iter()
+            .map(|parameter| {
+                resource_clause_to_resource_spec_with_parameters(
+                    parameter,
+                    parsed_function.parameters(),
+                    None,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        environment =
+            environment.with_function_contract(contract.with_proof_parameters(proof_parameters));
     }
     for (_, function) in parsed_sources.values() {
         let function = match function_blocks

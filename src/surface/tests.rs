@@ -3,6 +3,287 @@ use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
 #[test]
+fn checked_original_claim_can_close_after_rewrite_but_unrelated_have_cannot() {
+    let source = r#"verifying "identity.c";
+        int32 identity(int32 x) {
+            requires x == 1;
+            ensures result == 1;
+        } by {
+            execute(); rewrite(x == 1);
+            have result == 1 by { rewrite(x == 1); normalize(); }
+            assumption();
+        }
+    "#;
+    let c = [("identity.c", "int32 identity(int32 x) { return x; }")];
+    verify_c0_sources(source, &c).unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace("ensures result == 1;", "ensures result == 2;"),
+            &c
+        )
+        .is_err()
+    );
+    assert!(
+        verify_c0_sources(
+            &source.replace("have result == 1 by", "have result == 2 by"),
+            &c
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn opaque_resource_call_transports_only_the_selected_instance() {
+    let source = r#"verifying "invoke.c";
+        spec enum Mark { Clear, Set }
+        resource marker() { field model: Mark; field revision: int32; }
+        contract Touch(cell: marker()) for int32() {
+            owns cell;
+            ensures cell.model == old(cell.model);
+            ensures cell.revision == 1;
+            ensures result == 0;
+        }
+        int32 invoke(int32 (*callback)()) {
+            requires Touch(callback);
+            owns first: marker(); owns second: marker();
+            ensures first.model == old(first.model);
+            ensures first.revision == 1;
+            ensures second.model == old(second.model);
+            ensures second.revision == old(second.revision);
+            ensures result == 0;
+        } by { step(Touch(first)); execute(); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)()) { return callback(); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    assert!(expanded.contains("step(Touch(first));"));
+    verify_c0_sources(
+        &source.replace("by { step(Touch(first)); execute(); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    for bad in [
+        source.replace(
+            "ensures first.revision == 1;",
+            "ensures first.revision == old(first.revision);",
+        ),
+        source.replace("ensures cell.model == old(cell.model);", ""),
+        source.replace("Touch(first)", "Touch(second)"),
+    ] {
+        assert!(verify_c0_sources(&bad, &c).is_err());
+    }
+}
+
+#[test]
+fn explicit_contract_parameters_are_declared_not_implicit_ownership() {
+    let file = parser::parse(
+        r#"
+        resource marker(p: int32*) { field revision: int32; }
+        contract Read(cell: marker(p)) for int32(int32* p) {
+            owns cell;
+            ensures cell.revision == old(cell.revision);
+        }
+        contract Unowned(cell: marker(p)) for int32(int32* p) { ensures result == 0; }
+    "#,
+    )
+    .unwrap();
+    let definition = &file.contract_definitions()[0];
+    assert_eq!(definition.name(), "Read");
+    assert_eq!(definition.proof_parameters().unwrap().len(), 1);
+    assert_eq!(
+        definition.function_block().signature().parameters().len(),
+        1
+    );
+    assert!(
+        file.contract_definitions()[1]
+            .function_block()
+            .requires()
+            .is_empty()
+    );
+    let header = "resource marker(p: int32*) { field revision: int32; }";
+    for invalid in [
+        "contract C(cell: marker(p), cell: marker(p)) for int32(int32* p) {}",
+        "contract C(cell: marker(p), cell) for int32(int32* p) {}",
+        "contract C(p: marker(p)) for int32(int32* p) {}",
+        "contract C(cell: marker(0)) for int32() {}",
+        "contract C(cell: missing()) for int32() {}",
+        "contract C(cell: marker(p) = other) for int32(int32* p) {}",
+        "contract C() for int32(int32* p) { owns hidden: marker(p); }",
+        "contract C(cell: marker(p)) for int32(int32* p) { owns cell; owns cell; }",
+    ] {
+        let invalid = invalid.replace("{}", "{ ensures result == 0; }");
+        assert!(
+            parser::parse(&format!("{header} {invalid}")).is_err(),
+            "must reject {invalid}"
+        );
+    }
+}
+
+#[test]
+fn explicit_contract_applications_preserve_arguments_when_printed() {
+    let source = r#"
+        resource marker() { field revision: int32; }
+        contract Touch(cell: marker()) for int32() { owns cell; }
+        int32 f() { owns first: marker(); owns second: marker(); }
+        by { step(Touch(second)); }
+    "#;
+    let file = parser::parse(source).unwrap();
+    let SourceProof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+        panic!("expected script")
+    };
+    let printed = printing::format_proof_tactics(tactics).unwrap();
+    assert!(printed.contains("step(Touch(second));"));
+    let ProofTactic::StepContract(application) = &tactics[0] else {
+        panic!("expected application")
+    };
+    assert_eq!(application.arguments.as_ref().unwrap()[0].name, "second");
+    assert!(parser::parse(&source.replace("Touch(second)", "Touch(missing)")).is_err());
+}
+
+#[test]
+fn explicit_contract_empty_application_verifies_and_expands() {
+    let source = r#"verifying "invoke.c";
+        contract Identity() for int32(int32 x) { ensures result == x; }
+        int32 invoke(int32 (*callback)(int32), int32 x) {
+            requires Identity(callback);
+            ensures result == x;
+        } by { step(Identity()); execute(); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)(int32), int32 x) { return callback(x); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    assert!(expanded.contains("step(Identity());"));
+    verify_c0_sources(
+        &source.replace("by { step(Identity()); execute(); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    let error =
+        verify_c0_sources(&source.replace("step(Identity())", "step(Identity)"), &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("requires explicit application syntax"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn explicit_contract_application_checks_arguments_and_ownership() {
+    let source = r#"verifying "invoke.c";
+        resource marker() { field revision: int32; }
+        resource other() { field revision: int32; }
+        contract Touch(cell: marker()) for int32() { owns cell; ensures result == 0; }
+        int32 invoke(int32 (*callback)()) {
+            requires Touch(callback);
+            owns first: marker(); owns second: other();
+            ensures result == 0;
+        } by { step(Touch(first)); execute(); simp(); }
+    "#;
+    // C0 spells the empty function-pointer parameter list `()`.
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)()) { return callback(); }",
+    )];
+    for (application, diagnostic) in [
+        ("Touch", "requires explicit application syntax"),
+        ("Touch()", "expects 1 proof argument(s), got 0"),
+        ("Touch(first, second)", "expects 1 proof argument(s), got 2"),
+        ("Touch(second)", "expects resource `marker`, got `other`"),
+    ] {
+        let error =
+            verify_c0_sources(&source.replace("Touch(first)", application), &c).unwrap_err();
+        assert!(error.message().contains(diagnostic), "{}", error.message());
+    }
+    verify_c0_sources(source, &c).unwrap();
+    let duplicate = source
+        .replace("cell: marker()", "cell: marker(), another: marker()")
+        .replace("owns cell;", "owns cell; owns another;")
+        .replace("Touch(first)", "Touch(first, first)");
+    let error = verify_c0_sources(&duplicate, &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("cannot supply two contract proof parameters"),
+        "{}",
+        error.message()
+    );
+    let unowned = source
+        .replace("owns cell;", "")
+        .replace("step(Touch(first))", "step()");
+    let error = verify_c0_sources(&unowned, &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("requires explicit proof arguments"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn opaque_resource_call_checks_actual_c_arguments_and_call_entry_snapshots() {
+    let source = r#"verifying "invoke.c";
+        resource marker(p: int32*) { field revision: int32; }
+        contract Touch(cell: marker(p)) for int32(int32* p) {
+            owns cell;
+            ensures cell.revision == 1;
+            ensures result == old(cell.revision);
+        }
+        int32 invoke(int32 (*callback)(int32*), int32* p, int32* q) {
+            requires Touch(callback);
+            owns first: marker(p); owns second: marker(q);
+            ensures first.revision == 1;
+            ensures second.revision == old(second.revision);
+            ensures result == 1;
+        } by { step(Touch(first)); step(Touch(first)); execute();
+            rewrite(result == at(statement(0).exit, first.revision));
+            rewrite(at(statement(0).exit, first.revision) == 1); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)(int32*), int32* p, int32* q) { callback(p); return callback(p); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(
+        &source.replace(
+            "by { step(Touch(first)); step(Touch(first)); execute();\n            rewrite(result == at(statement(0).exit, first.revision));\n            rewrite(at(statement(0).exit, first.revision) == 1); simp(); }",
+            &expanded,
+        ),
+        &c,
+    )
+    .unwrap();
+    let error =
+        verify_c0_sources(&source.replace("Touch(first)", "Touch(second)"), &c).unwrap_err();
+    assert!(
+        error.message().contains("does not match its contract"),
+        "{}",
+        error.message()
+    );
+    assert!(!error.message().contains("AlgebraicSchemas"));
+    assert!(!error.message().contains("ResourceFieldSchema"));
+    assert!(!error.message().contains("diagnostic truncated"));
+    assert!(
+        verify_c0_sources(
+            &source.replace(
+                "ensures result == 1;",
+                "ensures result == old(first.revision);"
+            ),
+            &c
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn named_resource_bindings_preserve_symbolic_fields_and_recheck_expansion() {
     let source = r#"verifying "identity.c";
         spec enum Mark { Clear, Set }

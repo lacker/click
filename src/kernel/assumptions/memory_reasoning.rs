@@ -1616,7 +1616,19 @@ impl PureFactContext {
         end: &Bitvector32Term,
         element_width: u32,
     ) -> bool {
-        let resolved = crate::kernel::reasoning::resolve_symbolic_pointer_alias(pointer, self);
+        // Keep an access at its selected range base when their equality is
+        // explicit. Resolving only the access can otherwise lose an exact
+        // match after learning that a symbolic callback result aliases an
+        // external argument. This probes one equality, not ambient facts.
+        let resolved = if pointer == base
+            || self
+                .exact_condition_value(&ConditionTerm::pointer_equal(pointer.clone(), base.clone()))
+                == Some(true)
+        {
+            base.clone()
+        } else {
+            crate::kernel::reasoning::resolve_symbolic_pointer_alias(pointer, self)
+        };
         let pointer = &resolved;
         let proves_below_predecessor = |left: &Bitvector32Term, right: &Bitvector32Term| {
             let predecessor_upper =

@@ -617,98 +617,7 @@ impl PureFactContext {
         if let Some(rule) = self.derive_by_algebraic_constructor_rules(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
         }
-        let direct = match proposition {
-            Proposition::And(left, right) => self
-                .derive_proposition_using(left, for_simp)
-                .zip(self.derive_proposition_using(right, for_simp))
-                .map(|(left, right)| PropositionDerivationRule::And {
-                    left: Box::new(left),
-                    right: Box::new(right),
-                }),
-            Proposition::Or(left, right) => self
-                .derive_proposition_using(left, for_simp)
-                .map(|proof| PropositionDerivationRule::OrLeft(Box::new(proof)))
-                .or_else(|| {
-                    self.derive_proposition_using(right, for_simp)
-                        .map(|proof| PropositionDerivationRule::OrRight(Box::new(proof)))
-                }),
-            Proposition::Not(body) => match body.as_ref() {
-                Proposition::Not(inner) => self
-                    .derive_proposition_using(inner, for_simp)
-                    .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof))),
-                _ => self.atomic_derivation_premises(proposition, for_simp).map(
-                    |(premises, premises_id, evidence)| {
-                        PropositionDerivationRule::ContextualAtomic {
-                            premises,
-                            premises_id,
-                            for_simp,
-                            evidence,
-                        }
-                    },
-                ),
-            },
-            Proposition::Implies(left, right) => {
-                let antecedent = left.as_ref().clone();
-                let negated_antecedent = Proposition::Not(Box::new(antecedent.clone()));
-                if self.proves_exact(&negated_antecedent) {
-                    self.derive_proposition_using(&negated_antecedent, for_simp)
-                        .map(|proof| {
-                            PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof))
-                        })
-                } else {
-                    self.clone()
-                        .assume_proposition(antecedent.clone())
-                        .derive_proposition_using(right, for_simp)
-                        .map(|body| PropositionDerivationRule::Implies {
-                            antecedent,
-                            body: Box::new(body),
-                        })
-                        .or_else(|| {
-                            self.derive_proposition_using(&negated_antecedent, for_simp)
-                                .map(|proof| {
-                                    PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(
-                                        proof,
-                                    ))
-                                })
-                        })
-                }
-            }
-            Proposition::ForAll { var, body, .. } => {
-                let body_derivation = self
-                    .without_free_bitvector_variable(*var)
-                    .derive_proposition_using(body, for_simp)
-                    .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
-                body_derivation
-                    .or_else(|| self.derive_forall_loadable_range(proposition))
-                    .or_else(|| self.derive_finite_forall(proposition, for_simp))
-                    .or_else(|| {
-                        self.atomic_derivation_premises(proposition, for_simp).map(
-                            |(premises, premises_id, evidence)| {
-                                PropositionDerivationRule::ContextualAtomic {
-                                    premises,
-                                    premises_id,
-                                    for_simp,
-                                    evidence,
-                                }
-                            },
-                        )
-                    })
-            }
-            Proposition::Exists {
-                var, sort, body, ..
-            } => self
-                .derive_exists_from_witness(*var, sort, body)
-                .or_else(|| self.derive_exists_from_fact(*var, sort, body))
-                .or_else(|| self.derive_exists_loadable_range(*var, sort, body)),
-            _ => self.atomic_derivation_premises(proposition, for_simp).map(
-                |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
-                    premises,
-                    premises_id,
-                    for_simp,
-                    evidence,
-                },
-            ),
-        };
+        let direct = self.derive_structural_rule(proposition, for_simp);
         if let Some(rule) = direct {
             return Some(proposition_derivation(proposition, rule));
         }
@@ -725,6 +634,138 @@ impl PureFactContext {
         }
         self.derive_by_disjunction_cases(proposition, for_simp)
             .map(|rule| proposition_derivation(proposition, rule))
+    }
+
+    // These are stack-budget boundaries, not alternative search strategies.
+    // Keep rule-local by-value temporaries out of the recursive dispatcher.
+    #[inline(never)]
+    fn derive_structural_rule(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        match proposition {
+            Proposition::And(left, right) => self.derive_and_rule(left, right, for_simp),
+            Proposition::Or(left, right) => self.derive_or_rule(left, right, for_simp),
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::Not(inner) => self.derive_double_negation_rule(inner, for_simp),
+                _ => self.derive_atomic_rule(proposition, for_simp),
+            },
+            Proposition::Implies(left, right) => self.derive_implies_rule(left, right, for_simp),
+            Proposition::ForAll { var, body, .. } => {
+                self.derive_forall_rule(proposition, *var, body, for_simp)
+            }
+            Proposition::Exists {
+                var, sort, body, ..
+            } => self
+                .derive_exists_from_witness(*var, sort, body)
+                .or_else(|| self.derive_exists_from_fact(*var, sort, body))
+                .or_else(|| self.derive_exists_loadable_range(*var, sort, body)),
+            _ => self.derive_atomic_rule(proposition, for_simp),
+        }
+    }
+
+    #[inline(never)]
+    fn derive_and_rule(
+        &self,
+        left: &Proposition,
+        right: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        self.derive_proposition_using(left, for_simp)
+            .zip(self.derive_proposition_using(right, for_simp))
+            .map(|(left, right)| PropositionDerivationRule::And {
+                left: Box::new(left),
+                right: Box::new(right),
+            })
+    }
+
+    #[inline(never)]
+    fn derive_or_rule(
+        &self,
+        left: &Proposition,
+        right: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        self.derive_proposition_using(left, for_simp)
+            .map(|proof| PropositionDerivationRule::OrLeft(Box::new(proof)))
+            .or_else(|| {
+                self.derive_proposition_using(right, for_simp)
+                    .map(|proof| PropositionDerivationRule::OrRight(Box::new(proof)))
+            })
+    }
+
+    #[inline(never)]
+    fn derive_double_negation_rule(
+        &self,
+        inner: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        self.derive_proposition_using(inner, for_simp)
+            .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof)))
+    }
+
+    #[inline(never)]
+    fn derive_implies_rule(
+        &self,
+        left: &Proposition,
+        right: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        let antecedent = left.clone();
+        let negated_antecedent = Proposition::Not(Box::new(antecedent.clone()));
+        if self.proves_exact(&negated_antecedent) {
+            self.derive_proposition_using(&negated_antecedent, for_simp)
+                .map(|proof| PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof)))
+        } else {
+            self.clone()
+                .assume_proposition(antecedent.clone())
+                .derive_proposition_using(right, for_simp)
+                .map(|body| PropositionDerivationRule::Implies {
+                    antecedent,
+                    body: Box::new(body),
+                })
+                .or_else(|| {
+                    self.derive_proposition_using(&negated_antecedent, for_simp)
+                        .map(|proof| {
+                            PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof))
+                        })
+                })
+        }
+    }
+
+    #[inline(never)]
+    fn derive_forall_rule(
+        &self,
+        proposition: &Proposition,
+        var: Variable,
+        body: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        let body_derivation = self
+            .without_free_bitvector_variable(var)
+            .derive_proposition_using(body, for_simp)
+            .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
+        body_derivation
+            .or_else(|| self.derive_forall_loadable_range(proposition))
+            .or_else(|| self.derive_finite_forall(proposition, for_simp))
+            .or_else(|| self.derive_atomic_rule(proposition, for_simp))
+    }
+
+    #[inline(never)]
+    fn derive_atomic_rule(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        self.atomic_derivation_premises(proposition, for_simp).map(
+            |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
+                premises,
+                premises_id,
+                for_simp,
+                evidence,
+            },
+        )
     }
 
     fn derive_by_algebraic_constructor_rules(

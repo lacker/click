@@ -115,7 +115,13 @@ impl<'a> Proof<'a> {
             } => self.apply_transport_using(source, target, premises),
             ProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
             ProofStep::UnfoldFunction(application) => self.apply_function_unfold(application),
-            ProofStep::UnfoldResource(resource) => self.apply_execution_resource_unfold(resource),
+            ProofStep::UnfoldResource(resource) => {
+                if self.focused_outcome_data().is_some() {
+                    self.apply_outcome_resource_unfold(resource)
+                } else {
+                    self.apply_execution_resource_unfold(resource)
+                }
+            }
             ProofStep::FoldResource(resource) => {
                 if self.focused_outcome_data().is_some() {
                     self.apply_outcome_resource_fold(resource)

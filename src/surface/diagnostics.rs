@@ -153,6 +153,10 @@ pub(super) fn describe_pure_fact(
     arguments: &[CExpression],
 ) -> String {
     match fact {
+        Proposition::CResourceComposition(context) => format!(
+            "resource composition {}",
+            describe_resource_facts(context.facts(), parameters, arguments)
+        ),
         Proposition::Not(body) => {
             format!("not ({})", describe_pure_fact(body, parameters, arguments))
         }

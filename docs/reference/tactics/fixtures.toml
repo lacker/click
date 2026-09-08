@@ -23,6 +23,11 @@ path = "mdtests/c_step_contract_buffered.md"
 needle = "step(Buffered);"
 
 [[form]]
+id = "step-contract-application"
+path = "mdtests/contract_explicit_empty_application.md"
+needle = "step(Identity());"
+
+[[form]]
 id = "execute"
 path = "mdtests/tactic_execute.md"
 needle = "execute();"

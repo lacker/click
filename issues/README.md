@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## P1: before launch (20)
+## P1: before launch (21)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -51,6 +51,7 @@ Soundness and kernel shape:
 
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
+- [Plan quantified invariant bodies without legacy discovery](quantified-invariant-body-planning.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
@@ -76,9 +77,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (17)
-
-- [Split nested explicit post-call proof cases](nested-post-call-proof-cases.md)
+## P2: after launch (16)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling

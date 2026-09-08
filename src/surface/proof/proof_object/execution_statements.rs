@@ -12,7 +12,8 @@ impl<'a> Proof<'a> {
         };
         let selected_environment;
         let selected_context;
-        let context = if let ProofStep::StepContract(name) = &step {
+        let context = if let ProofStep::StepContract(application) = &step {
+            let name = &application.name;
             if context
                 .function_environment
                 .get_function_contract(name)
@@ -20,10 +21,51 @@ impl<'a> Proof<'a> {
             {
                 return Err(self.step_error(format!("unknown call contract `{name}`")));
             }
+            let definition = context
+                .predicate_environment
+                .contract_definition(name)
+                .ok_or_else(|| self.step_error(format!("unknown call contract `{name}`")))?;
+            let parameters = definition.proof_parameters.as_deref().unwrap_or(&[]);
+            if definition.proof_parameters.is_some() && application.arguments.is_none() {
+                return Err(self.step_error(format!(
+                    "contract `{name}` requires explicit application syntax: `{name}(...)`"
+                )));
+            }
+            let arguments = application.arguments.as_deref().unwrap_or(&[]);
+            if arguments.len() != parameters.len() {
+                return Err(self.step_error(format!(
+                    "contract `{name}` expects {} proof argument(s), got {}",
+                    parameters.len(),
+                    arguments.len()
+                )));
+            }
+            let mut identities = BTreeSet::new();
+            for (parameter, argument) in parameters.iter().zip(arguments) {
+                let ResourceClause::Named { binding, resource } = parameter else {
+                    unreachable!()
+                };
+                let ResourceClause::Declared { name: expected, .. } = resource.as_ref() else {
+                    unreachable!()
+                };
+                if argument.resource_name != *expected {
+                    return Err(self.step_error(format!(
+                        "contract `{name}` parameter `{}` expects resource `{expected}`, got `{}`",
+                        binding.name, argument.resource_name
+                    )));
+                }
+                if !identities.insert(argument.identity) {
+                    return Err(self.step_error(
+                        "an exclusive instance cannot supply two contract proof parameters",
+                    ));
+                }
+            }
             selected_environment = context
                 .function_environment
                 .clone()
-                .with_selected_call_contract(name);
+                .with_selected_call_contract(name)
+                .with_selected_call_resource_arguments(
+                    arguments.iter().map(|argument| argument.identity).collect(),
+                );
             selected_context = context.with_loop_binding(
                 context.function_block,
                 context.function,

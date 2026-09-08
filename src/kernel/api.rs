@@ -2857,6 +2857,65 @@ mod proof_case_evidence_tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn nested_outcome_evidence_is_exhaustive_and_rejects_corrupt_inner_arms() {
+        let root = ProofFacts::default();
+        let (outer, positive, negative) = case_partition(&root);
+        let outer_facts = [root.with_fact(positive), root.with_fact(negative)];
+        let inner_positive = Proposition::Predicate {
+            name: "inner".into(),
+            arguments: Vec::new(),
+        };
+        let inner_negative = Proposition::Not(Box::new(inner_positive.clone()));
+        let inner = CheckedProofCasePartition::check(
+            &outer_facts[0],
+            inner_positive.clone(),
+            inner_negative.clone(),
+        )
+        .unwrap();
+        let inner_facts = [
+            outer_facts[0].with_fact(inner_positive),
+            outer_facts[0].with_fact(inner_negative),
+        ];
+        let plan = |corrupt| OutcomeEvidenceFork::NestedSplit {
+            partition: outer.clone(),
+            arm_facts: outer_facts.clone(),
+            arms: [
+                Box::new(OutcomeEvidenceFork::Split {
+                    partition: inner.clone(),
+                    arm_facts: if corrupt {
+                        [inner_facts[1].clone(), inner_facts[0].clone()]
+                    } else {
+                        inner_facts.clone()
+                    },
+                }),
+                Box::new(OutcomeEvidenceFork::Keep),
+            ],
+        };
+        let mut core = ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
+        assert!(core.fork_outcome_evidence(&[plan(true)]).is_err());
+        assert_eq!(
+            core.execution_evidence.len(),
+            1,
+            "a rejected tree changes nothing"
+        );
+        core.fork_outcome_evidence(&[plan(false)]).unwrap();
+        assert_eq!(core.execution_evidence.len(), 3);
+        assert_eq!(
+            core.execution_evidence
+                .iter()
+                .map(|trace| trace.len())
+                .collect::<Vec<_>>(),
+            [2, 2, 1]
+        );
+        let traces = core.execution_evidence.to_vec();
+        assert!(proof_case_partitions_are_exhaustive(&traces));
+        assert!(
+            !proof_case_partitions_are_exhaustive(&traces[1..]),
+            "losing an inner arm is not exhaustive"
+        );
+    }
 }
 
 /// Reports whether an exact pure-fact context is contradictory.
