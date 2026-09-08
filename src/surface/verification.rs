@@ -3035,6 +3035,12 @@ pub(in crate::surface) fn composite_resource_definitions(
 ) -> Result<Vec<CCompositeResourceDefinition>, ClickError> {
     let mut definitions = Vec::new();
     for definition in resource_environment.definitions.values() {
+        // Field-bearing declarations are checked schemas, not legacy counted
+        // composites. All instance uses are rejected during declaration
+        // expansion until instance binding and field establishment land.
+        if !definition.is_countable() {
+            continue;
+        }
         let Some(body) = definition.composite_body() else {
             continue;
         };

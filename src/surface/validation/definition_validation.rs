@@ -673,6 +673,30 @@ fn validate_resource_definition(
     let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
+    if !definition.is_countable() {
+        let mut body_names = BTreeSet::new();
+        for fact in composite_body
+            .facts()
+            .iter()
+            .chain(composite_body.condition())
+        {
+            collect_current_proposition_variables(fact, &mut body_names);
+        }
+        for resource in composite_body.contains() {
+            collect_current_resource_clause_variables(resource, &mut body_names);
+        }
+        if let Some(field) = definition
+            .fields()
+            .iter()
+            .find(|field| body_names.contains(field.name()))
+        {
+            return Err(ClickError::new(format!(
+                "resource `{}` field `{}` cannot be used in body expressions yet; field establishment is not supported",
+                definition.name(),
+                field.name()
+            )));
+        }
+    }
     let mut variables = definition
         .parameters()
         .iter()

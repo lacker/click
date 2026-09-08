@@ -44,6 +44,12 @@ ownership of the unchanged C tree.
   linear ownership, counts, pointer/scalar substitution inside models, and
   deterministic scaling. A model index itself grants no memory authority.
   This is kernel support, not surface resource declarations or C contracts.
+- Resource bodies accept leading `field name: ClickType;` declarations,
+  including multiple fields and nested generic ADTs. Field declarations are
+  type-checked and retained as shared kernel-checked schemas. Field-bearing
+  resources are non-countable: `count(...)` and quantity clauses reject them.
+  [resource_fields.md](../mdtests/resource_fields.md) checks declarations only;
+  instance use and field establishment remain explicitly unsupported.
 
 Pure Click expressions define symbolic terms; only C executes. A pure `match`
 does not automatically split a proof or introduce proof-scope bindings.
@@ -58,6 +64,9 @@ checks conditional reductions against explicitly cited premises.
   lowering, C-contract model inputs/outputs, and checked body instantiation
   must carry symbolic arguments without encoding them as C values. C-only
   body evaluators reject a model argument rather than treating it as a scalar.
+- Resource fields cannot yet be bound, projected, established, or updated in
+  ownership proofs. Field-bearing declarations must not enter the legacy
+  counted/composite instance representation with their fields erased.
 - Resource bodies support one load-free `if` guard with an empty false case,
   but no `else` or constructor `match`. Resource-body witnesses are restricted
   to C pointers, so they cannot bind existential child models.
@@ -74,23 +83,32 @@ checks conditional reductions against explicitly cited premises.
 
 ## Agreed resource design and next implementation steps
 
-Resource definitions should accept symbolic model arguments and define their
-bodies by constructor `match`, just as they can already define conditional
-bodies with `if`. This is a logical definition, not runtime execution or an
-instruction to traverse a model automatically.
+Resource definitions should expose typed pure fields, such as `contents` or
+`model`, accessed through named owned instances. There is no special single
+model field: a resource can have several fields. Resources with fields are
+non-countable and exclusively owned. Identity, abstract state, and ownership
+must remain distinct; equal field values do not make two instances identical.
+Field-free resources retain their existing counting rules.
+
+Bodies should relate those fields to owned memory, including by constructor
+`match`, just as they can already define conditional bodies with `if`. This
+is a logical definition, not runtime execution or an instruction to traverse
+a model automatically.
 
 Implement and check the following slices in order:
 
-1. **Typed symbolic resource arguments.** Carry C and ADT arguments with their
-   actual types through resource identities, equality, substitution, lowering,
-   and certificates. Check a small nonrecursive model-indexed resource first,
-   including an arbitrary model variable, not only concrete constructors.
-   The kernel identity/substitution/counting slice is implemented; the surface
-   and C-contract integration remain open.
+1. **Resource fields and instance binding.** Declaration parsing, type checking,
+   shared kernel schemas, and rejection of counting are implemented. Decide
+   instance-binding and field-establishment syntax, then carry identity and
+   typed field state through contracts, equality, substitution, and checked
+   fold/unfold. Check a small nonrecursive resource with an arbitrary field
+   value, not only concrete constructors. The earlier kernel symbolic-index
+   infrastructure remains available but does not implement instance fields.
    [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
    current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
-   Turn it into a passing fixture as support lands, then add the arbitrary-index
-   read/return proof and meaningful negative transfer tests described there.
+   Keep that unsupported-parameter diagnostic until the parameter path is
+   supported. Add the intended arbitrary-state read/return proof using named
+   resource fields, with meaningful negative transfer tests.
 2. **Checked resource `match`.** Check exhaustive constructor arms and their
    scoped typed fields. Fold/unfold selects a justified arm and exposes only
    its immediate owned resources and pure facts. An unknown model remains
@@ -99,7 +117,8 @@ Implement and check the following slices in order:
    must retain a checked finite, well-founded interpretation.
 3. **Contract model bindings and the heap relation.** Support typed symbolic
    models and necessary witnesses across function entry and exit. Define
-   `tree_at(root, model)` in the existing modeled-binary-tree sidecar. Its empty
+   a tree resource with a model field in the existing modeled-binary-tree
+   sidecar. Its empty
    case requires a null root; its node case owns the node fields, relates the
    payload to memory, and contains disjoint resources for the two child models.
    Record node identities as well as stored values, without granting ownership
@@ -118,18 +137,17 @@ Resource `match` and the modeled C contracts remain unimplemented. The kernel
 identity tests and existing pure tree proofs must not be reported as
 verification of the C tree.
 
-### Next design decision: proof-only contract inputs
+### Next design decision: binding and establishing resource instances
 
-Decide how a C contract declares an arbitrary model input, and how a call
-instantiates it from the resources it transfers. The existing contract
-`let ... where` form introduces an existential witness; silently treating it
-as a universally quantified model parameter would change its semantics.
+Decide how a contract binds an owned instance as `cell`, how `cell.model` and
+`old(cell.model)` refer to its state, and how fold/return proofs establish field
+values. Fields are ordinary symbolic Click values, not freely assignable ghost
+storage. No field value itself grants memory authority. A model change must
+re-establish the resource's relation to the concrete memory.
 
-The proposed direction is explicit universally quantified proof-only contract
-parameters, separate from C parameters, with call-site inference from resource
-indices. Their declaration syntax and inference/explicit-instantiation rules
-need agreement before the arbitrary-index read/return fixture is implemented.
-Do not replace that fixture with concrete-only indices or add ghost C arguments.
+The existing contract `let ... where` introduces separate existential witnesses
+per clause; it must not silently become a shared instance binding. Do not
+replace arbitrary-state proofs with concrete-only models or add ghost C arguments.
 
 ## Violated invariant
 

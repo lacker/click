@@ -319,6 +319,43 @@ pub(super) fn validate_algebraic_type_uses(
         }
     }
     for definition in file.resource_definitions() {
+        let mut names = definition
+            .parameters()
+            .iter()
+            .map(|p| p.name())
+            .collect::<BTreeSet<_>>();
+        for field in definition.fields() {
+            if !names.insert(field.name()) {
+                return Err(ClickError::new(format!(
+                    "resource `{}` field `{}` duplicates a field or parameter name",
+                    definition.name(),
+                    field.name()
+                )));
+            }
+            if let ClickType::Algebraic(application) = field.click_type() {
+                validate_type_application(
+                    application,
+                    &definitions,
+                    &format!("resource `{}` field `{}`", definition.name(), field.name()),
+                )?;
+            }
+        }
+        let field_names = definition
+            .fields()
+            .iter()
+            .map(|field| field.name())
+            .collect::<BTreeSet<_>>();
+        if let Some(body) = definition.composite_body() {
+            for witness in body.witnesses() {
+                if field_names.contains(witness.name()) {
+                    return Err(ClickError::new(format!(
+                        "resource `{}` witness `{}` shadows a field",
+                        definition.name(),
+                        witness.name()
+                    )));
+                }
+            }
+        }
         if let Some(parameter) = definition
             .parameters()
             .iter()
