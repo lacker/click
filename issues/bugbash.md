@@ -1,10 +1,16 @@
 # Bug bash: open soundness holes and C mis-models
 
-Sixteen independent root causes, each with a reproduction that verifies today
-while stating something false about its C, or that models a C construct
-differently from C11/C17 on the LP64 profile Click documents. Six are
-critical: an ordinary contract over ordinary C is certified while false, with
-no unusual tactics.
+Nineteen independent root causes. Every one has a reproduction that verifies
+today while stating something the C does not guarantee: a false postcondition,
+a definite answer where C leaves the behaviour undefined or unspecified, or a
+program C rejects that Click accepts. All are against C11/C17 on the LP64
+profile Click documents.
+
+Six are critical: an ordinary contract over ordinary C is certified while
+false, with no unusual tactics. The other thirteen are high: the trigger is
+narrower, an unusual construct or an out-of-range value, but the accepted
+claim is just as wrong. Nothing here is speculative; anything that could not
+be made to reproduce has been removed rather than left as a lead.
 
 This is deliberately a bundle rather than one file per problem, so the set
 stays together while it is triaged. **Split it up as work starts**: when a
@@ -25,13 +31,11 @@ directory and run:
 click verify --time-limit 30s t.click
 ```
 
-Exit 0 is the bug: the sidecar states something false about the C. Every pair
-below was re-run against the release binary and reproduces, with one stated
-exception in section 12, whose pair is already rejected and becomes a positive
-test once that section's remaining work lands. Each regression is intended to
-land as an mdtest whose `expect` block is a rejection, so the diagnostic in
-the acceptance criteria is a shape, not an exact string; where the fix makes a
-previously-rejected program verify instead, land the positive test too.
+Exit 0 is the bug. Every pair below was re-run against the release binary and
+reproduces. Each regression is intended to land as an mdtest whose `expect`
+block is a rejection, so the diagnostic in the acceptance criteria is a shape,
+not an exact string; where the fix makes a previously-rejected program verify
+instead, land the positive test too.
 
 ---
 
@@ -1018,31 +1022,26 @@ correctly rejected, which shows the checker runs and this case slips past it.
 
 ---
 
-## 12. Aggregate copies skip field types and uninitialized sources
+## 12. An aggregate copy from an uninitialized source keeps the old value
 
-**Severity: medium.** Two parts, both narrower than the stale-value hole that
-the destination-clearing change closed.
+**Severity: high.** A whole-struct assignment whose source was never written
+leaves the destination reading as its own previous value, so a contract can
+state that value.
 
-**Violated invariant.** Struct assignment copies every member
-(C11 6.5.16.1p2), and copying from an uninitialized source is a read of
-indeterminate storage.
+**Violated invariant.** Struct assignment copies the source's members
+(C11 6.5.16.1p2). A source member that was never written is indeterminate, so
+reading the destination afterwards is a read of indeterminate storage, not a
+read of what the destination held before.
 
 **Mechanism.** `copy_aggregate_fields` (`src/kernel/functions.rs:3526-3549`)
-matches a fixed list of field types. A field outside that list is no longer
-left holding the destination's previous value, so no false value is provable,
-but it is still not carried: the missing widths are `int16*`, `uint16*`,
-`uint32*`, `int64*`, `uint64*`, `float*`, `double*`, and the float array and
-pointer-to-pointer forms. Separately, a copy whose source leaf is
-uninitialized is not reported as a read of indeterminate storage. The frontend
-routes union-containing layouts through this kernel copy
+copies a source cell only when one is present. A union-containing layout routes
+whole-struct assignment through this kernel copy
 (`C0Statement::AggregateCopy`, executed at
-`src/kernel/eval/statements.rs:568`), which is how both become reachable.
+`src/kernel/eval/statements.rs:568`), and with no source cell the destination's
+own cell survives untouched. The same assignment between plain structs is
+correctly reported, so the union path is what makes this reachable.
 
-**Regression.** The shape below is rejected today because the destination's
-cells are cleared; it becomes a positive test once the field is carried, with
-`ensures result == 21` (the copy makes `destination.data` null).
-
-**Regression** (`mdtests/aggregate_copy_skips_field_rejected.md`):
+**Regression** (`mdtests/aggregate_copy_uninitialized_source_rejected.md`):
 
 ```c
 union payload {
@@ -1053,53 +1052,42 @@ union payload {
 struct packet {
     int32 tag;
     union payload payload;
-    float* fp;
 };
 
-int32 stale_union_copy(struct packet* src) {
-    float arr[1];
-    struct packet dst;
-    dst.tag = 1;
-    dst.fp = arr;
-    dst = *src;
-    return dst.tag * 10 + (dst.fp == 0);
+int32 aggregate_copy_uninitialized_source_rejected() {
+    struct packet source;
+    struct packet destination;
+    destination.tag = 7;
+    destination = source;
+    return destination.tag;
 }
 ```
 
 ```click
 verifying "t.c";
 
-int32 stale_union_copy(struct packet* src) {
-    requires loadable(src->tag);
-    requires loadable(src->payload.number);
-    requires loadable(src->fp);
-    requires src->tag == 2;
-    requires src->fp == 0;
-    consumes src->tag;
-    consumes src->payload.number;
-    consumes src->fp;
-    ensures result == 20;
-    produces src->tag;
-    produces src->payload.number;
-    produces src->fp;
+int32 aggregate_copy_uninitialized_source_rejected() {
+    ensures result == 7;
 }
 ```
 
-After the copy `dst.fp` is null, so the function returns 21, not 20.
+`source` was never written, so `destination.tag` is indeterminate after the
+copy and 7 is the value the assignment was supposed to overwrite.
 
 **Acceptance criteria.**
-- The sidecar is rejected and `ensures result == 21` verifies.
-- Replace the catch-all `continue` with either a complete match over modeled
-  leaf types or an explicit unsupported-layout error; a silently skipped field
-  must be impossible.
-- A copy whose source leaf is uninitialized reports a read of uninitialized
-  storage rather than keeping the destination's old value.
+- The sidecar is rejected with a read of uninitialized storage, as the same
+  assignment between plain structs already is.
+- A copy whose source leaves a field type this copy cannot carry keeps its
+  current treatment: the destination cells are dropped, so nothing stale is
+  readable. Carrying the remaining widths (`int16*`, `uint16*`, `uint32*`,
+  `int64*`, `uint64*`, `float*`, `double*`, and the float array and
+  pointer-to-pointer forms) is a completeness follow-up, not part of this.
 
 ---
 
 ## 13. Subnormal float division is mis-rounded
 
-**Severity: medium.** The integer-space IEEE evaluator mis-rounds a division
+**Severity: high.** The integer-space IEEE evaluator mis-rounds a division
 whose result is subnormal and whose dividend is subnormal: the sticky bit
 collides with the rounding bit.
 
@@ -1148,7 +1136,7 @@ int32 subnormal_divide() {
 
 ## 14. Range byte counts wrap modulo 2^32
 
-**Severity: medium.** A huge or negative element range lowers to a tiny byte
+**Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
 
 **Violated invariant.** The byte footprint of an element range is
@@ -1208,7 +1196,9 @@ int32 symn(int32 p[], int32 n) {
 
 ## 15. Intra-object array overflow is modeled as a flat access
 
-**Severity: medium** (documented, but it accepts undefined behaviour).
+**Severity: high.** The flat-access model is documented, which is why the
+fix has to change the documentation with it; it still certifies a value for a
+program whose behaviour C leaves undefined.
 
 **Violated invariant.** An array subscript outside its own dimension is
 undefined behaviour (C11 6.5.6p8) even when the containing allocation has more
@@ -1276,51 +1266,168 @@ behaviour with a predictable result.
 
 ---
 
-## 16. Symbolic specification arithmetic wraps where constants are undefined
+## 16. Null pointer arithmetic is accepted and yields a definite pointer
 
-**Severity: medium.** No false non-reflexive claim was found, but the two
-halves of the specification language disagree, which is how the next hole gets
-in.
+**Severity: high.** Pointer arithmetic on a null pointer is undefined, and the
+result is then compared as a definite non-null value.
 
-**Violated invariant.** `docs/concepts/c0-and-c-fragments.md` says a C fragment
-in a specification follows C0 integer rules "including signed-overflow
-obligations". Symbolic spec terms do not produce them.
+**Violated invariant.** Additive pointer arithmetic is defined only when the
+pointer designates an element of an object or one past its end (C11 6.5.6p8).
+A null pointer designates no object, so `p + 1` has no defined value to
+compare.
 
-**Mechanism.** `evaluate_spec_int32_binary_paths` (`src/kernel/spec.rs:3137`)
-drops undefined-behaviour outcomes with
-`filter_map(c_expression_path_value)`, so a symbolic overflowing term becomes a
-wrapping bitvector term with no obligation. The same expression with constant
-operands fails to lower at all ("produced 0 paths, not one").
+**Mechanism.** Not localized. The pointer-addition path in
+`src/kernel/eval/operators.rs` scales the offset without requiring the base to
+designate an object, and the resulting pointer compares unequal to null
+because it carries a nonzero offset.
 
-**Regression** (`mdtests/spec_symbolic_overflow_wraps.md` — the expectation
-depends on the resolution):
+**Regression** (`mdtests/null_pointer_arithmetic_rejected.md`):
 
 ```c
-int32 identity(int32 x) {
-    return x;
+int32 null_pointer_arithmetic_rejected() {
+    int32* p = 0;
+    int32* q = p + 1;
+    if (q == 0) {
+        return 1;
+    }
+    return 0;
 }
 ```
 
 ```click
 verifying "t.c";
 
-int32 identity(int32 x) {
-    ensures (x + 1) - 1 == x;
+int32 null_pointer_arithmetic_rejected() {
+    ensures result == 0;
 }
 ```
 
-Verifies today with no `requires`. The concrete
-`ensures (2147483647 + 1) - (2147483647 + 1) == 0;` fails to lower, and
-`ensures x + 1 > x;` correctly fails.
+**Acceptance criteria.**
+- The addition is reported as undefined behaviour, so neither branch's value
+  is provable.
+- Arithmetic on a pointer that does designate an object is unaffected,
+  including the one-past-the-end position.
+
+---
+
+## 17. A `for` initializer's variable stays readable after the loop
+
+**Severity: high.** C0 accepts a program C rejects, and proves a value for the
+out-of-scope read.
+
+**Violated invariant.** A variable declared in a `for` initializer is scoped to
+the loop (C11 6.8.5p5). Naming it afterwards is a use of an undeclared
+identifier, which is a constraint violation, not a value.
+
+**Mechanism.** Not localized. `for` is lowered as sugar over `while` in
+`src/languages/c/syntax.rs`; the initializer's declaration is emitted into the
+enclosing block, so the binding outlives the loop it belongs to.
+
+**Regression** (`mdtests/for_initializer_scope_rejected.md`):
+
+```c
+int32 for_initializer_scope_rejected() {
+    int32 total = 0;
+    for (int32 i = 0; i < 3; i++) {
+        total = total + i;
+    }
+    return i;
+}
+```
+
+```click
+verifying "t.c";
+
+int32 for_initializer_scope_rejected() {
+    ensures result == 3;
+}
+```
 
 **Acceptance criteria.**
-- Pick one semantics and make both halves agree: either emit `defined(...)`
-  obligations for symbolic specification arithmetic so this sidecar needs
-  `requires x < 2147483647`, or document specification arithmetic as wrapping
-  and make the constant case fold rather than fail to lower.
-- Whichever is chosen, the diagnostic for the constant case stops being
-  "the kernel lowering produced 0 paths, not one", which is an internal shape
-  leaking into a user-facing message.
+- The C source is rejected with a source-positioned diagnostic naming `i`.
+- A `for` loop whose index is declared before the loop, and read after it,
+  still verifies.
+
+---
+
+## 18. Identical string literals are proved distinct
+
+**Severity: high.** Whether identical literals share storage is unspecified,
+so neither answer may be proved.
+
+**Violated invariant.** C11 6.4.5p7: it is unspecified whether identical string
+literals are distinct objects. A conforming implementation may merge them, so
+a proof that two identical literals differ is a proof of something no
+implementation is required to make true.
+
+**Mechanism.** Each literal is installed under its own block identity, keyed by
+the literal's generated name (`CMemory::string_literal_pointer` in
+`initialize_c_function_globals`, `src/kernel/functions.rs:3006-3040`).
+Distinct blocks compare unequal, so the comparison decides.
+
+**Regression** (`mdtests/identical_string_literals_undecided.md`):
+
+```c
+int32 identical_string_literals_undecided() {
+    uint8* first = "ok";
+    uint8* second = "ok";
+    if (first == second) {
+        return 1;
+    }
+    return 0;
+}
+```
+
+```click
+verifying "t.c";
+
+int32 identical_string_literals_undecided() {
+    ensures result == 0;
+}
+```
+
+**Acceptance criteria.**
+- Neither `result == 0` nor `result == 1` is provable; the comparison stays
+  undecided, and a proof needs both paths.
+- A literal compared against itself through one pointer still decides equal.
+
+---
+
+## 19. A postcondition may read the storage of a returned local
+
+**Severity: high.** A contract states a value in storage whose lifetime ended
+when the function returned, and the caller may rely on it.
+
+**Violated invariant.** An automatic object's lifetime ends when its block is
+left (C11 6.2.4p6); a pointer to it becomes indeterminate, so a postcondition
+may not read through it.
+
+**Mechanism.** Not localized. The returned pointer keeps its `local:` block,
+and the postcondition is lowered against the exit state where that block's
+cells are still present.
+
+**Regression** (`mdtests/returned_local_postcondition_rejected.md`):
+
+```c
+int32* returned_local_postcondition_rejected() {
+    int32 value = 5;
+    return &value;
+}
+```
+
+```click
+verifying "t.c";
+
+int32* returned_local_postcondition_rejected() {
+    ensures result[0] == 5;
+}
+```
+
+**Acceptance criteria.**
+- The postcondition is rejected: the frame's storage is gone at the exit
+  state, so the load has nothing to read.
+- A postcondition over storage that outlives the call, a heap allocation the
+  function returns or a caller object it was given, still verifies.
 
 ---
 
@@ -1365,34 +1472,6 @@ initializer is either supported or rejected with a source-positioned
 diagnostic.
 
 ---
-
-## Reported but not verified
-
-These came out of the review without an independent reproduction, because the
-run hit its usage limit before their verification agents ran. They are recorded
-so the leads are not lost; confirm each before acting on it.
-
-- A postcondition may read the storage of a local whose address is returned.
-- Overlapping struct self-assignment `*p = *q` gets a definite sequential
-  field-copy result where C leaves it undefined.
-- Two identical string literals are proved distinct; a freed pointer is proved
-  unequal to a later fresh allocation. Both are unspecified in C, so proving
-  either direction is wrong.
-- Null pointer arithmetic `(int32*)0 + 1` is accepted and yields a definite
-  non-null pointer.
-- A variable declared in a `for` initializer stays readable after the loop.
-- Contract-side `==` between a `uint64` result and an `int32` value compares
-  after an implicit conversion instead of rejecting the mismatch.
-- A contract naming `&c[0..1]` resolves to a file-scope global while the C body
-  means a function-local static of the same name.
-- Relational comparison of two unrelated pointer parameters is accepted with no
-  same-object obligation.
-- A single call inside an expression is sequenced before sibling operand loads,
-  fixing one of C's permitted evaluation orders.
-- Symbolic 64-bit signed addition and multiplication are reported as definite
-  overflow (a false rejection, not a false acceptance).
-- Nested field designator followed by a positional initializer continues at the
-  wrong nesting level.
 
 ## Checked and found sound
 
