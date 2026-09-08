@@ -4,6 +4,199 @@
 use super::*;
 use crate::kernel::proof::{CheckedProofCasePartition, OutcomeEvidenceFork};
 
+/// A source-sized decision graph. Both arms point to the shared continuation;
+/// walking an arm never visits the syntax or outcomes of its sibling.
+struct OutcomeCase<'a> {
+    condition: &'a ClickProposition,
+    arms: [Option<usize>; 2],
+}
+
+fn outcome_case_region<'a>(
+    tactics: &'a [DeferredPostExecutionTactic],
+    mut next: Option<usize>,
+    nodes: &mut Vec<OutcomeCase<'a>>,
+) -> Option<usize> {
+    for tactic in tactics.iter().rev() {
+        if let PostExecutionTactic::If {
+            condition,
+            then_tactics,
+            else_tactics,
+        } = &tactic.tactic
+        {
+            let arms = [
+                outcome_case_region(then_tactics, next, nodes),
+                outcome_case_region(else_tactics, next, nodes),
+            ];
+            nodes.push(OutcomeCase { condition, arms });
+            next = Some(nodes.len() - 1);
+        }
+    }
+    next
+}
+
+fn partition_outcome_cases(
+    nodes: &[OutcomeCase<'_>],
+    next: Option<usize>,
+    authority: &ProofFacts,
+    query: &ProofFacts,
+    facts: &mut Vec<Proposition>,
+    provenance: OutcomeProvenance,
+    lower: &impl Fn(&ClickProposition, &[Proposition]) -> Result<Proposition, ClickError>,
+    emit: &mut impl FnMut(&[Proposition], OutcomeProvenance),
+) -> Result<OutcomeEvidenceFork, ClickError> {
+    check_verification_deadline()?;
+    let Some(index) = next else {
+        emit(facts, provenance);
+        return Ok(OutcomeEvidenceFork::Keep);
+    };
+    let node = &nodes[index];
+    let lowered = lower(node.condition, facts)?;
+    let positive = crate::kernel::canonical_condition_fact(&lowered);
+    let negative =
+        crate::kernel::canonical_condition_fact(&Proposition::Not(Box::new(lowered.clone())));
+    let known = if query.assumptions().proves(&positive) {
+        Some(true)
+    } else if query.assumptions().proves(&negative) {
+        Some(false)
+    } else {
+        None
+    };
+    let mut descend =
+        |value: bool, authority: &ProofFacts, query: &ProofFacts, fact: Option<Proposition>| {
+            let mut child = provenance.clone();
+            child.branch_decisions.push(ExecutionBranchDecision {
+                condition: node.condition.clone(),
+                value,
+            });
+            child
+                .surface_propositions
+                .record_lowering(node.condition, &lowered)?;
+            let old_len = facts.len();
+            if let Some(fact) = fact {
+                facts.push(fact);
+            }
+            let result = partition_outcome_cases(
+                nodes,
+                node.arms[usize::from(!value)],
+                authority,
+                query,
+                facts,
+                child,
+                lower,
+                emit,
+            );
+            facts.truncate(old_len);
+            result
+        };
+    if let Some(value) = known {
+        return descend(value, authority, query, None);
+    }
+    let partition = CheckedProofCasePartition::check(authority, positive.clone(), negative.clone())
+        .ok_or_else(|| {
+            ClickError::new(
+                "post-execution case split did not produce complementary case facts".to_string(),
+            )
+        })?;
+    let arm_facts = [
+        authority.with_kernel_checked_fact(positive.clone()),
+        authority.with_kernel_checked_fact(negative.clone()),
+    ];
+    let then_arm = descend(
+        true,
+        &arm_facts[0],
+        &query.with_kernel_checked_fact(positive.clone()),
+        Some(positive),
+    )?;
+    let else_arm = descend(
+        false,
+        &arm_facts[1],
+        &query.with_kernel_checked_fact(negative.clone()),
+        Some(negative),
+    )?;
+    if matches!(
+        (&then_arm, &else_arm),
+        (OutcomeEvidenceFork::Keep, OutcomeEvidenceFork::Keep)
+    ) {
+        Ok(OutcomeEvidenceFork::Split {
+            partition,
+            arm_facts,
+        })
+    } else {
+        Ok(OutcomeEvidenceFork::NestedSplit {
+            partition,
+            arm_facts,
+            arms: [Box::new(then_arm), Box::new(else_arm)],
+        })
+    }
+}
+
+#[cfg(test)]
+mod outcome_case_tests {
+    use super::*;
+
+    #[test]
+    fn nested_case_partition_work_visits_only_reached_nodes() {
+        for size in [4, 8, 16, 32] {
+            let conditions = (0..size)
+                .map(|index| ClickProposition::PredicateCall {
+                    name: format!("case_{index}"),
+                    arguments: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            let nodes = conditions
+                .iter()
+                .enumerate()
+                .map(|(index, condition)| OutcomeCase {
+                    condition,
+                    arms: [
+                        if index + 1 < size {
+                            Some(index + 1)
+                        } else {
+                            None
+                        },
+                        None,
+                    ],
+                })
+                .collect::<Vec<_>>();
+            let visits = std::cell::Cell::new(0);
+            let mut leaves = 0;
+            let mut facts = Vec::new();
+            let root = ProofFacts::default();
+            partition_outcome_cases(
+                &nodes,
+                Some(0),
+                &root,
+                &root,
+                &mut facts,
+                OutcomeProvenance {
+                    branch_decisions: PersistentSequence::default(),
+                    surface_propositions: SurfacePropositionMap::default(),
+                    recorded_snapshots: RecordedSnapshots::default(),
+                },
+                &|condition, _| {
+                    visits.set(visits.get() + 1);
+                    let ClickProposition::PredicateCall { name, .. } = condition else {
+                        unreachable!()
+                    };
+                    Ok(Proposition::Predicate {
+                        name: name.clone(),
+                        arguments: Vec::new(),
+                    })
+                },
+                &mut |_, _| leaves += 1,
+            )
+            .unwrap();
+            assert_eq!(visits.get(), size, "case-lowering work at size {size}");
+            assert_eq!(
+                leaves,
+                size + 1,
+                "no unrelated sibling combinations at size {size}"
+            );
+            assert!(facts.is_empty(), "each arm restores the shared fact cursor");
+        }
+    }
+}
+
 impl<'a> Proof<'a> {
     pub(super) fn apply_theorem_using(
         &self,
@@ -832,20 +1025,16 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Reports whether every checked execution path already decides a
-    /// post-execution condition. Such an `if` is a cursor over an existing
-    /// path partition and may be deferred until each outcome Proof is
-    /// focused branch. An undecided logical case split must stay with the general
-    /// proof driver, which introduces the two assumptions explicitly.
-    /// Forks every outcome path on which `condition` is undecided into two
-    /// paths, one per polarity, each carrying the case fact and a recorded
-    /// proof-case decision; a path whose facts already decide the condition
-    /// only records the decision. Afterwards a deferred post-execution `if`
-    /// on `condition` is decided on every path, and certification runs once
-    /// per recorded case.
+    /// Partitions checked outcomes along the explicitly written case tree.
+    /// Known conditions select one arm; unknown conditions introduce checked
+    /// complementary facts and traverse only the corresponding subtrees.
+    /// Shared continuations are represented once in the source graph, and
+    /// each resulting leaf retains its own nested evidence and provenance.
     pub(in crate::surface::proof) fn split_outcome_paths_by_case(
         &self,
         condition: &ClickProposition,
+        then_tactics: &[DeferredPostExecutionTactic],
+        else_tactics: &[DeferredPostExecutionTactic],
     ) -> Result<Self, ClickError> {
         self.require_execution_frontier("post-execution case split")?;
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -875,106 +1064,87 @@ impl<'a> Proof<'a> {
         // The retained evidence traces fork with the candidates so they
         // stay zipped for completion; each forked copy records its arm.
         let mut evidence_plan = Vec::with_capacity(checked.paths().len());
+        let mut nodes = Vec::new();
+        let arms = [
+            outcome_case_region(then_tactics, None, &mut nodes),
+            outcome_case_region(else_tactics, None, &mut nodes),
+        ];
+        nodes.push(OutcomeCase { condition, arms });
+        let root = nodes.len() - 1;
         for (path_index, path) in checked.paths().iter().enumerate() {
             check_verification_deadline()?;
             let provenance = execution.provenance_for_outcome(path_index);
-            let keep = |paths: &mut Vec<_>, outcome_provenance: &mut Vec<_>| {
+            let CFunctionOutcome::Return { value, state } = path.outcome() else {
                 paths.push((
                     path.outcome().clone(),
                     path.execution_facts(),
                     path.obligations().to_vec(),
                 ));
-                outcome_provenance.push(provenance.clone());
-            };
-            if provenance
-                .branch_decisions
-                .iter()
-                .any(|decision| &decision.condition == condition)
-            {
-                keep(&mut paths, &mut outcome_provenance);
-                evidence_plan.push(OutcomeEvidenceFork::Keep);
-                continue;
-            }
-            let CFunctionOutcome::Return { value, state } = path.outcome() else {
-                keep(&mut paths, &mut outcome_provenance);
+                outcome_provenance.push(provenance);
                 evidence_plan.push(OutcomeEvidenceFork::Keep);
                 continue;
             };
-            let path_facts = path
+            // Materialize this input path once. Nested cases push/pop their
+            // own fact delta; sibling paths are never scanned or copied.
+            let mut path_facts = path
                 .facts()
                 .iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
-            let lowered = lower_outcome_proposition_with_recorded_snapshots(
-                context.parsed_function.parameters(),
-                context.arguments,
-                &pre_state,
-                state,
-                value,
-                &path_facts,
-                condition,
-                context.predicate_environment,
-                context.click_function_environment,
-                &provenance.recorded_snapshots,
-            )
-            .map_err(|message| {
-                self.step_error(format!(
-                    "post-execution case split could not lower its condition: {message}"
-                ))
-            })?;
-            let positive = crate::kernel::canonical_condition_fact(&lowered);
-            let negative = crate::kernel::canonical_condition_fact(&Proposition::Not(Box::new(
-                lowered.clone(),
-            )));
-            let assumptions = path_facts
+            let base_len = path_facts.len();
+            let query = path_facts.iter().fold(self.facts().clone(), |facts, fact| {
+                facts.with_kernel_checked_fact(fact.clone())
+            });
+            let snapshots = provenance.recorded_snapshots.clone();
+            let recorded = provenance
+                .branch_decisions
                 .iter()
-                .fold(self.facts().assumptions().clone(), |assumptions, fact| {
-                    assumptions.assume_proposition(fact.clone())
-                });
-            let cases: Vec<(bool, Option<Proposition>)> = if assumptions.proves(&positive) {
-                evidence_plan.push(OutcomeEvidenceFork::Keep);
-                vec![(true, None)]
-            } else if assumptions.proves(&negative) {
-                evidence_plan.push(OutcomeEvidenceFork::Keep);
-                vec![(false, None)]
-            } else {
-                let partition = CheckedProofCasePartition::check(
-                    self.facts(),
-                    positive.clone(),
-                    negative.clone(),
-                )
-                .ok_or_else(|| {
-                    self.step_error(
-                        "post-execution case split did not produce complementary case facts",
-                    )
-                })?;
-                evidence_plan.push(OutcomeEvidenceFork::Split {
-                    partition,
-                    arm_facts: [
-                        self.facts().with_kernel_checked_fact(positive.clone()),
-                        self.facts().with_kernel_checked_fact(negative.clone()),
-                    ],
-                });
-                vec![(true, Some(positive)), (false, Some(negative))]
-            };
-            for (value, case_fact) in cases {
-                let mut facts = path.execution_facts();
-                if let Some(case_fact) = case_fact {
-                    facts.push(ExecutionPureFact::new(case_fact));
-                }
-                paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
-                let mut case_provenance = provenance.clone();
-                case_provenance
-                    .branch_decisions
-                    .push(ExecutionBranchDecision {
-                        condition: condition.clone(),
+                .find(|decision| &decision.condition == condition)
+                .map(|decision| decision.value);
+            let next = recorded.map_or(Some(root), |value| arms[usize::from(!value)]);
+            let fork = partition_outcome_cases(
+                &nodes,
+                next,
+                self.facts(),
+                &query,
+                &mut path_facts,
+                provenance,
+                &|condition, facts| {
+                    lower_outcome_proposition_with_recorded_snapshots(
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        &pre_state,
+                        state,
                         value,
-                    });
-                case_provenance
-                    .surface_propositions
-                    .record_lowering(condition, &lowered)?;
-                outcome_provenance.push(case_provenance);
-            }
+                        facts,
+                        condition,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                        &snapshots,
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "post-execution case split could not lower its condition: {message}"
+                        ))
+                    })
+                },
+                &mut |facts, provenance| {
+                    let mut execution_facts = path.execution_facts();
+                    execution_facts.extend(
+                        facts[base_len..]
+                            .iter()
+                            .cloned()
+                            .map(ExecutionPureFact::new),
+                    );
+                    paths.push((
+                        path.outcome().clone(),
+                        execution_facts,
+                        path.obligations().to_vec(),
+                    ));
+                    outcome_provenance.push(provenance);
+                },
+            )?;
+            evidence_plan.push(fork);
         }
         let candidates = crate::kernel::c_function_execution_candidates_from_outcomes(
             checked.state().clone(),

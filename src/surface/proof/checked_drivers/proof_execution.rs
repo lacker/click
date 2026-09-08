@@ -1115,15 +1115,23 @@ fn try_check_structural_function_proof_inner<'a>(
                     let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
                         return decline();
                     };
-                    if !deferred_post_execution_if_is_explicit_path_cursor(
-                        condition,
-                        &then_tactics,
-                        &else_tactics,
-                    ) && !proof.post_execution_if_is_path_decided(condition)?
+                    if then_tactics
+                        .iter()
+                        .chain(&else_tactics)
+                        .any(|tactic| matches!(tactic.tactic, PostExecutionTactic::If { .. }))
+                        || !deferred_post_execution_if_is_explicit_path_cursor(
+                            condition,
+                            &then_tactics,
+                            &else_tactics,
+                        ) && !proof.post_execution_if_is_path_decided(condition)?
                     {
                         // The condition is a proof-level case split on some
                         // outcome path: fork those paths, one per polarity.
-                        match proof.split_outcome_paths_by_case(condition) {
+                        match proof.split_outcome_paths_by_case(
+                            condition,
+                            &then_tactics,
+                            &else_tactics,
+                        ) {
                             Ok(split) => proof = split,
                             Err(_) => {
                                 check_verification_deadline()?;
@@ -2075,15 +2083,20 @@ fn advance_focused_execution_region<'a>(
                 let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
                     return decline();
                 };
-                if !deferred_post_execution_if_is_explicit_path_cursor(
-                    condition,
-                    &then_tactics,
-                    &else_tactics,
-                ) && !proof.post_execution_if_is_path_decided(condition)?
+                if then_tactics
+                    .iter()
+                    .chain(&else_tactics)
+                    .any(|tactic| matches!(tactic.tactic, PostExecutionTactic::If { .. }))
+                    || !deferred_post_execution_if_is_explicit_path_cursor(
+                        condition,
+                        &then_tactics,
+                        &else_tactics,
+                    ) && !proof.post_execution_if_is_path_decided(condition)?
                 {
                     // A proof-level case split on some outcome path, as at
                     // the top level: fork those paths, one per polarity.
-                    match proof.split_outcome_paths_by_case(condition) {
+                    match proof.split_outcome_paths_by_case(condition, &then_tactics, &else_tactics)
+                    {
                         Ok(split) => proof = split,
                         Err(_) => {
                             check_verification_deadline()?;

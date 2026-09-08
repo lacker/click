@@ -76,9 +76,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (16)
-
-- [Split nested explicit post-call proof cases](nested-post-call-proof-cases.md)
+## P2: after launch (15)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling

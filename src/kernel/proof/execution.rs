@@ -1016,6 +1016,11 @@ pub(crate) enum OutcomeEvidenceFork {
         partition: Arc<CheckedProofCasePartition>,
         arm_facts: [ProofFacts; 2],
     },
+    NestedSplit {
+        partition: Arc<CheckedProofCasePartition>,
+        arm_facts: [ProofFacts; 2],
+        arms: [Box<OutcomeEvidenceFork>; 2],
+    },
 }
 
 /// One arm of a checked logical partition. This event advances no C source;
@@ -3759,12 +3764,21 @@ impl ExecutionProofCore {
             return Err("outcome evidence fork plan does not cover every trace");
         }
         let mut traces = Vec::with_capacity(plan.len() * 2);
-        for (trace, fork) in self.execution_evidence.iter().zip(plan) {
+        fn append(
+            trace: &PersistentSequence<CheckedExecutionEvent>,
+            fork: &OutcomeEvidenceFork,
+            traces: &mut Vec<PersistentSequence<CheckedExecutionEvent>>,
+        ) -> Result<(), &'static str> {
             match fork {
                 OutcomeEvidenceFork::Keep => traces.push(trace.clone()),
                 OutcomeEvidenceFork::Split {
                     partition,
                     arm_facts,
+                }
+                | OutcomeEvidenceFork::NestedSplit {
+                    partition,
+                    arm_facts,
+                    ..
                 } => {
                     for (arm_index, facts) in arm_facts.iter().enumerate() {
                         let arm = CheckedProofCaseArm {
@@ -3779,10 +3793,18 @@ impl ExecutionProofCore {
                         }
                         let mut forked = trace.clone();
                         forked.push(CheckedExecutionEvent::ProofCase(arm));
-                        traces.push(forked);
+                        if let OutcomeEvidenceFork::NestedSplit { arms, .. } = fork {
+                            append(&forked, &arms[arm_index], traces)?;
+                        } else {
+                            traces.push(forked);
+                        }
                     }
                 }
             }
+            Ok(())
+        }
+        for (trace, fork) in self.execution_evidence.iter().zip(plan) {
+            append(trace, fork, &mut traces)?;
         }
         self.execution_evidence = traces.into();
         Ok(())

@@ -511,6 +511,10 @@ Each case must return the target resources, and failure does not inherit
 success's update guarantee (nor success failure's preservation guarantee).
 The [status-returning callback tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_status.md)
 cover this refinement and an ordinary C caller that checks the returned status.
+These proof cases may nest: each inner arm receives its own condition, and
+the continuation after an inner `if` must check in every reachable case.
+See the [nested status cases](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_status_nested.md),
+including an impossible arm and a shared continuation containing another case.
 
 This slice supports one nongeneric callback theorem parameter,
 one target-contract conclusion, and one or more source-contract premises for
