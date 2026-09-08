@@ -5698,6 +5698,7 @@ pub(super) fn contract_expression_mentions_c_local(
     parameter_names: &BTreeSet<&str>,
 ) -> bool {
     match expression {
+        ContractExpression::ResourceField(_) => false,
         ContractExpression::AlgebraicVariable { .. } => false,
         ContractExpression::Binding(name) => !parameter_names.contains(name.as_str()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => arguments

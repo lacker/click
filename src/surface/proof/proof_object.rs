@@ -1880,7 +1880,7 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::Left => "left()",
         ProofStep::Right => "right()",
         ProofStep::Enumerate => "enumerate()",
-        ProofStep::Step => "step",
+        ProofStep::Step | ProofStep::StepContract(_) => "step",
         ProofStep::ApplyTheoremUsing { .. } => "apply",
         ProofStep::TransportUsing { .. } => "transport",
         ProofStep::InstantiateUsing { .. } => "instantiate",

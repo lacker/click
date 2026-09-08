@@ -1,6 +1,153 @@
 use super::*;
 
 #[test]
+fn program_entry_signed_resource_shadowing_expands() {
+    let sources = [(
+        "main.c",
+        "int p = 7; int read_cell(int *p) { return *p; } int main(void) { return read_cell(&p); }",
+    )];
+    let helper = "by { unfold(cell(p)); execute(); fold(cell(p)); simp(); }";
+    let main = "by { fold(cell(&p)); execute(); simp(); }";
+    let source = format!(
+        r#"resource cell(p: int32*) {{ owns p[0..1]; }}
+verifying "main.c";
+int read_cell(int *p) {{ consumes cell(p); produces cell(p); ensures result == old(p[0]); }} {helper}
+int main() {{ ensures result == 7; }} {main}"#
+    );
+    let verified = verify_c0_sources(&source, &sources).unwrap();
+    let mut expanded = source.clone();
+    for (name, original) in [("read_cell", helper), ("main", main)] {
+        let theorem = verified
+            .iter()
+            .find(|theorem| theorem.function_block.signature().name() == name)
+            .unwrap();
+        expanded = expanded.replacen(original, &theorem.expanded_proof_source().unwrap(), 1);
+    }
+    verify_c0_sources(&expanded, &sources).unwrap();
+}
+
+#[test]
+fn program_entry_resource_bindings_expand_and_reverify() {
+    for (c_type, click_type, suffix) in [("unsigned int", "uint32", "u32")] {
+        let c_source = format!(
+            "{c_type} state[2] = {{7,9}}; {c_type} read_pair({c_type} *p) {{ return p[0] + p[1]; }} int main(void) {{ return read_pair(state); }}"
+        );
+        let helper_proof = "by { unfold(pair(p)); execute(); fold(pair(p)); simp(); }";
+        let main_proof = "by { fold(pair(state)); execute(); simp(); }";
+        let click_source = format!(
+            r#"
+resource pair(p: {click_type}*) {{ owns p[0..2]; }}
+verifying "main.c";
+{c_type} read_pair({c_type} *p) {{
+    requires loadable(p[0..2]); consumes pair(p); produces pair(p);
+    ensures result == old(p[0]) + old(p[1]);
+}} {helper_proof}
+int main() {{ ensures result == 16; }} {main_proof}
+"#
+        );
+        let sources = [("main.c", c_source.as_str())];
+        let verified = verify_c0_sources(&click_source, &sources).unwrap();
+        let mut rewritten = click_source.clone();
+        for (name, original) in [("read_pair", helper_proof), ("main", main_proof)] {
+            let theorem = verified
+                .iter()
+                .find(|theorem| theorem.function_block.signature().name() == name)
+                .unwrap();
+            rewritten = rewritten.replacen(original, &theorem.expanded_proof_source().unwrap(), 1);
+        }
+        verify_c0_sources(&rewritten, &sources).unwrap();
+        // Repeated folding may be idempotent; requiring the same exclusive
+        // resource twice must still be rejected.
+        let duplicate =
+            click_source.replace("consumes pair(p);", "consumes pair(p); consumes pair(p);");
+        assert!(verify_c0_sources(&duplicate, &sources).is_err());
+        let mismatched = click_source.replace("pair(p: uint32*)", "pair(p: int32*)");
+        assert!(verify_c0_sources(&mismatched, &sources).is_err());
+        let wrong = click_source.replace("result == 16", "result == 17");
+        assert!(verify_c0_sources(&wrong, &sources).is_err(), "{suffix}");
+    }
+}
+
+#[test]
+fn composite_uint64_range_expansion_preserves_type() {
+    let c_source = "unsigned long read_pair(unsigned long *p) { return p[0] + p[1]; }";
+    let click_source = r#"resource pair(p: uint64*) { owns p[0..2]; }
+verifying "main.c";
+unsigned long read_pair(unsigned long *p) {
+    requires loadable(p[0..2]); consumes pair(p); produces pair(p);
+    ensures result == old(p[0]) + old(p[1]);
+} by { unfold(pair(p)); execute(); fold(pair(p)); simp(); }"#;
+    let sources = [("main.c", c_source)];
+    let verified = verify_c0_sources(click_source, &sources).unwrap();
+    let expanded = click_source.replacen(
+        "by { unfold(pair(p)); execute(); fold(pair(p)); simp(); }",
+        &verified[0].expanded_proof_source().unwrap(),
+        1,
+    );
+    verify_c0_sources(&expanded, &sources).unwrap();
+    let mismatched = click_source.replace("pair(p: uint64*)", "pair(p: uint32*)");
+    assert!(verify_c0_sources(&mismatched, &sources).is_err());
+}
+
+#[test]
+fn program_entry_typed_dereference_snapshots_expand_and_reverify() {
+    for (c_type, suffix) in [("unsigned int", "u32"), ("unsigned long", "u64")] {
+        let c_source = format!("{c_type} bump({c_type} *p) {{ *p += 1; return *p; }}");
+        let click_source = format!(
+            r#"verifying "main.c";
+{c_type} bump({c_type} *p) {{
+    requires loadable(p[0..1]); consumes p[0..1]; produces p[0..1];
+    ensures *p == old(*p) + 1{suffix};
+    ensures *p == p[0];
+    ensures old(*p) == old(p[0]);
+}} by {{ execute(); simp(); }}"#
+        );
+        let sources = [("main.c", c_source.as_str())];
+        let verified = verify_c0_sources(&click_source, &sources).unwrap();
+        let rewritten = click_source.replacen(
+            "by { execute(); simp(); }",
+            &verified[0].expanded_proof_source().unwrap(),
+            1,
+        );
+        verify_c0_sources(&rewritten, &sources).unwrap();
+        let wrong = click_source.replace(&format!("*p == old(*p) + 1{suffix}"), "*p == old(*p)");
+        assert!(verify_c0_sources(&wrong, &sources).is_err());
+    }
+}
+
+#[test]
+fn program_entry_expansion_reverifies() {
+    let c_source = "int state = 7; int main(void) { state += 1; return state; }";
+    let click_source =
+        "verifying \"main.c\"; int main() { ensures result == 8; } by { execute(); simp(); }";
+    let sources = [("main.c", c_source)];
+    let verified = verify_c0_sources(click_source, &sources).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let rewritten = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
+    verify_c0_sources(&rewritten, &sources).unwrap();
+}
+
+#[test]
+fn program_entry_collects_data_only_private_and_uncalled_local_storage() {
+    let sources = [
+        ("data.c", "static int private_state = 11; int zero;"),
+        (
+            "main.c",
+            "extern int zero; int unused(void) { static int local = 5; return local; } int main(void) { return zero; }",
+        ),
+    ];
+    let click_source = "verifying \"data.c\"; verifying \"main.c\"; int main() { ensures result == 0; } by { execute(); simp(); }";
+    let file = crate::surface::verification::parse_c0_click_file(click_source, &sources).unwrap();
+    let parsed =
+        crate::surface::verification::parse_verified_sources(&file, &sources.into_iter().collect())
+            .unwrap();
+    let startup = parsed["main"].1.program_entry_state.as_ref().unwrap();
+    assert_eq!(startup.resources().facts().len(), 3);
+    assert!(parsed["unused"].1.program_entry_state.is_none());
+    verify_c0_sources(click_source, &sources).unwrap();
+}
+
+#[test]
 fn const_char_return_expansion_preserves_target_and_qualification() {
     let c_source = "const char *version(void) { return \"0.17\"; }";
     let click_source = r#"verifying "version.c";
@@ -118,6 +265,29 @@ fn smart_simp_expansion_checks_as_surface_click() {
     let expanded_source = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("identity.c", c_source)])
         .expect("printed smart simp expansion should check");
+}
+
+#[test]
+fn unsigned_narrowing_snapshot_expansion_reverifies() {
+    let c_source = "struct state { unsigned long value; }; unsigned int take(struct state *p) { unsigned int result = p->value; p->value += 1; return result; }";
+    let click_source = r#"
+        verifying "take.c";
+        unsigned int take(struct state *p) {
+            requires loadable(p->value);
+            consumes p->value;
+            produces p->value;
+            ensures result == old((uint32)p->value);
+            ensures p->value == old(p->value) + 1u64;
+        } by { execute(); simp(); }
+    "#;
+    let verified =
+        verify_c0_sources(click_source, &[("take.c", c_source)]).expect("narrowing proof verifies");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("narrowing proof has a printable certificate");
+    let rewritten = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
+    verify_c0_sources(&rewritten, &[("take.c", c_source)])
+        .unwrap_or_else(|error| panic!("{error:?}\n{rewritten}"));
 }
 
 #[test]

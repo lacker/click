@@ -706,16 +706,20 @@ fn direct_composite_resource_match_checks_pointer_load_across_block_declaration(
     let later = entry.clone().with_block("local:pivot", 4);
     let resource_at = |memory: CMemory| CResource::Composite {
         name: "tree".to_string(),
-        arguments: vec![CValue::pointer(Pointer {
-            block: PointerBlock::ExternalArgument,
-            offset: PointerOffsetTerm::scale_int32(
-                Bitvector32Term::MemoryLoad(
-                    crate::kernel::intern_c_memory(memory),
-                    Box::new(field.clone()),
+        arguments: vec![
+            CValue::pointer(Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(memory),
+                        Box::new(field.clone()),
+                    ),
+                    4,
                 ),
-                4,
-            ),
-        })],
+            })
+            .into(),
+        ]
+        .into(),
     };
 
     assert!(c_resources_directly_match(

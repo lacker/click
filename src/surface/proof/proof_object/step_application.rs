@@ -53,7 +53,7 @@ impl<'a> Proof<'a> {
         if let ProofStep::Have { proposition, proof } = &step {
             return self.apply_have_step(proposition, proof);
         }
-        if let ProofStep::Step = &step {
+        if matches!(&step, ProofStep::Step | ProofStep::StepContract(_)) {
             return self.apply_execution_statement_step(step);
         }
 

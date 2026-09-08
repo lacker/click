@@ -540,6 +540,7 @@ enum AlphaBitvectorKey {
     Address(Box<AlphaPointerKey>),
     Int64From32(Box<Self>),
     UInt64From32(Box<Self>),
+    UInt32From64(Box<Self>),
     Int64FromUInt32(Box<Self>),
     UInt64FromInt32(Box<Self>),
     UInt64FromInt64(Box<Self>),
@@ -891,6 +892,9 @@ fn alpha_bitvector_key(
             alpha_bitvector_key(value, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64From32(value) => AlphaBitvectorKey::UInt64From32(Box::new(
+            alpha_bitvector_key(value, bindings, next_binder)?,
+        )),
+        Bitvector32Term::UInt32From64(value) => AlphaBitvectorKey::UInt32From64(Box::new(
             alpha_bitvector_key(value, bindings, next_binder)?,
         )),
         Bitvector32Term::Int64FromUInt32(value) => AlphaBitvectorKey::Int64FromUInt32(Box::new(

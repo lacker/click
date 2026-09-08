@@ -691,7 +691,8 @@ pub fn composite_resource_witness_values(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         state.locals.set_typed(
             parameter.name().to_string(),
             argument.clone(),
@@ -2901,7 +2902,7 @@ pub fn prove_owned_resource_count_lower_bound(
         CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
             (name, arguments)
         }
-        CResource::Memory(_) => return None,
+        CResource::Memory(_) | CResource::Instance(_) => return None,
     };
     let count = match state.counted_population(name, arguments) {
         Some(count) => count.clone(),
@@ -2970,6 +2971,7 @@ fn describe_contract_reuse_premise(premise: &Proposition) -> String {
         match resource {
             CResource::Composite { name, .. } | CResource::Token { name, .. } => name,
             CResource::Memory(_) => "memory",
+            CResource::Instance(instance) => instance.name(),
         }
     }
     match premise {
@@ -3127,7 +3129,7 @@ pub(crate) fn counted_populations_definitionally_equal(
             (
                 (
                     population.name.as_str(),
-                    population.arguments.as_slice(),
+                    population.arguments.as_ref(),
                     population.family_observation_marker,
                 ),
                 &population.count,
@@ -3137,7 +3139,7 @@ pub(crate) fn counted_populations_definitionally_equal(
     left_populations.into_iter().all(|population| {
         let identity = (
             population.name.as_str(),
-            population.arguments.as_slice(),
+            population.arguments.as_ref(),
             population.family_observation_marker,
         );
         right_by_identity.get(&identity).is_some_and(|right_count| {
@@ -4648,6 +4650,110 @@ pub(crate) fn prove_c_function_contract_refinement(
     })
 }
 
+mod contract_interface_identity;
+
+/// A checked one-call wrapper proves a contract implication. The wrapper's
+/// only extra inputs are source contracts for its last, arbitrary callback
+/// parameter. Its body must call precisely that parameter with every other
+/// parameter in order. No target-contract assumption authorizes this call.
+pub(crate) fn prove_executed_contract_refinement(
+    environment: &CExecutionEnvironment,
+    source_names: &[&str],
+    target_name: &str,
+    conclusion: Proposition,
+    rule: &CVerifiedFunctionRule,
+) -> Option<CVerifiedPureTheorem> {
+    if source_names.is_empty() {
+        return None;
+    }
+    let target = environment.get_function_contract(target_name)?;
+    let mut function = rule.function.clone();
+    let callback = function.parameters.pop()?;
+    if callback.c_type() != target.function_pointer_type() {
+        return None;
+    }
+    let arguments = function
+        .parameters
+        .iter()
+        .map(|parameter| CExpression::Variable(parameter.name().to_string()))
+        .collect();
+    let call = if function.return_type() == CType::Void {
+        CStatement::Call {
+            function_name: callback.name().to_string(),
+            arguments,
+        }
+    } else {
+        CStatement::Seq(
+            Arc::new(CStatement::CallAssign {
+                target: "result".into(),
+                function_name: callback.name().to_string(),
+                arguments,
+            }),
+            Arc::new(CStatement::Return(CExpression::Variable("result".into()))),
+        )
+    };
+    if function.body() != &call || function.source_body() != &call {
+        return None;
+    }
+    for source_name in source_names.iter().rev() {
+        let source = environment.get_function_contract(source_name)?;
+        if callback.c_type() != source.function_pointer_type() {
+            return None;
+        }
+        let source_requirement = SpecProposition::Predicate {
+            name: source.predicate_name(),
+            arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+                CExpression::Variable(callback.name().to_string()),
+            ))],
+        };
+        if function.contract_requires.pop()? != source_requirement {
+            return None;
+        }
+    }
+    if !contract_interface_identity::same_interface(target, &function) {
+        return None;
+    }
+    let Proposition::Predicate { name, arguments } = &conclusion else {
+        return None;
+    };
+    let [
+        state @ Term::CState(_),
+        Term::CValue(CValue::Pointer(pointer)),
+    ] = arguments.as_slice()
+    else {
+        return None;
+    };
+    let PointerBlock::FunctionSymbolic(variable) = pointer.pointer().block else {
+        return None;
+    };
+    if name != &target.predicate_name()
+        || pointer.c_type() != target.function_pointer_type()
+        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+    {
+        return None;
+    }
+    let mut implication = conclusion.clone();
+    for source_name in source_names.iter().rev() {
+        let premise = Proposition::Predicate {
+            name: environment
+                .get_function_contract(source_name)?
+                .predicate_name(),
+            arguments: vec![
+                state.clone(),
+                Term::CValue(CValue::Pointer(pointer.clone())),
+            ],
+        };
+        implication = Proposition::Implies(Box::new(premise), Box::new(implication));
+    }
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(Proposition::ForAll {
+            var: variable,
+            sort: Sort::CPointer(pointer.c_type()),
+            body: Box::new(implication),
+        }),
+    })
+}
+
 fn rewrite_int32_term_by_exact_equality(
     term: &Bitvector32Term,
     from: &Bitvector32Term,
@@ -4771,6 +4877,7 @@ fn rewrite_int32_term_by_exact_equality(
         | Bitvector32Term::Int64From32(_)
         | Bitvector32Term::Int64FromUInt32(_)
         | Bitvector32Term::UInt64From32(_)
+        | Bitvector32Term::UInt32From64(_)
         | Bitvector32Term::UInt64FromInt32(_)
         | Bitvector32Term::UInt64FromInt64(_)
         | Bitvector32Term::Int64Add(_, _)

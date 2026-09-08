@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::instrumentation::{self, TacticEvent, VerificationEvent};
 use crate::kernel::{
-    Bitvector32Term, BitvectorEqualityDerivationStep, CCheckedFunctionExecution,
+    AlgebraicValue, Bitvector32Term, BitvectorEqualityDerivationStep, CCheckedFunctionExecution,
     CCheckedFunctionProposition, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
     CFunction, CFunctionContract, CFunctionContractClaim, CFunctionContractClaimKey,
@@ -20,16 +20,16 @@ use crate::kernel::{
     CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
     CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
     ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition,
-    PropositionDerivation, PureFactContext, ResourceContext, ResourceContextValidityError, Sort,
-    SpecAlgebraicExpression, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition,
-    SpecResource, SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
-    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
-    c_contract_refinement_context, c_do_while_preservation_contexts,
-    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
-    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
-    c_function_entry_state, c_function_execution_candidates_from_outcomes,
-    c_function_outcome_from_statement_outcome, c_function_specification,
-    c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
+    PropositionDerivation, PureFactContext, ResourceArguments, ResourceContext,
+    ResourceContextValidityError, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
+    SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
+    Variable, abstract_c_state_for_join, c_checked_function_proposition,
+    c_condition_fact_has_memory, c_condition_fact_memories, c_contract_refinement_context,
+    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
+    c_function_contract_entry_state, c_function_contract_refinement_arguments,
+    c_function_contract_refinement_context, c_function_entry_state,
+    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
+    c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
@@ -171,6 +171,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "else",
     "ensures",
     "ensuring",
+    "executes",
     "entry",
     "enum",
     "enumerate",
@@ -184,6 +185,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "exit",
     "extract",
     "fact",
+    "field",
     "fold",
     "forall",
     "frame",
@@ -479,10 +481,12 @@ pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     composite_body: Option<CompositeResourceBody>,
+    field_schema: Option<crate::kernel::ResourceFieldSchema>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
+    fields: Vec<ResourceFieldDefinition>,
     condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
@@ -490,6 +494,21 @@ pub struct CompositeResourceBody {
     /// `where` proposition is also one of `facts`; the witness name is in
     /// scope for every later clause of the body.
     witnesses: Vec<ResourceWitness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldDefinition {
+    name: String,
+    click_type: ClickType,
+}
+
+impl ResourceFieldDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn click_type(&self) -> &ClickType {
+        &self.click_type
+    }
 }
 
 /// A pointer the body of a composite resource asserts to exist.
@@ -514,8 +533,15 @@ pub struct TheoremDefinition {
     name: String,
     type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
+    executes: Option<TheoremExecution>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremExecution {
+    callback: String,
+    parameters: Vec<FunctionParameter>,
 }
 
 /// A named behavioral interface for a function pointer. The embedded block
@@ -537,6 +563,9 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     external: bool,
+    /// Internal source grouping for an `executes` theorem's call and return.
+    /// The kernel still checks the complete ordinary statement sequence.
+    one_call_proof: bool,
     requires: Vec<Requirement>,
     /// Parsed once so a simple `choose(... from requirement label)` step does
     /// not linearly rescan every function requirement.
@@ -662,6 +691,10 @@ pub enum Ensure {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceClause {
+    Named {
+        binding: ResourceInstanceBinding,
+        resource: Box<ResourceClause>,
+    },
     ViewMemory(ContractSegment),
     OwnMemory(ContractSegment),
     /// A source-level aggregate place expanded into its typed leaf memory
@@ -683,6 +716,24 @@ pub enum ResourceClause {
         arguments: Vec<ContractExpression>,
         parameter_types: Vec<C0Type>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceInstanceBinding {
+    name: String,
+    identity: Variable,
+    schema: Option<crate::kernel::ResourceFieldSchema>,
+    fields: Option<crate::kernel::ResourceArguments>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldAccess {
+    owner: String,
+    resource_name: String,
+    identity: Variable,
+    field: String,
+    field_index: usize,
+    click_type: Option<ClickType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -904,6 +955,9 @@ fn collect_current_resource_clause_variables(
     names: &mut BTreeSet<String>,
 ) {
     match resource {
+        ResourceClause::Named { resource, .. } => {
+            collect_current_resource_clause_variables(resource, names)
+        }
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_current_segment_variables(segment, names);
         }
@@ -943,6 +997,7 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::ResourceField(_) => {}
         ContractExpression::AlgebraicVariable { name, .. } => {
             names.insert(name.clone());
         }
@@ -1395,6 +1450,7 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    ResourceField(ResourceFieldAccess),
     /// A fully type-applied constructor of a specification-only algebraic
     /// datatype. The first slice permits C scalar and data-pointer fields.
     AlgebraicConstructor {
@@ -2114,6 +2170,7 @@ pub(crate) struct PlannedStatementTransition {
 pub enum ProofTactic {
     Mark(String),
     Step,
+    StepContract(String),
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -2272,6 +2329,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step",
         syntax: "step()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step-contract",
+        syntax: "step(Contract)",
         class: "simple",
     },
     PublicTacticForm {
@@ -2521,6 +2583,7 @@ pub enum ProofStep {
     },
     Mark(String),
     Step,
+    StepContract(String),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -2701,6 +2764,7 @@ impl ProofStep {
             },
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
+            ProofTactic::StepContract(name) => Self::StepContract(name.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
@@ -2897,6 +2961,7 @@ impl ProofStep {
             }),
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
+            Self::StepContract(name) => ProofTactic::StepContract(name.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
@@ -3230,7 +3295,9 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
-            Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::Step | Self::StepContract(_) => {
+                TacticClass::Simple(SimpleTactic::StatementTransition)
+            }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
@@ -3782,6 +3849,20 @@ impl ClickFunctionDefinition {
 }
 
 impl ResourceDefinition {
+    pub fn fields(&self) -> &[ResourceFieldDefinition] {
+        self.composite_body
+            .as_ref()
+            .map_or(&[], |body| &body.fields)
+    }
+
+    pub fn field_schema(&self) -> Option<&crate::kernel::ResourceFieldSchema> {
+        self.field_schema.as_ref()
+    }
+
+    pub fn is_countable(&self) -> bool {
+        self.fields().is_empty()
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

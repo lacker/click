@@ -3,11 +3,10 @@ use super::api::{
 };
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
-    bitvector_terms_proven_equal_for_memory_resolution, bitvector_variable,
-    c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
-    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
-    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
-    signed_bitvector_constant, signed_i64_bitvector_constant,
+    bitvector_terms_proven_equal_for_memory_resolution, bitvector_variable, collect_or_cases,
+    instantiate_range_fold_step, memory_snapshots_proven_equal_at_pointer,
+    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
+    resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -155,6 +154,9 @@ pub enum Bitvector32Term {
     PointerAddress(Box<Pointer>),
     Int64From32(Box<Bitvector32Term>),
     UInt64From32(Box<Bitvector32Term>),
+    /// Unsigned narrowing modulo 2^32; the operand is a signed or unsigned
+    /// 64-bit integer and the result is a 32-bit bitvector.
+    UInt32From64(Box<Bitvector32Term>),
     Int64FromUInt32(Box<Bitvector32Term>),
     UInt64FromInt32(Box<Bitvector32Term>),
     UInt64FromInt64(Box<Bitvector32Term>),
@@ -677,6 +679,10 @@ pub enum SpecMemory {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecExpression {
     Value(CValue),
+    ResourceField {
+        projection: ResourceFieldProjection,
+        c_type: CType,
+    },
     AlgebraicMatch {
         scrutinee: Box<SpecAlgebraicExpression>,
         arms: Vec<SpecAlgebraicMatchArm>,
@@ -697,6 +703,7 @@ pub enum SpecExpression {
     BitwiseOr(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseXor(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseNot(Box<SpecExpression>),
+    Cast(Box<SpecExpression>, CType),
     If {
         condition: Box<SpecProposition>,
         then_branch: Box<SpecExpression>,
@@ -743,6 +750,7 @@ pub struct SpecAlgebraicExpression {
 pub enum SpecAlgebraicExpressionNode {
     Variable(Variable),
     Binding(String),
+    ResourceField(ResourceFieldProjection),
     Constructor {
         variant: String,
         fields: Vec<SpecAlgebraicValue>,
@@ -755,6 +763,15 @@ pub enum SpecAlgebraicExpressionNode {
         name: String,
         arguments: Vec<SpecPureFunctionArgument>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceFieldProjection {
+    pub identity: Variable,
+    pub field_index: usize,
+    /// Select the explicit entry state supplied to spec evaluation. There is
+    /// no fallback to the current state when that snapshot is unavailable.
+    pub at_entry: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -811,6 +828,62 @@ pub enum AlgebraicValueType {
         name: String,
         arguments: Vec<AlgebraicValueType>,
     },
+}
+
+/// A resource field has a logical type, never a C storage location.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ResourceFieldType {
+    C(CType),
+    Algebraic(AlgebraicType),
+}
+
+/// Checked declaration metadata. This does not create an owned instance or
+/// authorize a memory access; `ResourceInstance` carries identity and state.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceFieldSchema {
+    fields: std::sync::Arc<[(String, ResourceFieldType)]>,
+}
+
+impl ResourceFieldSchema {
+    pub fn new(fields: Vec<(String, ResourceFieldType)>) -> Option<Self> {
+        let mut names = BTreeSet::new();
+        for (name, ty) in &fields {
+            if name.is_empty() || !names.insert(name) {
+                return None;
+            }
+            let valid = match ty {
+                ResourceFieldType::C(ty) => !matches!(
+                    ty,
+                    CType::Void
+                        | CType::FunctionPointer(_)
+                        | CType::Int16Array(_)
+                        | CType::Int32Array(_)
+                        | CType::UInt8Array(_)
+                        | CType::UInt16Array(_)
+                        | CType::UInt32Array(_)
+                        | CType::Int64Array(_)
+                        | CType::UInt64Array(_)
+                        | CType::Float32Array(_)
+                        | CType::Float64Array(_)
+                ),
+                ResourceFieldType::Algebraic(ty) => ty.has_consistent_root_schema(),
+            };
+            if !valid {
+                return None;
+            }
+        }
+        Some(Self {
+            fields: fields.into(),
+        })
+    }
+
+    pub fn fields(&self) -> &[(String, ResourceFieldType)] {
+        &self.fields
+    }
+
+    pub fn is_countable(&self) -> bool {
+        self.fields.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1158,7 +1231,20 @@ impl Ord for AlgebraicType {
     }
 }
 
+impl From<CValue> for AlgebraicValue {
+    fn from(value: CValue) -> Self {
+        Self::C(value)
+    }
+}
+
 impl AlgebraicValue {
+    pub fn as_c_value(&self) -> Option<&CValue> {
+        match self {
+            Self::C(value) => Some(value),
+            Self::Algebraic(_) => None,
+        }
+    }
+
     pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
         match self {
             Self::C(value) => AlgebraicValueType::C(value.c_type()),
@@ -1782,6 +1868,7 @@ impl CAggregateLayout {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
+    pub(super) program_entry: bool,
     pub(super) return_type: CType,
     pub(super) return_pointee_constant: bool,
     pub(super) return_aggregate_layout: Option<CAggregateLayout>,
@@ -1870,6 +1957,8 @@ pub struct CFunctionSpecification {
 
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
+    // A proof-local rule choice. This is not installed in the project environment.
+    pub(crate) selected_call_contract: Option<std::sync::Arc<str>>,
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
     pub(super) function_contracts: std::sync::Arc<BTreeMap<String, CFunctionContract>>,
     pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
@@ -1884,6 +1973,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("CExecutionEnvironment")
+            .field("selected_call_contract", &self.selected_call_contract)
             .field("functions", &self.functions)
             .field("function_contracts", &self.function_contracts)
             .field("external_function_rules", &self.external_function_rules)
@@ -1899,7 +1989,8 @@ impl std::fmt::Debug for CExecutionEnvironment {
 
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
-        self.functions == other.functions
+        self.selected_call_contract == other.selected_call_contract
+            && self.functions == other.functions
             && self.function_contracts == other.function_contracts
             && self.external_function_rules == other.external_function_rules
             && self.verified_function_rules == other.verified_function_rules
@@ -2805,7 +2896,7 @@ pub struct CState {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCountedPopulation {
     pub(super) name: String,
-    pub(super) arguments: Vec<CValue>,
+    pub(super) arguments: ResourceArguments,
     pub(super) count: Bitvector32Term,
     /// Marks observation of a resource family even while its exact population
     /// is zero. Marker entries are not themselves resource populations.
@@ -2861,6 +2952,7 @@ pub(super) struct ResourceContextChange {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
+    pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
     pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
@@ -2935,21 +3027,90 @@ pub enum CResourceFact {
     View(CResource),
 }
 
+/// Immutable logical indices shared by resource snapshots and population keys.
+/// Cloning a resource must not clone a recursive model stored in its indices.
+pub type ResourceArguments = std::sync::Arc<[AlgebraicValue]>;
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResource {
     Memory(CMemoryRange),
     Composite {
         name: String,
-        arguments: Vec<CValue>,
+        arguments: ResourceArguments,
     },
     Token {
         name: String,
-        arguments: Vec<CValue>,
+        arguments: ResourceArguments,
     },
+    Instance(ResourceInstance),
+}
+
+/// A proof-only, exclusive resource instance. Identity is independent of its
+/// field state; equal fields do not identify distinct instances. This is an
+/// opaque ownership atom: its arguments and fields grant no memory authority.
+/// Constructing an atom is not a proof that it is owned or that a resource
+/// definition's body holds.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceInstance {
+    pub(super) identity: Variable,
+    pub(super) name: String,
+    pub(super) arguments: ResourceArguments,
+    pub(super) schema: ResourceFieldSchema,
+    pub(super) fields: ResourceArguments,
+}
+
+impl ResourceInstance {
+    pub fn new(
+        identity: Variable,
+        name: String,
+        arguments: ResourceArguments,
+        schema: ResourceFieldSchema,
+        fields: ResourceArguments,
+    ) -> Option<Self> {
+        if schema.is_countable() || schema.fields().len() != fields.len() {
+            return None;
+        }
+        for ((_, ty), value) in schema.fields().iter().zip(fields.iter()) {
+            let valid = match (ty, value) {
+                (ResourceFieldType::C(ty), AlgebraicValue::C(value)) => *ty == value.c_type(),
+                (ResourceFieldType::Algebraic(ty), AlgebraicValue::Algebraic(value)) => {
+                    *ty == value.algebraic_type && value.is_well_formed()
+                }
+                _ => false,
+            };
+            if !valid {
+                return None;
+            }
+        }
+        Some(Self {
+            identity,
+            name,
+            arguments,
+            schema,
+            fields,
+        })
+    }
+
+    pub fn identity(&self) -> Variable {
+        self.identity
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn arguments(&self) -> &[AlgebraicValue] {
+        &self.arguments
+    }
+    pub fn fields(&self) -> &[AlgebraicValue] {
+        &self.fields
+    }
+    pub fn schema(&self) -> &ResourceFieldSchema {
+        &self.schema
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
+    InvalidInstanceAccess(CResourceFact),
     DuplicateOwnedResourceFact(CResourceFact),
     OverlappingOwnedMemoryResources {
         left: CMemoryRange,
@@ -3019,10 +3180,12 @@ struct TokenResourceAlgebra;
 /// viewing. Source-declared body equivalences are applied as fold, unfold, and
 /// observation laws by the Click proof layer.
 struct CompositeResourceAlgebra;
+struct InstanceResourceAlgebra;
 
 static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
+static INSTANCE_RESOURCE_ALGEBRA: InstanceResourceAlgebra = InstanceResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
 /// `ResourceFamilyAlgebra` implementation in `resource_family_algebra`.
@@ -3031,6 +3194,7 @@ pub enum ResourceFamily {
     Memory,
     Composite,
     Token,
+    Instance,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -3041,6 +3205,11 @@ pub enum CResourceAccessMode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
+    Instance {
+        identity: Variable,
+        schema: ResourceFieldSchema,
+        resource: Box<CResourceSpec>,
+    },
     ViewMemory(CMemorySegment),
     OwnMemory(CMemorySegment),
     Quantified {

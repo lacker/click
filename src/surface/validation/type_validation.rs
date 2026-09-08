@@ -532,6 +532,7 @@ fn validate_pure_theorem_tactics(
             }
             ProofTactic::CloseInvariants
             | ProofTactic::Step
+            | ProofTactic::StepContract(_)
             | ProofTactic::SmartExecute
             | ProofTactic::SmartExecuteAllPaths
             | ProofTactic::ExecuteUntil(_)
@@ -558,7 +559,7 @@ fn validate_pure_theorem_tactics(
 pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Mark(_) => "mark",
-        ProofTactic::Step => "step",
+        ProofTactic::Step | ProofTactic::StepContract(_) => "step",
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",
         ProofTactic::ExecuteUntil(_) => "execute_until",
@@ -616,6 +617,9 @@ pub(super) fn reject_duplicate_owned_declared_resource_clauses<'a>(
 
 pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) -> String {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            format!("{}: {}", binding.name, describe_resource_clause(resource))
+        }
         ResourceClause::Quantified { quantity, resource } => format!(
             "{} of {}",
             describe_contract_expression(quantity),
@@ -814,6 +818,10 @@ pub(super) fn infer_contract_expression_type(
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access) => match &access.click_type {
+            Some(ClickType::C(ty)) => Ok(Some(*ty)),
+            _ => Err(ClickError::new("expected a scalar resource field")),
+        },
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => Err(ClickError::new(format!(
             "algebraic values are only valid in algebraic equality or as a `match` scrutinee in {context}"
@@ -1393,6 +1401,15 @@ pub(super) fn validate_resource_clause(
     context: &str,
 ) -> Result<(), ClickError> {
     match resource {
+        ResourceClause::Named { resource, .. } => validate_resource_clause(
+            resource,
+            resources,
+            recursive_resources,
+            click_functions,
+            click_function_types,
+            variables,
+            context,
+        ),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => Ok(()),
         ResourceClause::MemoryAggregate { .. } => Ok(()),
         ResourceClause::Quantified { quantity, resource } => {
@@ -1596,7 +1613,9 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 validate_contract_expression_calls(argument, click_functions, context)?;

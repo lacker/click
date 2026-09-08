@@ -1,49 +1,41 @@
-# Bug bash: soundness holes and C mis-models found on 2026-09-06
+# Bug bash: open soundness holes and C mis-models
 
-This file bundles the results of one adversarial review of the verifier at
-`d6502258`. It is deliberately one file rather than one file per problem, so
-the whole result set stays together while it is triaged. **Split it up as work
-starts**: when a root cause is picked up, move its section into its own
-`issues/<name>.md`, add the Open-list line, and delete the section here. Delete
-this file when the last section is gone.
+Eighteen independent root causes. Every one has a reproduction that verifies
+today while stating something the C does not guarantee: a false postcondition,
+a definite answer where C leaves the behaviour undefined or unspecified, or a
+program C rejects that Click accepts. All are against C11/C17 on the LP64
+profile Click documents.
 
-Every numbered section is an independent root cause with its own regression.
-They are not ranked by fix order; sections 1-10 are the ones where an ordinary
-contract over ordinary C is certified while false, with no unusual tactics.
+Six are critical: an ordinary contract over ordinary C is certified while
+false, with no unusual tactics. The other twelve are high: the trigger is
+narrower, an unusual construct or an out-of-range value, but the accepted
+claim is just as wrong. Nothing here is speculative; anything that could not
+be made to reproduce has been removed rather than left as a lead.
 
-## What was found
+This is deliberately a bundle rather than one file per problem, so the set
+stays together while it is triaged. **Split it up as work starts**: when a
+root cause is picked up, move its section into its own `issues/<name>.md`, add
+the Open-list line, and delete the section here. Delete this file when the
+last section is gone.
 
-34 reproductions were rebuilt from scratch and re-run against the release
-binary immediately before this file was written; every one exits 0 while
-stating a claim that is false under C11/C17 on the LP64 profile Click
-documents. They collapse into 24 root causes: 10 critical, 11 high, 3 medium.
-
-The proof core came out clean. Reviewers assigned to the simple tactics, the
-persistent fact store, branch joins and splits, order reasoning, and the
-`prove_int32_*` axioms produced no reproducible finding. So did direct probes
-of the integer operators, control flow, constant-index undefined behaviour,
-frame checks on globals, aliasing against `owns`, symbolic float comparison,
-and incremental selection after seven kinds of edit (see "Checked and sound"
-at the end). The unsoundness is concentrated at boundaries: what a function
-may assume at entry, what a call may assume about its callee, how memory
-cells are keyed, how literals are typed, and how a loop proof names program
-points.
+Sections are grouped by severity, not by fix order. Several say what *not* to
+do: those directions were built and measured, and each broke sound proofs
+elsewhere or lost a capability the tree uses. Read them before starting.
 
 ## Reproducing
 
-Each regression below is a self-contained pair. Write the files into an empty
+Each regression is a self-contained pair. Write the files into an empty
 directory and run:
 
 ```sh
 click verify --time-limit 30s t.click
 ```
 
-Exit 0 is the bug: the sidecar states something false about the C. Every
-regression is intended to land as an mdtest whose `expect` block is a
-rejection, so the diagnostic in the acceptance criteria is a shape, not an
-exact string. A generator that rebuilds and runs all of them lives in this
-review's scratch notes; it is not checked in, because the intended home for
-each case is `mdtests/`.
+Exit 0 is the bug. Every pair below was re-run against the release binary and
+reproduces. Each regression is intended to land as an mdtest whose `expect`
+block is a rejection, so the diagnostic in the acceptance criteria is a shape,
+not an exact string; where the fix makes a previously-rejected program verify
+instead, land the positive test too.
 
 ---
 
@@ -220,10 +212,10 @@ int32 caller() {
 - Document whatever is chosen in the contract reference next to
   `immutable`/`mutable`, since it changes what an omitted clause means.
 
-**Attempted and rejected: unbounded havoc at the call.** Adding a
+**Do not use unbounded havoc at the call.** Adding a
 "contract declares an effect clause" bit to `CFunction` and havocing all
 non-stack cells when a call has neither a declared clause nor a
-resource-derived frame does reject this section's regression, but it breaks 15
+resource-derived frame rejects the regression below but breaks 15
 mdtests that are not unsound, among them `const_global_table.md`,
 `execute_modular_swap_get.md`, and `c_named_function_contract_pipeline.md`.
 Those callees hold only `views` requirements and write nothing; a read-only
@@ -469,274 +461,42 @@ state has both `original.first == 4` and `original.first == 5`.
 **Acceptance criteria.**
 - `call_bump`'s claim is rejected, and so is any other value: after the call
   the only provable fact about `original.first` is that it is still 4.
-- Either bind by-value aggregate parameters to fresh blocks on the caller side
-  of instantiation too, or reject post-state mentions of a by-value parameter
-  in `ensures` and expose only `old(value.field)`. If the latter, the
-  diagnostic must say which clause is at fault.
 - `mdtests/struct_by_value_scalar_copy.md` and the rest of the by-value family
   still pass.
 
----
+**Do not bind the parameter to a fresh, empty post-state block.** Binding it to
+a fresh, empty block in the call's post-contract state
+(`with_contract_argument_views` keeps the caller's object; the two ensures
+lowerings at `src/kernel/functions.rs:1193` and `:1245` would rebind) fixes
+the regression below and leaves the caller's state consistent, but is too
+destructive as it stands:
 
-## 6. A reversed range consume splits ownership into overlapping residues
+- `mdtests/struct_conditional_value.md` fails. `choose_packet` states
+  `ensures result.tag == right.tag` over by-value parameters it never
+  modifies, and the caller needs that to chain into `sum_packet`'s
+  precondition. With an unconstrained post-state parameter the chain is lost.
+- `old(value.field)` breaks with it, so the migration those contracts would
+  need is not available: `old` resolves the parameter's address in the *post*
+  state and then reads it in entry memory, so an empty fresh block reads as
+  nothing. A fresh block would have to carry the argument's entry image for
+  `old` to keep working, while staying unconstrained in the post state.
 
-**Fixed** in `Reject consuming a reversed memory range`; the regression is
-`mdtests/reversed_range_consume_rejected.md`. Kept here until the next
-section split, since the guard audit below is still open.
-
-
-**Severity: critical.** A callee that consumes `p[lo..hi]` with `lo > hi`
-leaves the caller holding two owned ranges that overlap. Distinct owned facts
-are assumed disjoint, so a store through one no longer invalidates a load
-through the other.
-
-**Violated invariant.** Splitting an owned range must preserve disjointness of
-the residues. An empty or reversed range consumes nothing.
-
-**Mechanism.** The range split on consume in
-`src/kernel/primitives/resource_algebra.rs` computes the residues as
-`[start..lo]` and `[hi..end]` without requiring `lo <= hi`.
-
-**Regression** (`mdtests/reversed_range_consume_rejected.md`):
-
-```c
-int32 g(int32* p, int32 lo, int32 hi) {
-    return 0;
-}
-
-int32 t(int32* p, int32 lo, int32 hi) {
-    int32 x;
-    int32 r;
-    r = g(p, lo, hi);
-    x = p[0];
-    p[hi] = 7;
-    return x;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 g(int32* p, int32 lo, int32 hi) {
-    consumes p[lo..hi];
-}
-
-int32 t(int32* p, int32 lo, int32 hi) {
-    requires 1 <= lo;
-    requires lo <= 10;
-    requires 0 <= hi;
-    requires hi <= 9;
-    consumes p[0..10];
-
-    ensures result == p[0];
-}
-```
-
-With `lo = 1, hi = 0` the residues are `owns p[0..1]` and `owns p[0..10]`,
-which overlap. `x` is read before `p[hi] = 7` writes the same cell, so the
-postcondition asserts `3 == 7` for an entry state with `p[0] == 3`.
-
-**Acceptance criteria.**
-- The sidecar is rejected. Either the call fails because `lo <= hi` is not
-  established, or the split leaves the holder intact and the postcondition then
-  fails on the store.
-- A positive mdtest keeps an ordinary `lo <= hi` split working.
-- Check the same guard on the other range operations in the algebra
-  (`contains`, `separate`, merge) rather than only on consume.
+**Suggested direction.** The existing reading of a
+by-value parameter in `ensures` is sound exactly when the callee does not
+modify its copy, which is the case for every by-value contract in the tree
+today (`choose_packet`, `sum_packet`, `struct_by_value_pointer_copy.md`).
+Only a callee that writes to its copy, as `bump` does here, can state
+something the caller must not believe. So certification can keep the current
+call-site behaviour and instead reject an `ensures` that mentions a by-value
+aggregate parameter outside `old(...)` when the body writes to that
+parameter's storage. That preserves every contract in the tree and rejects
+this regression, and it needs no surface migration. The check belongs where
+the callee's body is certified, comparing the parameter's copy block between
+entry and exit, or by walking `source_body` for stores into it.
 
 ---
 
-## 7. The pure-function `decreases` check is name-based and scope-blind
-
-**Fixed** in `Scope the pure-function decreases check to real binders`;
-regressions `mdtests/pure_decreases_shadowed_binder_rejected.md` and
-`mdtests/pure_decreases_under_binders.md`.
-
-**Severity: critical.** A `let`, fold, or match binder that shadows the measure
-parameter satisfies the descent check, so an inconsistent pure definition is
-accepted and its equations leak into C claims.
-
-**Violated invariant.** A recursive pure function is admitted only when every
-recursive call strictly decreases the declared measure. The measure names a
-parameter; a shadowing binder is a different variable.
-
-**Mechanism.** `validate_recursive_call_edge`
-(`src/surface/validation/expression_analysis.rs:919-970`) matches the
-decreasing argument syntactically, by variable name, against the measure
-parameter name, and looks its bound up in a name-keyed `lower_bounds` map. No
-binder scoping is applied on the way down through
-`validate_recursive_calls_in_expression`.
-
-**Regression** (`mdtests/pure_decreases_shadowed_binder_rejected.md`):
-
-```c
-int32 never_one(int32 x) {
-    if (x == x + 2) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-function bad(n: int32) -> int32
-    decreases n
-{
-    if n <= 0 { 0 } else { (2..3).fold(0, |acc, n| acc + bad(n - 1) + 2) }
-}
-
-theorem t(x: int32) {
-    requires x == bad(1);
-    ensures x == x + 2 by {
-        unfold(bad(1));
-        simp();
-    }
-}
-
-int32 never_one(int32 x) {
-    requires x == bad(1);
-    requires x < 100;
-    ensures result == 1 by {
-        execute();
-        apply(t(x));
-        have 0 == 1 by {
-            contradiction(x == x + 2);
-        }
-        simp();
-    }
-}
-```
-
-The fold binder `n` shadows the parameter, so `bad(n - 1)` is `bad(1)` and the
-definition unfolds to `bad(1) == bad(1) + 2`, which no `int32` satisfies.
-`never_one` returns 0 for every input.
-
-**Acceptance criteria.**
-- The definition of `bad` is rejected at declaration validation, with a
-  diagnostic naming the shadowing binder, so the theorem and the C claim never
-  get a chance to be checked.
-- Resolve the measure through binder scopes rather than by name; alpha-renaming
-  the fold binder must not change the verdict.
-- Cover all three binder forms in the regression: `let`, fold item, and match
-  arm. Recursive definitions that genuinely descend still verify
-  (`mdtests/pure_function_unfold.md`, `pure_induction_countdown.md`).
-
----
-
-## 8. Floating-point constant folding is wrong in four distinct ways
-
-**Severity: critical.** The integer-space IEEE evaluator got mixed-sign
-`float` comparison, cancellation, widening, and out-of-range conversion wrong.
-Each yielded a verified false claim about a program with no symbolic inputs.
-**Regressions A through D are fixed**; only the mis-rounded subnormal division
-noted at the end remains, along with the differential test in the acceptance
-criteria.
-
-**Violated invariant.** Constant folding agrees with IEEE-754 at the declared
-width: comparison is a total order on non-NaN values, an exactly representable
-result is exact, widening `float` to `double` preserves the value including
-infinities, and a float-to-integer conversion out of range is undefined
-behaviour rather than a value.
-
-**Mechanism.** `src/kernel/primitives/term_operations.rs`, the `DecodedFloat`
-evaluator and `compare_float_bits`. The comparison defect is `float32`-only;
-`double` comparison is correct.
-
-**Regression A**, inverted mixed-sign `float` comparison — **fixed** in
-`Order binary32 comparison inside the format width`, regression
-`mdtests/float32_ordering_is_signed.md`. The other three below are open:
-
-```c
-int32 f32lt() {
-    float a = -1.0f;
-    float b = 1.0f;
-    if (a < b) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 f32lt() {
-    ensures result == 0;
-}
-```
-
-`-1.0f < 1.0f` is true, so the function returns 1. Click also certifies the
-mirror claim that `-1.0f > 1.0f`.
-
-**Regression B**, cancellation — **fixed** in `Normalize a cancelling float
-result before encoding it`, regression
-`mdtests/float_cancellation_is_exact.md`:
-
-```c
-int32 cancel() {
-    double x = 1.0 - 0.96875;
-    if (x == 0.03125) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 cancel() {
-    ensures result == 0;
-}
-```
-
-All three values are exactly representable in binary64 and the subtraction is
-exact, so the function returns 1.
-
-**Regression C**, widening — **fixed** in `Widen binary32 infinities to
-binary64 infinities`, regression
-`mdtests/float_widening_preserves_infinity.md`:
-
-```c
-int32 widen() {
-    float f = INFINITYF;
-    double d = (double) f;
-    if (isnan(d)) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 widen() {
-    ensures result == 1;
-}
-```
-
-Widening infinity yields infinity, not NaN, so the function returns 0.
-
-**Regression D**, out-of-range conversion — **fixed** in `Reject a float to
-integer conversion that overflows the container`, regressions
-`mdtests/float_to_integer_out_of_range_rejected.md` and
-`mdtests/float_to_integer_in_range.md`. A fifth, lower-severity case is
-mis-rounded subnormal division, still open.
-
-**Acceptance criteria.**
-- All four regressions are rejected, and the corresponding true claims verify.
-- Add a differential test over a fixed vector of bit patterns (signed zeros,
-  subnormals, infinities, NaNs, cancellation pairs, boundary conversions)
-  comparing the evaluator against known-good expected values, so the next
-  encoding change cannot silently regress.
-- The float mdtests already in the tree continue to pass.
-
----
-
-## 9. `at(L.entry, ...)` denotes two different states in one loop proof
+## 6. `at(L.entry, ...)` denotes two different states in one loop proof
 
 **Severity: critical.** Inside a `preserve` proof the spelling means the fresh
 havocked loop-head visit; after the loop it means the real pre-loop state. An
@@ -804,130 +564,7 @@ The second invariant is not inductive: `x` reaches `n >= 5` while
 
 ---
 
-## 10. The `calloc` zeroed flag survives a callee's writes
-
-**Fixed** in `End a zeroed reading when a call may write the allocation`;
-regressions `mdtests/calloc_zeroed_reading_survives_call_rejected.md` and
-`mdtests/calloc_zeroed_reading_after_calls.md`. The loop-havoc variant noted
-in the acceptance criteria is covered by the same helper.
-
-**Severity: critical.** Call havoc clears cells but not the allocation's
-zeroed status, so a caller reads 0 from memory the callee overwrote.
-
-**Violated invariant.** "This allocation reads as zero where unwritten" is
-invalidated by any write the caller cannot see, exactly like a cell value.
-
-**Mechanism.** The zeroed-allocation tables in
-`src/kernel/primitives/memory_state.rs` (`zeroed_allocations`,
-`zeroed_prefix_allocations`) are carried across `with_call_memory_havoc`
-unchanged.
-
-**Regression** (`mdtests/calloc_zeroed_survives_call_rejected.md`), two C
-files plus the sidecar:
-
-```c
-/* fill.c */
-void fill(int32* p) {
-    p[0] = 5;
-}
-```
-
-```c
-/* t.c */
-int32 t() {
-    int32* p = calloc(1, sizeof(int32));
-    if (p == 0) {
-        return 0;
-    }
-    fill(p);
-    int32 r = p[0];
-    free(p);
-    return r;
-}
-```
-
-```click
-verifying "fill.c";
-verifying "t.c";
-
-void fill(int32* p) {
-    owns p[0..1];
-    mutable p[0..1];
-}
-
-int32 t() {
-    ensures result == 0;
-}
-```
-
-`t()` returns 5.
-
-**Acceptance criteria.**
-- The sidecar is rejected; with `ensures p[0] == 5;` added to `fill`, the true
-  claim `result == 5` verifies.
-- Loop havoc gets the same treatment: a loop body that stores into a
-  `calloc`'d block must not leave the block readable as zero afterwards. One
-  regression each.
-- `mdtests/realloc_preserves_calloc_prefix.md` and the other zeroed-allocation
-  tests still pass.
-
----
-
-## 11. Sidecar integer literals in [2^31, 2^32) wrap to negative `int32`
-
-**Fixed** in `Type a sidecar literal the way a C source types it`; regressions
-`mdtests/sidecar_literal_types_match_c.md` and
-`mdtests/sidecar_literal_above_int32_rejected.md`. Two existing tests had
-encoded the old reading and were corrected in the same change:
-`mdtests/c_bitwise.md` and the expansion test
-`expanded_bitvector_facts_print_parseable_negative_literals` both claimed
-`~0 == 4294967295`, which is false in C, where the literal is a `long`.
-
-**Severity: high.** A spec author writing an ordinary unsigned constant gets a
-different number than they wrote, and the C frontend disagrees with the sidecar
-about the same digits.
-
-**Violated invariant.** A literal in a sidecar denotes the value written.
-
-**Mechanism.** The unsuffixed decimal branch of the sidecar tokenizer
-(`src/surface/parser/tokenizer.rs:253-262`) emits `Token::Number(u32)` for
-anything that fits `u32`, and only values above `u32::MAX` become
-`Int64Number`/`UInt64Number`. `src/surface/parser.rs:4610` turns that token
-into `CValue::Int32(Constant(value))` and `:4920` into
-`C0Expression::Int32Literal(value)` — the raw 32-bit pattern read as signed.
-The C frontend types the same digits as `int64`.
-
-**Regression** (`mdtests/sidecar_literal_wraps_rejected.md`):
-
-```c
-int32 identity(int32 x) {
-    return x;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 identity(int32 x) {
-    requires x == -2147483648;
-    ensures result == 2147483648;
-}
-```
-
-`-2147483648 == 2147483648` is false; the sidecar verifies because both
-literals become the same `int32` bit pattern.
-
-**Acceptance criteria.**
-- The sidecar is rejected, either as a type error or as an unproved claim.
-- Literals above `INT32_MAX` are typed as the C frontend types them, so
-  `ensures result == 4294967295` cannot be proved of a function returning `-1`.
-- Comparisons that mix widths after the change are either well-typed or
-  rejected with a source-positioned diagnostic; silent reinterpretation is what
-  this bug is.
-
----
-
-## 12. Literal and operator typing: `sizeof`, negated literals, `?:`
+## 7. Literal and operator typing: `sizeof`, negated literals, `?:`
 
 **Severity: high.** Thirteen findings share this cause. Each makes a mixed
 signed/unsigned expression evaluate differently from C.
@@ -1018,9 +655,9 @@ the comparison is false: the function returns 0.
 
 ---
 
-## 13. Uninitialized reads missed via symbolic index, callee, block re-entry
+## 8. Uninitialized reads missed via symbolic index, callee, block re-entry
 
-**Severity: high.** Four findings. Reading indeterminate automatic storage is
+**Severity: high.** Three findings. Reading indeterminate automatic storage is
 undefined behaviour that Click claims to check, and these paths do not.
 
 **Violated invariant.** A load from automatic storage that was never written is
@@ -1034,15 +671,7 @@ cell matched, which needs a concrete offset; heap blocks have an explicit
 initialization state across a `views`/`owns` transfer at a call, and
 block-scoped objects reuse one block for the whole function.
 
-**Regression A**, symbolic index. **Attempted and reverted**: flagging a
-symbolic-offset load from a `local:` block unless the whole block is written
-does reject this case, but it is not the right test. A load at an index the
-proof bounds to the written prefix, which is what an ordinary copy or
-initialization loop does, would be rejected with it. The attempt also could
-not see the writes: local array stores do not appear in the cell map under
-constant offsets, so a fully written `int32 a[3]` still looked uninitialized
-and even the sound cases were rejected. A real fix needs the load's index
-placed against the initialized region, not a whole-object test
+**Regression A**, symbolic index
 (`mdtests/uninit_local_symbolic_index_rejected.md`):
 
 ```c
@@ -1094,42 +723,7 @@ int32 uninit_eq_callee() {
 }
 ```
 
-**Regression C**, a `views` range wider than the caller's block — **fixed** in
-`Bound a borrowed view of a caller's local to that local`, regressions
-`mdtests/borrowed_local_view_bounds_rejected.md` and
-`mdtests/borrowed_local_view_in_bounds.md`. A range with symbolic bounds keeps
-the previous treatment; only constant bounds are placed against the block:
-
-```c
-int32 g(int32* a) {
-    return a[2];
-}
-
-int32 f() {
-    int32 b[2];
-    int32 c = 9;
-    b[0] = 1;
-    b[1] = 2;
-    return g(b) * 0 + c;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 g(int32* a) {
-    views a[0..3];
-    ensures result == a[2];
-}
-
-int32 f() {
-    ensures result == 9;
-}
-```
-
-`f` passes a two-element array where the callee's precondition claims three.
-
-**Regression D**, block-scoped storage
+**Regression C**, block-scoped storage
 (`mdtests/block_local_stale_across_iterations_rejected.md`):
 
 ```c
@@ -1159,77 +753,19 @@ indeterminate storage.
 
 **Acceptance criteria.**
 - Each regression is rejected with a "read of uninitialized storage"
-  diagnostic (C) or a failed precondition (C's `views` case).
+  diagnostic.
 - Track initialization for stack blocks the way heap blocks are tracked, so a
   symbolic index into a partly initialized array is checked against what was
-  actually written.
-- Check `views`/`owns` preconditions at a call against the callee's block
-  extent and its initialization state.
+  actually written. A whole-object test is not enough: an index the proof
+  bounds to the written prefix, which is what an ordinary copy loop does, must
+  still be accepted, and local array stores do not appear in the cell map
+  under constant offsets, so the writes have to be found another way.
+- Carry initialization state across a `views`/`owns` transfer at a call.
 - Give block-scoped objects a fresh block per entry to the block.
 
 ---
 
-## 14. String literal storage can be made writable through a contract
-
-**Fixed** in `Reject a call whose mutable footprint covers read-only storage`;
-regression `mdtests/string_literal_mutable_footprint_rejected.md`. The fix is
-at the call rather than on the literal's resource: removing the literal's
-ownership would also remove the documented ability to return a literal and
-read it in the caller (`mdtests/string_literals_call.md`), because `produces`
-transfers ownership and there is no spelling for producing a view.
-
-**Severity: high.** A callee contract that takes `owns` over a literal's
-storage lets the caller store into read-only memory with no diagnostic.
-
-**Violated invariant.** Modifying a string literal is undefined behaviour
-(C11 6.4.5p7). Read-only backing storage stays read-only across resource
-transfer.
-
-**Mechanism.** `initialize_c_function_globals` installs the literal's block
-with `with_read_only_block` and then unconditionally grants an `own_memory`
-resource over it (`src/kernel/functions.rs:3006-3040`); the ownership is what
-a callee's `mutable` clause then consumes.
-
-**Regression** (`mdtests/string_literal_writable_rejected.md`):
-
-```c
-void setb(uint8 *p) {
-    p[0] = 1;
-}
-
-int32 t() {
-    uint8 *s = "ab";
-    setb(s);
-    return s[0];
-}
-```
-
-```click
-verifying "t.c";
-
-void setb(uint8 *p) {
-    owns p[0..1];
-    mutable p[0..1];
-    ensures p[0] == 1;
-} by { execute(); frame(); simp(); }
-
-int32 t() {
-    ensures result == 1;
-} by { execute(); simp(); }
-```
-
-**Acceptance criteria.**
-- Passing literal storage to a parameter that requires `owns` is rejected, or
-  the store inside `setb` fails against the read-only block. Either way the
-  sidecar does not verify.
-- `mdtests/string_literals_reject_write.md` (the direct-store case) still
-  passes, and reading a literal through a `views` contract still works.
-- The variant where the literal is returned from a helper that declares
-  `produces result[0..3]` is the same bug and gets the same treatment.
-
----
-
-## 15. A store through `&local` in an inline header helper is dropped
+## 9. A store through `&local` in an inline header helper is dropped
 
 **Severity: high.** The caller keeps the old value of a local the inlined body
 wrote through a pointer.
@@ -1288,7 +824,7 @@ The function returns 9.
 
 ---
 
-## 16. A reloaded pointer to a local is treated as a distinct block
+## 10. A reloaded pointer to a local is treated as a distinct block
 
 **Severity: high.** After a call, a pointer loaded back out of caller-visible
 memory no longer aliases the local it points to, and the resulting state is
@@ -1355,53 +891,7 @@ inconsistent.
 
 ---
 
-## 17. `--changed-since` misses named-contract and algebraic-type changes
-
-**Fixed** in `Rebuild when a shared contract or algebraic type changes`;
-regressions `incremental_selection_rebuilds_all_functions_for_named_contract_changes`
-and `..._for_algebraic_type_changes` in `src/surface/tests/project_tests.rs`,
-which is where the existing incremental-selection tests live because the
-scenario needs a baseline rather than a sidecar.
-
-**Severity: high.** After a shared `contract` block is weakened, every function
-is reused and the run exits 0, while a full verify of the same tree fails.
-
-**Violated invariant.** Incremental selection re-verifies every claim whose
-meaning could have changed. Shared definitions that participate in a proof are
-part of that set.
-
-**Mechanism.** `shared_environment_changed`
-(`src/surface/verification.rs:329-334`) compares predicate, Click pure
-function, resource, and theorem definitions. Named function-contract
-definitions and `spec enum` algebraic types are not compared, and a function
-block that references a contract by name is byte-identical before and after,
-so nothing pulls it in through the reverse call graph.
-
-**Regression** (`mdtests/` cannot express this; it needs a git baseline, so it
-belongs in `tests/` beside the other incremental tests, or as a CLI test). The
-procedure:
-
-1. Take `mdtests/c_named_function_contract.md`'s sources as three C files and
-   one sidecar with a `contract int32 Comparator(...)` whose `ensures` is
-   `result == left - right`. Commit.
-2. `click verify t.click` — passes, records the baseline marker.
-3. Weaken the contract's `ensures` to `result >= 0`. Commit.
-4. `click verify --changed-since <first commit> t.click` — prints
-   `selected (0): (none)`, `reused (3): apply, caller, compare`, exit 0.
-5. `click verify t.click` on the same tree — fails, `apply.ensures_0`
-   unproved.
-
-**Acceptance criteria.**
-- Step 4 selects `apply` (at least) and fails exactly as step 5 does.
-- `contract_definitions()` and algebraic type definitions join the
-  shared-environment comparison; add each to the regression.
-- Audit the rest of the file-level declaration kinds against that comparison in
-  the same change, and note in `docs/reference/cli/verify.md` that any shared
-  declaration change forces a rebuild.
-
----
-
-## 18. Termination resolves calls by name and drops nested-loop writes
+## 11. Termination resolves calls by name and drops nested-loop writes
 
 **Severity: high.** Two independent holes in the same judgment; both certify
 `decreases` for a program that does not terminate.
@@ -1532,90 +1022,26 @@ correctly rejected, which shows the checker runs and this case slips past it.
 
 ---
 
-## 19. `mutable &obj.field` on a static struct lowers to the first cell
+## 12. An aggregate copy from an uninitialized source keeps the old value
 
-**Severity: high.** A footprint that names one field authorizes writes to a
-different field.
+**Severity: high.** A whole-struct assignment whose source was never written
+leaves the destination reading as its own previous value, so a contract can
+state that value.
 
-**Violated invariant.** A field place in an effect clause denotes that field's
-bytes, at its ABI offset.
-
-**Fixed** in `Resolve a field footprint through its address-of base`;
-regressions `mdtests/static_struct_field_footprint.md` and
-`mdtests/static_struct_field_footprint_rejected.md`.
-
-**Mechanism.** Field resolution in the contract-segment parser
-(`resolve_field_metadata`, `src/surface/parser.rs`) accepted only a bare
-variable as the base, so `&shared.second` (whose base is `AddressOf(shared)`)
-fell through to a fallback segment that keeps the base with no offset. The
-same clause without the `&` resolved correctly.
-
-One residual risk is left open: that fallback still yields an offset-free
-segment for a base whose layout the parse cannot name, such as a loaded
-pointer (`load_int32_pointer(o)->value`). Later lowering resolves those, and
-`mdtests/c_chained_field_access.md` covers the shape, but the parser cannot
-tell an unresolvable base from an unknown field.
-
-**Regression** (`mdtests/static_field_footprint_rejected.md`):
-
-```c
-struct pair {
-    int32 first;
-    int32 second;
-};
-
-struct pair gs;
-
-int32 f() {
-    gs.first = 9;
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 f() {
-    mutable &gs.second;
-    ensures result == 0;
-}
-```
-
-**Acceptance criteria.**
-- The sidecar is rejected: writing `gs.first` is outside a footprint that names
-  `gs.second`.
-- `mutable &gs.first;` verifies, and `mdtests/aggregate_static_effect.md` still
-  passes.
-- Cover a nested field (`&gs.inner.value`) in the regression too, since the
-  offset composition is the thing being fixed.
-
----
-
-## 20. Aggregate copies skip fields and copy uninitialized sources
-
-**Partly fixed** in `Drop the destination cells an aggregate copy cannot
-carry`; regression `mdtests/aggregate_copy_skipped_field_rejected.md`. A field
-the copy cannot carry no longer leaves the destination's previous value
-readable, so no false value is provable. Two parts remain open: the copy still
-does not carry those field types at all, which is an incompleteness (the
-missing widths are `int16*`, `uint16*`, `uint32*`, `int64*`, `uint64*`,
-`float*`, `double*`, and the float array and pointer-to-pointer forms), and
-copying from an uninitialized source is still not reported as such.
-
-**Severity: high.** A whole-struct assignment leaves the destination's previous
-value in fields the copy does not handle.
-
-**Violated invariant.** Struct assignment copies every member (C11 6.5.16.1p2),
-and copying from an uninitialized source is a read of indeterminate storage.
+**Violated invariant.** Struct assignment copies the source's members
+(C11 6.5.16.1p2). A source member that was never written is indeterminate, so
+reading the destination afterwards is a read of indeterminate storage, not a
+read of what the destination held before.
 
 **Mechanism.** `copy_aggregate_fields` (`src/kernel/functions.rs:3526-3549`)
-matches a fixed list of field types and ends with `_ => continue`, so
-`float*`, float arrays, and other unlisted types are silently skipped. The
-frontend routes union-containing layouts through this kernel copy
+copies a source cell only when one is present. A union-containing layout routes
+whole-struct assignment through this kernel copy
 (`C0Statement::AggregateCopy`, executed at
-`src/kernel/eval/statements.rs:568`), which is how the skip becomes reachable.
+`src/kernel/eval/statements.rs:568`), and with no source cell the destination's
+own cell survives untouched. The same assignment between plain structs is
+correctly reported, so the union path is what makes this reachable.
 
-**Regression** (`mdtests/aggregate_copy_skips_field_rejected.md`):
+**Regression** (`mdtests/aggregate_copy_uninitialized_source_rejected.md`):
 
 ```c
 union payload {
@@ -1626,117 +1052,91 @@ union payload {
 struct packet {
     int32 tag;
     union payload payload;
-    float* fp;
 };
 
-int32 stale_union_copy(struct packet* src) {
-    float arr[1];
-    struct packet dst;
-    dst.tag = 1;
-    dst.fp = arr;
-    dst = *src;
-    return dst.tag * 10 + (dst.fp == 0);
+int32 aggregate_copy_uninitialized_source_rejected() {
+    struct packet source;
+    struct packet destination;
+    destination.tag = 7;
+    destination = source;
+    return destination.tag;
 }
 ```
 
 ```click
 verifying "t.c";
 
-int32 stale_union_copy(struct packet* src) {
-    requires loadable(src->tag);
-    requires loadable(src->payload.number);
-    requires loadable(src->fp);
-    requires src->tag == 2;
-    requires src->fp == 0;
-    consumes src->tag;
-    consumes src->payload.number;
-    consumes src->fp;
-    ensures result == 20;
-    produces src->tag;
-    produces src->payload.number;
-    produces src->fp;
+int32 aggregate_copy_uninitialized_source_rejected() {
+    ensures result == 7;
 }
 ```
 
-After the copy `dst.fp` is null, so the function returns 21, not 20.
+`source` was never written, so `destination.tag` is indeterminate after the
+copy and 7 is the value the assignment was supposed to overwrite.
 
 **Acceptance criteria.**
-- The sidecar is rejected and `ensures result == 21` verifies.
-- Replace the catch-all `continue` with either a complete match over modeled
-  leaf types or an explicit unsupported-layout error; a silently skipped field
-  must be impossible.
-- A copy whose source leaf is uninitialized reports a read of uninitialized
-  storage rather than keeping the destination's old value.
+- The sidecar is rejected with a read of uninitialized storage, as the same
+  assignment between plain structs already is.
+- A copy whose source leaves a field type this copy cannot carry keeps its
+  current treatment: the destination cells are dropped, so nothing stale is
+  readable. Carrying the remaining widths (`int16*`, `uint16*`, `uint32*`,
+  `int64*`, `uint64*`, `float*`, `double*`, and the float array and
+  pointer-to-pointer forms) is a completeness follow-up, not part of this.
 
 ---
 
-## 21. `continue` in a `switch` inside a `do ... while` with a call condition
+## 13. Subnormal float division is mis-rounded
 
-**Fixed** in `Reject a switch-enclosed continue in a call-condition do-while`,
-by rejecting the shape rather than lowering it; regressions
-`mdtests/do_while_switch_continue_rejected.md` and
-`mdtests/do_while_continue_shapes.md`. Supporting the shape would need a
-spelling for "leave the loop" from inside a `switch`, which C0 does not have.
+**Severity: high.** The integer-space IEEE evaluator mis-rounds a division
+whose result is subnormal and whose dividend is subnormal: the sticky bit
+collides with the rounding bit.
 
-**Severity: high.** The `continue` is lowered as a `switch` break, so the rest
-of the body runs and the loop condition is not reached as C requires.
+**Violated invariant.** Constant folding agrees with IEEE-754 at the declared
+width, under round-to-nearest, ties-to-even, including in the subnormal range.
 
-**Violated invariant.** `continue` always continues the innermost enclosing
-loop, never the enclosing `switch`.
+**Mechanism.** `src/kernel/primitives/term_operations.rs`, the `DecodedFloat`
+evaluator's division path and `round_float_result`'s subnormal branch.
 
-**Mechanism.** `prepend_condition_check_before_loop_continues`
-(`src/languages/c/syntax.rs:13400`) rewrites `continue` for the
-call-in-condition form without distinguishing it from a `switch` `break`.
-
-**Regression** (`mdtests/do_while_switch_continue_rejected.md`):
+**Regression.** The correctly rounded binary32 quotient is
+`3.2229864679470793e-44f` (bits `0x00000017`, confirmed with a C compiler on
+this profile); Click folds to `3.363116314379561e-44f` (bits `0x00000018`),
+one unit in the last place high. The sidecar below therefore states the wrong
+branch and verifies, while `ensures result == 1` is rejected.
 
 ```c
-int32 stop_now() {
+int32 subnormal_divide() {
+    float quotient = 4.203895392974451e-45f / 0.12765958905220032f;
+    if (quotient == 3.2229864679470793e-44f) {
+        return 1;
+    }
+    if (quotient == 3.363116314379561e-44f) {
+        return 2;
+    }
     return 0;
-}
-
-int32 dw_switch() {
-    int32 count = 0;
-    int32 tail = 0;
-    do {
-        count++;
-        switch (count) {
-            case 1:
-                continue;
-            default:
-                break;
-        }
-        tail++;
-    } while (stop_now());
-    return tail;
 }
 ```
 
 ```click
 verifying "t.c";
 
-int32 stop_now() {
-    ensures result == 0;
-}
-
-int32 dw_switch() {
-    ensures result == 1;
+int32 subnormal_divide() {
+    ensures result == 2;
 }
 ```
 
-The `continue` skips `tail++` and goes to the post-test, which is false, so
-the function returns 0.
-
 **Acceptance criteria.**
-- The sidecar is rejected and `ensures result == 0` verifies.
-- Cover `while`, `for`, and `do ... while`, each with a `continue` inside a
-  `switch`, with and without a call in the loop condition.
+- The sidecar above is rejected and `ensures result == 1` verifies.
+- Add a differential test over a fixed vector of bit patterns (signed zeros,
+  subnormals, infinities, NaNs, cancellation pairs, boundary conversions)
+  comparing the evaluator against known-good expected values, so the next
+  encoding change cannot silently regress. This is the missing guard for the
+  whole evaluator, not only for this case.
 
 ---
 
-## 22. Range byte counts wrap modulo 2^32
+## 14. Range byte counts wrap modulo 2^32
 
-**Severity: medium.** A huge or negative element range lowers to a tiny byte
+**Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
 
 **Violated invariant.** The byte footprint of an element range is
@@ -1757,9 +1157,9 @@ folds to 0) and `n = 2^30 + 1` (folds to 4) both certify, while `n = 2^30 + 2`
 (folds to 8) is correctly rejected. `n = -1` also certifies, which is
 defensible: an empty range is vacuously loadable.
 
-A fix needs a decision rather than a local patch, which is why it is not
-bundled with section 6's guard: either carry byte extents in 64 bits, or emit
-a no-overflow obligation where an element range becomes a byte count. The
+A fix needs a decision rather than a local patch: either carry byte extents in
+64 bits, or emit a no-overflow obligation where an element range becomes a
+byte count. The
 memory model documents a 32-bit block extent, so the second is the smaller
 change but needs an obligation channel at both sites.
 
@@ -1789,14 +1189,16 @@ int32 symn(int32 p[], int32 n) {
 - Both the wrapping and the negative case are rejected.
 - Compute footprints in 64-bit, or emit a no-overflow obligation on range
   lowering; either way empty and reversed ranges stay empty.
-- Fold this into section 6's guard audit: both are range arithmetic without
-  side conditions.
+- Audit the other range operations for the same gap: element-to-byte
+  arithmetic without a side condition appears wherever a range is measured.
 
 ---
 
-## 23. Intra-object array overflow is modeled as a flat access
+## 15. Intra-object array overflow is modeled as a flat access
 
-**Severity: medium** (documented, but it accepts undefined behaviour).
+**Severity: high.** The flat-access model is documented, which is why the
+fix has to change the documentation with it; it still certifies a value for a
+program whose behaviour C leaves undefined.
 
 **Violated invariant.** An array subscript outside its own dimension is
 undefined behaviour (C11 6.5.6p8) even when the containing allocation has more
@@ -1864,51 +1266,124 @@ behaviour with a predictable result.
 
 ---
 
-## 24. Symbolic specification arithmetic wraps where constants are undefined
+## 16. A `for` initializer's variable stays readable after the loop
 
-**Severity: medium.** No false non-reflexive claim was found, but the two
-halves of the specification language disagree, which is how the next hole gets
-in.
+**Severity: high.** C0 accepts a program C rejects, and proves a value for the
+out-of-scope read.
 
-**Violated invariant.** `docs/concepts/c0-and-c-fragments.md` says a C fragment
-in a specification follows C0 integer rules "including signed-overflow
-obligations". Symbolic spec terms do not produce them.
+**Violated invariant.** A variable declared in a `for` initializer is scoped to
+the loop (C11 6.8.5p5). Naming it afterwards is a use of an undeclared
+identifier, which is a constraint violation, not a value.
 
-**Mechanism.** `evaluate_spec_int32_binary_paths` (`src/kernel/spec.rs:3137`)
-drops undefined-behaviour outcomes with
-`filter_map(c_expression_path_value)`, so a symbolic overflowing term becomes a
-wrapping bitvector term with no obligation. The same expression with constant
-operands fails to lower at all ("produced 0 paths, not one").
+**Mechanism.** Not localized. `for` is lowered as sugar over `while` in
+`src/languages/c/syntax.rs`; the initializer's declaration is emitted into the
+enclosing block, so the binding outlives the loop it belongs to.
 
-**Regression** (`mdtests/spec_symbolic_overflow_wraps.md` — the expectation
-depends on the resolution):
+**Regression** (`mdtests/for_initializer_scope_rejected.md`):
 
 ```c
-int32 identity(int32 x) {
-    return x;
+int32 for_initializer_scope_rejected() {
+    int32 total = 0;
+    for (int32 i = 0; i < 3; i++) {
+        total = total + i;
+    }
+    return i;
 }
 ```
 
 ```click
 verifying "t.c";
 
-int32 identity(int32 x) {
-    ensures (x + 1) - 1 == x;
+int32 for_initializer_scope_rejected() {
+    ensures result == 3;
 }
 ```
 
-Verifies today with no `requires`. The concrete
-`ensures (2147483647 + 1) - (2147483647 + 1) == 0;` fails to lower, and
-`ensures x + 1 > x;` correctly fails.
+**Acceptance criteria.**
+- The C source is rejected with a source-positioned diagnostic naming `i`.
+- A `for` loop whose index is declared before the loop, and read after it,
+  still verifies.
+
+---
+
+## 17. Identical string literals are proved distinct
+
+**Severity: high.** Whether identical literals share storage is unspecified,
+so neither answer may be proved.
+
+**Violated invariant.** C11 6.4.5p7: it is unspecified whether identical string
+literals are distinct objects. A conforming implementation may merge them, so
+a proof that two identical literals differ is a proof of something no
+implementation is required to make true.
+
+**Mechanism.** Each literal is installed under its own block identity, keyed by
+the literal's generated name (`CMemory::string_literal_pointer` in
+`initialize_c_function_globals`, `src/kernel/functions.rs:3006-3040`).
+Distinct blocks compare unequal, so the comparison decides.
+
+**Regression** (`mdtests/identical_string_literals_undecided.md`):
+
+```c
+int32 identical_string_literals_undecided() {
+    uint8* first = "ok";
+    uint8* second = "ok";
+    if (first == second) {
+        return 1;
+    }
+    return 0;
+}
+```
+
+```click
+verifying "t.c";
+
+int32 identical_string_literals_undecided() {
+    ensures result == 0;
+}
+```
 
 **Acceptance criteria.**
-- Pick one semantics and make both halves agree: either emit `defined(...)`
-  obligations for symbolic specification arithmetic so this sidecar needs
-  `requires x < 2147483647`, or document specification arithmetic as wrapping
-  and make the constant case fold rather than fail to lower.
-- Whichever is chosen, the diagnostic for the constant case stops being
-  "the kernel lowering produced 0 paths, not one", which is an internal shape
-  leaking into a user-facing message.
+- Neither `result == 0` nor `result == 1` is provable; the comparison stays
+  undecided, and a proof needs both paths.
+- A literal compared against itself through one pointer still decides equal.
+
+---
+
+## 18. A postcondition may read the storage of a returned local
+
+**Severity: high.** A contract states a value in storage whose lifetime ended
+when the function returned, and the caller may rely on it.
+
+**Violated invariant.** An automatic object's lifetime ends when its block is
+left (C11 6.2.4p6); a pointer to it becomes indeterminate, so a postcondition
+may not read through it.
+
+**Mechanism.** Not localized. The returned pointer keeps its `local:` block,
+and the postcondition is lowered against the exit state where that block's
+cells are still present.
+
+**Regression** (`mdtests/returned_local_postcondition_rejected.md`):
+
+```c
+int32* returned_local_postcondition_rejected() {
+    int32 value = 5;
+    return &value;
+}
+```
+
+```click
+verifying "t.c";
+
+int32* returned_local_postcondition_rejected() {
+    ensures result[0] == 5;
+}
+```
+
+**Acceptance criteria.**
+- The postcondition is rejected: the frame's storage is gone at the exit
+  state, so the load has nothing to read.
+- A postcondition over storage that outlives the call, a heap allocation the
+  function returns or a caller object it was given, still verifies.
 
 ---
 
@@ -1954,34 +1429,6 @@ diagnostic.
 
 ---
 
-## Reported but not verified
-
-These came out of the review without an independent reproduction, because the
-run hit its usage limit before their verification agents ran. They are recorded
-so the leads are not lost; confirm each before acting on it.
-
-- A postcondition may read the storage of a local whose address is returned.
-- Overlapping struct self-assignment `*p = *q` gets a definite sequential
-  field-copy result where C leaves it undefined.
-- Two identical string literals are proved distinct; a freed pointer is proved
-  unequal to a later fresh allocation. Both are unspecified in C, so proving
-  either direction is wrong.
-- Null pointer arithmetic `(int32*)0 + 1` is accepted and yields a definite
-  non-null pointer.
-- A variable declared in a `for` initializer stays readable after the loop.
-- Contract-side `==` between a `uint64` result and an `int32` value compares
-  after an implicit conversion instead of rejecting the mismatch.
-- A contract naming `&c[0..1]` resolves to a file-scope global while the C body
-  means a function-local static of the same name.
-- Relational comparison of two unrelated pointer parameters is accepted with no
-  same-object obligation.
-- A single call inside an expression is sequenced before sibling operand loads,
-  fixing one of C's permitted evaluation orders.
-- Symbolic 64-bit signed addition and multiplication are reported as definite
-  overflow (a false rejection, not a false acceptance).
-- Nested field designator followed by a positional initializer continues at the
-  wrong nesting level.
-
 ## Checked and found sound
 
 Recorded so the next pass does not re-cover this ground. Each was probed
@@ -2005,7 +1452,7 @@ was correctly rejected, and the corresponding true claims verified.
   allocation's address into a global under `immutable`, a callee mutating a
   global with the caller claiming it unchanged, and a callback parameter
   shadowing a file-scope function (frame checking resolves the shadowing
-  correctly — only termination does not; see section 18).
+  correctly — only termination does not; see section 11).
 - Resources: two `owns` clauses over aliasing arguments are rejected as
   overlapping; `views` and `owns` over the same cell are not assumed separate.
 - Floating point with symbolic operands: NaN keeps the third path in
@@ -2014,8 +1461,8 @@ was correctly rejected, and the corresponding true claims verified.
   call sites, and an overflowing callee `ensures` instantiation yields no fact.
 - Incremental selection re-verifies correctly after a callee contract change, a
   callee body change, a strengthened callee precondition, a caller body change,
-  a global initializer change, an extern contract change, and a theorem change
-  (the gap is only the shared-declaration kinds in section 17).
+  a global initializer change, an extern contract change, a theorem change,
+  and a named-contract or algebraic type change.
 - Sidecar/C signature mismatches (arity, parameter order, parameter type) and
   missing functions are rejected.
 - The proof object and simple tactics: the reviewer assigned to
@@ -2040,13 +1487,3 @@ Reported during the review and refuted on inspection. Do not re-file.
 - **`click verify` exits 0 on a sidecar with no proof units.** Documented
   behaviour: a sidecar target verifies every claim in that sidecar, and there
   are none.
-
-## Provenance
-
-Produced on 2026-09-06 against `d6502258` by sixteen subsystem reviewers and
-six black-box attackers, each finding then rebuilt by an independent
-reproducer and challenged by an adversarial skeptic. 89 findings were reported;
-72 had the false claim re-run and accepted, 59 of those also cleared both
-verification passes, and 4 were refuted (listed above). The 34 regressions in
-this file were rebuilt from scratch and re-run immediately before it was
-written. No fix has been attempted, and the tree is otherwise untouched.

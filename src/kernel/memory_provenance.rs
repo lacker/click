@@ -2,6 +2,38 @@ use super::primitives::*;
 use super::reasoning::*;
 use std::collections::BTreeSet;
 
+/// Resource indices are logical values. ADT indices can only be exchanged
+/// using equality evidence of the same algebraic type; they are never cast
+/// to C scalars or interpreted as memory authority.
+pub(crate) fn resource_arguments_proven_equal(
+    left: &AlgebraicValue,
+    right: &AlgebraicValue,
+    assumptions: &PureFactContext,
+) -> bool {
+    match (left, right) {
+        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        (AlgebraicValue::Algebraic(left), AlgebraicValue::Algebraic(right)) => {
+            left.algebraic_type == right.algebraic_type
+                && (left == right
+                    || assumptions.proves_exact(&Proposition::Equal(
+                        Term::Algebraic(left.clone()),
+                        Term::Algebraic(right.clone()),
+                    ))
+                    || assumptions.proves_exact(&Proposition::Equal(
+                        Term::Algebraic(right.clone()),
+                        Term::Algebraic(left.clone()),
+                    ))
+                    || assumptions.decide(&ConditionTerm::AlgebraicEqual(
+                        Box::new(left.clone()),
+                        Box::new(right.clone()),
+                    )) == Some(true))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
     canonical_memory_for_pointer_load(memory, pointer)
 }
@@ -87,6 +119,19 @@ pub(crate) fn c_resources_directly_match(
                     || pointers_match_for_resource_check(left.base(), right.base(), assumptions),
                 ))
         }
+        (CResource::Instance(left), CResource::Instance(right)) => {
+            left.identity() == right.identity()
+                && left.name() == right.name()
+                && left.schema() == right.schema()
+                && left.arguments().len() == right.arguments().len()
+                && left.fields().len() == right.fields().len()
+                && left
+                    .arguments()
+                    .iter()
+                    .chain(left.fields())
+                    .zip(right.arguments().iter().chain(right.fields()))
+                    .all(|(a, b)| resource_arguments_proven_equal(a, b, assumptions))
+        }
         (
             CResource::Composite {
                 name: left_name,
@@ -111,8 +156,13 @@ pub(crate) fn c_resources_directly_match(
                 && left_arguments.len() == right_arguments.len()
                 && left_arguments
                     .iter()
-                    .zip(right_arguments)
-                    .all(|(left, right)| values_match(left, right))
+                    .zip(right_arguments.iter())
+                    .all(|(left, right)| match (left, right) {
+                        (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
+                            values_match(left, right)
+                        }
+                        _ => resource_arguments_proven_equal(left, right, assumptions),
+                    })
         }
         _ => false,
     }
@@ -3343,6 +3393,7 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                 | Bitvector32Term::Int64From32(value)
                 | Bitvector32Term::Int64FromUInt32(value)
                 | Bitvector32Term::UInt64From32(value)
+                | Bitvector32Term::UInt32From64(value)
                 | Bitvector32Term::UInt64FromInt32(value)
                 | Bitvector32Term::UInt64FromInt64(value)
                 | Bitvector32Term::Int64BitwiseNot(value)
@@ -3700,6 +3751,9 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                     }
                     Bitvector32Term::UInt64From32(value) => {
                         visit_unary!(Bitvector32Term::UInt64From32, value, tasks)
+                    }
+                    Bitvector32Term::UInt32From64(value) => {
+                        visit_unary!(Bitvector32Term::UInt32From64, value, tasks)
                     }
                     Bitvector32Term::UInt64FromInt32(value) => {
                         visit_unary!(Bitvector32Term::UInt64FromInt32, value, tasks)
@@ -4410,6 +4464,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             | Bitvector32Term::Float64Negate(term) => bitvector_has_memory(term),
             Bitvector32Term::Int64From32(term)
             | Bitvector32Term::UInt64From32(term)
+            | Bitvector32Term::UInt32From64(term)
             | Bitvector32Term::Int64FromUInt32(term)
             | Bitvector32Term::UInt64FromInt32(term)
             | Bitvector32Term::UInt64FromInt64(term) => bitvector_has_memory(term),
@@ -4647,6 +4702,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         | Bitvector32Term::UInt64BitwiseNot(term)
         | Bitvector32Term::Int64From32(term)
         | Bitvector32Term::UInt64From32(term)
+        | Bitvector32Term::UInt32From64(term)
         | Bitvector32Term::Int64FromUInt32(term)
         | Bitvector32Term::UInt64FromInt32(term)
         | Bitvector32Term::UInt64FromInt64(term) => collect_bitvector_memories(term, memories),
@@ -4943,6 +4999,9 @@ fn transport_framed_atomic_bitvector(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
         ),
         Bitvector32Term::UInt64From32(value) => Bitvector32Term::uint64_from_32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt32From64(value) => Bitvector32Term::uint32_from_64(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
         ),
         Bitvector32Term::Int64FromUInt32(value) => Bitvector32Term::int64_from_uint32(
@@ -5354,6 +5413,7 @@ enum ExactLoadUnary {
     BitwiseNot,
     Int64From32,
     UInt64From32,
+    UInt32From64,
     Int64FromUInt32,
     UInt64FromInt32,
     UInt64FromInt64,
@@ -5435,6 +5495,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
             ExactLoadUnary::BitwiseNot => Bitvector32Term::bitwise_not(value),
             ExactLoadUnary::Int64From32 => Bitvector32Term::int64_from_32(value),
             ExactLoadUnary::UInt64From32 => Bitvector32Term::uint64_from_32(value),
+            ExactLoadUnary::UInt32From64 => Bitvector32Term::uint32_from_64(value),
             ExactLoadUnary::Int64FromUInt32 => Bitvector32Term::int64_from_uint32(value),
             ExactLoadUnary::UInt64FromInt32 => Bitvector32Term::uint64_from_int32(value),
             ExactLoadUnary::UInt64FromInt64 => Bitvector32Term::uint64_from_int64(value),
@@ -5627,6 +5688,9 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                     }
                     Bitvector32Term::UInt64From32(value) => {
                         push_unary(&mut tasks, ExactLoadUnary::UInt64From32, value)
+                    }
+                    Bitvector32Term::UInt32From64(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt32From64, value)
                     }
                     Bitvector32Term::Int64FromUInt32(value) => {
                         push_unary(&mut tasks, ExactLoadUnary::Int64FromUInt32, value)

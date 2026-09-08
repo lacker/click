@@ -449,6 +449,71 @@ the next `step()`. After function exit it is checked separately on each
 path, where `result`, post-state expressions, and ordinary `old(...)` arguments
 can be evaluated.
 
+## Callback execution theorems
+
+An ordinary theorem has no execution frontier. An explicit `executes` clause
+instead proves a contract implication by checking one arbitrary callback call:
+
+<!-- verified-example: mdtests/c_contract_executes_buffer.md -->
+```click
+resource Buffer(data: int32*, count: int32) {
+    owns data[0..count];
+}
+contract void Raw(int32* data, int32 count) {
+    requires count >= 0;
+    owns data[0..count];
+}
+contract void Buffered(int32* data, int32 count) {
+    requires count >= 0;
+    owns Buffer(data, count);
+}
+theorem raw_is_buffered(callback: void (*)(int32*, int32))
+    executes callback(int32* data, int32 count)
+{
+    requires Raw(callback);
+    ensures Buffered(callback) by {
+        unfold(Buffer(data, count));
+        step(Raw);
+        fold(Buffer(data, count));
+        simp();
+    }
+}
+```
+
+The proof starts with arbitrary call arguments and the **target contract's**
+input requirements and resources. It knows only the callback contracts in the
+theorem's premises or established by checked proof steps—not the target
+contract fact being proved. The call checks the selected source contract's
+requirements and performs its resource transition and effects. The remaining
+proof must establish all target postconditions, returned resources, and effect
+bounds. Unrelated owned resources use ordinary framing.
+
+These are ordinary execution proof blocks: `have`, theorem application,
+rewriting, proof cases, `fold`, `unfold`, and the usual closing tactics retain
+their normal meanings. Every feasible proof case must execute the call. The
+checked result is a reusable contract implication: `apply(raw_is_buffered(f))`
+establishes `Buffered(f)`, after which an ordinary caller can use
+`step(Buffered)`. Expansion preserves the explicit contract selection.
+
+Return-valued callbacks use the same syntax: the theorem parameter's C
+function-pointer type supplies the return type. `step(Contract)` performs the
+call and forwards its actual return value to `result` in one checked step.
+The proof may relate `result` to current or `old` memory and to guarantees
+from other applicable contracts. There is no extra proof step to expose the
+result, and no new result-binding syntax. Existing supported scalar and pointer
+return types retain their C types. See the
+[end-to-end return-valued buffer proof](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_return_buffer.md).
+
+This slice supports one nongeneric callback theorem parameter,
+one target-contract conclusion, and one or more source-contract premises for
+that same pointer. The `executes` arguments use C parameter spelling, match
+the callback signature, and are bound only inside the execution proof; they
+cannot escape into theorem premises or conclusions. Their names must be
+distinct from the callback and from `result`; a return-valued callback parameter
+also cannot be named `result`. Additional theorem parameters remain outside
+this slice. The existing callback-type limitations (such as const-qualified
+callback returns) are unchanged.
+
 ## Requirements
 
 Requirements are shared by all guarantees for the function.
@@ -629,6 +694,54 @@ resource uncalled(flag: int32*) {
     fact flag[0] == 0;
 }
 ```
+
+A resource may declare pure fields before its body clauses:
+
+<!-- verified-example: mdtests/resource_fields.md -->
+```click
+resource buffer(p: int32*, capacity: int32) {
+    field contents: List<int32>;
+    field mark: Mark;
+    field revision: int32;
+    owns p[0..capacity];
+}
+```
+
+Here `Mark` is the enum declared in the linked fixture. Fields have Click
+types: supported unqualified C scalar/pointer types or algebraic types,
+including instantiated generic types. Field names must be distinct from one
+another, resource parameters, and body witnesses. Fields precede any guard
+and cannot be declared inside it. Qualified C types, struct types/pointers,
+arrays, and function-pointer field types are not supported in this slice.
+
+Resources with fields are non-countable and intended for exclusive
+instance-based ownership. Both `count(resource(...))` and quantities such as
+`1 of resource(...)` are rejected. Field-free resources keep their existing
+rules. Named ownership binds an exclusive instance with arbitrary typed fields:
+
+<!-- verified-example: mdtests/resource_instance_bindings.md -->
+```click
+int32 identity(int32 value) {
+    owns cell: marked_cell();
+    ensures result == value;
+    ensures cell.model == old(cell.model);
+    ensures cell.revision == old(cell.revision);
+} by {
+    execute();
+    simp();
+}
+```
+
+Here `marked_cell` is declared in the linked fixture. `cell.model` reads the
+currently owned instance's field; `old(cell.model)` reads its function-entry
+state. Returning ownership does not itself promise unchanged fields; use an
+explicit postcondition. Instance identity is distinct from field state, and
+fields are symbolic Click values, not executable C ghost parameters.
+
+These instances remain opaque. Checked body fold/unfold, field establishment
+and updates, and binder transport across modular calls are not yet supported.
+Field names are not yet in scope in body expressions. A declaration alone
+grants no ownership, and binding an instance does not expose its memory body.
 
 A composite body may instead have one top-level guard:
 
@@ -854,6 +967,13 @@ ensures forall (k: int32) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto
 ```
 
 Inside `old(...)`, `result` is unavailable.
+
+Contract expressions accept the unsigned narrowing cast `(uint32)x`, including
+`old((uint32)p->value)`. The operand must be
+a current C expression; put `old(...)` or `at(...)` around the whole cast to
+select another snapshot. A 64-to-`uint32` cast retains the low 32 bits, rather
+than requiring the source value to fit. Casts retain their selected memory
+snapshot even when the underlying field is subsequently updated.
 
 When `old(p)` is passed as an array argument to a pure Click function or
 predicate, it becomes an entry-state Click array ref. For example,
@@ -1117,6 +1237,7 @@ Surface Click also has documented low-level memory reads for addresses that do
 not have a recoverable C source place:
 
 - `load_int32(pointer)` and `load_uint8(pointer)`
+- `load_uint32(pointer)`, `load_int64(pointer)`, and `load_uint64(pointer)`
 - `load_int32_pointer(pointer)` and `load_uint8_pointer(pointer)`
 - `byte_offset(pointer, bytes)`
 

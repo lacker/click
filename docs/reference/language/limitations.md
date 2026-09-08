@@ -132,13 +132,14 @@ remain unsupported. The exact trailing struct spelling
 LP64 eight-byte alignment requirement; other alignment forms remain
 unsupported. Const-qualified static-storage aggregates are read-only, while
 automatic/local const aggregates remain unsupported.
-System header includes other than the modeled no-op `<stdint.h>`, function-like macros
+System header includes other than the modeled integer-type-only `<stdint.h>`
+and `<inttypes.h>`, function-like macros
 with more than three parameters, empty arguments, stringification, token pasting,
 macro redefinitions without an intervening `#undef`,
 relational comparisons, arithmetic, ternaries, and other general conditional
 expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
 when both operands are integer or character literals, literal-valued macros, or
-`defined(NAME)`.
+`defined(NAME)`; undefined identifiers evaluate to zero.
 Canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
 `#pragma once`, and the bounded conditional subset are supported. C0 also
 supports object-like macros with literal, alias, and multi-token expression

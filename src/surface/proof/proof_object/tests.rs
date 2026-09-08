@@ -9764,7 +9764,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let represented_quantity = CResourceFact::own_quantity(
         CResource::Token {
             name: "marker".to_string(),
-            arguments: Vec::new(),
+            arguments: Vec::new().into(),
         },
         Bitvector32Term::Constant(2),
     );

@@ -923,6 +923,7 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         | Bitvector32Term::UInt64BitwiseNot(value)
         | Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)

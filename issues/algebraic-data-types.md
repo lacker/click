@@ -1,193 +1,230 @@
 # Add algebraic data types to specifications
 
-Split from [recursive-structure-models.md](recursive-structure-models.md) on
-2026-09-05 and broadened from the original specification-sequence issue on
-2026-09-05. Exact finite order is useful well before recursive heap models:
-array copies, buffer transforms, vector append, traversal results, and tree
-rotations all need to relate an ordered collection at two snapshots. The
-sequence work exposed the more general missing abstraction: Click has no
-user-defined immutable algebraic data types, constructor patterns, or
-structural recursion and induction over logical values.
+MVR dependency. Complete first-class use of symbolic algebraic data types in
+resources, contracts, and collection models. The pure ADT foundation is
+implemented; the immediate target is connecting the pure tree model to
+ownership of the unchanged C tree.
 
-The intended foundation is a specification-only, Rust-like sum-of-products
-declaration. Its recursive values are mathematical constructor trees, not C
-layouts and not runtime allocations. In schematic surface syntax, the MVR
-model should be definable as:
+## Current capabilities
 
-```click
-spec enum List<T> {
-    Nil,
-    Cons(T, List<T>),
-}
-```
+- Rust-like generic `spec enum` declarations with sum-of-products constructors,
+  nested fields, and regular strictly positive recursive datatype groups.
+  Recursive groups must admit finite values.
+- First-class `ClickType` parameters for pure functions, predicates, and
+  theorems, algebraic pure-function results, and expression-local typed or
+  inferred `let` bindings.
+- Arbitrary typed symbolic ADT variables, constructor terms, symbolic matches,
+  and opaque pure-function applications. Constructor schemas are shared;
+  unknown recursive values are not expanded into trees of possible fields.
+- Checked constructor formation, disjointness, congruence, injectivity, and
+  exhaustive matching with scoped typed field bindings.
+- Structurally recursive pure functions, including multiple recursive fields
+  and mutually recursive groups. Explicit `unfold` exposes one defining
+  equation. Structural `induct` checks constructor cases and provides hypotheses
+  for immediate recursive fields of the same datatype.
+- Generic pure functions and predicates with call-site type inference. Generic
+  theorem bodies are checked at declaration using rigid arbitrary types;
+  applications also use checked, cached concrete instantiations. Generic proof
+  expansion and rechecking are supported.
+- The [prelude](../stdlib/prelude.click) supplies `List<T>`, append, membership,
+  and their checked generic laws; `Nat`, addition and its identity, successor,
+  associativity, and commutativity laws; and Nat-valued `list_length` with its
+  constructor and append-length laws.
+- The [modeled-binary-tree example](../examples/modeled-binary-tree/README.md)
+  defines an example-local `Tree<T>`, Nat-valued `tree_size`, and `tree_mirror`.
+  Checked generic theorems prove mirror involution and size preservation.
+  These are pure-model proofs only: there is no `tree_at(root, model)` resource
+  and no verified C function contract in that sidecar yet.
+- The [sequence-transform example](../examples/sequence-transform/README.md)
+  verifies fixed-size copying, concatenation, reversal, and membership using
+  sequence literals. Its C remains unchanged.
+- Kernel resource identities and population keys accept typed C or symbolic
+  ADT arguments in shared immutable storage. Kernel tests cover arbitrary
+  indices, equality-justified transfer, type and constructor distinctions,
+  linear ownership, counts, pointer/scalar substitution inside models, and
+  deterministic scaling. A model index itself grants no memory authority.
+  This is kernel support, not surface resource declarations or C contracts.
+- Resource bodies accept leading `field name: ClickType;` declarations,
+  including multiple fields and nested generic ADTs. Field declarations are
+  type-checked and retained as shared kernel-checked schemas. Field-bearing
+  resources are non-countable: `count(...)` and quantity clauses reject them.
+  [resource_fields.md](../mdtests/resource_fields.md) checks declarations only;
+  field establishment remains explicitly unsupported.
+- The kernel has a separate exclusive instance representation with identity,
+  shared typed field state, equality-checked linear transfer, and indexed
+  lookup. It rejects duplicate identity, views, and counted quantities.
+  Kernel spec projections distinguish current state from an explicitly supplied
+  entry snapshot; ownership alone does not prove preservation. Fields and
+  arguments grant no memory authority. Kernel tests cover these rules,
+  substitution, and deterministic multi-size scaling.
+- Source contracts accept `owns cell: marked_cell(p);`, `cell.model`, and
+  `old(cell.model)`. Fields start as arbitrary typed symbolic values, not
+  concrete constructors. [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
+  verifies preservation through C execution. Tests also cover nested generic
+  fields, symbolic pure applications, expansion/rechecking, binder scope,
+  distinct instance state, and rejection of unproved field values. These
+  instances remain opaque: binding does not expose their memory bodies.
 
-`List<T>` is the conventional name because proofs expose its inductive
-`Nil`/`Cons` structure. It can still model the finite ordered contents of an
-array, vector, C linked list, or tree without claiming that the implementation
-uses any particular representation.
+Pure Click expressions define symbolic terms; only C executes. A pure `match`
+does not automatically split a proof or introduce proof-scope bindings.
+Explicit proof control provides case reasoning. `normalize() using { ... }`
+checks conditional reductions against explicitly cited premises.
 
-The fixed synthetic C scaffold for the first nonrecursive uses lives in
-[`examples/sequence-transform`](../examples/sequence-transform/README.md).
-Its sidecar verifies the implemented fixed-literal slices while keeping the C
-unchanged.
+## Current gaps
 
-## Implemented precursor slices
+- Surface resource parameters still reject ADT values. Kernel resource
+  identities support them, but resource specifications still use C
+  expressions/types and composite definitions use C parameters. Surface
+  lowering, C-contract model inputs/outputs, and checked body instantiation
+  must carry symbolic arguments without encoding them as C values. C-only
+  body evaluators reject a model argument rather than treating it as a scalar.
+- Named resource bodies cannot yet be folded/unfolded, nor can fields be
+  established or updated. Modular calls involving named instances explicitly
+  reject unsupported binder transport rather than assume field preservation.
+  Fixed ADT snapshots currently support the arbitrary variables introduced
+  at entry; future state updates must also support arbitrary symbolic terms.
+  Field-bearing declarations must not enter the legacy
+  counted/composite instance representation with their fields erased.
+- Resource bodies support one load-free `if` guard with an empty false case,
+  but no `else` or constructor `match`. Resource-body witnesses are restricted
+  to C pointers, so they cannot bind existential child models.
+- Algebraic quantifiers and the model-binding/transport path needed by C
+  contracts remain unfinished. Expression-local ADT `let` support does not
+  establish this resource/contract functionality.
+- Mutual structural induction is not implemented, although mutually recursive
+  datatypes and pure functions are supported.
+- Sequence literals, `++`, and `in` still use a separate internal sequence
+  representation. This limitation applies to that syntax, not to ADTs in
+  general. The syntax must elaborate to the library's `List<T>`, append, and
+  membership rather than remain a second logical collection universe.
+- Symbolic typed-memory-range projection to a snapshot `List<T>` is missing.
 
-- finite homogeneous literals, including `[]`;
-- persistent `++` terms with constant-time root sharing and empty identity;
-- `==` and `!=` lowering to typed kernel sequence terms;
-- element-wise `old(...)` and named-snapshot elaboration;
-- checked contracts for `sequence_copy3` and `sequence_concatenate2`;
-- shape-independent element-wise equality, including `++` associativity; and
-- a checked contract for in-place `sequence_reverse3`;
-- proposition-level `element in sequence` membership over literals and
-  concatenations; and
-- a checked exact-result contract for `sequence_contains3`.
-- generic `spec enum` declarations with nullary and product variants;
-- fully type-applied constructors, structural `==`/`!=`, and exhaustive
-  `match` expressions over constructed values whose fields may be symbolic C
-  values; and
-- checked rejection of wrong constructor field types, nonexhaustive matches,
-  duplicate match arms, and escaping pattern binders;
-- a first-class `ClickType` family distinct from C's `C0Type`, with algebraic
-  types accepted as pure-function, predicate, and theorem parameter types and
-  as pure-function result types; and
-- arbitrary symbolic algebraic values, structural reflexivity, exhaustive
-  elimination, and pure positive/negative mdtests that require no C
-  translation unit; and
-- typed kernel algebraic terms with one variable node per arbitrary value,
-  constructor nodes with checked instantiated schemas, symbolic match nodes,
-  opaque typed pure-function applications, and shared datatype definitions.
-  The earlier eager encoding as an integer tag plus fields for every possible
-  variant has been removed; and
-- checked constructor formation, disjointness, congruence, and injectivity,
-  with explicit surface certificates and indexed exact-hypothesis lookup; and
-- theorem application with symbolic algebraic variables, constructors, and
-  pure-function results as checked, type-preserving arguments; and
-- expression-local algebraic `let` bindings with either an explicit
-  `ClickType` annotation or inference from constructors and algebraic-returning
-  pure functions. Bound values remain symbolic through equality, calls, and
-  `match`; and
-- acyclic nested algebraic fields and algebraic type arguments, including
-  generic substitution through declarations such as `Present(Maybe<T>)` and
-  applications such as `Holder<Maybe<int32>>`. Symbolic matches bind nested
-  fields as typed algebraic terms; and
-- regular, strictly positive recursive datatype declarations, including
-  `List<T>`, binary `Tree<T>`, and mutually recursive groups. Recursive fields
-  are nominal references to finite schemas, preserve the enclosing type
-  parameters exactly, and remain symbolic under one-layer matches. Recursive
-  groups with no finite constructor value are rejected; and
-- structurally recursive pure functions whose `decreases` parameter is a
-  recursive algebraic datatype. Direct fields, nested descent through fields,
-  multiple recursive fields, and mutually recursive datatype/function groups
-  are checked; recursion on the original value or a field of an unrelated
-  value is rejected. Calls remain symbolic and explicit `unfold` exposes only
-  one defining equation; and
-- explicit structural induction for recursive algebraic theorem parameters.
-  The control tactic checks exhaustive constructor arms, scopes typed field
-  bindings to each arm, and supplies the theorem at every immediate recursive
-  field of the same datatype. Lists and binary trees are covered, including
-  constructors with multiple recursive children; induction across a mutually
-  recursive group remains open.
-- Rust-like type parameters on pure functions and predicates, with concrete
-  call-site inference, checked conflict/ambiguity diagnostics, distinct kernel
-  identities for concrete function instances, and concrete body
-  instantiation before `unfold`; and
-- generic theorems checked at declaration with rigid arbitrary type parameters,
-  including unused proofs and parametric expansion/rechecking, plus checked use-site
-  monomorphization. Type substitution covers statements, explicit proof
-  terms, and structural induction; each distinct concrete instance is
-  verified once per theorem environment before `apply` grants its conclusion.
-  Invalid, ambiguous, and conflicting instances are rejected.
+## Agreed resource design and next implementation steps
 
-These forms are currently backed by a dedicated internal sequence term. They
-must remain supported while their public semantics migrate to `List<T>`:
-`[]` constructs `List::Nil`, a nonempty literal constructs nested
-`List::Cons`, `++` calls list append, and `in` calls list membership. They must
-not remain a second, privileged logical collection universe.
+Resource definitions should expose typed pure fields, such as `contents` or
+`model`, accessed through named owned instances. There is no special single
+model field: a resource can have several fields. Resources with fields are
+non-countable and exclusively owned. Identity, abstract state, and ownership
+must remain distinct; equal field values do not make two instances identical.
+Field-free resources retain their existing counting rules.
 
-The prelude now supplies `List<T>`, `list_append`, and `list_contains`, with
-checked generic append identities, its constructor equation and associativity,
-and the membership constructor and append equations. Pure clients exercise
-integers, pointers, and nested lists in `mdtests/stdlib_list.md` and
-`mdtests/stdlib_list_compositionality.md`. Algebraic equality in conditionals
-stays symbolic; `normalize() using { ... }` checks reductions from explicitly
-cited conditions without evaluating unknown lists.
+Bodies should relate those fields to owned memory, including by constructor
+`match`, just as they can already define conditional bodies with `if`. This
+is a logical definition, not runtime execution or an instruction to traverse
+a model automatically.
 
-Still open are algebraic quantifiers, resource arguments, mutual structural
-induction, migration of sequence syntax, recursive-resource use, and symbolic
-typed-memory-range projection.
-All pure calls remain logical applications
-during lowering; an explicit checked `unfold` step exposes one defining
-equation. Expression-level `match` is deliberately symbolic, so it neither
-splits a proof nor introduces proof-scope field names; the explicit structural
-`induct` control tactic performs that proof operation.
+Implement and check the following slices in order:
+
+1. **Resource fields and instance binding.** Declaration parsing, type checking,
+   shared kernel schemas, rejection of counting, and the exclusive kernel
+   identity/field-state representation are implemented. Source supports
+   `owns cell: marked_cell(p);`, with current `cell.model` and entry-state
+   `old(cell.model)` projections. Next implement checked body fold/unfold and
+   binder transport across calls; field establishment/update syntax remains
+   deferred. Opaque nonrecursive resources already preserve arbitrary field
+   values, not only concrete constructors. The earlier kernel symbolic-index
+   infrastructure remains available but does not implement instance fields.
+   [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
+   current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
+   Keep that unsupported-parameter diagnostic until the parameter path is
+   supported. Add the intended arbitrary-state read/return proof using named
+   resource fields, with meaningful negative transfer tests.
+2. **Checked resource `match`.** Check exhaustive constructor arms and their
+   scoped typed fields. Fold/unfold selects a justified arm and exposes only
+   its immediate owned resources and pure facts. An unknown model remains
+   opaque until explicit proof evidence establishes the relevant case; no
+   operation eagerly unfolds the whole recursive value. Recursive definitions
+   must retain a checked finite, well-founded interpretation.
+3. **Contract model bindings and the heap relation.** Support typed symbolic
+   models and necessary witnesses across function entry and exit. Define
+   a tree resource with a model field in the existing modeled-binary-tree
+   sidecar. Its empty
+   case requires a null root; its node case owns the node fields, relates the
+   payload to memory, and contains disjoint resources for the two child models.
+   Record node identities as well as stored values, without granting ownership
+   merely because a pointer occurs in a model. Keep the tree model example-local.
+4. **First end-to-end C proof.** Verify unchanged `tree_node_init`: ownership of
+   the supplied node fields and two modeled child trees becomes ownership of
+   the correctly modeled parent. Require a nonnull, separately owned parent;
+   neither child can be duplicated or overlap it.
+5. **Structure-level proofs.** Continue with rotations and traversals under
+   [recursive-structure-models.md](recursive-structure-models.md). That issue
+   owns the exact node/in-order preservation and subsequent insert/erase
+   regressions. Iterative structural termination is tracked separately in
+   [structural-loop-termination.md](structural-loop-termination.md).
+
+Resource `match` and the modeled C contracts remain unimplemented. The kernel
+identity tests and existing pure tree proofs must not be reported as
+verification of the C tree.
+
+### Agreed binding; deferred field establishment
+
+The agreed contract syntax is `owns cell: marked_cell(p);`. It binds the
+exclusive instance entering and leaving the function. `cell.model` denotes
+its current field state, while `old(cell.model)` denotes its entry state.
+Returning the instance does not itself promise unchanged fields: that requires
+a postcondition such as `ensures cell.model == old(cell.model);`.
+
+The next implementation must connect these source bindings to checked
+body unfolding, preserving binder scope across calls and keeping
+function-entry snapshots distinct from loop-entry snapshots. The intended
+first C regression is an unchanged `return *p;` function using a field-bearing
+cell resource, with a proof that returns the same instance and preserves an
+arbitrary `Mark` field. Missing ownership, a different instance, or an unproved
+field change must fail.
+
+Syntax for initially establishing or changing fields remains deferred. Fields
+are ordinary symbolic Click values, not freely assignable ghost storage.
+No field value itself grants memory authority. A model change must
+re-establish the resource's relation to the concrete memory.
+
+The existing contract `let ... where` introduces separate existential witnesses
+per clause; it must not silently become a shared instance binding. Do not
+replace arbitrary-state proofs with concrete-only models or add ghost C arguments.
 
 ## Violated invariant
 
-A specification must be able to define and reason about immutable logical
-variants compositionally instead of adding a new privileged kernel type for
-every abstract model. Recursive logical values must be finite and support
-explicit, exhaustive elimination. They must not carry runtime storage or
-memory authority.
+An immutable logical value must preserve its type and meaning wherever a
+specification needs it, including resource arguments, witnesses, quantifiers,
+and function contracts. A heap model must be justified by the owned structure,
+not an unconstrained ghost assertion. Model values carry neither runtime
+storage nor memory authority.
 
-## Intended regression
+## Intended regressions
 
-First define a small nonrecursive generic datatype such as `Maybe<T>`. Verify
-construction, structural equality, exhaustive pattern matching, type
-substitution, and use through predicates, pure functions, theorems, and
-resources. Negative regressions reject wrong constructor arguments,
-nonexhaustive or duplicate match arms, escaping pattern binders, and invalid
-recursive declarations.
-
-With the recursive `List<T>` declaration and one-layer symbolic matching now
-implemented, define append and membership by pattern matching, with recursive
-calls justified by structural descent. Prove empty identity, append
-associativity, and the membership law using explicit structural induction.
-Negative claims must distinguish `[a, b]` from `[b, a]`, `[a]` from `[a, a]`,
-and membership from ownership of an object addressed by a pointer element.
-
-Then verify the unchanged `sequence-transform` C fixture with contracts that
-express these results conceptually:
-
-- copying three cells preserves their exact entry sequence;
-- concatenating two two-cell inputs produces their sequence concatenation;
-- reversing three cells produces the entry sequence in reverse order; and
-- membership returns true exactly when the target occurs in the input
-  sequence.
-
-The fixed-size fixture may construct three-element list literals directly. A
-checked projection from a typed memory range to its snapshot list is the next
-regression, so the same abstraction scales to dynamic buffers without
-enumerating their cells in a contract.
+- A model-indexed resource can be transferred with an arbitrary ADT argument;
+  wrong types and a changed, unproved model argument are rejected.
+- Resource matching accepts exhaustive typed arms and rejects missing or
+  duplicate constructors, wrong field types, escaping binders, and unchecked
+  branch selection. Fold/unfold certificates reject tampered models or facts.
+- The unchanged `tree_node_init` verifies with the exact parent/child model.
+  Claims with a wrong value, swapped children, or a duplicated nonempty subtree
+  fail; possessing a pointer in a model alone must not authorize a C load or
+  store.
+- Algebraic quantifiers preserve arbitrary types and witness scope. Mutual
+  induction checks the appropriate hypotheses across a recursive group.
+- Sequence syntax elaborates to `List<T>` while retaining the existing
+  sequence-transform proofs. Equality distinguishes order and multiplicity.
+- A readable symbolic memory range projects to its exact snapshot list without
+  enumeration. Missing readability evidence and claims that ignore an
+  intervening write fail. `old(...)` and named snapshots retain pointer
+  provenance and the correct list contents.
 
 ## Acceptance criteria
 
-- Specifications can declare immutable, generic algebraic data types with
-  typed sum variants and product fields. Constructors, variables, parameters,
-  `let` bindings, quantifiers, contracts, predicates, pure functions,
-  theorems, and resource arguments preserve their instantiated types.
-- Pattern matching is explicit and exhaustive, binds typed constructor fields
-  only within an arm, and gives each arm the checked constructor refinement.
-- Recursive declarations accept only sound strictly positive occurrences.
-  Recursive functions can cite structural descent, and proofs can perform
-  explicit structural induction with hypotheses for recursive fields. Neither
-  operation unfolds an unknown whole value automatically.
-- A library-defined `List<T>` supplies `Nil`, `Cons`, append, and membership.
-  Existing `[]`, `++`, and `in` syntax elaborates to that public abstraction.
-  List equality is structural and is not delegated to an unchecked solver.
-- Lists support the modeled C scalar values and provenance-carrying data
-  pointers needed by MVR. `old(...)` and named snapshots preserve list values.
-  A stored pointer retains identity, offset, nullness, and provenance but
-  grants no pointee ownership or memory access.
-- A typed memory range can be projected to a symbolic list at a named
-  snapshot only with the corresponding readable evidence. Projection does not
-  eagerly enumerate a symbolic range.
-- Constructor and symbolic terms use persistent, output-sensitive
-  representation and checking. Repeated append must not copy or scan unrelated
-  terms or silently become quadratic.
-- Pure positive and negative regressions, the `sequence-transform` contracts,
-  a range-projection regression, and `scripts/check.sh` pass.
+- The current pure ADT capabilities remain supported, and the resource,
+  contract, quantifier, mutual-induction, sequence-syntax, and range-projection
+  gaps above are implemented with checked positive and negative regressions.
+- The modeled tree resource and unchanged initializer provide an end-to-end
+  regression; later tree algorithm obligations stay explicitly tracked in
+  the related recursive-structure issue.
+- Models remain symbolic. Explicit simple checking is output-sensitive in the
+  selected source, model terms, and certificate, without scans or clones of
+  unrelated state. Performance-sensitive representation changes have
+  deterministic scaling regressions over multiple input sizes.
+- Proof expansion produces recheckable certificates, diagnostics remain
+  bounded and actionable, and `scripts/check.sh` passes.
 
-Related: [recursive-structure-models.md](recursive-structure-models.md) and
-[mathematical-integers-in-specs.md](mathematical-integers-in-specs.md).
+Related: [recursive-structure-models.md](recursive-structure-models.md),
+[mathematical-integers-in-specs.md](mathematical-integers-in-specs.md), and
+[resource-algebra-extensions.md](resource-algebra-extensions.md).

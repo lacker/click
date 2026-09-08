@@ -181,6 +181,7 @@ fn verify_click_file_theorems_with_environment(
         &predicate_environment,
         &click_function_environment,
         function_environment,
+        &ResourceEnvironment::new(&combined_resource_definitions(file)?),
     )?;
     Ok(verified
         .into_iter()
@@ -836,6 +837,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &predicate_environment,
             &click_function_environment,
             Some(&function_environment),
+            &resource_environment,
         )?;
         // Verified pure theorems over supported kernel binders become closed
         // universally-quantified facts, so kernel contract certification can
@@ -1391,15 +1393,16 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             // mutable frame (for example `consumes p[1..2]`) is covered by
             // the resource transition, while explicit mutable frames require
             // an Effect claim.
-            let rule = c_verified_function_rule(contract_function, &certified_claims).ok_or_else(
-                || {
-                    ClickError::new(format!(
-                        "could not package verified contract for `{}`",
-                        function_block.signature.name()
-                    ))
-                },
-            )?;
-            function_environment = function_environment.with_verified_function_rule(rule);
+            if !contract_function.is_program_entry() {
+                let rule = c_verified_function_rule(contract_function, &certified_claims)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "could not package verified contract for `{}`",
+                            function_block.signature.name()
+                        ))
+                    })?;
+                function_environment = function_environment.with_verified_function_rule(rule);
+            }
         }
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::FunctionFinished {
@@ -2827,10 +2830,97 @@ pub(in crate::surface) fn parse_verified_sources(
         }
     }
 
+    if parsed.contains_key("main") {
+        let mut storage_functions = parsed
+            .values()
+            .map(|(_, function)| function.to_kernel_static_storage(function.name() == "main"))
+            .collect::<Vec<_>>();
+        // Main already supplies the linked external objects and its own
+        // translation unit's private objects. Visit each remaining unit's
+        // declarations once, including data-only files; do not copy every
+        // function body or its whole visible global map at startup.
+        let main_source = &parsed["main"].0;
+        for source_path in units.keys().filter(|path| *path != main_source) {
+            let visible_globals = globals_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &globals[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_arrays = global_arrays_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_arrays[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_aggregates = global_aggregates_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_aggregates[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_aggregate_arrays = global_aggregate_arrays_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_aggregate_arrays[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let storage = syntax::C0Function::external(syntax::C0Type::Void, String::new(), vec![])
+                .with_globals(visible_globals)
+                .with_global_arrays(visible_arrays)
+                .with_global_aggregates(visible_aggregates)
+                .with_global_aggregate_arrays(visible_aggregate_arrays);
+            storage
+                .validate_static_initializers()
+                .map_err(|error| ClickError::new(error.to_string()))?;
+            storage_functions.push(storage.to_kernel_static_storage(true));
+        }
+        parsed
+            .get_mut("main")
+            .expect("main was found")
+            .1
+            .program_entry_state = Some(std::sync::Arc::new(
+            crate::kernel::initialize_c_program_storage(storage_functions),
+        ));
+    }
     Ok(parsed)
 }
 
-fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
+pub(in crate::surface) fn external_c0_function(
+    function_block: &FunctionBlock,
+) -> syntax::C0Function {
     syntax::C0Function::external(
         function_block.signature().return_type(),
         function_block.signature().name().to_string(),
@@ -3039,6 +3129,12 @@ pub(in crate::surface) fn composite_resource_definitions(
 ) -> Result<Vec<CCompositeResourceDefinition>, ClickError> {
     let mut definitions = Vec::new();
     for definition in resource_environment.definitions.values() {
+        // Field-bearing declarations are checked schemas, not legacy counted
+        // composites. Named instances remain opaque until checked instance
+        // body fold/unfold rules land; do not erase their identity or fields.
+        if !definition.is_countable() {
+            continue;
+        }
         let Some(body) = definition.composite_body() else {
             continue;
         };
@@ -3149,6 +3245,18 @@ fn resource_clause_to_resource_spec_with_parameters(
     result_type: Option<crate::kernel::CType>,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
+            identity: binding.identity,
+            schema: binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
+            resource: Box::new(resource_clause_to_resource_spec_with_parameters(
+                resource,
+                parameters,
+                result_type,
+            )?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec_with_parameters(
@@ -3247,6 +3355,13 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: Box::new(substitute_resource_clause_for_summary(
+                resource,
+                substitutions,
+            )?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
             quantity: substitute_contract_expression(quantity, substitutions)?,
             resource: Box::new(substitute_resource_clause_for_summary(
@@ -3313,6 +3428,14 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
     resource: &ResourceClause,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
+            identity: binding.identity,
+            schema: binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
+            resource: Box::new(resource_clause_to_resource_spec(resource)?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec(resource)?),

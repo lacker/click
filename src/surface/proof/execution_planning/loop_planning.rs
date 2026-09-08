@@ -462,6 +462,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
     match step {
         ProofStep::Mark(_)
         | ProofStep::Step
+        | ProofStep::StepContract(_)
         | ProofStep::ApplyTheoremUsing { .. }
         | ProofStep::TransportUsing { .. }
         | ProofStep::UnfoldPredicate(_)

@@ -555,6 +555,13 @@ pub(super) fn describe_resource_fact(
         );
     }
     match resource {
+        CResourceFact::Own(CResource::Instance(instance), _)
+        | CResourceFact::View(CResource::Instance(instance)) => format!(
+            "{} instance {}#{}",
+            if resource.is_own() { "owns" } else { "views" },
+            instance.name(),
+            instance.identity().0
+        ),
         CResourceFact::Own(
             CResource::Composite {
                 name,
@@ -602,6 +609,9 @@ fn describe_c_resource(
     arguments: &[CExpression],
 ) -> String {
     match resource {
+        CResource::Instance(instance) => {
+            format!("instance {}#{}", instance.name(), instance.identity().0)
+        }
         CResource::Memory(range) => {
             format!(
                 "memory({})",
@@ -639,7 +649,7 @@ fn describe_resource_subject(resource: &ResourceSubject) -> String {
 
 fn format_declared_resource(
     name: &str,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
@@ -647,7 +657,11 @@ fn format_declared_resource(
         "{name}({})",
         resource_arguments
             .iter()
-            .map(|argument| describe_c_value(argument, parameters, arguments))
+            .map(|argument| match argument {
+                AlgebraicValue::C(value) => describe_c_value(value, parameters, arguments),
+                AlgebraicValue::Algebraic(value) =>
+                    format!("<{} model>", value.algebraic_type.name),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -951,7 +965,19 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::Cast {
             expression,
             target_type,
-        } => format!("({target_type:?}){}", describe_c_expression(expression)),
+        } => {
+            let spelling = match target_type {
+                CType::Int16 => "int16".to_string(),
+                CType::Int32 => "int32".to_string(),
+                CType::UInt8 => "uint8".to_string(),
+                CType::UInt16 => "uint16".to_string(),
+                CType::UInt32 => "uint32".to_string(),
+                CType::Int64 => "int64".to_string(),
+                CType::UInt64 => "uint64".to_string(),
+                _ => format!("{target_type:?}"),
+            };
+            format!("({spelling})({})", describe_c_expression(expression))
+        }
         CExpression::FloatNegate(expression) => format!("-{}", describe_c_expression(expression)),
         CExpression::FloatClassification {
             expression,
@@ -1068,6 +1094,7 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
+        ContractExpression::ResourceField(access) => format!("{}.{}", access.owner, access.field),
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -1511,6 +1538,10 @@ pub(super) fn describe_bitvector_with_context(
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value) => format!(
             "cast64({})",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        Bitvector32Term::UInt32From64(value) => format!(
+            "truncate32({})",
             describe_bitvector_with_context(value, parameters, arguments)
         ),
         Bitvector32Term::Int64Add(left, right) | Bitvector32Term::UInt64Add(left, right) => {

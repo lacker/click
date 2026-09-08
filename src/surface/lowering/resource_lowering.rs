@@ -15,6 +15,7 @@ pub(in crate::surface) struct ConcreteMemoryRangeSeed {
 pub(in crate::surface) fn initial_call_state(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
+    function: &CFunction,
 ) -> Result<(CState, Vec<CExpression>), ClickError> {
     let mut arguments = Vec::new();
 
@@ -192,13 +193,10 @@ pub(in crate::surface) fn initial_call_state(
     let mut memory = CMemory::new();
     memory = memory_with_symbolic_loadable_cells(memory, &loadable_ranges);
     memory = materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
-    let resources = resource_context_from_requirements(requires, parameters, &arguments, &memory)?;
-    Ok((
-        CState::new()
-            .with_memory(memory)
-            .with_resource_context(resources),
-        arguments,
-    ))
+    let state =
+        crate::kernel::initialize_c_function_globals(&CState::new().with_memory(memory), function);
+    let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
+    Ok((state.with_resource_context(resources), arguments))
 }
 
 pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
@@ -298,6 +296,7 @@ fn materialize_symbolic_access_resource_cells(
             continue;
         };
         match resource {
+            ResourceClause::Named { .. } => {}
             ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
                 memory = materialize_access_segment_cells(memory, segment, parameters, arguments)?;
             }
@@ -487,7 +486,7 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
                     .map(Some)
                 }
                 Requirement::Resource(resource) => {
-                    resource_clause_loadable_prop(resource, parameters, arguments, state.memory())
+                    resource_clause_loadable_prop_at_state(resource, parameters, arguments, state)
                 }
                 Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
             };
@@ -650,16 +649,16 @@ pub(in crate::surface) fn resource_context_from_requirements(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    memory: &CMemory,
+    state: &CState,
 ) -> Result<ResourceContext, ClickError> {
-    let mut context = ResourceContext::new();
+    let mut context = state.resources().clone();
     for requirement in requires {
         if let Requirement::Resource(resource) = requirement.inner() {
             // This lowering path has no proposition assumptions yet. It builds
             // a provisional context; execution paths use checked composition
             // once assumptions are available.
-            context = context.unchecked_with_fact(lower_resource_clause(
-                resource, parameters, arguments, memory,
+            context = context.unchecked_with_fact(lower_resource_clause_at_state(
+                resource, parameters, arguments, state,
             )?);
         }
     }
@@ -717,14 +716,8 @@ pub(in crate::surface) fn lower_resource_clause_at_state(
         }
         return Ok(facts.pop().expect("resource clause fact count was checked"));
     }
-    let mut values =
+    let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    values.extend(
-        state
-            .locals()
-            .object_values()
-            .map(|(name, value)| (name.to_string(), value.clone())),
-    );
     lower_resource_clause_with_values(resource, parameters, &values, state, None)
 }
 
@@ -734,14 +727,8 @@ pub(in crate::surface) fn lower_resource_clause_facts_at_state(
     arguments: &[CExpression],
     state: &CState,
 ) -> Result<Vec<CResourceFact>, ClickError> {
-    let mut values =
+    let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    values.extend(
-        state
-            .locals()
-            .object_values()
-            .map(|(name, value)| (name.to_string(), value.clone())),
-    );
     lower_resource_clause_facts_with_values(resource, parameters, &values, state, None)
 }
 
@@ -764,14 +751,8 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
         }
         return Ok(facts.pop().expect("resource clause fact count was checked"));
     }
-    let mut values =
+    let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    values.extend(
-        state
-            .locals()
-            .object_values()
-            .map(|(name, value)| (name.to_string(), value.clone())),
-    );
     lower_resource_clause_with_values(resource, parameters, &values, state, Some(result))
 }
 
@@ -782,14 +763,8 @@ pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result(
     state: &CState,
     result: &CValue,
 ) -> Result<Vec<CResourceFact>, ClickError> {
-    let mut values =
+    let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    values.extend(
-        state
-            .locals()
-            .object_values()
-            .map(|(name, value)| (name.to_string(), value.clone())),
-    );
     lower_resource_clause_facts_with_values(resource, parameters, &values, state, Some(result))
 }
 
@@ -801,6 +776,34 @@ fn lower_resource_clause_with_values(
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            let lowered =
+                lower_resource_clause_with_values(resource, parameters, values, state, result)?;
+            let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
+                return Err(ClickError::new(
+                    "named instance requires an owned resource definition",
+                ));
+            };
+            let schema = binding
+                .schema
+                .clone()
+                .ok_or_else(|| ClickError::new("resource instance has no checked schema"))?;
+            let fields = binding
+                .fields
+                .clone()
+                .ok_or_else(|| ClickError::new("resource instance has no symbolic field state"))?;
+            let instance = crate::kernel::ResourceInstance::new(
+                binding.identity,
+                name,
+                arguments,
+                schema,
+                fields,
+            )
+            .ok_or_else(|| {
+                ClickError::new("resource instance fields do not match the declared schema")
+            })?;
+            Ok(CResourceFact::own(CResource::Instance(instance)))
+        }
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses require batch lowering",
         )),
@@ -808,7 +811,7 @@ fn lower_resource_clause_with_values(
             let quantity = resource_argument_to_c_expression(quantity)?;
             let assumptions = PureFactContext::new();
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
-            let quantity = crate::surface::proof::evaluate_c_fragment_through_kernel(
+            let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                 &quantity,
                 &assumptions,
                 values,
@@ -892,7 +895,7 @@ fn lower_resource_clause_with_values(
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
                 let argument = resource_argument_to_c_expression(argument)?;
-                let value = crate::surface::proof::evaluate_c_fragment_through_kernel(
+                let value = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                     &argument,
                     &assumptions,
                     values,
@@ -922,11 +925,11 @@ fn lower_resource_clause_with_values(
             let resource = match kind {
                 ResourceKind::Composite => CResource::Composite {
                     name: name.clone(),
-                    arguments: resource_values,
+                    arguments: resource_values.into_iter().map(AlgebraicValue::C).collect(),
                 },
                 ResourceKind::Token => CResource::Token {
                     name: name.clone(),
-                    arguments: resource_values,
+                    arguments: resource_values.into_iter().map(AlgebraicValue::C).collect(),
                 },
             };
             Ok(match access {
@@ -959,7 +962,7 @@ fn lower_resource_clause_facts_with_values(
             let quantity = resource_argument_to_c_expression(quantity)?;
             let assumptions = PureFactContext::new();
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
-            let quantity = crate::surface::proof::evaluate_c_fragment_through_kernel(
+            let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                 &quantity,
                 &assumptions,
                 values,
@@ -999,6 +1002,9 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
+        ContractExpression::ResourceField(_) => Err(ClickError::new(
+            "resource fields are symbolic Click values, not C arguments",
+        )),
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => Err(ClickError::new(
@@ -1093,7 +1099,7 @@ fn lower_resource_segment_with_values(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     let evaluate = |expression: &CExpression| {
-        crate::surface::proof::evaluate_c_fragment_through_kernel(
+        crate::surface::proof::evaluate_resource_fragment_through_kernel(
             expression,
             &assumptions,
             values,
@@ -1168,9 +1174,24 @@ pub(in crate::surface) fn resource_clause_loadable_prop(
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<Option<Proposition>, ClickError> {
+    resource_clause_loadable_prop_at_state(
+        resource,
+        parameters,
+        arguments,
+        &CState::new().with_memory(memory.clone()),
+    )
+}
+
+pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<Option<Proposition>, ClickError> {
     let ranges = match resource {
+        ResourceClause::Named { .. } => return Ok(None),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
-            let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
+            let lowered = lower_resource_clause_at_state(resource, parameters, arguments, state)?;
             vec![
                 lowered
                     .memory_view_range()
@@ -1180,7 +1201,7 @@ pub(in crate::surface) fn resource_clause_loadable_prop(
             ]
         }
         ResourceClause::MemoryAggregate { .. } => {
-            lower_resource_clause_facts(resource, parameters, arguments, memory)?
+            lower_resource_clause_facts_at_state(resource, parameters, arguments, state)?
                 .into_iter()
                 .map(|lowered| {
                     lowered
@@ -1195,7 +1216,7 @@ pub(in crate::surface) fn resource_clause_loadable_prop(
     };
     let mut propositions = ranges
         .iter()
-        .map(|range| memory_range_loadable_prop(memory, range))
+        .map(|range| memory_range_loadable_prop(state.memory(), range))
         .collect::<Vec<_>>();
     let first = propositions
         .drain(..1)
@@ -1278,6 +1299,7 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
     arguments: &[CExpression],
 ) -> Result<Vec<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segments = match resource {
+        ResourceClause::Named { .. } => return Ok(vec![]),
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             vec![segment]
         }
@@ -1441,7 +1463,7 @@ pub(in crate::surface) fn contract_segment_element_width_for_result_type(
     contract_expression_element_width(parameters, &segment.base).unwrap_or(4)
 }
 
-fn contract_segment_element_type(
+pub(in crate::surface) fn contract_segment_element_type(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> CType {
@@ -1507,6 +1529,7 @@ fn contract_expression_element_type(
     expression: &CExpression,
 ) -> Option<CType> {
     match expression {
+        CExpression::Value(value) => value.c_type().pointee_type(),
         CExpression::Variable(name) => parameters
             .iter()
             .find(|parameter| parameter.name() == name)
@@ -1534,6 +1557,7 @@ pub(in crate::surface) fn contract_expression_element_width(
     expression: &CExpression,
 ) -> Option<u32> {
     match expression {
+        CExpression::Value(value) => value.c_type().pointee_type().map(CType::byte_width),
         CExpression::Variable(name) => parameters
             .iter()
             .find(|parameter| parameter.name() == name)

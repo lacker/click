@@ -319,6 +319,43 @@ pub(super) fn validate_algebraic_type_uses(
         }
     }
     for definition in file.resource_definitions() {
+        let mut names = definition
+            .parameters()
+            .iter()
+            .map(|p| p.name())
+            .collect::<BTreeSet<_>>();
+        for field in definition.fields() {
+            if !names.insert(field.name()) {
+                return Err(ClickError::new(format!(
+                    "resource `{}` field `{}` duplicates a field or parameter name",
+                    definition.name(),
+                    field.name()
+                )));
+            }
+            if let ClickType::Algebraic(application) = field.click_type() {
+                validate_type_application(
+                    application,
+                    &definitions,
+                    &format!("resource `{}` field `{}`", definition.name(), field.name()),
+                )?;
+            }
+        }
+        let field_names = definition
+            .fields()
+            .iter()
+            .map(|field| field.name())
+            .collect::<BTreeSet<_>>();
+        if let Some(body) = definition.composite_body() {
+            for witness in body.witnesses() {
+                if field_names.contains(witness.name()) {
+                    return Err(ClickError::new(format!(
+                        "resource `{}` witness `{}` shadows a field",
+                        definition.name(),
+                        witness.name()
+                    )));
+                }
+            }
+        }
         if let Some(parameter) = definition
             .parameters()
             .iter()
@@ -798,6 +835,10 @@ fn validate_algebraic_expression(
     context: &str,
 ) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access) => Ok(match &access.click_type {
+            Some(ClickType::Algebraic(ty)) => Some(ty.clone()),
+            _ => None,
+        }),
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             validate_type_application(algebraic_type, definitions, context)?;
             Ok(Some(algebraic_type.clone()))
@@ -1363,6 +1404,7 @@ fn infer_generic_expression_type(
     context: &str,
 ) -> Result<Option<ClickType>, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
         }

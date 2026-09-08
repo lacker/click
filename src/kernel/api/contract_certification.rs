@@ -49,7 +49,12 @@ pub(crate) fn contract_resource_condition_cases(
         let mut condition_state = CState::new()
             .with_memory(entry_state.memory().clone())
             .with_resource_context(required_resources.clone());
-        for (parameter, value) in definition.parameters().iter().zip(resource_arguments) {
+        for (parameter, value) in definition
+            .parameters()
+            .iter()
+            .zip(resource_arguments.iter())
+        {
+            let value = value.as_c_value()?;
             if parameter.c_type() != value.c_type() {
                 return None;
             }
@@ -616,6 +621,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
             | Bitvector32Term::Int64From32(_)
             | Bitvector32Term::Int64FromUInt32(_)
             | Bitvector32Term::UInt64From32(_)
+            | Bitvector32Term::UInt32From64(_)
             | Bitvector32Term::UInt64FromInt32(_)
             | Bitvector32Term::UInt64FromInt64(_)
             | Bitvector32Term::Int64Add(_, _)
@@ -940,6 +946,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             | Bitvector32Term::Int64From32(_)
             | Bitvector32Term::Int64FromUInt32(_)
             | Bitvector32Term::UInt64From32(_)
+            | Bitvector32Term::UInt32From64(_)
             | Bitvector32Term::UInt64FromInt32(_)
             | Bitvector32Term::UInt64FromInt64(_)
             | Bitvector32Term::Int64Add(_, _)
@@ -1359,6 +1366,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                         }
                         CResource::Composite { name, .. } => format!("composite {name}"),
                         CResource::Token { name, .. } => format!("token {name}"),
+                        CResource::Instance(instance) => format!("instance {}", instance.name()),
                     };
                     format!("{index}: {kind}")
                 })
@@ -1386,7 +1394,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         let Some(count) = entry_state.counted_population(name, arguments) else {
             continue;

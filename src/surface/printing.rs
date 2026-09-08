@@ -124,6 +124,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     match tactic {
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
         ProofTactic::Step => line(output, &prefix, "step();"),
+        ProofTactic::StepContract(name) => line(output, &prefix, &format!("step({name});")),
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }
@@ -582,6 +583,9 @@ fn format_resource_call(resource: &ResourceClause) -> String {
 
 fn format_resource_target(resource: &ResourceClause) -> String {
     match resource {
+        ResourceClause::Named { binding, resource } => {
+            format!("{}: {}", binding.name, format_resource_target(resource))
+        }
         ResourceClause::Quantified { quantity, resource } => format!(
             "{} of {}",
             describe_contract_expression(quantity),
@@ -604,6 +608,7 @@ fn format_resource_target(resource: &ResourceClause) -> String {
 
 fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
     match resource {
+        ResourceClause::Named { .. } => ResourceAccessMode::Own,
         ResourceClause::Quantified { resource, .. } => resource_access(resource),
         ResourceClause::ViewMemory(_) => ResourceAccessMode::View,
         ResourceClause::OwnMemory(_) => ResourceAccessMode::Own,

@@ -2,8 +2,10 @@ use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DeclaredResourceInfo {
+    fields: std::sync::Arc<BTreeMap<String, (usize, ClickType)>>,
     parameter_types: Vec<C0Type>,
     kind: ResourceKind,
+    has_fields: bool,
 }
 
 type StandardLibraryDefinitions = (
@@ -72,26 +74,40 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
         .resource_definitions()
         .iter()
         .map(|definition| {
-            (
+            Ok((
                 definition.name().to_string(),
                 DeclaredResourceInfo {
+                    fields: std::sync::Arc::new(definition.fields().iter().enumerate()
+                        .map(|(index, field)| (field.name().to_string(), (index, field.click_type().clone())))
+                        .collect()),
+                    has_fields: !definition.is_countable(),
                     parameter_types: definition
                         .parameters()
                         .iter()
-                        .map(FunctionParameter::c_type)
-                        .collect::<Vec<_>>(),
+                        .map(|parameter| {
+                            parameter.click_type().c_type().ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "resource `{}` parameter `{}` uses an algebraic type; algebraic resource arguments are not supported yet",
+                                    definition.name(),
+                                    parameter.name()
+                                ))
+                            })
+                        })
+                        .collect::<Result<Vec<_>, ClickError>>()?,
                     kind: if definition.composite_body().is_some() {
                         ResourceKind::Composite
                     } else {
                         ResourceKind::Token
                     },
                 },
-            )
+            ))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>, ClickError>>()?;
     resource_definitions
         .entry(CResourceFact::ALLOCATION_RESOURCE_NAME.to_string())
         .or_insert_with(|| DeclaredResourceInfo {
+            fields: Default::default(),
+            has_fields: false,
             parameter_types: vec![C0Type::Int32Pointer, C0Type::Int32],
             kind: ResourceKind::Token,
         });
@@ -105,6 +121,18 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
     for predicate in &mut file.predicate_definitions {
         predicate.body =
             expand_declared_resource_proposition(predicate.body.clone(), &resource_definitions)?;
+    }
+
+    for function in &mut file.click_function_definitions {
+        function.body =
+            expand_declared_resource_expression(function.body.clone(), &resource_definitions)?;
+        function.decreases = function
+            .decreases
+            .take()
+            .map(|expression| {
+                expand_declared_resource_expression(expression, &resource_definitions)
+            })
+            .transpose()?;
     }
 
     for contract in &mut file.contract_definitions {
@@ -144,7 +172,9 @@ fn expand_declared_resources_in_function_block(
         .decreases
         .take()
         .map(|decreases| match decreases {
-            CFunctionDecrease::Numeric(expression) => Ok(CFunctionDecrease::Numeric(expression)),
+            CFunctionDecrease::Numeric(expression) => Ok(CFunctionDecrease::Numeric(
+                expand_declared_resource_expression(expression, resource_definitions)?,
+            )),
             CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
                 expand_declared_resource_clause(resource, &resource_definitions)?,
             )),
@@ -201,6 +231,7 @@ fn expand_declared_composite_resource_body(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
+        fields: composite_body.fields,
         witnesses: composite_body.witnesses.clone(),
         condition: composite_body
             .condition
@@ -339,6 +370,44 @@ fn expand_declared_resource_tactic(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
+        ProofTactic::ApplyTheorem(mut application) => {
+            application.arguments = application
+                .arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<_, _>>()?;
+            Ok(ProofTactic::ApplyTheorem(application))
+        }
+        ProofTactic::Witness(mut witness) => {
+            witness.value =
+                expand_declared_resource_expression(witness.value, resource_definitions)?;
+            Ok(ProofTactic::Witness(witness))
+        }
+        ProofTactic::ApplyInduction {
+            hypothesis,
+            argument,
+        } => Ok(ProofTactic::ApplyInduction {
+            hypothesis,
+            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+        }),
+        ProofTactic::ApplyInductionUsing {
+            hypothesis,
+            argument,
+            premises,
+        } => Ok(ProofTactic::ApplyInductionUsing {
+            hypothesis,
+            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<_, _>>()?,
+        }),
+        ProofTactic::ArithmeticUsing(premises) => Ok(ProofTactic::ArithmeticUsing(
+            premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<_, _>>()?,
+        )),
         ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
             region,
             premises: premises
@@ -350,7 +419,16 @@ fn expand_declared_resource_tactic(
             application,
             premises,
         } => Ok(ProofTactic::ApplyTheoremUsing {
-            application,
+            application: TheoremApplication {
+                name: application.name,
+                arguments: application
+                    .arguments
+                    .into_iter()
+                    .map(|argument| {
+                        expand_declared_resource_expression(argument, resource_definitions)
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
             premises: premises
                 .into_iter()
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
@@ -423,7 +501,7 @@ fn expand_declared_resource_tactic(
             premises,
         } => Ok(ProofTactic::InstantiateUsing {
             quantified: expand_declared_resource_proposition(quantified, resource_definitions)?,
-            argument,
+            argument: expand_declared_resource_expression(argument, resource_definitions)?,
             premises: premises
                 .into_iter()
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
@@ -554,13 +632,53 @@ fn expand_declared_resource_clause(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
-        ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
-            quantity,
-            resource: Box::new(expand_declared_resource_clause(
-                *resource,
+        ResourceClause::Named { binding, resource } => {
+            let ResourceClause::Declared {
+                access: ResourceAccessMode::Own,
+                name,
+                arguments,
+                ..
+            } = *resource
+            else {
+                return Err(ClickError::new(
+                    "named ownership requires a declared resource",
+                ));
+            };
+            let info = declared_resource_info_with_fields(
+                &name,
+                arguments.len(),
                 resource_definitions,
-            )?),
-        }),
+                true,
+            )?;
+            if !info.has_fields {
+                return Err(ClickError::new(format!(
+                    "resource `{name}` has no fields; use ordinary unnamed ownership"
+                )));
+            }
+            Ok(ResourceClause::Named {
+                binding,
+                resource: Box::new(ResourceClause::Declared {
+                    access: ResourceAccessMode::Own,
+                    kind: info.kind,
+                    name,
+                    arguments: arguments
+                        .into_iter()
+                        .map(|arg| expand_declared_resource_expression(arg, resource_definitions))
+                        .collect::<Result<_, _>>()?,
+                    parameter_types: info.parameter_types,
+                }),
+            })
+        }
+        ResourceClause::Quantified { quantity, resource } => {
+            reject_counted_field_resource(&resource, resource_definitions)?;
+            Ok(ResourceClause::Quantified {
+                quantity: expand_declared_resource_expression(quantity, resource_definitions)?,
+                resource: Box::new(expand_declared_resource_clause(
+                    *resource,
+                    resource_definitions,
+                )?),
+            })
+        }
         ResourceClause::Declared {
             access,
             kind: _,
@@ -579,7 +697,12 @@ fn expand_declared_resource_clause(
                 access,
                 kind: info.kind,
                 name,
-                arguments,
+                arguments: arguments
+                    .into_iter()
+                    .map(|argument| {
+                        expand_declared_resource_expression(argument, resource_definitions)
+                    })
+                    .collect::<Result<_, _>>()?,
                 parameter_types: info.parameter_types,
             })
         }
@@ -602,7 +725,12 @@ fn expand_declared_resource_subject(
             Ok(ResourceSubject::Declared {
                 kind: info.kind,
                 name,
-                arguments,
+                arguments: arguments
+                    .into_iter()
+                    .map(|argument| {
+                        expand_declared_resource_expression(argument, resource_definitions)
+                    })
+                    .collect::<Result<_, _>>()?,
                 parameter_types: info.parameter_types,
             })
         }
@@ -744,7 +872,58 @@ fn expand_declared_resource_expression(
     let recurse =
         |expression| expand_declared_resource_expression(expression, resource_definitions);
     Ok(match expression {
+        ContractExpression::ResourceField(mut access) => {
+            let info = resource_definitions
+                .get(&access.resource_name)
+                .ok_or_else(|| {
+                    ClickError::new(format!("unknown resource `{}`", access.resource_name))
+                })?;
+            let (index, field) = info.fields.get(&access.field).ok_or_else(|| {
+                ClickError::new(format!(
+                    "resource `{}` has no field `{}`",
+                    access.resource_name, access.field
+                ))
+            })?;
+            access.field_index = *index;
+            access.click_type = Some(field.clone());
+            ContractExpression::ResourceField(access)
+        }
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments: arguments
+                .into_iter()
+                .map(recurse)
+                .collect::<Result<_, _>>()?,
+        },
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            ContractExpression::AlgebraicMatch {
+                scrutinee: Box::new(recurse(*scrutinee)?),
+                arms: arms
+                    .into_iter()
+                    .map(|mut arm| {
+                        arm.body = recurse(arm.body)?;
+                        Ok(arm)
+                    })
+                    .collect::<Result<_, ClickError>>()?,
+            }
+        }
+        ContractExpression::SequenceLiteral(elements) => ContractExpression::SequenceLiteral(
+            elements
+                .into_iter()
+                .map(recurse)
+                .collect::<Result<_, _>>()?,
+        ),
+        ContractExpression::SequenceConcat(left, right) => ContractExpression::SequenceConcat(
+            Box::new(recurse(*left)?),
+            Box::new(recurse(*right)?),
+        ),
         ContractExpression::ResourceCount(resource) => {
+            reject_counted_field_resource(&resource, resource_definitions)?;
             let resource = expand_declared_resource_clause(*resource, resource_definitions)?;
             ContractExpression::ResourceCount(Box::new(resource))
         }
@@ -855,6 +1034,15 @@ fn declared_resource_info(
     actual: usize,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<DeclaredResourceInfo, ClickError> {
+    declared_resource_info_with_fields(name, actual, resource_definitions, false)
+}
+
+fn declared_resource_info_with_fields(
+    name: &str,
+    actual: usize,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    allow_fields: bool,
+) -> Result<DeclaredResourceInfo, ClickError> {
     let Some(info) = resource_definitions.get(name) else {
         return Err(ClickError::new(format!("unknown resource `{name}`")));
     };
@@ -864,7 +1052,31 @@ fn declared_resource_info(
             "resource `{name}` expects {expected} argument(s), got {actual}"
         )));
     }
+    if info.has_fields && !allow_fields {
+        return Err(ClickError::new(format!(
+            "resource `{name}` has fields; bind it with `owns name: {name}(...);`"
+        )));
+    }
     Ok(info.clone())
+}
+
+fn reject_counted_field_resource(
+    resource: &ResourceClause,
+    definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceClause::Declared { name, .. }
+            if definitions.get(name).is_some_and(|info| info.has_fields) =>
+        {
+            Err(ClickError::new(format!(
+                "resource `{name}` has fields and is not countable"
+            )))
+        }
+        ResourceClause::Quantified { resource, .. } => {
+            reject_counted_field_resource(resource, definitions)
+        }
+        _ => Ok(()),
+    }
 }
 
 pub(in crate::surface) fn combined_predicate_definitions(

@@ -149,7 +149,23 @@ pub fn c0_smart_tactic_source_sites(
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
     let mut sites = Vec::new();
     for theorem in file.theorem_definitions() {
+        // These declarations are checked against kernel axioms, not expanded
+        // by an implicit auto tactic. Keep genuine callback refinement proofs
+        // (which run before the arithmetic-axiom branch) in the inventory.
+        let kernel_axiom_name = proof::is_kernel_standard_theorem_name(theorem.name())
+            && theorem
+                .parameters()
+                .iter()
+                .all(|parameter| parameter.click_type() == &ClickType::C(C0Type::Int32));
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
+            if kernel_axiom_name
+                && !matches!(
+                    ensure.ensure(),
+                    Ensure::Proposition(ClickProposition::PredicateCall { .. })
+                )
+            {
+                continue;
+            }
             let label = ensure.name().map_or_else(
                 || format!("{}.ensures_{ensure_index}", theorem.name()),
                 |name| format!("{}.{name}", theorem.name()),
@@ -734,14 +750,14 @@ fn find_theorem(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, Cl
             continue;
         }
         let parameters_close = matching_delimiter(tokens, parameters_open, "(", ")")?;
-        if tokens
-            .get(parameters_close + 1)
-            .map(|token| token.text.as_str())
-            != Some("{")
-        {
+        let mut body_open = parameters_close + 1;
+        if tokens.get(body_open).map(|token| token.text.as_str()) == Some("executes") {
+            let arguments_open = body_open + 2;
+            body_open = matching_delimiter(tokens, arguments_open, "(", ")")? + 1;
+        }
+        if tokens.get(body_open).map(|token| token.text.as_str()) != Some("{") {
             continue;
         }
-        let body_open = parameters_close + 1;
         let body_close = matching_delimiter(tokens, body_open, "{", "}")?;
         return Ok(FunctionSource {
             body_open,

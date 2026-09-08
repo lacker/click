@@ -1,4 +1,131 @@
 use super::*;
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
+
+pub(in crate::surface) fn check_resource_field_schemas(
+    file: &mut ClickFile,
+) -> Result<(), ClickError> {
+    if file
+        .resource_definitions
+        .iter()
+        .all(ResourceDefinition::is_countable)
+    {
+        return Ok(());
+    }
+    let environment = ClickFunctionEnvironment::with_algebraic_types(
+        &[],
+        &super::super::validation::combined_algebraic_type_definitions(file)?,
+    );
+    for definition in &mut file.resource_definitions {
+        if definition.is_countable() {
+            continue;
+        }
+        let fields = definition
+            .fields()
+            .iter()
+            .map(|field| {
+                let ty = match field.click_type() {
+                    ClickType::C(ty) => crate::kernel::ResourceFieldType::C(ty.to_kernel_type()),
+                    ClickType::Algebraic(application) => {
+                        crate::kernel::ResourceFieldType::Algebraic(
+                            algebraic_kernel_type(&environment, application)
+                                .map_err(ClickError::new)?,
+                        )
+                    }
+                    ClickType::Parameter(name) => {
+                        return Err(ClickError::new(format!(
+                            "unresolved resource field type `{name}`"
+                        )));
+                    }
+                };
+                Ok((field.name().to_string(), ty))
+            })
+            .collect::<Result<Vec<_>, ClickError>>()?;
+        definition.field_schema = Some(
+            crate::kernel::ResourceFieldSchema::new(fields).ok_or_else(|| {
+                ClickError::new(format!(
+                    "invalid field schema for resource `{}`",
+                    definition.name()
+                ))
+            })?,
+        );
+    }
+    let schemas = file
+        .resource_definitions
+        .iter()
+        .filter_map(|definition| {
+            definition
+                .field_schema()
+                .map(|schema| (definition.name().to_string(), schema.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    // Separate from the existing C/spec and composite-witness ranges. These
+    // variables are collected from the entry resource state by the kernel's
+    // fresh-variable allocator, so later execution cannot reuse their IDs.
+    let mut next_field_variable = 9_000_000_000u64;
+    for function in file.function_blocks.iter_mut().chain(
+        file.contract_definitions
+            .iter_mut()
+            .map(|contract| &mut contract.function_block),
+    ) {
+        let mut bindings = BTreeMap::new();
+        let parameter_names = function
+            .signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name())
+            .collect::<BTreeSet<_>>();
+        for requirement in &mut function.requires {
+            let Requirement::Resource(ResourceClause::Named { binding, resource }) = requirement
+            else {
+                continue;
+            };
+            if parameter_names.contains(binding.name.as_str()) {
+                return Err(ClickError::new(format!(
+                    "resource instance `{}` conflicts with a C parameter",
+                    binding.name
+                )));
+            }
+            let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                return Err(ClickError::new(
+                    "named ownership requires a declared resource",
+                ));
+            };
+            let schema = schemas
+                .get(name)
+                .ok_or_else(|| ClickError::new("named resource has no checked fields"))?;
+            let fields = schema
+                .fields()
+                .iter()
+                .map(|(_, ty)| {
+                    let variable = Variable(next_field_variable);
+                    next_field_variable += 1;
+                    match ty {
+                        crate::kernel::ResourceFieldType::C(ty) => {
+                            AlgebraicValue::C(crate::kernel::symbolic_call_result(*ty, variable))
+                        }
+                        crate::kernel::ResourceFieldType::Algebraic(ty) => {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: ty.clone(),
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
+                        }
+                    }
+                })
+                .collect::<crate::kernel::ResourceArguments>();
+            binding.schema = Some(schema.clone());
+            binding.fields = Some(fields);
+            bindings.insert(binding.identity, binding.clone());
+        }
+        for ensure in &mut function.ensures {
+            if let Ensure::Resource(ResourceClause::Named { binding, .. }) = &mut ensure.ensure {
+                *binding = bindings.get(&binding.identity).cloned().ok_or_else(|| {
+                    ClickError::new("returned resource instance has no entry binding")
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
 
 fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
     match expression {
@@ -17,6 +144,9 @@ fn contract_expression_is_algebraic(
     lexical_bindings: &mut Vec<(String, bool)>,
 ) -> bool {
     match expression {
+        ContractExpression::ResourceField(access) => {
+            matches!(access.click_type, Some(ClickType::Algebraic(_)))
+        }
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => true,
         ContractExpression::Binding(name) => lexical_bindings
@@ -297,6 +427,9 @@ pub(in crate::surface) fn annotated_function(
     )
     .with_return_pointee_constant(parsed_function.return_pointee_is_constant())
     .with_source_body(source_body);
+    if parsed_kernel_function.is_program_entry() {
+        function = function.with_program_entry();
+    }
     if let Some(struct_name) = parsed_function.return_struct_name() {
         let layout = parsed_function
             .structs()
@@ -639,7 +772,18 @@ pub(in crate::surface) fn function_contract_summary(
         snapshots: None,
         count_assumptions: None,
     };
-    let context = SpecElaborationContext::for_function_contract();
+    let mut context = SpecElaborationContext::for_function_contract();
+    // Parameters shadow file-scope spellings in both current and old clauses.
+    // Keep them as C bindings, not loads from same-named global storage.
+    context
+        .values
+        .extend(parsed_function.parameters().iter().map(|parameter| {
+            let name = parameter.name().to_string();
+            (
+                name.clone(),
+                SpecExpression::CExpression(CExpression::Variable(name)),
+            )
+        }));
     let all_predicates = predicate_environment
         .definitions
         .keys()
@@ -734,6 +878,19 @@ pub(in crate::surface) fn function_contract_summary(
 
     let mut mutable = Vec::new();
     if function_block.effects().is_empty() {
+        if let Some(startup) = &parsed_function.program_entry_state {
+            mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
+                let range = fact.memory_own_range()?;
+                Some(
+                    CMemorySegment::new(
+                        CExpression::Value(CValue::pointer(range.base().clone())),
+                        CExpression::Value(CValue::Int32(range.start().clone())),
+                        CExpression::Value(CValue::Int32(range.end().clone())),
+                    )
+                    .with_element_width(range.element_width()),
+                )
+            }));
+        }
         for requirement in function_block.requires() {
             if let Requirement::Resource(resource) = requirement.inner() {
                 collect_owned_resource_memory_segments(
@@ -854,7 +1011,7 @@ fn collect_owned_resource_memory_segments_inner(
     active_guard: Option<ClickProposition>,
 ) -> Result<(), ClickError> {
     match resource {
-        ResourceClause::Quantified { resource, .. } => {
+        ResourceClause::Named { resource, .. } | ResourceClause::Quantified { resource, .. } => {
             collect_owned_resource_memory_segments_inner(
                 resource,
                 resource_environment,
@@ -1556,12 +1713,57 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    fn fixed_resource_field(
+        &self,
+        access: &ResourceFieldAccess,
+        environment: &SpecElaborationContext,
+    ) -> Result<Option<AlgebraicValue>, String> {
+        let snapshot = environment.snapshot_state.as_ref().or_else(|| {
+            (environment.at_function_entry && !environment.function_contract)
+                .then_some(self.entry_state)
+        });
+        snapshot
+            .map(|state| {
+                state
+                    .resources()
+                    .owned_instance(access.identity)
+                    .and_then(|instance| instance.fields().get(access.field_index))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "resource instance `{}` is not owned at this snapshot",
+                            access.owner
+                        )
+                    })
+            })
+            .transpose()
+    }
+
     fn lower_contract_expression_to_spec(
         &mut self,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::ResourceField(access) => {
+                let Some(ClickType::C(c_type)) = &access.click_type else {
+                    return Err("expected a scalar resource field".into());
+                };
+                if let Some(value) = self.fixed_resource_field(access, environment)? {
+                    let AlgebraicValue::C(value) = value else {
+                        return Err("resource field type mismatch".into());
+                    };
+                    return Ok(SpecExpression::Value(value));
+                }
+                Ok(SpecExpression::ResourceField {
+                    projection: crate::kernel::ResourceFieldProjection {
+                        identity: access.identity,
+                        field_index: access.field_index,
+                        at_entry: environment.at_function_entry,
+                    },
+                    c_type: c_type.to_kernel_type(),
+                })
+            }
             ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => {
                 Err("a sequence value is only valid as an operand of `==` or `!=`".to_string())
             }
@@ -1682,7 +1884,9 @@ impl AnnotationLowerer<'_> {
                         .iter()
                         .map(|argument| match argument {
                             None => Some(None),
-                            Some(SpecExpression::Value(value)) => Some(Some(value.clone())),
+                            Some(SpecExpression::Value(value)) => {
+                                Some(Some(AlgebraicValue::C(value.clone())))
+                            }
                             Some(_) => None,
                         })
                         .collect::<Option<Vec<_>>>()
@@ -1924,6 +2128,34 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecAlgebraicExpression, String> {
         match expression {
+            ContractExpression::ResourceField(access) => {
+                let Some(ClickType::Algebraic(ty)) = &access.click_type else {
+                    return Err("expected an algebraic resource field".into());
+                };
+                let algebraic_type = self.cached_algebraic_kernel_type(ty)?;
+                let node = if let Some(value) = self.fixed_resource_field(access, environment)? {
+                    let AlgebraicValue::Algebraic(AlgebraicTerm {
+                        node: AlgebraicTermNode::Variable(variable),
+                        ..
+                    }) = value
+                    else {
+                        return Err("only entry-bound symbolic resource fields support fixed snapshots in this slice".into());
+                    };
+                    SpecAlgebraicExpressionNode::Variable(variable)
+                } else {
+                    SpecAlgebraicExpressionNode::ResourceField(
+                        crate::kernel::ResourceFieldProjection {
+                            identity: access.identity,
+                            field_index: access.field_index,
+                            at_entry: environment.at_function_entry,
+                        },
+                    )
+                };
+                Ok(SpecAlgebraicExpression {
+                    algebraic_type,
+                    node,
+                })
+            }
             ContractExpression::AlgebraicVariable {
                 name,
                 algebraic_type,
@@ -2298,6 +2530,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<Option<ClickType>, String> {
         match argument {
+            ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
             ContractExpression::AlgebraicVariable { algebraic_type, .. }
             | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
                 Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
@@ -2724,6 +2957,13 @@ impl AnnotationLowerer<'_> {
             CExpression::BitwiseNot(expression) => Ok(SpecExpression::BitwiseNot(Box::new(
                 self.lower_c_fragment_to_spec(expression, environment)?,
             ))),
+            CExpression::Cast {
+                expression,
+                target_type,
+            } if *target_type == CType::UInt32 => Ok(SpecExpression::Cast(
+                Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
+                *target_type,
+            )),
             CExpression::Index(base, index) => {
                 let element_type = self
                     .c_expression_array_element_type(base, environment)
@@ -2754,7 +2994,9 @@ impl AnnotationLowerer<'_> {
             CExpression::Load(pointer) => Ok(SpecExpression::MemoryLoad {
                 memory: environment.current_memory.clone(),
                 pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
-                value_type: CType::Int32,
+                value_type: self
+                    .c_expression_array_element_type(pointer, environment)
+                    .unwrap_or(CType::Int32),
             }),
             expression => Ok(SpecExpression::CExpression(expression.clone())),
         }
@@ -3305,6 +3547,7 @@ impl AnnotationLowerer<'_> {
 
 fn spec_expression_click_type(expression: &SpecExpression) -> Option<ClickType> {
     let c_type = match expression {
+        SpecExpression::ResourceField { c_type, .. } => *c_type,
         SpecExpression::Value(value) => value.c_type(),
         SpecExpression::PureFunctionApplication { result_type, .. }
         | SpecExpression::MemoryLoad {

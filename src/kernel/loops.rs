@@ -284,6 +284,15 @@ pub(super) fn execute_c_call_assign_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if function_name == "realloc" {
+        if environment.selected_call_contract.is_some() {
+            return Ok(vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    "step(Contract) requires a function-pointer call".to_string(),
+                )),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]);
+        }
         return execute_c_realloc_assign_paths(state, target, arguments, assumptions, budget);
     }
 
@@ -585,10 +594,12 @@ fn execute_c_indirect_call_paths(
                 if pointer.offset == PointerOffsetTerm::Constant(0) =>
             {
                 match &pointer.block {
-                    PointerBlock::Function(name) => {
+                    PointerBlock::Function(name)
+                        if environment.selected_call_contract.is_none() =>
+                    {
                         vec![Ok(name.clone())]
                     }
-                    PointerBlock::FunctionSymbolic(_) => {
+                    PointerBlock::FunctionSymbolic(_) | PointerBlock::Function(_) => {
                         let target_assumptions =
                             assumptions_with_path_context(assumptions, &facts, &obligations);
                         let contracts = target_assumptions
@@ -598,8 +609,19 @@ fn execute_c_indirect_call_paths(
                                 !contract.template().return_pointee_is_constant()
                                     && contract.function_pointer_type() == function_type
                             })
-                            .cloned()
                             .collect::<Vec<_>>();
+                        if let Some(selected) = &environment.selected_call_contract
+                            && !contracts
+                                .iter()
+                                .any(|contract| contract.name() == selected.as_ref())
+                        {
+                            paths.push(CFunctionPath {
+                                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                                    format!("contract `{selected}` is not established for this callback with its call signature"))),
+                                facts, obligations,
+                            });
+                            continue;
+                        }
                         if contracts.is_empty() {
                             paths.push(CFunctionPath {
                                 outcome: CFunctionOutcome::RuntimeError(
@@ -612,23 +634,21 @@ fn execute_c_indirect_call_paths(
                             });
                             continue;
                         }
-                        for contract in contracts {
-                            for mut call_path in execute_c_function_contract_paths(
-                                state,
-                                &contract,
-                                arguments,
-                                &target_assumptions,
-                                environment,
-                                budget,
-                            )? {
-                                let mut merged_facts = facts.clone();
-                                merged_facts.extend(call_path.facts);
-                                let mut merged_obligations = obligations.clone();
-                                merged_obligations.extend(call_path.obligations);
-                                call_path.facts = merged_facts;
-                                call_path.obligations = merged_obligations;
-                                paths.push(call_path);
-                            }
+                        for mut call_path in execute_c_function_contracts_paths(
+                            state,
+                            &contracts,
+                            arguments,
+                            &target_assumptions,
+                            environment,
+                            budget,
+                        )? {
+                            let mut merged_facts = facts.clone();
+                            merged_facts.extend(call_path.facts);
+                            let mut merged_obligations = obligations.clone();
+                            merged_obligations.extend(call_path.obligations);
+                            call_path.facts = merged_facts;
+                            call_path.obligations = merged_obligations;
+                            paths.push(call_path);
                         }
                         continue;
                     }

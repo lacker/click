@@ -651,7 +651,9 @@ fn validate_theorem_definition(
             click_function_types,
             &format!("ensures clause in theorem `{}`", theorem.name()),
         )?;
-        validate_pure_theorem_proof(theorem.name(), ensure.proof())?;
+        if theorem.executes.is_none() {
+            validate_pure_theorem_proof(theorem.name(), ensure.proof())?;
+        }
     }
 
     Ok(())
@@ -673,6 +675,30 @@ fn validate_resource_definition(
     let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
+    if !definition.is_countable() {
+        let mut body_names = BTreeSet::new();
+        for fact in composite_body
+            .facts()
+            .iter()
+            .chain(composite_body.condition())
+        {
+            collect_current_proposition_variables(fact, &mut body_names);
+        }
+        for resource in composite_body.contains() {
+            collect_current_resource_clause_variables(resource, &mut body_names);
+        }
+        if let Some(field) = definition
+            .fields()
+            .iter()
+            .find(|field| body_names.contains(field.name()))
+        {
+            return Err(ClickError::new(format!(
+                "resource `{}` field `{}` cannot be used in body expressions yet; field establishment is not supported",
+                definition.name(),
+                field.name()
+            )));
+        }
+    }
     let mut variables = definition
         .parameters()
         .iter()
@@ -1385,7 +1411,9 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::AlgebraicVariable { .. } | ContractExpression::Binding(_) => Ok(()),
+        ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_) => Ok(()),
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_resource_fact_reads_from_contract_expression(
@@ -2044,6 +2072,7 @@ fn constant_c_expression_i64(expression: &CExpression) -> Option<i64> {
 
 fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
     match resource {
+        ResourceClause::Named { resource, .. } => declared_composite_resource_name(resource),
         ResourceClause::Declared {
             kind: ResourceKind::Composite,
             name,
@@ -2066,6 +2095,9 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                 .into_iter()
                 .flat_map(CompositeResourceBody::contains)
                 .filter_map(|resource| match resource {
+                    ResourceClause::Named { resource, .. } => {
+                        declared_composite_resource_name(resource).map(str::to_string)
+                    }
                     ResourceClause::Declared {
                         kind: ResourceKind::Composite,
                         name,

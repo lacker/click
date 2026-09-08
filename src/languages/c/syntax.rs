@@ -126,6 +126,7 @@ struct StaticAddress {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
+    pub(crate) program_entry_state: Option<std::sync::Arc<crate::kernel::CState>>,
     return_type: C0Type,
     return_pointee_constant: bool,
     return_struct_name: Option<String>,
@@ -1957,6 +1958,11 @@ pub struct C0SyntaxError {
 }
 
 impl C0Function {
+    /// An explicitly declared one-call proof, represented with ordinary C AST nodes.
+    pub(crate) fn with_proof_body(mut self, body: C0Statement) -> Self {
+        self.body = body;
+        self
+    }
     pub(crate) fn with_return_pointee_constant(mut self, constant: bool) -> Self {
         self.return_pointee_constant = constant;
         self
@@ -1978,6 +1984,7 @@ impl C0Function {
             return_pointer_struct_name: None,
             name,
             inline_body: false,
+            program_entry_state: None,
             parameters,
             body: C0Statement::Skip,
             structs: BTreeMap::new(),
@@ -2397,6 +2404,9 @@ impl C0Function {
             self.body.to_kernel_statement(),
         );
         function = function.with_return_pointee_constant(self.return_pointee_constant);
+        if self.program_entry_state.is_some() {
+            function = function.with_program_entry();
+        }
         if self.inline_body {
             function = function.with_inline_body();
         }
@@ -2408,31 +2418,59 @@ impl C0Function {
                 .to_kernel_aggregate_layout();
             function = function.with_return_aggregate_layout(layout);
         }
+        self.with_kernel_static_storage(function, true)
+    }
+
+    /// Startup needs storage declarations, not another copy of each body
+    /// or each function's complete visible global environment.
+    pub(crate) fn to_kernel_static_storage(
+        &self,
+        include_globals: bool,
+    ) -> crate::kernel::CFunction {
+        self.with_kernel_static_storage(
+            crate::kernel::CFunction::new(
+                crate::kernel::CType::Void,
+                self.name.clone(),
+                vec![],
+                crate::kernel::CStatement::Skip,
+            ),
+            include_globals,
+        )
+    }
+
+    fn with_kernel_static_storage(
+        &self,
+        mut function: crate::kernel::CFunction,
+        include_globals: bool,
+    ) -> crate::kernel::CFunction {
+        if include_globals {
+            function = function
+                .with_global_variables(
+                    self.globals
+                        .values()
+                        .filter_map(|global| self.to_kernel_global(global))
+                        .collect(),
+                )
+                .with_global_arrays(
+                    self.global_arrays
+                        .values()
+                        .filter_map(C0GlobalArray::to_kernel_global_array)
+                        .collect(),
+                )
+                .with_global_aggregates(
+                    self.global_aggregates
+                        .values()
+                        .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
+                        .collect(),
+                )
+                .with_global_aggregate_arrays(
+                    self.global_aggregate_arrays
+                        .values()
+                        .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
+                        .collect(),
+                );
+        }
         function
-            .with_global_variables(
-                self.globals
-                    .values()
-                    .filter_map(|global| self.to_kernel_global(global))
-                    .collect(),
-            )
-            .with_global_arrays(
-                self.global_arrays
-                    .values()
-                    .filter_map(C0GlobalArray::to_kernel_global_array)
-                    .collect(),
-            )
-            .with_global_aggregates(
-                self.global_aggregates
-                    .values()
-                    .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
-                    .collect(),
-            )
-            .with_global_aggregate_arrays(
-                self.global_aggregate_arrays
-                    .values()
-                    .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
-                    .collect(),
-            )
             .with_static_variables(
                 self.static_locals
                     .values()
@@ -4743,6 +4781,19 @@ struct Parser {
 struct ScopeBinding {
     source_name: String,
     kernel_name: String,
+    shadowed: Option<VariableMetadata>,
+}
+
+#[derive(Clone, Debug)]
+struct VariableMetadata {
+    c_type: C0Type,
+    struct_name: Option<String>,
+    struct_value: Option<String>,
+    array_shape: Option<Vec<u32>>,
+    function_pointer: Option<C0FunctionPointerSignature>,
+    constant: bool,
+    pointee_constant: bool,
+    incomplete_array: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4869,6 +4920,32 @@ impl Parser {
             self.variable_function_pointers.remove(&binding.kernel_name);
             self.variable_constants.remove(&binding.kernel_name);
             self.variable_pointee_constants.remove(&binding.kernel_name);
+            self.incomplete_array_names.remove(&binding.kernel_name);
+            if let Some(metadata) = binding.shadowed {
+                let name = binding.kernel_name;
+                self.variable_types.insert(name.clone(), metadata.c_type);
+                if let Some(value) = metadata.struct_name {
+                    self.variable_structs.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.struct_value {
+                    self.variable_struct_values.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.array_shape {
+                    self.variable_array_shapes.insert(name.clone(), value);
+                }
+                if let Some(value) = metadata.function_pointer {
+                    self.variable_function_pointers.insert(name.clone(), value);
+                }
+                if metadata.constant {
+                    self.variable_constants.insert(name.clone());
+                }
+                if metadata.pointee_constant {
+                    self.variable_pointee_constants.insert(name.clone());
+                }
+                if metadata.incomplete_array {
+                    self.incomplete_array_names.insert(name);
+                }
+            }
         }
     }
 
@@ -5262,14 +5339,31 @@ impl Parser {
         } else {
             name.to_string()
         };
+        // A parameter may keep the source spelling of a file-scope object.
+        // Save only that object's metadata, not the translation-unit tables.
+        let shadowed = self
+            .variable_types
+            .remove(&kernel_name)
+            .map(|c_type| VariableMetadata {
+                c_type,
+                struct_name: self.variable_structs.remove(&kernel_name),
+                struct_value: self.variable_struct_values.remove(&kernel_name),
+                array_shape: self.variable_array_shapes.remove(&kernel_name),
+                function_pointer: self.variable_function_pointers.remove(&kernel_name),
+                constant: self.variable_constants.remove(&kernel_name),
+                pointee_constant: self.variable_pointee_constants.remove(&kernel_name),
+                incomplete_array: self.incomplete_array_names.remove(&kernel_name),
+            });
         match self.scopes.last_mut() {
             Some(scope) => scope.push(ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed,
             }),
             None => self.scopes.push(vec![ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed,
             }]),
         }
         Ok(kernel_name)
@@ -5299,10 +5393,12 @@ impl Parser {
             Some(scope) => scope.push(ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed: None,
             }),
             None => self.scopes.push(vec![ScopeBinding {
                 source_name: name.to_string(),
                 kernel_name: kernel_name.clone(),
+                shadowed: None,
             }]),
         }
         Ok(kernel_name)
@@ -5681,6 +5777,7 @@ impl Parser {
             return_pointer_struct_name: header.return_pointer_struct_name,
             name: header.name,
             inline_body,
+            program_entry_state: None,
             parameters: header.parameters,
             body,
             structs: self.structs.clone(),
@@ -6141,6 +6238,8 @@ impl Parser {
                 .with_constant(parsed_type.is_constant);
                 let declaration = declaration.with_tentative(tentative);
                 self.register_global_aggregate_declaration(name.clone(), declaration)?;
+                self.variable_struct_values
+                    .insert(kernel_name.clone(), struct_name.clone());
                 self.variable_types
                     .insert(name.clone(), struct_value_type(layout));
                 self.variable_structs
@@ -8612,7 +8711,11 @@ impl Parser {
                     self.push_scope();
                     let init = self.parse_for_initializer()?;
                     self.expect(Token::Semicolon)?;
-                    let condition = self.parse_expression()?;
+                    let condition = if self.peek() == Some(&Token::Semicolon) {
+                        C0Expression::Int32Literal(1)
+                    } else {
+                        self.parse_expression()?
+                    };
                     self.expect(Token::Semicolon)?;
                     let step = self.parse_for_step()?;
                     self.expect(Token::RParen)?;
@@ -14664,4 +14767,42 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+#[cfg(test)]
+mod scope_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn shadow_metadata_storage_is_independent_of_unrelated_globals() {
+        for count in [16, 64, 256] {
+            let mut parser = Parser::new("", CAbi::SUPPORTED).unwrap();
+            for index in 0..count {
+                parser
+                    .variable_types
+                    .insert(format!("global{index}"), C0Type::UInt64);
+            }
+            parser
+                .variable_types
+                .insert("p".into(), C0Type::UInt32Array(2));
+            parser.variable_array_shapes.insert("p".into(), vec![2]);
+            parser.variable_constants.insert("p".into());
+            parser.push_scope();
+            assert_eq!(parser.declare_name("p").unwrap(), "p");
+            assert_eq!(parser.scopes.last().unwrap().len(), 1);
+            let saved = parser.scopes.last().unwrap()[0].shadowed.as_ref().unwrap();
+            assert_eq!(saved.c_type, C0Type::UInt32Array(2));
+            assert_eq!(saved.array_shape.as_deref(), Some([2].as_slice()));
+            assert!(saved.constant);
+            assert_eq!(parser.variable_types.len(), count);
+            parser
+                .variable_types
+                .insert("p".into(), C0Type::Int32Pointer);
+            parser.pop_scope();
+            assert_eq!(parser.variable_types.len(), count + 1);
+            assert_eq!(parser.variable_types["p"], C0Type::UInt32Array(2));
+            assert_eq!(parser.variable_array_shapes["p"], vec![2]);
+            assert!(parser.variable_constants.contains("p"));
+        }
+    }
 }

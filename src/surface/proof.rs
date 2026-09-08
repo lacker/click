@@ -8,7 +8,8 @@ mod claim_proofs;
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
 pub(in crate::surface) use fixed_state_proofs::{
     evaluate_c_fragment_through_kernel, evaluate_fixed_state_array_ref_through_kernel,
-    evaluate_fixed_state_expression_through_kernel, lower_fixed_state_proposition_through_kernel,
+    evaluate_fixed_state_expression_through_kernel, evaluate_resource_fragment_through_kernel,
+    lower_fixed_state_proposition_through_kernel,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls,
 };
 mod cursor_execution;
@@ -83,13 +84,13 @@ use language_context::*;
 #[cfg(test)]
 pub(in crate::surface) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;
+pub(super) use pure_theorems::{
+    is_kernel_standard_theorem_name, pure_theorem_array_refs, pure_theorem_parameter_values,
+    verify_concrete_theorem_definition, verify_theorem_definitions,
+};
 #[cfg(test)]
 use pure_theorems::{
     lower_pure_theorem_proposition, pure_theorem_context, validate_pure_theorem_certificate,
-};
-pub(super) use pure_theorems::{
-    pure_theorem_array_refs, pure_theorem_parameter_values, verify_concrete_theorem_definition,
-    verify_theorem_definitions,
 };
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;
@@ -1306,6 +1307,7 @@ mod certificate_tests {
                 &predicate_environment,
                 &click_function_environment,
                 None,
+                &ResourceEnvironment::new(&[]),
             )
         });
         let verified = verified.expect("direct checked pure proofs should verify");
@@ -2024,10 +2026,26 @@ pub(super) fn initial_claim_context(
     ),
     ClickError,
 > {
-    let (mut state, arguments) =
-        initial_call_state(function_block.requires(), parsed_function.parameters())?;
-    state =
-        crate::kernel::initialize_c_function_globals(&state, &parsed_function.to_kernel_function());
+    let (mut state, arguments) = if let Some(startup) = &parsed_function.program_entry_state {
+        if !function_block.requires().is_empty() || !parsed_function.parameters().is_empty() {
+            return Err(ClickError::new(
+                "program-entry main currently requires no parameters or preconditions; static ownership comes from startup",
+            ));
+        }
+        (
+            crate::kernel::initialize_c_function_globals(
+                startup,
+                &parsed_function.to_kernel_function(),
+            ),
+            vec![],
+        )
+    } else {
+        initial_call_state(
+            function_block.requires(),
+            parsed_function.parameters(),
+            &parsed_function.to_kernel_function(),
+        )?
+    };
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();
     for requirement in function_block.requires() {

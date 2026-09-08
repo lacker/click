@@ -27,6 +27,7 @@ pub(in crate::surface::proof) fn take_driver_declines()
 fn arm_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
         ProofTactic::Step => Some(ProofStep::Step),
+        ProofTactic::StepContract(name) => Some(ProofStep::StepContract(name.clone())),
         tactic => linear_execution_proof_step(tactic),
     }
 }
@@ -35,6 +36,7 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
         ProofTactic::Mark(name) => Some(ProofStep::Mark(name.clone())),
         ProofTactic::Step => Some(ProofStep::Step),
+        ProofTactic::StepContract(name) => Some(ProofStep::StepContract(name.clone())),
         ProofTactic::TransportUsing {
             source,
             target,
@@ -136,7 +138,10 @@ fn checked_execution_arm_tactics_end(
             at_function_exit = true;
             continue;
         }
-        if matches!(indexed.tactic, ProofTactic::Step) {
+        if matches!(
+            indexed.tactic,
+            ProofTactic::Step | ProofTactic::StepContract(_)
+        ) {
             may_exit = true;
             continue;
         }
@@ -3056,6 +3061,7 @@ pub(in crate::surface::proof) fn add_proof_branch_path(
 fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
     let name = match tactic {
         ProofTactic::Step => "step()".to_string(),
+        ProofTactic::StepContract(name) => format!("step({name})"),
         ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => "execute()".to_string(),
         ProofTactic::ExecuteUntil(region) => format!(
             "execute_until({})",

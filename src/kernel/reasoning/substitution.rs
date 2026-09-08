@@ -964,8 +964,8 @@ fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Vari
         collect_resource_bound_variables(fact.resource(), variables);
     }
     for population in state.counted_populations.iter() {
-        for argument in &population.arguments {
-            collect_c_value_bound_variables(argument, variables);
+        for argument in population.arguments.iter() {
+            collect_algebraic_value_bound_variables(argument, variables);
         }
         collect_bitvector_bound_variables(&population.count, variables);
     }
@@ -1032,6 +1032,9 @@ fn collect_c_resource_spec_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResourceSpec::Instance { resource, .. } => {
+            collect_c_resource_spec_bound_variables(resource, variables)
+        }
         CResourceSpec::Quantified { quantity, resource } => {
             collect_c_expression_bound_variables(quantity, variables);
             collect_c_resource_spec_bound_variables(resource, variables);
@@ -1114,14 +1117,19 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
 
 fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
     match resource {
+        CResource::Instance(instance) => {
+            for value in instance.arguments.iter().chain(instance.fields.iter()) {
+                collect_algebraic_value_bound_variables(value, variables);
+            }
+        }
         CResource::Memory(range) => {
             collect_pointer_bound_variables(&range.base, variables);
             collect_bitvector_bound_variables(&range.start, variables);
             collect_bitvector_bound_variables(&range.end, variables);
         }
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
-            for argument in arguments {
-                collect_c_value_bound_variables(argument, variables);
+            for argument in arguments.iter() {
+                collect_algebraic_value_bound_variables(argument, variables);
             }
         }
     }
@@ -1224,6 +1232,7 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)
@@ -1968,6 +1977,9 @@ fn substitute_bitvector_variable_in_spec_algebraic_expression(
     to: &Bitvector32Term,
 ) -> SpecAlgebraicExpression {
     let node = match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(projection) => {
+            SpecAlgebraicExpressionNode::ResourceField(projection.clone())
+        }
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
@@ -2034,6 +2046,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
     to: &Bitvector32Term,
 ) -> SpecExpression {
     match expression {
+        SpecExpression::ResourceField { .. } => expression.clone(),
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
@@ -2150,6 +2163,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
         SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
             substitute_bitvector_variable_in_spec_expression(expression, from, to),
         )),
+        SpecExpression::Cast(expression, target_type) => SpecExpression::Cast(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                expression, from, to,
+            )),
+            *target_type,
+        ),
         SpecExpression::If {
             condition,
             then_branch,
@@ -2667,7 +2686,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         .arguments
                         .iter()
                         .map(|argument| {
-                            substitute_bitvector_variable_in_c_value(argument, from, to)
+                            substitute_bitvector_variable_in_algebraic_value(argument, from, to)
                         })
                         .collect(),
                     count: match substitute_bitvector_variable_in_c_value(
@@ -2720,6 +2739,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
+        CResource::Instance(instance) => {
+            let mut result = instance.clone();
+            result.arguments = instance
+                .arguments
+                .iter()
+                .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.fields = instance
+                .fields
+                .iter()
+                .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
+                .collect();
+            CResource::Instance(result)
+        }
         CResource::Memory(range) => CResource::Memory(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
@@ -2727,14 +2760,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .map(|argument| {
+                    substitute_bitvector_variable_in_algebraic_value(argument, from, to)
+                })
                 .collect(),
         },
         CResource::Token { name, arguments } => CResource::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .map(|argument| {
+                    substitute_bitvector_variable_in_algebraic_value(argument, from, to)
+                })
                 .collect(),
         },
     }
@@ -2746,6 +2783,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     to: &Bitvector32Term,
 ) -> CFunction {
     CFunction {
+        program_entry: function.program_entry,
         return_type: function.return_type,
         return_pointee_constant: function.return_pointee_constant,
         name: function.name.clone(),
@@ -2851,6 +2889,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     to: &Bitvector32Term,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+        } => CResourceSpec::Instance {
+            identity: *identity,
+            schema: schema.clone(),
+            resource: Box::new(substitute_bitvector_variable_in_resource_spec(
+                resource, from, to,
+            )),
+        },
         CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
             quantity: substitute_bitvector_variable_in_c_expression(quantity, from, to),
             resource: Box::new(substitute_bitvector_variable_in_resource_spec(
@@ -3188,6 +3237,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         }
         Bitvector32Term::UInt64From32(value) => {
             Bitvector32Term::uint64_from_32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt32From64(value) => {
+            Bitvector32Term::uint32_from_64(substitute_bitvector_variable(value, from, to))
         }
         Bitvector32Term::Int64FromUInt32(value) => {
             Bitvector32Term::int64_from_uint32(substitute_bitvector_variable(value, from, to))
@@ -4733,7 +4785,9 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                     arguments: population
                         .arguments
                         .iter()
-                        .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                        .map(|argument| {
+                            substitute_pointer_variable_in_algebraic_value(argument, from, to)
+                        })
                         .collect(),
                     count: population.count.clone(),
                     family_observation_marker: population.family_observation_marker,
@@ -4778,6 +4832,20 @@ fn substitute_pointer_variable_in_c_resource(
     to: &Pointer,
 ) -> CResource {
     match resource {
+        CResource::Instance(instance) => {
+            let mut result = instance.clone();
+            result.arguments = instance
+                .arguments
+                .iter()
+                .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.fields = instance
+                .fields
+                .iter()
+                .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
+                .collect();
+            CResource::Instance(result)
+        }
         CResource::Memory(range) => CResource::Memory(
             substitute_pointer_variable_in_c_memory_range(range, from, to),
         ),
@@ -4785,14 +4853,14 @@ fn substitute_pointer_variable_in_c_resource(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                .map(|argument| substitute_pointer_variable_in_algebraic_value(argument, from, to))
                 .collect(),
         },
         CResource::Token { name, arguments } => CResource::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_pointer_variable_in_c_value(argument, from, to))
+                .map(|argument| substitute_pointer_variable_in_algebraic_value(argument, from, to))
                 .collect(),
         },
     }
@@ -4987,6 +5055,9 @@ fn substitute_pointer_variable_in_spec_algebraic_expression(
     to: &Pointer,
 ) -> SpecAlgebraicExpression {
     let node = match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(projection) => {
+            SpecAlgebraicExpressionNode::ResourceField(projection.clone())
+        }
         SpecAlgebraicExpressionNode::Variable(variable) => {
             SpecAlgebraicExpressionNode::Variable(*variable)
         }
@@ -5053,6 +5124,7 @@ fn substitute_pointer_variable_in_spec_expression(
     to: &Pointer,
 ) -> SpecExpression {
     match expression {
+        SpecExpression::ResourceField { .. } => expression.clone(),
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_pointer_variable_in_c_value(value, from, to))
         }
@@ -5119,6 +5191,12 @@ fn substitute_pointer_variable_in_spec_expression(
         SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
             substitute_pointer_variable_in_spec_expression(expression, from, to),
         )),
+        SpecExpression::Cast(expression, target_type) => SpecExpression::Cast(
+            Box::new(substitute_pointer_variable_in_spec_expression(
+                expression, from, to,
+            )),
+            *target_type,
+        ),
         SpecExpression::If {
             condition,
             then_branch,
@@ -5464,6 +5542,7 @@ fn substitute_pointer_variable_in_c_function(
     to: &Pointer,
 ) -> CFunction {
     CFunction {
+        program_entry: function.program_entry,
         return_type: function.return_type,
         return_pointee_constant: function.return_pointee_constant,
         name: function.name.clone(),
@@ -5570,6 +5649,17 @@ fn substitute_pointer_variable_in_resource_spec(
     to: &Pointer,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+        } => CResourceSpec::Instance {
+            identity: *identity,
+            schema: schema.clone(),
+            resource: Box::new(substitute_pointer_variable_in_resource_spec(
+                resource, from, to,
+            )),
+        },
         CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
             quantity: substitute_pointer_variable_in_c_expression(quantity, from, to),
             resource: Box::new(substitute_pointer_variable_in_resource_spec(

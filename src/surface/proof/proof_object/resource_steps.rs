@@ -721,11 +721,11 @@ impl<'a> Proof<'a> {
             context.click_function_environment,
             &execution.core.unfolded_predicates,
         )?;
-        let selected = lower_resource_clause(
+        let selected = lower_resource_clause_at_state(
             resource,
             context.parsed_function.parameters(),
             context.arguments,
-            checked.state.memory(),
+            &checked.state,
         )?;
         execution
             .core

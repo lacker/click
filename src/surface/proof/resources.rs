@@ -158,13 +158,13 @@ pub(super) fn materialize_counted_population_bodies(
     _click_function_environment: &ClickFunctionEnvironment,
     _claim_label: &str,
 ) -> Result<(CState, Vec<Proposition>), ClickError> {
-    let mut populations = Vec::<(String, Vec<CValue>, Bitvector32Term)>::new();
+    let mut populations = Vec::<(String, ResourceArguments, Bitvector32Term)>::new();
     for fact in state.resources().facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         if resource_environment.get(name).is_none() {
             continue;
@@ -278,7 +278,7 @@ fn materialize_folded_composite_resource_memory(
     for resource in state.resources().facts() {
         let (name, resource_arguments) = match resource.resource() {
             CResource::Composite { name, arguments } => (name, arguments),
-            CResource::Memory(_) | CResource::Token { .. } => {
+            CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
                 continue;
             }
         };
@@ -628,7 +628,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     tactic_index: usize,
 ) -> Result<(CState, CResourceFact), ClickError> {
     let requested_resource =
-        lower_resource_clause(resource, parameters, arguments, state.memory())?;
+        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
     let abstract_resource = state
@@ -664,6 +664,11 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             ))
         })?;
     let (observed_quantity, counted_resource, explicit_quantity) = match resource {
+        ResourceClause::Named { .. } => {
+            return Err(ClickError::new(
+                "named resources do not have counted observations",
+            ));
+        }
         ResourceClause::Quantified { quantity, resource } => {
             (quantity.clone(), resource.as_ref().clone(), true)
         }
@@ -949,7 +954,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     if !active {
         return Ok(());
     }
-    let parent = lower_resource_clause(resource, parameters, arguments, fact_state.memory())
+    let parent = lower_resource_clause_at_state(resource, parameters, arguments, fact_state)
         .map_err(|error| error.message().to_string())?;
     let parent_subject = resource_clause_subject(resource);
     let mut owned_children = Vec::new();
@@ -961,7 +966,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
                     definition.name()
                 )
             })?;
-        let lowered = lower_resource_clause(&contained, parameters, arguments, fact_state.memory())
+        let lowered = lower_resource_clause_at_state(&contained, parameters, arguments, fact_state)
             .map_err(|error| error.message().to_string())?;
         if let Some(child) = lowered.owned_resource() {
             let child_subject = resource_clause_subject(&contained);
@@ -984,7 +989,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
             continue;
         };
         if let Some(kernel) =
-            resource_clause_loadable_prop(&contained, parameters, arguments, fact_state.memory())
+            resource_clause_loadable_prop_at_state(&contained, parameters, arguments, fact_state)
                 .map_err(|error| error.message().to_string())?
         {
             surface_propositions
@@ -1048,6 +1053,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
 
 fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
     match resource {
+        ResourceClause::Named { resource, .. } => resource_clause_subject(resource),
         ResourceClause::Quantified { resource, .. } => resource_clause_subject(resource),
         ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             ResourceSubject::Memory(segment.clone())
@@ -1174,7 +1180,7 @@ fn project_held_resource_observable_facts(
 ) -> Result<CMemory, String> {
     let (name, resource_arguments) = match resource.resource() {
         CResource::Composite { name, arguments } => (name, arguments),
-        CResource::Memory(_) | CResource::Token { .. } => {
+        CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
             return Ok(state.memory().clone());
         }
     };
@@ -1325,7 +1331,7 @@ fn composite_resource_body_is_active_with_assumptions(
 pub(super) fn apply_composite_observation_law(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1355,7 +1361,7 @@ pub(super) fn apply_composite_observation_law(
 fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1436,7 +1442,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         composite_body,
         &CResource::Composite {
             name: definition.name().to_string(),
-            arguments: resource_arguments.to_vec(),
+            arguments: resource_arguments.to_vec().into(),
         },
         &substitutions,
         &contained_resources,
@@ -1676,6 +1682,9 @@ fn describe_resource_context_validity_error(
     arguments: &[CExpression],
 ) -> String {
     match error {
+        ResourceContextValidityError::InvalidInstanceAccess(_) => {
+            "field-bearing resource instances require exclusive ownership with quantity one".into()
+        }
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             format!(
                 "duplicate resource fact `{}`",
@@ -1748,7 +1757,7 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
 
 fn resource_value_substitutions(
     definition: &ResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
 ) -> Result<BTreeMap<String, ContractExpression>, String> {
     if definition.parameters().len() != arguments.len() {
         return Err(format!(
@@ -1763,12 +1772,15 @@ fn resource_value_substitutions(
         .iter()
         .zip(arguments)
         .map(|(parameter, argument)| {
-            (
+            let argument = argument
+                .as_c_value()
+                .ok_or_else(|| "algebraic resource bodies are not supported yet".to_string())?;
+            Ok((
                 parameter.name().to_string(),
                 ContractExpression::CFragment(CExpression::Value(argument.clone())),
-            )
+            ))
         })
-        .collect())
+        .collect::<Result<_, String>>()?)
 }
 
 /// Value substitutions for a held composite resource fact, with its
@@ -1776,7 +1788,7 @@ fn resource_value_substitutions(
 /// `memory` and `assumptions`.
 fn resource_value_substitutions_with_witnesses(
     definition: &ResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     memory: &CMemory,
     resources: &ResourceContext,
     assumptions: &PureFactContext,
@@ -1799,7 +1811,7 @@ fn resource_value_substitutions_with_witnesses(
     .map_err(|error| error.message().to_string())?;
     let fact = CResourceFact::own(CResource::Composite {
         name: definition.name().to_string(),
-        arguments: arguments.to_vec(),
+        arguments: arguments.to_vec().into(),
     });
     let values = crate::kernel::composite_resource_witness_values(
         &fact,
@@ -1999,7 +2011,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         &[]
     };
     let mut abstract_resource =
-        lower_resource_clause(resource, parameters, arguments, state.memory())?;
+        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     if let Some(authority) = state
         .resources()
@@ -2024,6 +2036,11 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 (name.clone(), arguments.clone())
             }
             CResource::Memory(_) => unreachable!("a declared resource lowered to memory"),
+            CResource::Instance(_) => {
+                return Err(ClickError::new(
+                    "instance unfolding is not a population operation",
+                ));
+            }
         };
     let tracks_population_in_body = composite_body
         .facts()
@@ -2101,7 +2118,8 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                         describe_resource_clause(resource)
                     ))
                 })?;
-            let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+            let lowered =
+                lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
             let Some(next) = remaining.without_fact(&lowered, &assumptions) else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
@@ -2145,7 +2163,8 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 describe_resource_clause(resource)
             ))
         })?;
-        let mut lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+        let mut lowered =
+            lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
         if opening_view {
             lowered = CResourceFact::View(lowered.resource().clone());
         }
@@ -2158,7 +2177,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     Some((name, arguments))
                 }
-                CResource::Memory(_) => None,
+                CResource::Memory(_) | CResource::Instance(_) => None,
             };
             if let Some((name, resource_arguments)) = named
                 && state.counted_population(name, resource_arguments).is_none()
@@ -2440,7 +2459,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     (name, arguments)
                 }
-                CResource::Memory(_) => {
+                CResource::Memory(_) | CResource::Instance(_) => {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` did not lower to a declared resource",
                         describe_resource_clause(resource)
@@ -2518,6 +2537,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                     (name, arguments)
                 }
                 CResource::Memory(_) => unreachable!("declared resource lowered to memory"),
+                CResource::Instance(_) => {
+                    return Err(ClickError::new(
+                        "instance folding is not a population operation",
+                    ));
+                }
             };
             if state
                 .counted_population(name, population_arguments)
@@ -3087,7 +3111,7 @@ fn extend_substitutions_with_witnesses(
         Some(result) => lower_resource_clause_at_state_with_result(
             resource, parameters, arguments, state, result,
         )?,
-        None => lower_resource_clause(resource, parameters, arguments, state.memory())?,
+        None => lower_resource_clause_at_state(resource, parameters, arguments, state)?,
     };
     let definitions = crate::surface::verification::composite_resource_definitions(
         resource_environment,
@@ -3172,6 +3196,10 @@ pub(super) fn instantiate_resource_clause(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
+        }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
             quantity: substitute_contract_expression(quantity, substitutions)?,
             resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
@@ -3238,6 +3266,7 @@ fn materialize_composite_resource_cells(
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
     let Some((segment, range)) = (match resource_clause {
+        ResourceClause::Named { .. } => None,
         ResourceClause::ViewMemory(segment) => {
             lowered.memory_view_range().map(|range| (segment, range))
         }
@@ -3320,11 +3349,10 @@ fn materialize_composite_resource_cells(
             crate::kernel::intern_c_memory(base_memory.clone()),
             pointer.clone(),
         );
-        // A scalar field cell takes the field's own type, so a `uint64` word
-        // reads back as itself; pointer fields and plain ranges keep the
-        // int32 words this projection uses everywhere.
-        let value = match segment.field_element_type() {
-            Some(element_type) if !element_type.is_pointer() => {
+        // Preserve scalar pointee types, including substituted pointer values.
+        // Pointer cells retain the word representation used for load origins.
+        let value = match contract_segment_element_type(parameters, segment) {
+            element_type if !element_type.is_pointer() => {
                 crate::surface::lowering::symbolic_value_from_load(&pointer, element_type, load)
             }
             _ => match element_width {

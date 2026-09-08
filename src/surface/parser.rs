@@ -155,6 +155,8 @@ impl Token {
 }
 
 struct Parser {
+    next_resource_identity: u64,
+    current_resource_bindings: BTreeMap<String, (Variable, String)>,
     match_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
@@ -347,6 +349,8 @@ impl Parser {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
+            next_resource_identity: 0,
+            current_resource_bindings: BTreeMap::new(),
             tokens,
             positions,
             matching_parentheses,
@@ -368,8 +372,10 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
-        let file = super::validation::expand_declared_resource_clauses(self.parse_file_items()?)?;
+        let mut file =
+            super::validation::expand_declared_resource_clauses(self.parse_file_items()?)?;
         super::validation::validate_click_definitions(&file)?;
+        super::lowering::check_resource_field_schemas(&mut file)?;
         Ok(file)
     }
 
@@ -716,11 +722,29 @@ impl Parser {
             name,
             parameters: parsed_parameters.parameters,
             composite_body,
+            field_schema: None,
         })
     }
 
     fn parse_composite_resource_body(&mut self) -> Result<CompositeResourceBody, ClickError> {
         self.expect(Token::LBrace)?;
+        let mut fields = Vec::new();
+        while self.peek_ident() == Some("field") {
+            self.position += 1;
+            let name = self.expect_ident("resource field name")?;
+            self.expect(Token::Colon)?;
+            let (click_type, parsed_c_type) = self.parse_click_type()?;
+            if parsed_c_type.as_ref().is_some_and(|ty| {
+                !algebraic_field_c_type_supported(ty.c_type)
+                    || ty.struct_name.is_some()
+                    || ty.constant
+                    || ty.pointee_constant
+            }) {
+                return Err(self.error(format!("resource field `{name}` requires an unqualified scalar, pointer, or algebraic Click type")));
+            }
+            self.expect(Token::Semicolon)?;
+            fields.push(ResourceFieldDefinition { name, click_type });
+        }
         let condition = if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -734,6 +758,7 @@ impl Parser {
         let mut witnesses: Vec<ResourceWitness> = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
+                Some("field") => return Err(self.error("resource fields must be declared before body clauses and outside the resource guard")),
                 Some("let") => {
                     let binding = self.parse_contract_let_binding()?;
                     let ContractLetBindingKind::Where(condition) = binding.kind else {
@@ -808,6 +833,7 @@ impl Parser {
             .flat_map(expand_aggregate_resource_clause)
             .collect();
         Ok(CompositeResourceBody {
+            fields,
             condition,
             contains,
             facts,
@@ -919,6 +945,19 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
+        let executes = if self.peek_ident() == Some("executes") {
+            self.position += 1;
+            let callback = self.expect_ident("callback parameter")?;
+            self.expect(Token::LParen)?;
+            let call_parameters = self.parse_parameters()?;
+            self.expect(Token::RParen)?;
+            Some(TheoremExecution {
+                callback,
+                parameters: call_parameters.parameters,
+            })
+        } else {
+            None
+        };
         self.expect(Token::LBrace)?;
 
         let parameter_names = parsed_parameters
@@ -1078,12 +1117,14 @@ impl Parser {
             name,
             type_parameters,
             parameters: parsed_parameters.parameters,
+            executes,
             requires,
             ensures,
         })
     }
 
     fn parse_function_block(&mut self, external: bool) -> Result<FunctionBlock, ClickError> {
+        let previous_resource_bindings = std::mem::take(&mut self.current_resource_bindings);
         if external {
             self.expect_ident_spelling("extern")?;
         }
@@ -1209,7 +1250,7 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -1340,6 +1381,7 @@ impl Parser {
             }
         }
         self.current_struct_params = previous_struct_params;
+        self.current_resource_bindings = previous_resource_bindings;
         self.current_aggregate_objects = previous_aggregate_objects;
         self.current_global_array_shapes = previous_global_array_shapes;
         self.current_struct_array_params = previous_struct_array_params;
@@ -1382,6 +1424,7 @@ impl Parser {
         Ok(FunctionBlock {
             signature,
             external,
+            one_call_proof: false,
             requires,
             requirement_label_indices,
             decreases,
@@ -2120,6 +2163,41 @@ impl Parser {
         Ok(match access {
             ResourceAccessMode::Own => ResourceClause::OwnMemory(segment),
             ResourceAccessMode::View => ResourceClause::ViewMemory(segment),
+        })
+    }
+
+    fn parse_owned_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        if !matches!(self.peek(), Some(Token::Ident(_))) || self.peek_next() != Some(&Token::Colon)
+        {
+            return self.parse_owned_resource_target();
+        }
+        let name = self.expect_ident("resource instance name")?;
+        self.expect(Token::Colon)?;
+        if self.current_resource_bindings.contains_key(&name)
+            || self.current_contract_bindings.contains(&name)
+        {
+            return Err(self.error(format!("duplicate resource instance binding `{name}`")));
+        }
+        let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+        let ResourceClause::Declared {
+            name: resource_name,
+            ..
+        } = &resource
+        else {
+            return Err(self.error("named ownership requires a field-bearing declared resource"));
+        };
+        let identity = Variable(self.next_resource_identity);
+        self.next_resource_identity += 1;
+        self.current_resource_bindings
+            .insert(name.clone(), (identity, resource_name.clone()));
+        Ok(ResourceClause::Named {
+            binding: ResourceInstanceBinding {
+                name,
+                identity,
+                schema: None,
+                fields: None,
+            },
+            resource: Box::new(resource),
         })
     }
 
@@ -2879,8 +2957,14 @@ impl Parser {
         }
         let tactic = match name.as_str() {
             "step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Step
+                self.expect(Token::LParen)?;
+                let step = if self.peek() == Some(&Token::RParen) {
+                    ProofTactic::Step
+                } else {
+                    ProofTactic::StepContract(self.expect_ident("call contract name")?)
+                };
+                self.expect(Token::RParen)?;
+                step
             }
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;
@@ -4384,6 +4468,24 @@ impl Parser {
     }
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::LParen)
+            && matches!(self.peek_next(), Some(Token::Ident(name)) if name == "uint32")
+        {
+            self.position += 1;
+            let target_type = self.parse_type()?.c_type.to_kernel_type();
+            if target_type.is_pointer() {
+                return Err(self.error("contract scalar casts do not accept pointer target types"));
+            }
+            self.expect(Token::RParen)?;
+            let operand = self.parse_contract_unary()?;
+            let Some(expression) = contract_expression_as_c_fragment(&operand) else {
+                return Err(self.error("scalar cast expects a current C expression; put old(...) around the whole cast for an entry-state value"));
+            };
+            return Ok(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(expression),
+                target_type,
+            }));
+        }
         if self.peek() == Some(&Token::Minus) {
             if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
@@ -4598,6 +4700,26 @@ impl Parser {
                     }
                 }
                 Some(Token::Arrow | Token::Dot) => {
+                    if let ContractExpression::CFragment(CExpression::Variable(owner)) = &expression
+                        && let Some((identity, resource_name)) =
+                            self.current_resource_bindings.get(owner).cloned()
+                    {
+                        if self.peek() != Some(&Token::Dot) {
+                            return Err(self.error("resource fields use `.`, not `->`"));
+                        }
+                        let owner = owner.clone();
+                        self.position += 1;
+                        let field = self.expect_ident("resource field name")?;
+                        expression = ContractExpression::ResourceField(ResourceFieldAccess {
+                            owner,
+                            resource_name,
+                            identity,
+                            field,
+                            field_index: 0,
+                            click_type: None,
+                        });
+                        continue;
+                    }
                     if struct_array_element_width.is_some() {
                         return Err(self.error(
                             "arrays of embedded structs require an index before field access",
@@ -4928,6 +5050,8 @@ impl Parser {
             Some("load_int32") => Some(CType::Int32),
             Some("load_uint8") => Some(CType::UInt8),
             Some("load_uint32") => Some(CType::UInt32),
+            Some("load_int64") => Some(CType::Int64),
+            Some("load_uint64") => Some(CType::UInt64),
             Some("load_int32_pointer") => Some(CType::Int32Pointer),
             Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
             Some("load_int32_pointer_pointer") => Some(CType::Int32PointerPointer),
