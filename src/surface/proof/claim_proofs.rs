@@ -24,6 +24,7 @@ fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
     tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
     selected: &mut Vec<&'a DeferredPostExecutionTactic>,
+    choices: &mut Vec<SurfacePathChoice>,
 ) -> Result<(), ClickError> {
     for deferred in tactics {
         match &deferred.tactic {
@@ -32,17 +33,50 @@ fn select_checked_post_execution_tactics<'a>(
                 then_tactics,
                 else_tactics,
             } => {
-                let arm = if proof.checked_outcome_if_value(condition)? {
-                    then_tactics
-                } else {
-                    else_tactics
-                };
-                select_checked_post_execution_tactics(proof, arm, selected)?;
+                let value = proof.checked_outcome_if_value(condition)?;
+                choices.push(SurfacePathChoice {
+                    occurrence: deferred.source_index,
+                    condition: condition.clone(),
+                    value,
+                    tactic_offset: selected.len(),
+                });
+                let arm = if value { then_tactics } else { else_tactics };
+                select_checked_post_execution_tactics(proof, arm, selected, choices)?;
             }
             _ => selected.push(deferred),
         }
     }
     Ok(())
+}
+
+/// Serialize deferred proof cases at their checked operation offsets. Their
+/// outcome paths need not have branches in the earlier C execution prefix.
+fn synthesize_post_execution_paths(
+    tactics: &[Vec<ProofTactic>],
+    closers: &[Vec<ProofTactic>],
+    choices: &[Vec<SurfacePathChoice>],
+) -> Result<Vec<ProofStep>, String> {
+    let paths = tactics
+        .iter()
+        .zip(closers)
+        .zip(choices)
+        .map(|((tactics, closers), choices)| {
+            let mut steps = ProofCertificate::from_proof_tactics(tactics)
+                .map_err(|error| format!("post-execution path is not simple: {error:?}"))?
+                .steps;
+            steps.extend(
+                ProofCertificate::from_proof_tactics(closers)
+                    .map_err(|error| format!("post-execution closer is not simple: {error:?}"))?
+                    .steps,
+            );
+            Ok(ProofCertificateBuilder {
+                steps,
+                path_choices: choices.clone(),
+                ..ProofCertificateBuilder::default()
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    synthesize_surface_alternatives(paths)
 }
 
 fn collect_post_execution_if_have_indices<'a>(
@@ -1492,6 +1526,7 @@ pub(super) fn finish_ordered_proof<'a>(
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
+        let mut surface_post_choices_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_branches_by_path = Vec::with_capacity(execution.paths().len());
         // Whether the implicit exact closer of a single-claim proof would
@@ -1816,11 +1851,13 @@ pub(super) fn finish_ordered_proof<'a>(
                         "post-execution claim tactics",
                     );
                     let mut selected_post_execution_tactics = Vec::new();
+                    let mut selected_post_choices = Vec::new();
                     if let Some(branch_proof) = outcome_proof.as_ref() {
                         select_checked_post_execution_tactics(
                             branch_proof,
                             proof_execution.presentation.post_execution_tactics.iter(),
                             &mut selected_post_execution_tactics,
+                            &mut selected_post_choices,
                         )?;
                     } else {
                         if proof_execution
@@ -1838,9 +1875,19 @@ pub(super) fn finish_ordered_proof<'a>(
                         selected_post_execution_tactics
                             .extend(proof_execution.presentation.post_execution_tactics.iter());
                     }
+                    let mut selected_post_choices = selected_post_choices.into_iter().peekable();
+                    let mut surface_post_choices = Vec::new();
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
                     {
+                        while selected_post_choices
+                            .peek()
+                            .is_some_and(|choice| choice.tactic_offset == post_execution_index)
+                        {
+                            let mut choice = selected_post_choices.next().unwrap();
+                            choice.tactic_offset = path_surface_post_tactics.len();
+                            surface_post_choices.push(choice);
+                        }
                         let tactic_index = &deferred.tactic_index;
                         let source_index = &deferred.source_index;
                         let post_tactic = &deferred.tactic;
@@ -4353,6 +4400,11 @@ pub(super) fn finish_ordered_proof<'a>(
                         );
                     }
                     surface_grouped_closers_by_path.push(path_grouped_surface_closers);
+                    for mut choice in selected_post_choices {
+                        choice.tactic_offset = path_surface_post_tactics.len();
+                        surface_post_choices.push(choice);
+                    }
+                    surface_post_choices_by_path.push(surface_post_choices);
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
                     let implicitly_closable = path_deferred_capture_tactics.is_empty()
                         || (!require_explicit_closers
@@ -4393,21 +4445,41 @@ pub(super) fn finish_ordered_proof<'a>(
             };
         if proof_context.constants.grouped_contract {
             let mut expanded = retained_surface.clone();
-            if surface_post_tactics_by_path
+            if surface_post_choices_by_path
                 .iter()
-                .any(|tactics| !tactics.is_empty())
-                && let Err(message) =
-                    append_surface_tactics(&mut expanded.steps, &surface_post_tactics_by_path)
+                .any(|choices| !choices.is_empty())
             {
-                expanded.block(message);
-            }
-            if surface_grouped_closers_by_path
-                .iter()
-                .any(|tactics| !tactics.is_empty())
-                && let Err(message) =
-                    append_surface_tactics(&mut expanded.steps, &surface_grouped_closers_by_path)
-            {
-                expanded.block(message);
+                match synthesize_post_execution_paths(
+                    &surface_post_tactics_by_path,
+                    &surface_grouped_closers_by_path,
+                    &surface_post_choices_by_path,
+                ) {
+                    Ok(suffix) => {
+                        for step in suffix {
+                            append_surface_step_to_leaves(&mut expanded.steps, step);
+                        }
+                    }
+                    Err(message) => expanded.block(message),
+                }
+            } else {
+                if surface_post_tactics_by_path
+                    .iter()
+                    .any(|tactics| !tactics.is_empty())
+                    && let Err(message) =
+                        append_surface_tactics(&mut expanded.steps, &surface_post_tactics_by_path)
+                {
+                    expanded.block(message);
+                }
+                if surface_grouped_closers_by_path
+                    .iter()
+                    .any(|tactics| !tactics.is_empty())
+                    && let Err(message) = append_surface_tactics(
+                        &mut expanded.steps,
+                        &surface_grouped_closers_by_path,
+                    )
+                {
+                    expanded.block(message);
+                }
             }
             for theorem in &mut verified {
                 theorem.expanded_proof = expanded
@@ -4489,10 +4561,7 @@ pub(super) fn finish_ordered_proof<'a>(
             let path_independent_capture = !deferred_capture_tactics_by_path.is_empty()
                 && deferred_capture_tactics_by_path
                     .windows(2)
-                    .all(|pair| pair[0] == pair[1])
-                && deferred_capture_branches_by_path
-                    .iter()
-                    .all(Option::is_none);
+                    .all(|pair| pair[0] == pair[1]);
             // Paths that disagree — a certificate found on one, the implicit
             // exact closer on the others — cannot be stitched without the
             // branch skeleton. When every path is closable by that exact
@@ -4509,10 +4578,10 @@ pub(super) fn finish_ordered_proof<'a>(
                         .all(Option::is_none)
                     && implicit_closure_by_path.iter().all(|closable| *closable));
             if !contributes_no_tactics && path_independent_capture {
-                // No path can decide the enclosing branch skeleton — the
-                // tactic ran after the branches completed — and every path
-                // produced the same expansion; it stands on its own and must
-                // not be wrapped in that skeleton.
+                // Every path produced the same checked expansion. It stands
+                // at the selected source site, including inside an existing
+                // proof branch. Repeating that branch here could evaluate a
+                // caller local after return, when it is no longer in scope.
                 match ProofCertificate::from_proof_tactics(&deferred_capture_tactics_by_path[0]) {
                     Ok(proof) => capture.steps = proof.steps().to_vec(),
                     Err(error) => capture.block(format!(
@@ -4563,6 +4632,57 @@ pub(super) fn finish_ordered_proof<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_cases_retain_prefixes_closers_and_duplicate_execution_paths() {
+        let condition = ClickProposition::PredicateCall {
+            name: "P".into(),
+            arguments: vec![],
+        };
+        let choices = [true, true, false, false].map(|value| {
+            vec![SurfacePathChoice {
+                occurrence: 7,
+                condition: condition.clone(),
+                value,
+                tactic_offset: 1,
+            }]
+        });
+        let tactics = [true, true, false, false].map(|value| {
+            vec![
+                ProofTactic::Step,
+                if value {
+                    ProofTactic::Assumption
+                } else {
+                    ProofTactic::Normalize
+                },
+            ]
+        });
+        let closers = vec![vec![ProofTactic::Normalize]; 4];
+        let steps = synthesize_post_execution_paths(&tactics, &closers, &choices).unwrap();
+        let [
+            ProofStep::Step,
+            ProofStep::If {
+                condition: actual,
+                then_proof,
+                else_proof,
+            },
+        ] = steps.as_slice()
+        else {
+            panic!("deferred branch lost its shared prefix");
+        };
+        assert_eq!(actual, &condition);
+        assert_eq!(
+            then_proof.steps(),
+            &[ProofStep::Assumption, ProofStep::Normalize]
+        );
+        assert_eq!(
+            else_proof.steps(),
+            &[ProofStep::Normalize, ProofStep::Normalize]
+        );
+        let mut mismatched = tactics;
+        mismatched[1][0] = ProofTactic::Normalize;
+        assert!(synthesize_post_execution_paths(&mismatched, &closers, &choices).is_err());
+    }
 
     #[test]
     fn unsupported_shape_diagnostic_names_route_and_tactic() {

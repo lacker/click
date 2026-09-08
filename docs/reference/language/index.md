@@ -504,6 +504,14 @@ result, and no new result-binding syntax. Existing supported scalar and pointer
 return types retain their C types. See the
 [end-to-end return-valued buffer proof](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_return_buffer.md).
 
+An explicit proof `if` after `step(Contract)` may distinguish success and
+failure using `result`. Conditional postconditions remain conditional until
+their guard is established; `extract` exposes the selected consequence.
+Each case must return the target resources, and failure does not inherit
+success's update guarantee (nor success failure's preservation guarantee).
+The [status-returning callback tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_status.md)
+cover this refinement and an ordinary C caller that checks the returned status.
+
 This slice supports one nongeneric callback theorem parameter,
 one target-contract conclusion, and one or more source-contract premises for
 that same pointer. The `executes` arguments use C parameter spelling, match

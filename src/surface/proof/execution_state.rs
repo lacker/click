@@ -758,6 +758,11 @@ pub(super) fn synthesize_surface_paths(
     if paths.len() == 1 {
         return Ok(paths.into_iter().next().unwrap().steps);
     }
+    if paths.iter().all(|path| path.path_choices.is_empty())
+        && paths.windows(2).all(|pair| pair[0].steps == pair[1].steps)
+    {
+        return Ok(paths.into_iter().next().unwrap().steps);
+    }
     let first_choice = paths
         .first()
         .and_then(|path| path.path_choices.first())
