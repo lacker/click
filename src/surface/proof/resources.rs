@@ -1856,6 +1856,7 @@ pub(super) fn unfold_composite_resource_for_proof(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
+    materialize_memory: bool,
 ) -> Result<CheckedResourceUnfold, ClickError> {
     unfold_composite_resource_for_proof_with_access(
         resource_environment,
@@ -1870,6 +1871,7 @@ pub(super) fn unfold_composite_resource_for_proof(
         claim_label,
         tactic_index,
         ResourceBodyAccess::Finalize,
+        materialize_memory,
     )
 }
 
@@ -1900,6 +1902,7 @@ pub(super) fn open_composite_resource_for_proof(
         claim_label,
         tactic_index,
         ResourceBodyAccess::Open,
+        true,
     )
 }
 
@@ -1917,6 +1920,7 @@ fn unfold_composite_resource_for_proof_with_access(
     claim_label: &str,
     tactic_index: usize,
     access: ResourceBodyAccess,
+    materialize_memory: bool,
 ) -> Result<CheckedResourceUnfold, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
     let unfolded = unfold_composite_resource_with_facts(
@@ -1932,6 +1936,7 @@ fn unfold_composite_resource_for_proof_with_access(
         claim_label,
         tactic_index,
         access,
+        materialize_memory,
     )?;
     Ok(CheckedResourceUnfold {
         state: unfolded.state,
@@ -1956,6 +1961,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     claim_label: &str,
     tactic_index: usize,
     access: ResourceBodyAccess,
+    materialize_memory: bool,
 ) -> Result<UnfoldedCompositeResource, ClickError> {
     let definition = composite_resource_law_definition(
         resource_environment,
@@ -2189,27 +2195,27 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 );
             }
         }
-        let memory = materialize_composite_resource_cells(
-            state.memory().clone(),
-            &contained,
-            &lowered,
-            parameters,
-        );
-        state = state.with_memory(memory);
-        append_resource_clause_loadable_fact_with_store(
-            &contained,
-            parameters,
-            arguments,
-            state.memory(),
-            available_pure_facts,
-        )
-        .map_err(|error| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: could not project `unfold({})` loadability: {}",
-                describe_resource_clause(resource),
-                error.message()
-            ))
-        })?;
+        // A completed outcome has no more C loads to execute. Its proof
+        // receives loadability and symbolic loads without modifying the
+        // certified program memory by installing cached cells into it.
+        if materialize_memory {
+            let memory = materialize_composite_resource_cells(
+                state.memory().clone(),
+                &contained,
+                &lowered,
+                parameters,
+            );
+            state = state.with_memory(memory);
+        }
+        // The selected child was already lowered in the current state.
+        // Re-lowering from memory alone loses locals such as a callback's
+        // returned pointer. Project exactly that checked child's range.
+        if let Some(range) = lowered
+            .memory_view_range()
+            .or_else(|| lowered.memory_own_range())
+        {
+            available_pure_facts.insert(memory_range_loadable_prop(state.memory(), range));
+        }
     }
 
     let body_was_already_exposed = composite_body.condition().is_none()

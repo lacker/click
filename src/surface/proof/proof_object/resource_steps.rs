@@ -652,6 +652,7 @@ impl<'a> Proof<'a> {
             context.click_function_environment,
             context.claim_label,
             context.tactic_index,
+            true,
         )?;
         execution
             .core
@@ -756,6 +757,63 @@ impl<'a> Proof<'a> {
             branch: Some(branch),
             added_facts: Vec::new(),
             checked_facts: Vec::new(),
+        })
+    }
+
+    /// Exposes one selected composite on a completed call's focused outcome.
+    /// Reuse the ordinary checked definition law, binding the result only in
+    /// the explicit resource operand; retain the original surface step.
+    pub(super) fn apply_outcome_resource_unfold(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("outcome resource `unfold` requires an execution proof"));
+        };
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(
+                self.step_error("outcome resource `unfold` requires a focused outcome goal")
+            );
+        };
+        let resource = crate::surface::verification::substitute_resource_clause_for_summary(
+            resource,
+            &BTreeMap::from([(
+                "result".to_string(),
+                ContractExpression::CFragment(CExpression::Value((*goal.data.core.result).clone())),
+            )]),
+        )
+        .map_err(|message| self.step_error(message))?;
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let mut data = (*goal.data).clone();
+        let checked = unfold_composite_resource_for_proof(
+            context.resource_environment,
+            &resource,
+            context.parsed_function.parameters(),
+            context.arguments,
+            (*data.core.state).clone(),
+            self.facts().clone(),
+            &mut data.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+            false,
+        )?;
+        data.core.state = checked.state.into();
+        let mut updated = goal.clone();
+        updated.data = Arc::new(data);
+        Ok(CheckedFocusedTransition {
+            locals: self.state().locals().clone(),
+            branch: Some(OpenBranch::function_outcome(
+                updated,
+                BranchState {
+                    facts: checked.facts,
+                    unfolded_predicates: branch_state.unfolded_predicates.clone(),
+                    execution: branch_state.execution.clone(),
+                },
+            )),
+            added_facts: checked.added_facts.clone(),
+            checked_facts: checked.added_facts,
         })
     }
 

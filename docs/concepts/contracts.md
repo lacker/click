@@ -111,6 +111,16 @@ declared effect footprint.
 
 The name `result` means the function's return value.
 
+Callback contracts can also produce resources indexed by `result`. For example,
+an acquisition callback can return null with no cell, or a nonnull pointer with
+ownership of that cell. After `step(ContractName)`, an explicit proof case on
+the returned pointer permits unfolding the corresponding resource branch.
+The same unfolding works without a case when the contract already establishes
+the guard. The repository tests `mdtests/c_contract_executes_acquire.md` and
+`mdtests/c_contract_executes_acquire_nonnull.md` demonstrate both forms.
+Returned ownership does not by itself establish that the allocation is fresh;
+writes must still satisfy the caller's declared effect footprint.
+
 Guarantees can also be labeled:
 
 <!-- verified-example: mdtests/contract_let_bindings.md -->

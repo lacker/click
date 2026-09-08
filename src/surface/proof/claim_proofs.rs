@@ -1876,6 +1876,20 @@ pub(super) fn finish_ordered_proof<'a>(
                             .extend(proof_execution.presentation.post_execution_tactics.iter());
                     }
                     let mut selected_post_choices = selected_post_choices.into_iter().peekable();
+                    // An expansion replaces one source occurrence. Outcomes
+                    // that never reach it must not contribute empty sibling
+                    // certificates or reintroduce their enclosing C guard.
+                    let visits_selected_capture = proof_execution
+                        .presentation
+                        .expansion
+                        .deferred_tactic_capture
+                        .as_ref()
+                        .is_some_and(|capture| {
+                            selected_post_execution_tactics.iter().any(|tactic| {
+                                tactic.tactic_index == capture.tactic_index
+                                    && tactic.source_index == capture.source_index
+                            })
+                        });
                     let mut surface_post_choices = Vec::new();
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
@@ -1929,15 +1943,21 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                         });
                         match post_tactic {
-                            PostExecutionTactic::Fold(resource) => {
+                            PostExecutionTactic::Fold(resource)
+                            | PostExecutionTactic::Unfold(resource) => {
                                 let Some(evolving) = outcome_proof.take() else {
                                     return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `fold` has no Proof goal"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome resource operation has no Proof goal"
                                     )));
                                 };
                                 let before = evolving.checkpoint();
-                                let folded = evolving
-                                    .apply_step(ProofStep::FoldResource(resource.clone()))?;
+                                let step = if matches!(post_tactic, PostExecutionTactic::Unfold(_))
+                                {
+                                    ProofStep::UnfoldResource(resource.clone())
+                                } else {
+                                    ProofStep::FoldResource(resource.clone())
+                                };
+                                let folded = evolving.apply_step(step)?;
                                 outcome = folded.focused_outcome_snapshot()?;
                                 let surface_tactics =
                                     folded.certificate_since(&before)?.to_proof_tactics();
@@ -4452,9 +4472,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     }
                                     _ => true,
                                 }));
-                    implicit_closure_by_path.push(implicitly_closable);
-                    deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
-                    deferred_capture_branches_by_path.push(deferred_capture_branch_path);
+                    if visits_selected_capture {
+                        implicit_closure_by_path.push(implicitly_closable);
+                        deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
+                        deferred_capture_branches_by_path.push(deferred_capture_branch_path);
+                    }
                     drop(_path_certification_timing);
                 }
                 Ok(())
