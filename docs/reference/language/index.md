@@ -526,6 +526,18 @@ also cannot be named `result`. Additional theorem parameters remain outside
 this slice. The existing callback-type limitations (such as const-qualified
 callback returns) are unchanged.
 
+When the target contract declares resource proof parameters, their names are
+available inside the execution proof block. For example, a target parameter
+`cell: Counter()` can be passed to `step(Exact(cell))`; the theorem proves the
+refinement for an arbitrary such instance. These names cannot shadow the
+callback, call arguments, theorem local names, or `result`, and do not escape
+the block. Source and target parameter names need not match, and the target
+contract may be declared later in the file. The
+[counter refinement tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_counter.md)
+demonstrate an exact field increment refined to progress while framing an
+unrelated caller-owned counter. Unmentioned fields of the selected counter are
+not implicitly preserved.
+
 ## Requirements
 
 Requirements are shared by all guarantees for the function.
