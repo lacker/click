@@ -1210,6 +1210,62 @@ int32 second(int32 x) { ensures result == x; } by simp;
     assert!(selection.reused_functions.is_empty());
 }
 
+#[test]
+fn incremental_selection_rebuilds_all_functions_for_named_contract_changes() {
+    // A function block that names a shared `contract` is byte-identical when
+    // only the contract's clauses change, so nothing pulls it back in through
+    // the call graph. Weakening the contract must still force a rebuild.
+    let sources = [
+        (
+            "compare.c",
+            "int32 compare(int32 left, int32 right) { return left - right; }",
+        ),
+        (
+            "apply.c",
+            "int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) { int32 result; result = callback(left, right); return result; }",
+        ),
+    ];
+    let baseline = r#"
+verifying "compare.c";
+verifying "apply.c";
+contract int32 Comparator(int32 left, int32 right) {
+    requires 0 <= right;
+    requires right <= left;
+    ensures result == left - right;
+}
+int32 compare(int32 left, int32 right) {
+    requires 0 <= right;
+    requires right <= left;
+    ensures result == left - right by auto;
+}
+int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
+    requires Comparator(callback);
+    requires 0 <= right;
+    requires right <= left;
+    ensures result == left - right by auto;
+}
+"#;
+    let changed = baseline.replace("ensures result == left - right;", "ensures result >= 0;");
+    let selection = c0_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
+    assert!(selection.full_rebuild, "{selection:?}");
+    assert_eq!(selection.selected_functions, ["apply", "compare"]);
+    assert!(selection.reused_functions.is_empty(), "{selection:?}");
+}
+
+#[test]
+fn incremental_selection_rebuilds_all_functions_for_algebraic_type_changes() {
+    let sources = [("first.c", "int32 first(int32 x) { return x; }")];
+    let baseline = r#"
+verifying "first.c";
+spec enum Flag { Off, On }
+int32 first(int32 x) { ensures result == x; } by simp;
+"#;
+    let changed = baseline.replace("Off, On", "Off, On, Unset");
+    let selection = c0_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
+    assert!(selection.full_rebuild, "{selection:?}");
+    assert_eq!(selection.selected_functions, ["first"]);
+}
+
 /// The perpetual-service example used to verify or fail depending on ambient
 /// machine load: `fold(service(owner))` decided its body's separation fact
 /// through an open-ended kernel search whose budget truncation was reported

@@ -1339,6 +1339,12 @@ inconsistent.
 
 ## 17. `--changed-since` misses named-contract and algebraic-type changes
 
+**Fixed** in `Rebuild when a shared contract or algebraic type changes`;
+regressions `incremental_selection_rebuilds_all_functions_for_named_contract_changes`
+and `..._for_algebraic_type_changes` in `src/surface/tests/project_tests.rs`,
+which is where the existing incremental-selection tests live because the
+scenario needs a baseline rather than a sidecar.
+
 **Severity: high.** After a shared `contract` block is weakened, every function
 is reused and the run exits 0, while a full verify of the same tree fails.
 

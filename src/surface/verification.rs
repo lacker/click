@@ -424,17 +424,24 @@ pub fn c0_incremental_selection(
         .collect::<BTreeMap<_, _>>();
     let current_names = current_blocks.keys().cloned().collect::<BTreeSet<_>>();
 
+    // Every file-level declaration a proof can depend on belongs here. A
+    // function block that names one is byte-identical when only the
+    // declaration changes, so nothing else would pull it back in: a weakened
+    // `contract` would leave every caller reused and the run green while a
+    // full verification of the same tree fails.
     let shared_environment_changed = current_file.predicate_definitions()
         != baseline_file.predicate_definitions()
         || current_file.click_function_definitions() != baseline_file.click_function_definitions()
         || current_file.resource_definitions() != baseline_file.resource_definitions()
-        || current_file.theorem_definitions() != baseline_file.theorem_definitions();
+        || current_file.theorem_definitions() != baseline_file.theorem_definitions()
+        || current_file.contract_definitions() != baseline_file.contract_definitions()
+        || current_file.algebraic_type_definitions() != baseline_file.algebraic_type_definitions();
     if shared_environment_changed {
         return Ok(C0IncrementalSelection {
             selected_functions: current_names.iter().cloned().collect(),
             reused_functions: Vec::new(),
             reasons: vec![
-                "shared predicate, pure function, resource, or theorem definitions changed"
+                "shared predicate, pure function, resource, theorem, contract, or algebraic type definitions changed"
                     .to_string(),
             ],
             full_rebuild: true,
