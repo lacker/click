@@ -75,10 +75,10 @@ fn explicit_invariant_body_quantified_bubble_census() {
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
-/// Reproduces the stack crash independently of the automatic-planner prototype.
+/// The unchanged copy3 closure must report a local search miss, not overflow.
+/// Positive automatic planning remains tracked in the linked issue.
 #[test]
-#[ignore = "stack overflow: issues/quantified-invariant-body-planning.md"]
-fn explicit_invariant_body_copy3_planning_census() {
+fn explicit_invariant_body_copy3_has_a_bounded_planning_miss() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/copy3_array_demo.md");
     let source = std::fs::read_to_string(&path).unwrap();
     let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
@@ -92,10 +92,13 @@ fn explicit_invariant_body_copy3_planning_census() {
     let expanded = expand_c0_claim_source(click, &sources, "copy3", CProofClaim::Grouped).unwrap();
     assert!(expanded.contains("close_invariants();"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    verify_c0_sources(&explicit, &sources).unwrap();
-    let expanded =
-        expand_c0_claim_source(&explicit, &sources, "copy3", CProofClaim::Grouped).unwrap();
-    verify_c0_sources(&expanded, &sources).unwrap();
+    let error = verify_c0_sources(&explicit, &sources).unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("closure body did not prove every invariant obligation"),
+        "{error:?}"
+    );
 }
 
 #[test]
