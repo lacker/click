@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn owned_range_access_survives_learning_a_symbolic_pointer_alias() {
+    let cell = Pointer::symbolic(Variable(100));
+    let slot = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(101)), 4),
+    };
+    let unrelated = Pointer::symbolic(Variable(102));
+    let range = CMemoryRange::new(
+        cell.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(cell.clone(), slot.clone()),
+        true,
+    );
+    for pointer in [&cell, &slot] {
+        assert!(
+            resources
+                .memory_write_range(pointer, 4, &assumptions)
+                .is_some()
+        );
+    }
+    assert!(
+        resources
+            .memory_write_range(&unrelated, 4, &assumptions)
+            .is_none()
+    );
+    assert!(
+        resources
+            .memory_write_range(&cell, 16, &assumptions)
+            .is_none()
+    );
+}
+
 fn field_instance(identity: u64, model: AlgebraicTerm, revision: u32) -> ResourceInstance {
     let schema = ResourceFieldSchema::new(vec![
         (

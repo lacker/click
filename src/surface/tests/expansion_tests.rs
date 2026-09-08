@@ -9407,6 +9407,36 @@ fn acquired_callback_ownership_expands_at_every_smart_site() {
 }
 
 #[test]
+fn callback_pool_cycle_expands_at_every_smart_site() {
+    let markdown = include_str!("../../../mdtests/c_callback_pool_cycle.md");
+    let mdtest = crate::cli::parse_mdtest(std::path::Path::new("cycle.md"), markdown).unwrap();
+    let source = mdtest.click_source.as_deref().unwrap();
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &c_sources).expect("pool cycle verifies");
+    let sites = c0_smart_tactic_source_sites(source, &c_sources).unwrap();
+    assert!(!sites.is_empty());
+    for site in sites {
+        let position =
+            c0_tactic_source_position(source, &c_sources, &site.claim_label, site.source_index)
+                .unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(source, &c_sources, position.line, position.column).unwrap();
+        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+            panic!(
+                "{}:{}: {}\n{expanded}",
+                position.line,
+                position.column,
+                error.message()
+            )
+        });
+    }
+}
+
+#[test]
 fn transformed_resource_branch_interface_retains_its_common_descendant() {
     let markdown = include_str!("../../../mdtests/proof_branch_composite_resource_transform.md");
     let mdtest = crate::cli::parse_mdtest(
