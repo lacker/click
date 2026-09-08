@@ -2,6 +2,42 @@ use super::diagnostics::describe_contract_expression;
 use super::*;
 use crate::kernel::int32;
 
+#[test]
+fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
+    let source = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click")
+        .replace("verifying \"modeled_binary_tree.c\";", "");
+    verify_c0_sources(&source, &[]).expect("generic tree laws should verify");
+    for (from, to) in [("right", "left"), ("left", "right")] {
+        let wrong_mirror = source.replacen(
+            &format!("tree_mirror({from})"),
+            &format!("tree_mirror({to})"),
+            1,
+        );
+        assert!(
+            verify_c0_sources(&wrong_mirror, &[]).is_err(),
+            "mirroring must not duplicate the {to} subtree"
+        );
+    }
+    let wrong_size = source.replace(
+        "ensures tree_size(tree_mirror(tree)) == tree_size(tree)",
+        "ensures tree_size(tree_mirror(tree)) == Nat::Succ(tree_size(tree))",
+    );
+    assert!(verify_c0_sources(&wrong_size, &[]).is_err());
+
+    let client = format!(
+        "{source}\n\
+         theorem nested_payload(tree: Tree<List<int32>>) {{\n\
+             ensures tree_mirror(tree_mirror(tree)) == tree by {{\n\
+                 apply(tree_mirror_twice(tree));\n\
+             }}\n\
+             ensures tree_size(tree_mirror(tree)) == tree_size(tree) by {{\n\
+                 apply(tree_mirror_preserves_size(tree));\n\
+             }}\n\
+         }}"
+    );
+    verify_c0_sources(&client, &[]).expect("tree laws should apply to nested generic payloads");
+}
+
 const FILL3_C: &str = r#"
         int32 fill3(int32* p) {
             int32 i;
