@@ -4372,6 +4372,31 @@ fn zero_aggregate_array_fields(
 /// but the pointed-to allocation is not. Missing cells in automatic storage
 /// remain missing so an uninitialized source field stays uninitialized in the
 /// copy; opaque/external source cells are represented by typed symbolic loads.
+/// Whether a borrowed local view names storage its block actually has.
+///
+/// Only a range whose bounds are constant can be placed against the block's
+/// extent. One with symbolic bounds keeps the previous treatment: it is the
+/// caller's own stack object either way, and tightening that case belongs
+/// with the range-arithmetic work rather than here.
+fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool {
+    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+        return true;
+    };
+    if end <= start {
+        return true;
+    }
+    let Some(elements) = u32::try_from(end - start).ok() else {
+        return false;
+    };
+    let Some(bytes) = elements.checked_mul(range.element_width()) else {
+        return false;
+    };
+    let base = range
+        .base()
+        .offset_by_elements(range.start().clone(), range.element_width());
+    memory.access_in_bounds(&base, bytes)
+}
+
 pub(super) fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
@@ -4783,12 +4808,16 @@ fn prepare_function_resource_transfer(
 
     let mut return_resources = caller_state.resources().clone();
     for resource in &required_resource_list {
-        if matches!(
-            resource,
-            CResourceFact::View(CResource::Memory(range))
-                if range.base().block.starts_with("local:")
-                    && callee_state.memory().has_block(&range.base().block)
-        ) {
+        // A borrowed view of the caller's own stack object needs no resource
+        // from the caller, but it still has to name storage that object has.
+        // A range running past the block would otherwise let the callee read
+        // whatever the caller keeps beyond it: `views a[0..3]` on an
+        // `int32 b[2]` used to be discharged by the block merely existing.
+        if let CResourceFact::View(CResource::Memory(range)) = resource
+            && range.base().block.starts_with("local:")
+            && callee_state.memory().has_block(&range.base().block)
+            && local_view_range_within_block(range, callee_state.memory())
+        {
             continue;
         }
         if let CResource::Composite { name, arguments } | CResource::Token { name, arguments } =

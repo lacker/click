@@ -1086,8 +1086,11 @@ int32 uninit_eq_callee() {
 }
 ```
 
-**Regression C**, a `views` range wider than the caller's block
-(`mdtests/views_exceeds_local_block_rejected.md`):
+**Regression C**, a `views` range wider than the caller's block — **fixed** in
+`Bound a borrowed view of a caller's local to that local`, regressions
+`mdtests/borrowed_local_view_bounds_rejected.md` and
+`mdtests/borrowed_local_view_in_bounds.md`. A range with symbolic bounds keeps
+the previous treatment; only constant bounds are placed against the block:
 
 ```c
 int32 g(int32* a) {
