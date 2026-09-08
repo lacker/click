@@ -3267,6 +3267,24 @@ pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
     parse_functions_for_abi(source, CAbi::SUPPORTED)
 }
 
+pub(crate) struct C0TranslationUnit {
+    pub functions: Vec<C0Function>,
+    pub structs: BTreeMap<String, C0StructLayout>,
+    pub unions: BTreeMap<String, C0UnionLayout>,
+    pub globals: BTreeMap<String, C0Global>,
+    pub global_arrays: BTreeMap<String, C0GlobalArray>,
+    pub global_aggregates: BTreeMap<String, C0GlobalAggregate>,
+    pub global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
+}
+
+pub(crate) fn parse_translation_unit_for_source(
+    source: &str,
+    source_identity: &str,
+) -> Result<C0TranslationUnit, C0SyntaxError> {
+    Parser::new_with_source_identity(source, CAbi::SUPPORTED, Some(source_identity))?
+        .parse_translation_unit()
+}
+
 pub(crate) fn parse_functions_for_source(
     source: &str,
     source_identity: &str,
@@ -5343,7 +5361,17 @@ impl Parser {
         self.link_function_global_objects(function)
     }
 
-    fn parse_functions(mut self) -> Result<Vec<C0Function>, C0SyntaxError> {
+    fn parse_functions(self) -> Result<Vec<C0Function>, C0SyntaxError> {
+        let unit = self.parse_translation_unit()?;
+        if unit.functions.is_empty() {
+            return Err(C0SyntaxError::new(
+                "C source must define at least one function",
+            ));
+        }
+        Ok(unit.functions)
+    }
+
+    fn parse_translation_unit(mut self) -> Result<C0TranslationUnit, C0SyntaxError> {
         self.parse_declarations()?;
         let mut functions = Vec::new();
         while self.peek().is_some() {
@@ -5417,15 +5445,19 @@ impl Parser {
             }
             self.parse_declarations()?;
         }
-        if functions.is_empty() {
-            return Err(C0SyntaxError::new(
-                "C source must define at least one function",
-            ));
-        }
-        functions
+        let functions = functions
             .into_iter()
             .map(|function| self.link_function_global_objects(function))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(C0TranslationUnit {
+            functions,
+            structs: self.structs,
+            unions: self.unions,
+            globals: self.globals,
+            global_arrays: self.global_arrays,
+            global_aggregates: self.global_aggregates,
+            global_aggregate_arrays: self.global_aggregate_arrays,
+        })
     }
 
     fn parse_header(mut self) -> Result<(), C0SyntaxError> {

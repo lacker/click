@@ -2136,10 +2136,10 @@ pub(in crate::surface) fn c_function_termination_plans(
     Ok((plans, requested))
 }
 
-fn parse_c_source_functions(
+fn parse_c_source_unit(
     source_path: &str,
     c_sources: &BTreeMap<&str, &str>,
-) -> Result<Vec<syntax::C0Function>, ClickError> {
+) -> Result<syntax::C0TranslationUnit, ClickError> {
     let expanded =
         crate::languages::c::source::expand_includes(source_path, c_sources).map_err(|error| {
             ClickError::new(format!(
@@ -2158,7 +2158,7 @@ fn parse_c_source_functions(
             ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
         })?;
     }
-    syntax::parse_functions_for_source(expanded.source(), source_path).map_err(|error| {
+    syntax::parse_translation_unit_for_source(expanded.source(), source_path).map_err(|error| {
         ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
     })
 }
@@ -2182,26 +2182,26 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut aggregate_array_objects = BTreeMap::new();
     let mut global_array_shapes = BTreeMap::new();
     for source_path in super::verifying_source_paths(click_source)? {
-        let functions = parse_c_source_functions(&source_path, c_sources)?;
-        for function in functions {
-            for (name, layout) in function.structs() {
-                if let Some(previous) = layouts.insert(name.clone(), layout.clone())
-                    && previous != *layout
-                {
-                    return Err(ClickError::new(format!(
-                        "conflicting declarations for struct `{name}`"
-                    )));
-                }
+        let unit = parse_c_source_unit(&source_path, c_sources)?;
+        for (name, layout) in &unit.structs {
+            if let Some(previous) = layouts.insert(name.clone(), layout.clone())
+                && previous != *layout
+            {
+                return Err(ClickError::new(format!(
+                    "conflicting declarations for struct `{name}`"
+                )));
             }
-            for (name, layout) in function.unions() {
-                if let Some(previous) = union_layouts.insert(name.clone(), layout.clone())
-                    && previous != *layout
-                {
-                    return Err(ClickError::new(format!(
-                        "conflicting declarations for union `{name}`"
-                    )));
-                }
+        }
+        for (name, layout) in &unit.unions {
+            if let Some(previous) = union_layouts.insert(name.clone(), layout.clone())
+                && previous != *layout
+            {
+                return Err(ClickError::new(format!(
+                    "conflicting declarations for union `{name}`"
+                )));
             }
+        }
+        for function in unit.functions {
             let mut function_aggregate_objects = BTreeMap::new();
             for aggregate in function.global_aggregates().values() {
                 function_aggregate_objects.insert(
@@ -2276,9 +2276,10 @@ pub(in crate::surface) fn parse_verified_sources(
     }
 
     let mut parsed = BTreeMap::new();
+    let mut units = BTreeMap::new();
     for source_path in &file.verifying_sources {
-        let functions = parse_c_source_functions(source_path, c_sources)?;
-        for function in functions {
+        let mut unit = parse_c_source_unit(source_path, c_sources)?;
+        for function in std::mem::take(&mut unit.functions) {
             let function_name = function.name().to_string();
             let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
             if previous.is_some() {
@@ -2287,18 +2288,17 @@ pub(in crate::surface) fn parse_verified_sources(
                 )));
             }
         }
+        units.insert(source_path.clone(), unit);
     }
 
-    // Each translation unit sees only the declarations available through its
-    // own includes. Link the collected declarations here so every kernel
-    // function receives the same externally linked global layout, while
-    // counting a definition once per source file rather than once per
-    // function. File-scope `static` declarations stay in their own
+    // Link declarations once per translation unit, including data-only files.
+    // Every kernel function receives the same externally linked global layout.
+    // File-scope `static` declarations stay in their own
     // translation unit and are linked below only into that unit's functions.
     let mut globals_by_source = BTreeMap::<String, BTreeMap<String, syntax::C0Global>>::new();
-    for (source_path, function) in parsed.values() {
+    for (source_path, unit) in &units {
         let source_globals = globals_by_source.entry(source_path.clone()).or_default();
-        for (name, global) in function.globals() {
+        for (name, global) in &unit.globals {
             match source_globals.get(name) {
                 Some(previous) if previous.c_type() != global.c_type() => {
                     return Err(ClickError::new(format!(
@@ -2382,11 +2382,11 @@ pub(in crate::surface) fn parse_verified_sources(
     }
     let mut global_arrays_by_source =
         BTreeMap::<String, BTreeMap<String, syntax::C0GlobalArray>>::new();
-    for (source_path, function) in parsed.values() {
+    for (source_path, unit) in &units {
         let source_arrays = global_arrays_by_source
             .entry(source_path.clone())
             .or_default();
-        for (name, array) in function.global_arrays() {
+        for (name, array) in &unit.global_arrays {
             if globals_by_source
                 .get(source_path)
                 .is_some_and(|source_globals| source_globals.contains_key(name))
@@ -2484,11 +2484,11 @@ pub(in crate::surface) fn parse_verified_sources(
     }
     let mut global_aggregates_by_source =
         BTreeMap::<String, BTreeMap<String, syntax::C0GlobalAggregate>>::new();
-    for (source_path, function) in parsed.values() {
+    for (source_path, unit) in &units {
         let source_aggregates = global_aggregates_by_source
             .entry(source_path.clone())
             .or_default();
-        for (name, aggregate) in function.global_aggregates() {
+        for (name, aggregate) in &unit.global_aggregates {
             if globals_by_source
                 .get(source_path)
                 .is_some_and(|source_globals| source_globals.contains_key(name))
@@ -2598,11 +2598,11 @@ pub(in crate::surface) fn parse_verified_sources(
     }
     let mut global_aggregate_arrays_by_source =
         BTreeMap::<String, BTreeMap<String, syntax::C0GlobalAggregateArray>>::new();
-    for (source_path, function) in parsed.values() {
+    for (source_path, unit) in &units {
         let source_aggregate_arrays = global_aggregate_arrays_by_source
             .entry(source_path.clone())
             .or_default();
-        for (name, aggregate) in function.global_aggregate_arrays() {
+        for (name, aggregate) in &unit.global_aggregate_arrays {
             if globals_by_source
                 .get(source_path)
                 .is_some_and(|source_globals| source_globals.contains_key(name))

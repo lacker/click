@@ -34,6 +34,8 @@ records the current C0 boundary.
 
 Current projects:
 
+- `multifile-registry/` combines shared counters, same-named private statics,
+  persistent local arrays, repeated includes, and a data-only translation unit.
 - `sequence-transform/` fixes small array copy, concatenation, reversal, and
   membership operations for the logical list model; its unchanged C and
   sidecar verify the implemented finite-literal precursor contracts.

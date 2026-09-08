@@ -7,6 +7,11 @@ mdtest instead of inventing syntax from memory.
 Larger example projects live directly under `examples/`. They contain ordinary
 `.c` files and `.click` sidecars, and are verified by `tests/examples.rs`.
 
+`examples/multifile-registry/` verifies a registry across four C translation
+units and two headers. It covers shared updates, independent same-named private
+statics, persistent local arrays, const lookup tables, and unchanged fields.
+The data definitions live in a translation unit without functions.
+
 `examples/heap-object/` is the focused allocation-lifetime project. It shows a
 nullable factory, full initialization, a read-only borrower, ownership transfer
 across calls, and destruction. The neighboring `heap_*` mdtests pin the main

@@ -10,6 +10,12 @@ arrays, and uninitialized incomplete struct arrays remain unsupported.
 
 Found by the 2026-09-01 kernel audit at cb034b21.
 
+Data-only translation units now contribute their scalar, array, struct, and
+struct-array declarations directly to bundle linking. They need no function
+definition. The `data_only_*.md` regressions cover initialization, relocations,
+duplicate definitions, and private-versus-external linkage; the
+`examples/multifile-registry/` project exercises their composition with calls.
+
 The scalar file-scope slice is now implemented for both externally linked and
 internal-linkage objects: supported integer globals, compatible `extern`
 declarations, coalesced tentative definitions, exactly one linked initialized
