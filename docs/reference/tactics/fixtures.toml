@@ -13,6 +13,11 @@ path = "mdtests/smart_step_carries_prior_call_facts.md"
 needle = "step();"
 
 [[form]]
+id = "step-contract"
+path = "mdtests/c_step_contract_buffered.md"
+needle = "step(Buffered);"
+
+[[form]]
 id = "execute"
 path = "mdtests/tactic_execute.md"
 needle = "execute();"

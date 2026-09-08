@@ -110,6 +110,10 @@ fn remove_resource_index_entry<K: Ord + Clone>(
 impl ResourceContextIndex {
     fn with_inserted(&self, entry: ResourceEntryId, fact: &CResourceFact) -> Self {
         let mut result = self.clone();
+        if let CResource::Instance(instance) = fact.resource() {
+            result.instances =
+                insert_resource_index_entry(&result.instances, instance.identity, entry);
+        }
         result.exact = insert_resource_index_entry(&result.exact, fact.clone(), entry);
         result.by_resource =
             insert_resource_index_entry(&result.by_resource, fact.resource().clone(), entry);
@@ -165,6 +169,10 @@ impl ResourceContextIndex {
 
     fn without_entry(&self, entry: ResourceEntryId, fact: &CResourceFact) -> Self {
         let mut result = self.clone();
+        if let CResource::Instance(instance) = fact.resource() {
+            result.instances =
+                remove_resource_index_entry(&result.instances, &instance.identity, entry);
+        }
         result.exact = remove_resource_index_entry(&result.exact, fact, entry);
         result.by_resource =
             remove_resource_index_entry(&result.by_resource, fact.resource(), entry);
@@ -221,6 +229,40 @@ impl ResourceContextIndex {
 }
 
 impl ResourceContext {
+    fn instance_validity_error(
+        &self,
+        fact: &CResourceFact,
+    ) -> Option<ResourceContextValidityError> {
+        let CResource::Instance(instance) = fact.resource() else {
+            return None;
+        };
+        if !fact.has_valid_instance_access() {
+            return Some(ResourceContextValidityError::InvalidInstanceAccess(
+                fact.clone(),
+            ));
+        }
+        let valid = self
+            .storage
+            .index
+            .instances
+            .get(&instance.identity)
+            .is_some_and(|entries| entries.len() == 1);
+        (!valid).then(|| ResourceContextValidityError::DuplicateOwnedResourceFact(fact.clone()))
+    }
+
+    pub fn owned_instance(&self, identity: Variable) -> Option<&ResourceInstance> {
+        let entries = self.storage.index.instances.get(&identity)?;
+        if entries.len() != 1 {
+            return None;
+        }
+        let CResourceFact::Own(CResource::Instance(instance), quantity) =
+            self.fact(*entries.iter().next()?)
+        else {
+            return None;
+        };
+        (quantity.as_const() == Some(1)).then_some(instance)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -888,6 +930,7 @@ impl ResourceContext {
 
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&ResourceEntryIds> {
         match fact.resource() {
+            CResource::Instance(instance) => self.storage.index.instances.get(&instance.identity),
             CResource::Memory(range) => self.storage.index.memory_by_block.get(&range.base().block),
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => self
                 .storage
@@ -1040,6 +1083,9 @@ impl ResourceContext {
         }
         for right_entry in first_new..self.storage.next_entry_id {
             let right = self.fact(right_entry);
+            if let Some(error) = self.instance_validity_error(right) {
+                return Err(error);
+            }
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
@@ -1159,6 +1205,13 @@ impl ResourceContext {
         &self,
         assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError> {
+        for (_, entries) in self.storage.index.instances.iter() {
+            for entry in entries.iter() {
+                if let Some(error) = self.instance_validity_error(self.fact(*entry)) {
+                    return Some(error);
+                }
+            }
+        }
         for (_, entries) in self.storage.index.memory_by_block.iter() {
             let owned = entries
                 .iter()
@@ -1265,6 +1318,9 @@ impl ResourceContext {
     }
 
     pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &PureFactContext) -> bool {
+        if !fact.has_valid_instance_access() {
+            return false;
+        }
         if fact
             .owned_quantity_term()
             .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
@@ -1475,6 +1531,9 @@ impl ResourceContext {
         fact: &CResourceFact,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
+        if !fact.has_valid_instance_access() {
+            return None;
+        }
         if fact
             .owned_quantity_term()
             .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
@@ -1624,6 +1683,9 @@ impl ResourceContext {
         fact: &CResourceFact,
         assumptions: &PureFactContext,
     ) -> bool {
+        if !fact.has_valid_instance_access() {
+            return false;
+        }
         if fact
             .owned_quantity_term()
             .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
@@ -1742,9 +1804,10 @@ impl ResourceContext {
         let retained = self
             .iter()
             .filter_map(|fact| {
-                if fact
-                    .owned_quantity_term()
-                    .is_some_and(|quantity| quantity.as_const() == Some(0))
+                if fact.has_valid_instance_access()
+                    && fact
+                        .owned_quantity_term()
+                        .is_some_and(|quantity| quantity.as_const() == Some(0))
                 {
                     changed_facts.insert(fact.clone());
                     None
@@ -1847,6 +1910,7 @@ impl ResourceContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum ResourceNormalizationKey {
+    Instance(Variable),
     Resource(CResource),
     ExactShape(ResourceFamily, String, usize),
     MemoryStart(PointerBlock, bool, Bitvector32Term),
@@ -1862,6 +1926,9 @@ impl ResourceNormalizationIndex {
     fn keys(fact: &CResourceFact) -> Vec<ResourceNormalizationKey> {
         let mut keys = vec![ResourceNormalizationKey::Resource(fact.resource().clone())];
         match fact.resource() {
+            CResource::Instance(instance) => {
+                keys.push(ResourceNormalizationKey::Instance(instance.identity))
+            }
             CResource::Memory(range) => {
                 keys.push(ResourceNormalizationKey::MemoryStart(
                     range.base().block.clone(),
@@ -1902,6 +1969,9 @@ impl ResourceNormalizationIndex {
     fn candidates_after(&self, position: usize, fact: &CResourceFact) -> Vec<usize> {
         let mut keys = vec![ResourceNormalizationKey::Resource(fact.resource().clone())];
         match fact.resource() {
+            CResource::Instance(instance) => {
+                keys.push(ResourceNormalizationKey::Instance(instance.identity))
+            }
             CResource::Memory(range) => {
                 keys.push(ResourceNormalizationKey::MemoryEnd(
                     range.base().block.clone(),
@@ -1937,6 +2007,7 @@ fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamil
         ResourceFamily::Memory => &MEMORY_RESOURCE_ALGEBRA,
         ResourceFamily::Composite => &COMPOSITE_RESOURCE_ALGEBRA,
         ResourceFamily::Token => &TOKEN_RESOURCE_ALGEBRA,
+        ResourceFamily::Instance => &INSTANCE_RESOURCE_ALGEBRA,
     };
     debug_assert_eq!(algebra.family(), family);
     algebra
@@ -2025,6 +2096,19 @@ fn exact_resources_proven_equal(
         return true;
     }
     match (left, right) {
+        (CResource::Instance(left), CResource::Instance(right)) => {
+            left.identity == right.identity
+                && left.name == right.name
+                && left.schema == right.schema
+                && left.arguments.len() == right.arguments.len()
+                && left.fields.len() == right.fields.len()
+                && left
+                    .arguments
+                    .iter()
+                    .chain(left.fields.iter())
+                    .zip(right.arguments.iter().chain(right.fields.iter()))
+                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
+        }
         (
             CResource::Composite {
                 name: left_name,
@@ -2390,10 +2474,63 @@ macro_rules! impl_exact_resource_algebra {
 impl_exact_resource_algebra!(TokenResourceAlgebra, ResourceFamily::Token);
 impl_exact_resource_algebra!(CompositeResourceAlgebra, ResourceFamily::Composite);
 
+impl ResourceFamilyAlgebra for InstanceResourceAlgebra {
+    fn family(&self) -> ResourceFamily {
+        ResourceFamily::Instance
+    }
+    fn pair_validity_error(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        _: &PureFactContext,
+    ) -> Option<ResourceContextValidityError> {
+        match (left.resource(), right.resource()) {
+            (CResource::Instance(a), CResource::Instance(b)) if a.identity == b.identity => Some(
+                ResourceContextValidityError::DuplicateOwnedResourceFact(right.clone()),
+            ),
+            _ => None,
+        }
+    }
+    fn entails(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        matches!((available,required),(CResourceFact::Own(_,a),CResourceFact::Own(_,b)) if a.as_const()==Some(1) && b.as_const()==Some(1))
+            && exact_resources_proven_equal(available.resource(), required.resource(), assumptions)
+    }
+    fn consume(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<ResourceFactConsumption> {
+        self.entails(available, required, assumptions)
+            .then(|| ResourceFactConsumption::Replace(vec![]))
+    }
+    fn normalize_pair(
+        &self,
+        _: &CResourceFact,
+        _: &CResourceFact,
+        _: &PureFactContext,
+    ) -> Option<CResourceFact> {
+        None
+    }
+    fn core(&self, _: &CResourceFact) -> Option<CResourceFact> {
+        None
+    }
+    fn observable_facts(&self, _: &[&CResourceFact], _: &PureFactContext) -> Vec<Proposition> {
+        vec![]
+    }
+}
+
 fn resource_fact_read_core_range(resource: &CResourceFact) -> Option<CMemoryRange> {
     match resource.core()? {
         CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. })
+        CResourceFact::View(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+        )
         | CResourceFact::Own(..) => None,
     }
 }
@@ -2431,7 +2568,10 @@ fn memory_resource_fact_permits_write(
             range.end(),
             range.element_width(),
         ),
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            _,
+        )
         | CResourceFact::View(_) => false,
     }
 }
@@ -2675,8 +2815,13 @@ fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
     match fact {
         CResourceFact::Own(CResource::Memory(range), _)
         | CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
-        | CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            _,
+        )
+        | CResourceFact::View(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+        ) => None,
     }
 }
 
@@ -2902,11 +3047,17 @@ impl CResource {
             Self::Memory(_) => ResourceFamily::Memory,
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
+            Self::Instance(_) => ResourceFamily::Instance,
         }
     }
 }
 
 impl CResourceFact {
+    fn has_valid_instance_access(&self) -> bool {
+        !matches!(self.resource(), CResource::Instance(_))
+            || matches!(self, Self::Own(_, quantity) if quantity.as_const() == Some(1))
+    }
+
     pub const ALLOCATION_RESOURCE_NAME: &'static str = "allocation";
 
     pub fn own_memory(range: CMemoryRange) -> Self {
@@ -2941,13 +3092,17 @@ impl CResourceFact {
     }
 
     pub(crate) fn has_proven_zero_quantity(&self, assumptions: &PureFactContext) -> bool {
-        self.owned_quantity_term()
-            .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+        self.has_valid_instance_access()
+            && self
+                .owned_quantity_term()
+                .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
     }
 
     pub(crate) fn has_proven_positive_quantity(&self, assumptions: &PureFactContext) -> bool {
-        self.owned_quantity_term()
-            .is_some_and(|quantity| resource_quantity_is_positive(quantity, assumptions))
+        self.has_valid_instance_access()
+            && self
+                .owned_quantity_term()
+                .is_some_and(|quantity| resource_quantity_is_positive(quantity, assumptions))
     }
 
     pub fn own_allocation(base: Pointer, bytes: impl Into<Bitvector32Term>) -> Self {
@@ -2981,7 +3136,7 @@ impl CResourceFact {
             CResource::Composite { arguments, .. } => arguments.iter().any(
                 |argument| matches!(argument, AlgebraicValue::C(CValue::Pointer(pointer)) if &pointer.block == block),
             ),
-            CResource::Token { .. } => false,
+            CResource::Token { .. } | CResource::Instance(_) => false,
         }
     }
 
@@ -3046,6 +3201,9 @@ impl CResourceFact {
     }
 
     pub fn core_with_assumptions(&self, assumptions: &PureFactContext) -> Option<Self> {
+        if matches!(self.resource(), CResource::Instance(_)) {
+            return None;
+        }
         match self {
             Self::Own(resource, quantity)
                 if quantity.as_const().is_some_and(|value| value > 0)
@@ -3067,18 +3225,21 @@ impl CResourceFact {
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::Own(CResource::Memory(range), _) => Some(range),
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. }, _) | Self::View(_) => {
-                None
-            }
+            Self::Own(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+                _,
+            )
+            | Self::View(_) => None,
         }
     }
 
     pub fn memory_view_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::View(CResource::Memory(range)) => Some(range),
-            Self::View(CResource::Composite { .. } | CResource::Token { .. }) | Self::Own(..) => {
-                None
-            }
+            Self::View(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            )
+            | Self::Own(..) => None,
         }
     }
 
@@ -3087,8 +3248,13 @@ impl CResourceFact {
             Self::Own(CResource::Memory(range), _) | Self::View(CResource::Memory(range)) => {
                 Some(range)
             }
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
-            | Self::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+            Self::Own(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+                _,
+            )
+            | Self::View(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            ) => None,
         }
     }
 

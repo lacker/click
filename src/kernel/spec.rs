@@ -542,9 +542,11 @@ fn lower_spec_algebraic_comparison_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    if left == right
-        || algebraic_match_reconstructs(left, right)
-        || algebraic_match_reconstructs(right, left)
+    if super::functions::spec_algebraic_expression_is_state_independent(left)
+        && super::functions::spec_algebraic_expression_is_state_independent(right)
+        && (left == right
+            || algebraic_match_reconstructs(left, right)
+            || algebraic_match_reconstructs(right, left))
     {
         return Ok(vec![SpecPropositionPath {
             proposition: Proposition::ConditionIs(ConditionTerm::Constant(equal), true),
@@ -688,6 +690,28 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
 ) -> ExecutionResult<Vec<SpecAlgebraicPath>> {
     budget.consume_expression_step()?;
     match &expression.node {
+        SpecAlgebraicExpressionNode::ResourceField(projection) => {
+            let snapshot = if projection.at_entry {
+                loop_entry_state.ok_or(ExecutionLimit::Paths)?
+            } else {
+                state
+            };
+            let Some(AlgebraicValue::Algebraic(value)) = snapshot
+                .resources()
+                .owned_instance(projection.identity)
+                .and_then(|instance| instance.fields().get(projection.field_index))
+            else {
+                return Err(ExecutionLimit::Paths);
+            };
+            if value.algebraic_type != expression.algebraic_type {
+                return Err(ExecutionLimit::Paths);
+            }
+            Ok(vec![SpecAlgebraicPath {
+                value: value.clone(),
+                facts: vec![],
+                obligations: vec![],
+            }])
+        }
         SpecAlgebraicExpressionNode::Variable(variable) => Ok(vec![SpecAlgebraicPath {
             value: AlgebraicTerm {
                 algebraic_type: expression.algebraic_type.clone(),
@@ -2678,6 +2702,28 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        SpecExpression::ResourceField { projection, c_type } => {
+            let snapshot = if projection.at_entry {
+                loop_entry_state.ok_or(ExecutionLimit::Paths)?
+            } else {
+                state
+            };
+            let Some(AlgebraicValue::C(value)) = snapshot
+                .resources()
+                .owned_instance(projection.identity)
+                .and_then(|instance| instance.fields().get(projection.field_index))
+            else {
+                return Err(ExecutionLimit::Paths);
+            };
+            if value.c_type() != *c_type {
+                return Err(ExecutionLimit::Paths);
+            }
+            vec![SpecExpressionPath {
+                value: value.clone(),
+                facts: vec![],
+                obligations: vec![],
+            }]
+        }
         SpecExpression::Value(value) => vec![SpecExpressionPath {
             value: value.clone(),
             facts: Vec::new(),

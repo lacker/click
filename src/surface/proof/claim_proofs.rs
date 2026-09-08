@@ -158,6 +158,7 @@ fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet
         matches!(
             tactic,
             ProofTactic::Step
+                | ProofTactic::StepContract(_)
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
                 | ProofTactic::ExecuteUntil(_)

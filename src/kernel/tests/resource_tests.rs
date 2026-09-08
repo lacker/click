@@ -1,5 +1,463 @@
 use super::*;
 
+fn field_instance(identity: u64, model: AlgebraicTerm, revision: u32) -> ResourceInstance {
+    let schema = ResourceFieldSchema::new(vec![
+        (
+            "model".into(),
+            ResourceFieldType::Algebraic(model.algebraic_type.clone()),
+        ),
+        ("revision".into(), ResourceFieldType::C(CType::Int32)),
+    ])
+    .unwrap();
+    ResourceInstance::new(
+        Variable(identity),
+        "marked_cell".into(),
+        vec![int32(7).into()].into(),
+        schema,
+        vec![AlgebraicValue::Algebraic(model), int32(revision).into()].into(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn resource_instances_validate_fields_without_expanding_symbolic_values() {
+    let ty = resource_index_type("Mark", vec![]);
+    let model = resource_index_variable(&ty, 1);
+    let instance = field_instance(2, model.clone(), 3);
+    assert_eq!(instance.fields()[0], AlgebraicValue::Algebraic(model));
+    let make = |schema, fields| {
+        ResourceInstance::new(
+            Variable(2),
+            "marked_cell".into(),
+            instance.arguments.clone(),
+            schema,
+            fields,
+        )
+    };
+    assert!(make(ResourceFieldSchema::new(vec![]).unwrap(), vec![].into()).is_none());
+    assert!(make(instance.schema().clone(), vec![].into()).is_none());
+    assert!(
+        make(
+            instance.schema().clone(),
+            vec![int32(1).into(), int32(2).into()].into()
+        )
+        .is_none()
+    );
+    let wrong = resource_index_variable(&resource_index_type("Other", vec![]), 1);
+    assert!(
+        make(
+            instance.schema().clone(),
+            vec![AlgebraicValue::Algebraic(wrong), int32(2).into()].into()
+        )
+        .is_none()
+    );
+    let malformed = AlgebraicTerm {
+        algebraic_type: ty,
+        node: AlgebraicTermNode::Constructor {
+            variant: "Missing".into(),
+            fields: vec![],
+        },
+    };
+    assert!(
+        make(
+            instance.schema().clone(),
+            vec![AlgebraicValue::Algebraic(malformed), int32(2).into()].into()
+        )
+        .is_none()
+    );
+    let copy = instance.clone();
+    assert!(std::sync::Arc::ptr_eq(&instance.fields, &copy.fields));
+    assert!(std::sync::Arc::ptr_eq(&instance.arguments, &copy.arguments));
+}
+
+#[test]
+fn resource_instances_are_exclusive_not_counted_or_viewable() {
+    let assumptions = PureFactContext::new();
+    let ty = resource_index_type("Mark", vec![]);
+    let instance = field_instance(2, resource_index_variable(&ty, 1), 0);
+    let owned = CResourceFact::own(CResource::Instance(instance.clone()));
+    let context = ResourceContext::new()
+        .try_compose_with_fact(owned.clone(), &assumptions)
+        .unwrap();
+    assert!(owned.core().is_none());
+    assert!(owned.core_with_assumptions(&assumptions).is_none());
+    let mut invalid = vec![CResourceFact::View(owned.resource().clone())];
+    invalid.extend([0, 2].map(|q| CResourceFact::own_quantity(owned.resource().clone(), q.into())));
+    invalid.push(CResourceFact::own_quantity(
+        owned.resource().clone(),
+        Bitvector32Term::Variable(Variable(8)),
+    ));
+    for fact in invalid {
+        assert!(matches!(
+            ResourceContext::new().try_compose_with_fact(fact.clone(), &assumptions),
+            Err(ResourceContextValidityError::InvalidInstanceAccess(_))
+        ));
+        assert!(!context.satisfies_fact(&fact, &assumptions));
+        assert!(
+            context
+                .clone()
+                .without_fact_delaying_normalization(&fact, &assumptions)
+                .is_none()
+        );
+        assert!(
+            context
+                .clone()
+                .without_fact_incrementally(&fact, &assumptions)
+                .is_none()
+        );
+        let invalid_context = ResourceContext::new().unchecked_with_fact(fact);
+        assert!(invalid_context.owned_instance(Variable(2)).is_none());
+        assert!(
+            !invalid_context
+                .normalized(&assumptions)
+                .is_valid(&assumptions)
+        );
+    }
+    for duplicate in [
+        instance,
+        field_instance(2, resource_index_variable(&ty, 9), 1),
+    ] {
+        let fact = CResourceFact::own(CResource::Instance(duplicate));
+        assert!(
+            context
+                .clone()
+                .try_compose_into_valid_context_delaying_normalization([fact.clone()], &assumptions)
+                .is_err()
+        );
+        let invalid = context.clone().unchecked_with_fact(fact);
+        assert!(invalid.owned_instance(Variable(2)).is_none());
+        assert!(!invalid.normalized(&assumptions).is_valid(&assumptions));
+    }
+    let remaining = context
+        .without_fact_delaying_normalization(&owned, &assumptions)
+        .unwrap();
+    assert!(remaining.owned_instance(Variable(2)).is_none());
+    assert!(!remaining.satisfies_fact(&owned, &assumptions));
+}
+
+#[test]
+fn resource_instances_distinguish_identity_from_equal_field_state() {
+    let ty = resource_index_type("Mark", vec![]);
+    let m = resource_index_variable(&ty, 1);
+    let n = resource_index_variable(&ty, 2);
+    let owned = CResourceFact::own(CResource::Instance(field_instance(10, m.clone(), 0)));
+    let equal_state = CResourceFact::own(CResource::Instance(field_instance(10, n.clone(), 0)));
+    let other_identity = CResourceFact::own(CResource::Instance(field_instance(11, m.clone(), 0)));
+    let changed_scalar = CResourceFact::own(CResource::Instance(field_instance(10, m.clone(), 1)));
+    let empty = PureFactContext::new();
+    let context = ResourceContext::new().unchecked_with_fact(owned.clone());
+    assert!(!context.satisfies_fact(&equal_state, &empty));
+    let assumptions =
+        empty.assume_proposition(Proposition::Equal(Term::Algebraic(m), Term::Algebraic(n)));
+    assert!(context.satisfies_fact(&equal_state, &assumptions));
+    assert!(c_resources_directly_match(
+        owned.resource(),
+        equal_state.resource(),
+        &assumptions
+    ));
+    for wrong in [other_identity.clone(), changed_scalar] {
+        assert!(!context.satisfies_fact(&wrong, &assumptions));
+        assert!(!c_resources_directly_match(
+            owned.resource(),
+            wrong.resource(),
+            &assumptions
+        ));
+    }
+    assert!(
+        context
+            .clone()
+            .try_compose_with_fact(other_identity, &assumptions)
+            .is_ok()
+    );
+    assert!(
+        context
+            .without_fact_incrementally(&equal_state, &assumptions)
+            .unwrap()
+            .facts()
+            .is_empty()
+    );
+}
+
+#[test]
+fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
+    let ty = resource_index_type("Mark", vec![]);
+    let m = resource_index_variable(&ty, 1);
+    let n = resource_index_variable(&ty, 2);
+    let state = |model, revision| {
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own(CResource::Instance(field_instance(10, model, revision))),
+        ))
+    };
+    let entry = state(m.clone(), 3);
+    let current = state(n.clone(), 4);
+    let empty = PureFactContext::new();
+    for (at_entry, expected) in [(false, 4), (true, 3)] {
+        let expression = SpecExpression::ResourceField {
+            projection: ResourceFieldProjection {
+                identity: Variable(10),
+                field_index: 1,
+                at_entry,
+            },
+            c_type: CType::Int32,
+        };
+        let paths = crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+            &current,
+            &expression,
+            Some(&entry),
+            &empty,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].value, int32(expected));
+        assert!(paths[0].facts.is_empty() && paths[0].obligations.is_empty());
+    }
+    let projection = |at_entry| SpecAlgebraicExpression {
+        algebraic_type: ty.clone(),
+        node: SpecAlgebraicExpressionNode::ResourceField(ResourceFieldProjection {
+            identity: Variable(10),
+            field_index: 0,
+            at_entry,
+        }),
+    };
+    let claim = SpecProposition::AlgebraicComparison {
+        left: projection(false),
+        equal: true,
+        right: projection(true),
+    };
+    let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_loop_entry(
+        &current,
+        &claim,
+        Some(&entry),
+        &empty,
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert_eq!(paths.len(), 1);
+    assert!(
+        !empty.proves(&paths[0].proposition),
+        "ownership alone must not imply preservation"
+    );
+    let equal = empty
+        .clone()
+        .assume_proposition(Proposition::Equal(Term::Algebraic(n), Term::Algebraic(m)));
+    assert!(equal.proves(&paths[0].proposition));
+    let missing = CState::new();
+    for (state, old, claim) in [
+        (&current, None, claim.clone()),
+        (&missing, Some(&entry), claim),
+        (
+            &missing,
+            None,
+            SpecProposition::AlgebraicComparison {
+                left: projection(false),
+                equal: true,
+                right: projection(false),
+            },
+        ),
+    ] {
+        assert!(
+            crate::kernel::spec::lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                &claim,
+                old,
+                &empty,
+                &mut ExecutionBudget::default()
+            )
+            .is_err()
+        );
+    }
+    for (identity, field_index, c_type) in [
+        (99, 1, CType::Int32),
+        (10, 2, CType::Int32),
+        (10, 0, CType::Int32),
+        (10, 1, CType::UInt32),
+    ] {
+        let expression = SpecExpression::ResourceField {
+            projection: ResourceFieldProjection {
+                identity: Variable(identity),
+                field_index,
+                at_entry: false,
+            },
+            c_type,
+        };
+        assert!(
+            crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+                &current,
+                &expression,
+                None,
+                &empty,
+                &mut ExecutionBudget::default()
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn resource_instance_lookup_and_transfer_scale_by_identity() {
+    let ty = resource_index_type("Mark", vec![]);
+    let m = resource_index_variable(&ty, 1);
+    let n = resource_index_variable(&ty, 2);
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::Equal(
+        Term::Algebraic(m.clone()),
+        Term::Algebraic(n.clone()),
+    ));
+    let selected = CResourceFact::own(CResource::Instance(field_instance(1, n, 0)));
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let (context, build_work) = crate::instrumentation::measure_deterministic_work(|| {
+            let mut context = ResourceContext::new();
+            for identity in 1..=size {
+                context = context
+                    .try_compose_into_valid_context_delaying_normalization(
+                        [CResourceFact::own(CResource::Instance(field_instance(
+                            identity,
+                            m.clone(),
+                            0,
+                        )))],
+                        &assumptions,
+                    )
+                    .unwrap();
+            }
+            context
+        });
+        assert!(context.shares_storage_with(&context.clone()));
+        let (remaining, query_work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert!(context.owned_instance(Variable(1)).is_some());
+            assert!(context.owned_instance(Variable(size + 1)).is_none());
+            assert!(context.satisfies_fact(&selected, &assumptions));
+            context
+                .without_fact_delaying_normalization(&selected, &assumptions)
+                .unwrap()
+        });
+        assert_eq!(remaining.facts().len(), size as usize - 1);
+        samples.push((build_work, query_work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].0 <= pair[0].0 * 3 + 16,
+            "instance build scaling: {samples:?}"
+        );
+        assert!(
+            pair[1].1 <= pair[0].1 + 64,
+            "fixed identity query scaling: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn resource_instance_substitution_preserves_identity_without_memory_authority() {
+    let pointer = Pointer::symbolic(Variable(10));
+    let target = Pointer {
+        block: "instance-target".into(),
+        offset: PointerOffsetTerm::Constant(12),
+    };
+    let ty = resource_index_type(
+        "Payload",
+        vec![
+            AlgebraicValueType::C(CValue::pointer(pointer.clone()).c_type()),
+            AlgebraicValueType::C(CType::Int32),
+        ],
+    );
+    let make = |p: Pointer, value: Bitvector32Term| {
+        let model = AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: "Set".into(),
+                fields: vec![CValue::pointer(p.clone()).into(), int32(value).into()],
+            },
+        };
+        let mut instance = field_instance(10, model, 0);
+        instance.arguments = vec![CValue::pointer(p).into()].into();
+        CResource::Instance(instance)
+    };
+    let source = make(pointer.clone(), Bitvector32Term::Variable(Variable(11)));
+    let context = ResourceContext::new().unchecked_with_fact(CResourceFact::own(source.clone()));
+    let assumptions = PureFactContext::new();
+    for required in [
+        CResourceFact::view_memory(memory_range(pointer.clone(), 0, 1)),
+        CResourceFact::own_memory(memory_range(pointer, 0, 1)),
+    ] {
+        assert!(!context.satisfies_fact(&required, &assumptions));
+    }
+    let numeric = crate::kernel::reasoning::substitute_bitvector_variable_in_c_resource(
+        &source,
+        Variable(11),
+        &Bitvector32Term::Constant(7),
+    );
+    let substituted = crate::kernel::reasoning::substitute_pointer_variable_in_proposition(
+        &Proposition::CResourceComposition(
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own(numeric)),
+        ),
+        Variable(10),
+        &target,
+    );
+    let expected = Proposition::CResourceComposition(ResourceContext::new().unchecked_with_fact(
+        CResourceFact::own(make(target, Bitvector32Term::Constant(7))),
+    ));
+    assert_eq!(
+        substituted, expected,
+        "C substitutions must not rename the resource identity"
+    );
+}
+
+#[test]
+fn resource_field_schemas_are_typed_shared_and_non_countable() {
+    let fields = vec![
+        (
+            "model".into(),
+            ResourceFieldType::Algebraic(resource_index_type("Mark", vec![])),
+        ),
+        ("revision".into(), ResourceFieldType::C(CType::Int32)),
+    ];
+    let schema = ResourceFieldSchema::new(fields.clone()).unwrap();
+    assert_eq!(schema.fields(), fields);
+    assert!(!schema.is_countable());
+    let copy = schema.clone();
+    assert!(std::ptr::eq(
+        schema.fields().as_ptr(),
+        copy.fields().as_ptr()
+    ));
+    assert!(ResourceFieldSchema::new(vec![]).unwrap().is_countable());
+    assert!(ResourceFieldSchema::new(vec![fields[0].clone(), fields[0].clone()]).is_none());
+    assert!(
+        ResourceFieldSchema::new(vec![("".into(), ResourceFieldType::C(CType::Int32))]).is_none()
+    );
+    for ty in [CType::Void, CType::Int32Array(3), CType::FunctionPointer(1)] {
+        assert!(ResourceFieldSchema::new(vec![("bad".into(), ResourceFieldType::C(ty))]).is_none());
+    }
+    let mut malformed = resource_index_type("Mark", vec![]);
+    malformed.name = "Wrong".into();
+    assert!(
+        ResourceFieldSchema::new(vec![(
+            "bad".into(),
+            ResourceFieldType::Algebraic(malformed)
+        )])
+        .is_none()
+    );
+}
+
+#[test]
+fn resource_field_schema_clones_share_storage_at_multiple_sizes() {
+    for size in [16, 32, 64, 128] {
+        let schema = ResourceFieldSchema::new(
+            (0..size)
+                .map(|i| (format!("field_{i}"), ResourceFieldType::C(CType::Int32)))
+                .collect(),
+        )
+        .unwrap();
+        for _ in 0..size {
+            let copy = schema.clone();
+            assert_eq!(copy.fields().len(), size);
+            assert!(
+                std::ptr::eq(schema.fields().as_ptr(), copy.fields().as_ptr()),
+                "cloning declaration metadata must not copy any field entries"
+            );
+        }
+    }
+}
+
 fn resource_index_type(name: &str, fields: Vec<AlgebraicValueType>) -> AlgebraicType {
     let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
         AlgebraicVariantType {

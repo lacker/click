@@ -1,6 +1,104 @@
 use super::*;
 
 #[test]
+fn executed_refinement_checks_the_exact_call_and_source_premises() {
+    check_executed_refinement_shape(CType::Void, false);
+}
+
+#[test]
+fn executed_refinement_requires_forwarding_the_exact_typed_call_result() {
+    for return_type in [CType::Int32, CType::Int64, CType::Int32Pointer] {
+        check_executed_refinement_shape(return_type, false);
+        check_executed_refinement_shape(return_type, true);
+    }
+}
+
+fn check_executed_refinement_shape(return_type: CType, alter_result: bool) {
+    let template = c_function(
+        return_type,
+        "interface",
+        vec![c_parameter("x", CType::Int32)],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true);
+    let source = CFunctionContract::new("Source", template.clone()).unwrap();
+    let target = CFunctionContract::new("Target", template.clone()).unwrap();
+    let pointer_type = source.function_pointer_type();
+    let premise = SpecProposition::Predicate {
+        name: source.predicate_name(),
+        arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+            c_variable("callback"),
+        ))],
+    };
+    let conclusion = Proposition::Predicate {
+        name: target.predicate_name(),
+        arguments: vec![
+            Term::CState(CState::new()),
+            Term::CValue(CValue::Pointer(CPointerValue::new(
+                Pointer {
+                    block: PointerBlock::FunctionSymbolic(Variable(0)),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                pointer_type,
+            ))),
+        ],
+    };
+    let environment = CExecutionEnvironment::new()
+        .with_function_contract(source)
+        .with_function_contract(target);
+    // Isolate the implication boundary: its input is an already trusted rule.
+    // Ordinary execution certification is covered by the mdtests.
+    for (callee, argument, sources, extra_premise, valid) in [
+        ("callback", c_variable("x"), vec!["Source"], false, true),
+        ("other", c_variable("x"), vec!["Source"], false, false),
+        ("callback", c_int32_literal(1), vec!["Source"], false, false),
+        ("callback", c_variable("x"), vec!["Target"], false, false),
+        ("callback", c_variable("x"), vec![], false, false),
+        ("callback", c_variable("x"), vec!["Source"], true, false),
+    ] {
+        let mut requirements = vec![premise.clone()];
+        if extra_premise {
+            requirements.insert(0, premise.clone());
+        }
+        let function = c_function(
+            return_type,
+            "wrapper",
+            vec![
+                c_parameter("x", CType::Int32),
+                c_parameter("callback", pointer_type),
+            ],
+            if return_type == CType::Void {
+                CStatement::Call {
+                    function_name: callee.to_string(),
+                    arguments: vec![argument],
+                }
+            } else {
+                c_seq(
+                    c_call_assign("result", callee, vec![argument]),
+                    c_return(if alter_result {
+                        c_int32_literal(0)
+                    } else {
+                        c_variable("result")
+                    }),
+                )
+            },
+        )
+        .with_contract(requirements, vec![], vec![], vec![], true);
+        assert_eq!(
+            crate::kernel::prove_executed_contract_refinement(
+                &environment,
+                &sources,
+                "Target",
+                conclusion.clone(),
+                &CVerifiedFunctionRule { function },
+            )
+            .is_some(),
+            valid && !alter_result
+        );
+    }
+}
+
+#[test]
 fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
     let contract = interface(0);
     for count in [0, 16, 64, 256] {
@@ -54,6 +152,15 @@ fn interface(index: usize) -> CFunctionContract {
 
 #[test]
 fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
+    check_callback_interface_scaling(false);
+}
+
+#[test]
+fn selected_callback_shares_call_budget_and_scales_with_interfaces() {
+    check_callback_interface_scaling(true);
+}
+
+fn check_callback_interface_scaling(select: bool) {
     let mut samples = Vec::new();
     for count in [1, 8, 32, 128] {
         let contracts = (0..count).map(interface).collect::<Vec<_>>();
@@ -62,13 +169,18 @@ fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
             .with_function_calls(1)
             .with_paths(1);
         let initial_expressions = budget.expression_steps;
+        let environment = if select {
+            CExecutionEnvironment::new().with_selected_call_contract(&format!("Bound{}", count - 1))
+        } else {
+            CExecutionEnvironment::new()
+        };
         let (paths, work) = crate::instrumentation::measure_deterministic_work(|| {
             execute_c_function_contracts_paths(
                 &CState::new(),
                 &contracts,
                 &[c_int32_literal(7)],
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
+                &environment,
                 &mut budget,
             )
             .unwrap()
@@ -96,6 +208,15 @@ fn callback_conjunction_shares_call_budget_and_scales_with_interfaces() {
 
 #[test]
 fn callback_conjunction_does_not_visit_unrelated_functions() {
+    check_unrelated_functions(false);
+}
+
+#[test]
+fn selected_callback_does_not_visit_unrelated_functions() {
+    check_unrelated_functions(true);
+}
+
+fn check_unrelated_functions(select: bool) {
     let contracts = vec![interface(0), interface(1)];
     let contracts = contracts.iter().collect::<Vec<_>>();
     let mut samples = Vec::new();
@@ -112,6 +233,13 @@ fn callback_conjunction_does_not_visit_unrelated_functions() {
         let mut budget = ExecutionBudget::default()
             .with_function_calls(1)
             .with_paths(1);
+        if select {
+            let selected = environment.clone().with_selected_call_contract("Bound1");
+            assert!(selected.shares_all_storage_with(&environment));
+            assert_ne!(selected, environment);
+            assert!(environment.selected_call_contract.is_none());
+            environment = selected;
+        }
         let (paths, work) = crate::instrumentation::measure_deterministic_work(|| {
             execute_c_function_contracts_paths(
                 &CState::new(),

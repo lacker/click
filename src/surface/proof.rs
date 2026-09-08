@@ -1307,6 +1307,7 @@ mod certificate_tests {
                 &predicate_environment,
                 &click_function_environment,
                 None,
+                &ResourceEnvironment::new(&[]),
             )
         });
         let verified = verified.expect("direct checked pure proofs should verify");

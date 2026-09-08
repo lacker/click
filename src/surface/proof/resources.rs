@@ -164,7 +164,7 @@ pub(super) fn materialize_counted_population_bodies(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) => continue,
         };
         if resource_environment.get(name).is_none() {
             continue;
@@ -278,7 +278,7 @@ fn materialize_folded_composite_resource_memory(
     for resource in state.resources().facts() {
         let (name, resource_arguments) = match resource.resource() {
             CResource::Composite { name, arguments } => (name, arguments),
-            CResource::Memory(_) | CResource::Token { .. } => {
+            CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
                 continue;
             }
         };
@@ -1174,7 +1174,7 @@ fn project_held_resource_observable_facts(
 ) -> Result<CMemory, String> {
     let (name, resource_arguments) = match resource.resource() {
         CResource::Composite { name, arguments } => (name, arguments),
-        CResource::Memory(_) | CResource::Token { .. } => {
+        CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
             return Ok(state.memory().clone());
         }
     };
@@ -1676,6 +1676,9 @@ fn describe_resource_context_validity_error(
     arguments: &[CExpression],
 ) -> String {
     match error {
+        ResourceContextValidityError::InvalidInstanceAccess(_) => {
+            "field-bearing resource instances require exclusive ownership with quantity one".into()
+        }
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             format!(
                 "duplicate resource fact `{}`",
@@ -2027,6 +2030,11 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 (name.clone(), arguments.clone())
             }
             CResource::Memory(_) => unreachable!("a declared resource lowered to memory"),
+            CResource::Instance(_) => {
+                return Err(ClickError::new(
+                    "instance unfolding is not a population operation",
+                ));
+            }
         };
     let tracks_population_in_body = composite_body
         .facts()
@@ -2163,7 +2171,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     Some((name, arguments))
                 }
-                CResource::Memory(_) => None,
+                CResource::Memory(_) | CResource::Instance(_) => None,
             };
             if let Some((name, resource_arguments)) = named
                 && state.counted_population(name, resource_arguments).is_none()
@@ -2445,7 +2453,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     (name, arguments)
                 }
-                CResource::Memory(_) => {
+                CResource::Memory(_) | CResource::Instance(_) => {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` did not lower to a declared resource",
                         describe_resource_clause(resource)
@@ -2523,6 +2531,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                     (name, arguments)
                 }
                 CResource::Memory(_) => unreachable!("declared resource lowered to memory"),
+                CResource::Instance(_) => {
+                    return Err(ClickError::new(
+                        "instance folding is not a population operation",
+                    ));
+                }
             };
             if state
                 .counted_population(name, population_arguments)

@@ -1,7 +1,7 @@
 # Alternative owned postconditions are not duplicated
 
 Even identical ownership promises are not added as independently spendable
-resources. General resource conjunction is an explicit deferred capability.
+resources. An ambiguous resource transition requires `step(Contract)`.
 
 ```c filename=joint.c
 void invoke(void (*callback)(int32*), int32* cell) { callback(cell); }
@@ -19,5 +19,5 @@ void invoke(void (*callback)(int32*), int32* cell) {
 ```
 
 ```expect
-fail: combining resource-bearing callback contracts is not yet supported
+fail: ambiguous callback resource transition; use step(Contract)
 ```

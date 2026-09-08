@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Nineteen independent root causes. Every one has a reproduction that verifies
+Eighteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other thirteen are high: the trigger is
+false, with no unusual tactics. The other twelve are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -1266,51 +1266,7 @@ behaviour with a predictable result.
 
 ---
 
-## 16. Null pointer arithmetic is accepted and yields a definite pointer
-
-**Severity: high.** Pointer arithmetic on a null pointer is undefined, and the
-result is then compared as a definite non-null value.
-
-**Violated invariant.** Additive pointer arithmetic is defined only when the
-pointer designates an element of an object or one past its end (C11 6.5.6p8).
-A null pointer designates no object, so `p + 1` has no defined value to
-compare.
-
-**Mechanism.** Not localized. The pointer-addition path in
-`src/kernel/eval/operators.rs` scales the offset without requiring the base to
-designate an object, and the resulting pointer compares unequal to null
-because it carries a nonzero offset.
-
-**Regression** (`mdtests/null_pointer_arithmetic_rejected.md`):
-
-```c
-int32 null_pointer_arithmetic_rejected() {
-    int32* p = 0;
-    int32* q = p + 1;
-    if (q == 0) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 null_pointer_arithmetic_rejected() {
-    ensures result == 0;
-}
-```
-
-**Acceptance criteria.**
-- The addition is reported as undefined behaviour, so neither branch's value
-  is provable.
-- Arithmetic on a pointer that does designate an object is unaffected,
-  including the one-past-the-end position.
-
----
-
-## 17. A `for` initializer's variable stays readable after the loop
+## 16. A `for` initializer's variable stays readable after the loop
 
 **Severity: high.** C0 accepts a program C rejects, and proves a value for the
 out-of-scope read.
@@ -1350,7 +1306,7 @@ int32 for_initializer_scope_rejected() {
 
 ---
 
-## 18. Identical string literals are proved distinct
+## 17. Identical string literals are proved distinct
 
 **Severity: high.** Whether identical literals share storage is unspecified,
 so neither answer may be proved.
@@ -1393,7 +1349,7 @@ int32 identical_string_literals_undecided() {
 
 ---
 
-## 19. A postcondition may read the storage of a returned local
+## 18. A postcondition may read the storage of a returned local
 
 **Severity: high.** A contract states a value in storage whose lifetime ended
 when the function returned, and the caller may rely on it.

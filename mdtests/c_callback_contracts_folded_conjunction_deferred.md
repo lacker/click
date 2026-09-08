@@ -1,8 +1,8 @@
-# Folded resource conjunction remains explicitly deferred
+# Folded resource alternatives require explicit selection
 
 Both behavioral facts may be known after refinement. Ordinary resource matching
 can use the folded resource for either interface. Combining those alternative
-owned descriptions remains explicitly deferred, rather than selecting a view
+owned descriptions requires `step(Contract)`, rather than selecting a view
 by contract-name order or returning two successors.
 
 ```c filename=joint.c
@@ -33,5 +33,5 @@ int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
 ```
 
 ```expect
-fail: combining resource-bearing callback contracts is not yet supported
+fail: ambiguous callback resource transition; use step(Contract)
 ```

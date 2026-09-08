@@ -555,6 +555,13 @@ pub(super) fn describe_resource_fact(
         );
     }
     match resource {
+        CResourceFact::Own(CResource::Instance(instance), _)
+        | CResourceFact::View(CResource::Instance(instance)) => format!(
+            "{} instance {}#{}",
+            if resource.is_own() { "owns" } else { "views" },
+            instance.name(),
+            instance.identity().0
+        ),
         CResourceFact::Own(
             CResource::Composite {
                 name,
@@ -602,6 +609,9 @@ fn describe_c_resource(
     arguments: &[CExpression],
 ) -> String {
     match resource {
+        CResource::Instance(instance) => {
+            format!("instance {}#{}", instance.name(), instance.identity().0)
+        }
         CResource::Memory(range) => {
             format!(
                 "memory({})",

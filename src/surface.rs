@@ -170,6 +170,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "else",
     "ensures",
     "ensuring",
+    "executes",
     "entry",
     "enum",
     "enumerate",
@@ -183,6 +184,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "exit",
     "extract",
     "fact",
+    "field",
     "fold",
     "forall",
     "frame",
@@ -478,10 +480,12 @@ pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     composite_body: Option<CompositeResourceBody>,
+    field_schema: Option<crate::kernel::ResourceFieldSchema>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
+    fields: Vec<ResourceFieldDefinition>,
     condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
@@ -489,6 +493,21 @@ pub struct CompositeResourceBody {
     /// `where` proposition is also one of `facts`; the witness name is in
     /// scope for every later clause of the body.
     witnesses: Vec<ResourceWitness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFieldDefinition {
+    name: String,
+    click_type: ClickType,
+}
+
+impl ResourceFieldDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn click_type(&self) -> &ClickType {
+        &self.click_type
+    }
 }
 
 /// A pointer the body of a composite resource asserts to exist.
@@ -513,8 +532,15 @@ pub struct TheoremDefinition {
     name: String,
     type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
+    executes: Option<TheoremExecution>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremExecution {
+    callback: String,
+    parameters: Vec<FunctionParameter>,
 }
 
 /// A named behavioral interface for a function pointer. The embedded block
@@ -536,6 +562,9 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     external: bool,
+    /// Internal source grouping for an `executes` theorem's call and return.
+    /// The kernel still checks the complete ordinary statement sequence.
+    one_call_proof: bool,
     requires: Vec<Requirement>,
     /// Parsed once so a simple `choose(... from requirement label)` step does
     /// not linearly rescan every function requirement.
@@ -2113,6 +2142,7 @@ pub(crate) struct PlannedStatementTransition {
 pub enum ProofTactic {
     Mark(String),
     Step,
+    StepContract(String),
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -2269,6 +2299,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step",
         syntax: "step()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step-contract",
+        syntax: "step(Contract)",
         class: "simple",
     },
     PublicTacticForm {
@@ -2509,6 +2544,7 @@ pub struct ProofCertificate {
 pub enum ProofStep {
     Mark(String),
     Step,
+    StepContract(String),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -2673,6 +2709,7 @@ impl ProofStep {
         match tactic {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
+            ProofTactic::StepContract(name) => Self::StepContract(name.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
@@ -2862,6 +2899,7 @@ impl ProofStep {
         match self {
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
+            Self::StepContract(name) => ProofTactic::StepContract(name.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
@@ -3183,7 +3221,9 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
-            Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::Step | Self::StepContract(_) => {
+                TacticClass::Simple(SimpleTactic::StatementTransition)
+            }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
@@ -3727,6 +3767,20 @@ impl ClickFunctionDefinition {
 }
 
 impl ResourceDefinition {
+    pub fn fields(&self) -> &[ResourceFieldDefinition] {
+        self.composite_body
+            .as_ref()
+            .map_or(&[], |body| &body.fields)
+    }
+
+    pub fn field_schema(&self) -> Option<&crate::kernel::ResourceFieldSchema> {
+        self.field_schema.as_ref()
+    }
+
+    pub fn is_countable(&self) -> bool {
+        self.fields().is_empty()
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

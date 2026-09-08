@@ -1549,6 +1549,13 @@ fn execute_step_from_frontier_position_selecting_path(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
     })?;
+    if function_environment.selected_call_contract.is_some()
+        && !matches!(source_region.kind, SourceStatementKind::Plain)
+    {
+        return Err(ClickError::new(
+            "step(Contract) requires a call at the current frontier",
+        ));
+    }
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
         let entered = execute_branch_step_from_frontier_position(
             execution,
@@ -1569,7 +1576,7 @@ fn execute_step_from_frontier_position_selecting_path(
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
     };
-    let (execution_start_state, current_state, source_statement, remaining) =
+    let (execution_start_state, current_state, mut source_statement, mut remaining) =
         next_top_level_statement_from_frontier_position(
             ExecutionView::new(
                 &execution.core.frontier,
@@ -1585,6 +1592,15 @@ fn execute_step_from_frontier_position_selecting_path(
             tactic_index,
             tactic_name,
         )?;
+    if function_block.one_call_proof
+        && matches!(
+            execution.core.frontier.position,
+            FrontierPosition::FunctionEntry
+        )
+    {
+        source_statement = function.body().clone();
+        remaining = None;
+    }
     if matches!(source_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source loop at statement({statement_index})"
@@ -1611,6 +1627,13 @@ fn execute_step_from_frontier_position_selecting_path(
         return Ok(Vec::new());
     }
     let step_statement = source_statement;
+    if function_environment.selected_call_contract.is_some()
+        && !statement_contains_call(&step_statement)
+    {
+        return Err(ClickError::new(
+            "step(Contract) requires a call at the current frontier",
+        ));
+    }
 
     // The surface step for this statement is written from the proof state
     // *before* the statement runs. Its own check establishes this
@@ -2047,7 +2070,23 @@ fn execute_step_from_frontier_position_selecting_path(
     append_execution_effect_facts(&mut execution.core.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
     let successor_pure_facts = transition.pure_facts;
-    let outcome = transition.outcome;
+    // Falling off a void function is a return in the kernel's C semantics.
+    // A source-less one-call proof can reach this boundary without the
+    // explicit return node normally inserted by C parsing.
+    let outcome = match transition.outcome {
+        CStatementOutcome::Normal(state)
+            if function.return_type() == crate::kernel::CType::Void
+                && remaining.is_none()
+                && execution.core.frontier.region == ExecutionRegionKind::Function
+                && execution.core.frontier.continuations.is_empty() =>
+        {
+            CStatementOutcome::Return {
+                value: CValue::Void,
+                state,
+            }
+        }
+        outcome => outcome,
+    };
     if let Some(statement_exit_state) = match &outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)

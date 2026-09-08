@@ -2869,6 +2869,46 @@ fn recording_covers_a_loadability_premise_from_the_retained_context() {
 }
 
 #[test]
+fn recording_complete_sequence_requires_exact_remaining_source() {
+    let body = c_seq(c_return(c_int32_literal(0)), c_return(c_int32_literal(1)));
+    let function = c_function(CType::Int32, "sequence", Vec::new(), body.clone());
+    let entry = c_function_entry_state(&CState::new(), &function, &[]).expect("entry");
+    for (statement, accepted) in [
+        (body, true),
+        (
+            c_seq(c_return(c_int32_literal(0)), c_return(c_int32_literal(2))),
+            false,
+        ),
+        (c_seq(CStatement::Skip, c_return(c_int32_literal(1))), false),
+    ] {
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            CState::new(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        let evidence = Theorem::new(Proposition::CStatementVerifies {
+            state: entry.clone(),
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(0),
+                state: entry.clone(),
+            },
+        });
+        let recorded = core.record_statement_transition(
+            &function,
+            &[],
+            evidence,
+            PureFactContext::new(),
+            &[],
+            &[],
+        );
+        assert_eq!(recorded.is_ok(), accepted);
+        if accepted {
+            assert!(core.evidence_source.is_none());
+        }
+    }
+}
+
+#[test]
 fn recording_statement_evidence_checks_it_advances_the_frontier() {
     // The record call itself applies the judgment the end-of-proof walk
     // applies: the theorem proves the frontier's next source statement
@@ -3229,6 +3269,72 @@ fn recorded_evidence_consumes_the_source_not_the_driver_frontier() {
     )
     .expect("the tail is the source the evidence has yet to consume");
     assert!(core.evidence_source.is_none());
+}
+
+#[test]
+fn void_fallthrough_completion_requires_consuming_the_entire_source() {
+    for (return_type, pending_return) in [
+        (CType::Void, false),
+        (CType::Void, true),
+        (CType::Int32, false),
+    ] {
+        let body = if pending_return {
+            CStatement::Seq(
+                std::sync::Arc::new(CStatement::Skip),
+                std::sync::Arc::new(c_return(c_void_value())),
+            )
+        } else {
+            CStatement::Skip
+        };
+        let function = c_function(return_type, "fallthrough", Vec::new(), body);
+        let caller = CState::new();
+        let entry = c_function_entry_state(&caller, &function, &[]).expect("entry");
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            caller.clone(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        core.record_statement_transition(
+            &function,
+            &[],
+            Theorem::new(Proposition::CStatementVerifies {
+                state: entry.clone(),
+                statement: CStatement::Skip,
+                outcome: CStatementOutcome::Normal(entry.clone()),
+            }),
+            PureFactContext::new(),
+            &[],
+            &[],
+        )
+        .expect("checked next statement");
+        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+            &caller,
+            &function,
+            CStatementOutcome::Return {
+                value: CValue::Void,
+                state: entry,
+            },
+            Vec::new(),
+            &PureFactContext::new(),
+        );
+        let candidates = c_function_execution_candidates_from_outcomes(
+            caller,
+            function.clone(),
+            Vec::new(),
+            vec![(outcome, Vec::new(), obligations)],
+        );
+        let result = core.checked_function_execution(
+            &candidates,
+            &function,
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+        );
+        assert_eq!(
+            result.is_ok(),
+            return_type == CType::Void && !pending_return
+        );
+    }
 }
 
 #[test]

@@ -91,6 +91,16 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   equalities supply their element equalities in linear work. Concrete and
   abstract refinement proofs retain the ordinary resource and effect checks.
 
+- Explicit `executes callback(...)` theorems reuse ordinary one-call execution
+  proofs to adapt resource representations. `step(Contract)` selects one
+  ownership transition and footprint while supported independent guarantees
+  from other applicable interfaces constrain the same call. The first slice
+  supports void and return-valued callbacks and reusable implications from
+  one or more named source contracts to a named target contract, with ordinary proof cases and
+  theorem application. A return-valued step forwards the actual typed call
+  result without another source-level proof step. Extra theorem parameters
+  remain a future extension of this proof form.
+
 The remaining semantic step is refinement for broader state-dependent
 propositions at concrete-pointer formation.
 Guarded effects participate in footprint containment, but stateful
