@@ -2598,7 +2598,7 @@ impl CState {
     pub fn with_counted_population(
         mut self,
         name: impl Into<String>,
-        arguments: Vec<CValue>,
+        arguments: ResourceArguments,
         count: Bitvector32Term,
     ) -> Self {
         let name = name.into();
@@ -2622,13 +2622,17 @@ impl CState {
         self
     }
 
-    pub fn counted_population(&self, name: &str, arguments: &[CValue]) -> Option<&Bitvector32Term> {
+    pub fn counted_population(
+        &self,
+        name: &str,
+        arguments: &[AlgebraicValue],
+    ) -> Option<&Bitvector32Term> {
         self.counted_populations
             .iter()
             .find(|population| {
                 !population.family_observation_marker
                     && population.name == name
-                    && population.arguments == arguments
+                    && population.arguments.as_ref() == arguments
             })
             .map(|population| &population.count)
     }
@@ -2636,9 +2640,9 @@ impl CState {
     pub fn counted_population_proven_equal(
         &self,
         name: &str,
-        arguments: &[CValue],
+        arguments: &[AlgebraicValue],
         assumptions: &PureFactContext,
-    ) -> Option<(String, Vec<CValue>, Bitvector32Term)> {
+    ) -> Option<(String, ResourceArguments, Bitvector32Term)> {
         self.counted_populations
             .iter()
             .find(|population| {
@@ -2650,7 +2654,7 @@ impl CState {
                         .iter()
                         .zip(arguments)
                         .all(|(left, right)| {
-                            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                            crate::kernel::resource_arguments_proven_equal(left, right, assumptions)
                         })
             })
             .map(|population| {
@@ -2665,7 +2669,7 @@ impl CState {
     pub fn counted_population_sum(
         &self,
         name: &str,
-        arguments: &[Option<CValue>],
+        arguments: &[Option<AlgebraicValue>],
         assumptions: &PureFactContext,
     ) -> Bitvector32Term {
         self.counted_populations
@@ -2680,7 +2684,7 @@ impl CState {
                         .zip(arguments)
                         .all(|(actual, expected)| {
                             expected.as_ref().is_none_or(|expected| {
-                                c_values_proven_equal_for_memory_resolution(
+                                crate::kernel::resource_arguments_proven_equal(
                                     actual,
                                     expected,
                                     assumptions,
@@ -2693,11 +2697,11 @@ impl CState {
             })
     }
 
-    pub fn without_counted_population(mut self, name: &str, arguments: &[CValue]) -> Self {
+    pub fn without_counted_population(mut self, name: &str, arguments: &[AlgebraicValue]) -> Self {
         std::sync::Arc::make_mut(&mut self.counted_populations).retain(|population| {
             population.family_observation_marker
                 || population.name != name
-                || population.arguments != arguments
+                || population.arguments.as_ref() != arguments
         });
         self
     }
@@ -2713,7 +2717,7 @@ impl CState {
         if !self.observes_population_family(&name) {
             std::sync::Arc::make_mut(&mut self.counted_populations).push(CCountedPopulation {
                 name,
-                arguments: Vec::new(),
+                arguments: std::sync::Arc::from([]),
                 count: Bitvector32Term::Constant(0),
                 family_observation_marker: true,
             });

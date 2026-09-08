@@ -2049,9 +2049,9 @@ fn exact_resources_proven_equal(
                 && left_arguments.len() == right_arguments.len()
                 && left_arguments
                     .iter()
-                    .zip(right_arguments)
+                    .zip(right_arguments.iter())
                     .all(|(left, right)| {
-                        c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                        crate::kernel::resource_arguments_proven_equal(left, right, assumptions)
                     })
         }
         _ => false,
@@ -2918,14 +2918,17 @@ impl CResourceFact {
     }
 
     pub fn own_composite(name: String, arguments: Vec<CValue>) -> Self {
+        let arguments = arguments.into_iter().map(AlgebraicValue::C).collect();
         Self::own(CResource::Composite { name, arguments })
     }
 
     pub fn view_composite(name: String, arguments: Vec<CValue>) -> Self {
+        let arguments = arguments.into_iter().map(AlgebraicValue::C).collect();
         Self::View(CResource::Composite { name, arguments })
     }
 
     pub fn own_token(name: String, arguments: Vec<CValue>) -> Self {
+        let arguments = arguments.into_iter().map(AlgebraicValue::C).collect();
         Self::own(CResource::Token { name, arguments })
     }
 
@@ -2962,7 +2965,11 @@ impl CResourceFact {
         if name != Self::ALLOCATION_RESOURCE_NAME {
             return None;
         }
-        let [CValue::Pointer(base), CValue::Int32(bytes)] = arguments.as_slice() else {
+        let [
+            AlgebraicValue::C(CValue::Pointer(base)),
+            AlgebraicValue::C(CValue::Int32(bytes)),
+        ] = arguments.as_ref()
+        else {
             return None;
         };
         Some((base.pointer(), bytes))
@@ -2972,7 +2979,7 @@ impl CResourceFact {
         match self.resource() {
             CResource::Memory(range) => &range.base().block == block,
             CResource::Composite { arguments, .. } => arguments.iter().any(
-                |argument| matches!(argument, CValue::Pointer(pointer) if &pointer.block == block),
+                |argument| matches!(argument, AlgebraicValue::C(CValue::Pointer(pointer)) if &pointer.block == block),
             ),
             CResource::Token { .. } => false,
         }
@@ -3012,6 +3019,7 @@ impl CResourceFact {
     }
 
     pub fn view_token(name: String, arguments: Vec<CValue>) -> Self {
+        let arguments = arguments.into_iter().map(AlgebraicValue::C).collect();
         Self::View(CResource::Token { name, arguments })
     }
 

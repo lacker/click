@@ -38,6 +38,12 @@ ownership of the unchanged C tree.
 - The [sequence-transform example](../examples/sequence-transform/README.md)
   verifies fixed-size copying, concatenation, reversal, and membership using
   sequence literals. Its C remains unchanged.
+- Kernel resource identities and population keys accept typed C or symbolic
+  ADT arguments in shared immutable storage. Kernel tests cover arbitrary
+  indices, equality-justified transfer, type and constructor distinctions,
+  linear ownership, counts, pointer/scalar substitution inside models, and
+  deterministic scaling. A model index itself grants no memory authority.
+  This is kernel support, not surface resource declarations or C contracts.
 
 Pure Click expressions define symbolic terms; only C executes. A pure `match`
 does not automatically split a proof or introduce proof-scope bindings.
@@ -46,12 +52,12 @@ checks conditional reductions against explicitly cited premises.
 
 ## Current gaps
 
-- Resource parameters and identities do not accept ADT values. Surface
-  validation explicitly rejects them; kernel resource arguments are
-  `Vec<CValue>`, resource specifications use C expressions/types, and composite
-  definitions use C parameters. Equality, substitution, resource counts,
-  contract transfer, and checked fold/unfold must preserve symbolic model
-  arguments rather than encode them as C values.
+- Surface resource parameters still reject ADT values. Kernel resource
+  identities support them, but resource specifications still use C
+  expressions/types and composite definitions use C parameters. Surface
+  lowering, C-contract model inputs/outputs, and checked body instantiation
+  must carry symbolic arguments without encoding them as C values. C-only
+  body evaluators reject a model argument rather than treating it as a scalar.
 - Resource bodies support one load-free `if` guard with an empty false case,
   but no `else` or constructor `match`. Resource-body witnesses are restricted
   to C pointers, so they cannot bind existential child models.
@@ -79,6 +85,8 @@ Implement and check the following slices in order:
    actual types through resource identities, equality, substitution, lowering,
    and certificates. Check a small nonrecursive model-indexed resource first,
    including an arbitrary model variable, not only concrete constructors.
+   The kernel identity/substitution/counting slice is implemented; the surface
+   and C-contract integration remain open.
    [adt_indexed_resource.md](../mdtests/adt_indexed_resource.md) records the
    current exact declaration-level rejection for `marked_cell(p, mark: Mark)`.
    Turn it into a passing fixture as support lands, then add the arbitrary-index
@@ -106,9 +114,22 @@ Implement and check the following slices in order:
    regressions. Iterative structural termination is tracked separately in
    [structural-loop-termination.md](structural-loop-termination.md).
 
-None of the new model-indexed resource or resource-match implementation has
-landed. The existing pure tree proofs must not be reported as verification of
-the C tree.
+Resource `match` and the modeled C contracts remain unimplemented. The kernel
+identity tests and existing pure tree proofs must not be reported as
+verification of the C tree.
+
+### Next design decision: proof-only contract inputs
+
+Decide how a C contract declares an arbitrary model input, and how a call
+instantiates it from the resources it transfers. The existing contract
+`let ... where` form introduces an existential witness; silently treating it
+as a universally quantified model parameter would change its semantics.
+
+The proposed direction is explicit universally quantified proof-only contract
+parameters, separate from C parameters, with call-site inference from resource
+indices. Their declaration syntax and inference/explicit-instantiation rules
+need agreement before the arbitrary-index read/return fixture is implemented.
+Do not replace that fixture with concrete-only indices or add ghost C arguments.
 
 ## Violated invariant
 

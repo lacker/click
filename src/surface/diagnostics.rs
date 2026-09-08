@@ -639,7 +639,7 @@ fn describe_resource_subject(resource: &ResourceSubject) -> String {
 
 fn format_declared_resource(
     name: &str,
-    resource_arguments: &[CValue],
+    resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
@@ -647,7 +647,11 @@ fn format_declared_resource(
         "{name}({})",
         resource_arguments
             .iter()
-            .map(|argument| describe_c_value(argument, parameters, arguments))
+            .map(|argument| match argument {
+                AlgebraicValue::C(value) => describe_c_value(value, parameters, arguments),
+                AlgebraicValue::Algebraic(value) =>
+                    format!("<{} model>", value.algebraic_type.name),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     )

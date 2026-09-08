@@ -691,7 +691,8 @@ pub fn composite_resource_witness_values(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         state.locals.set_typed(
             parameter.name().to_string(),
             argument.clone(),
@@ -3127,7 +3128,7 @@ pub(crate) fn counted_populations_definitionally_equal(
             (
                 (
                     population.name.as_str(),
-                    population.arguments.as_slice(),
+                    population.arguments.as_ref(),
                     population.family_observation_marker,
                 ),
                 &population.count,
@@ -3137,7 +3138,7 @@ pub(crate) fn counted_populations_definitionally_equal(
     left_populations.into_iter().all(|population| {
         let identity = (
             population.name.as_str(),
-            population.arguments.as_slice(),
+            population.arguments.as_ref(),
             population.family_observation_marker,
         );
         right_by_identity.get(&identity).is_some_and(|right_count| {

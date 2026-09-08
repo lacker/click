@@ -66,7 +66,7 @@ fn apply_pool_transition(state: &CState, function: &CFunction, pool: u32, object
 fn pool_count(state: &CState, pool: u32) -> Bitvector32Term {
     state.counted_population_sum(
         "pool_object",
-        &[Some(int32(pool)), None],
+        &[Some(int32(pool).into()), None],
         &PureFactContext::new(),
     )
 }

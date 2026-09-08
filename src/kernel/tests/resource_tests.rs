@@ -1,5 +1,333 @@
 use super::*;
 
+fn resource_index_type(name: &str, fields: Vec<AlgebraicValueType>) -> AlgebraicType {
+    let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+        AlgebraicVariantType {
+            name: "Clear".into(),
+            fields: vec![],
+        },
+        AlgebraicVariantType {
+            name: "Set".into(),
+            fields,
+        },
+    ]
+    .into();
+    let value_type = AlgebraicValueType::Algebraic {
+        name: name.into(),
+        arguments: vec![],
+    };
+    AlgebraicType {
+        rigid: false,
+        name: name.into(),
+        arguments: vec![],
+        variants: variants.clone(),
+        schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+            value_type, variants,
+        )]))),
+    }
+}
+
+fn resource_index_variable(ty: &AlgebraicType, id: u64) -> AlgebraicTerm {
+    AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(id)),
+    }
+}
+
+fn indexed_resource(index: AlgebraicTerm, composite: bool) -> CResource {
+    let arguments = vec![AlgebraicValue::Algebraic(index)].into();
+    if composite {
+        CResource::Composite {
+            name: "indexed".into(),
+            arguments,
+        }
+    } else {
+        CResource::Token {
+            name: "indexed".into(),
+            arguments,
+        }
+    }
+}
+
+#[test]
+fn symbolic_resource_indices_preserve_types_equality_and_linear_transfer() {
+    let ty = resource_index_type("Mark", vec![]);
+    let m = resource_index_variable(&ty, 990_001);
+    let n = resource_index_variable(&ty, 990_002);
+    let other = resource_index_variable(&resource_index_type("Other", vec![]), 990_001);
+    for composite in [false, true] {
+        let owned = CResourceFact::own(indexed_resource(m.clone(), composite));
+        let renamed = CResourceFact::own(indexed_resource(n.clone(), composite));
+        let wrong_type = CResourceFact::own(indexed_resource(other.clone(), composite));
+        let facts = ResourceContext::new().unchecked_with_fact(owned.clone());
+        let empty = PureFactContext::new();
+        assert!(facts.satisfies_fact(&owned, &empty));
+        assert!(!facts.satisfies_fact(&renamed, &empty));
+        assert!(!facts.satisfies_fact(&wrong_type, &empty));
+        assert!(!facts.satisfies_fact(
+            &CResourceFact::own_quantity(owned.resource().clone(), Bitvector32Term::Constant(2)),
+            &empty,
+        ));
+        assert!(
+            !ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::View(owned.resource().clone()))
+                .satisfies_fact(&owned, &empty)
+        );
+
+        for equality in [
+            Proposition::Equal(Term::Algebraic(m.clone()), Term::Algebraic(n.clone())),
+            Proposition::Equal(Term::Algebraic(n.clone()), Term::Algebraic(m.clone())),
+            Proposition::ConditionIs(
+                ConditionTerm::AlgebraicEqual(Box::new(m.clone()), Box::new(n.clone())),
+                true,
+            ),
+        ] {
+            let assumptions = empty.clone().assume_proposition(equality);
+            assert!(facts.satisfies_fact(&renamed, &assumptions));
+            assert!(c_resources_directly_match(
+                owned.resource(),
+                renamed.resource(),
+                &assumptions
+            ));
+            let remaining = facts
+                .clone()
+                .without_fact_delaying_normalization(&renamed, &assumptions)
+                .expect("an equal index should transfer the same unit");
+            assert!(remaining.is_empty());
+            assert!(!remaining.satisfies_fact(&owned, &assumptions));
+            assert!(!remaining.satisfies_fact(&renamed, &assumptions));
+        }
+    }
+}
+
+#[test]
+fn symbolic_resource_indices_distinguish_constructors_and_population_counts() {
+    let ty = resource_index_type("Mark", vec![]);
+    let constructor = |variant: &str| AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: variant.into(),
+            fields: vec![],
+        },
+    };
+    let clear = indexed_resource(constructor("Clear"), false);
+    let set = indexed_resource(constructor("Set"), false);
+    assert!(!c_resources_directly_match(
+        &clear,
+        &set,
+        &PureFactContext::new()
+    ));
+
+    let m = resource_index_variable(&ty, 990_010);
+    let n = resource_index_variable(&ty, 990_011);
+    let arguments: ResourceArguments = vec![AlgebraicValue::Algebraic(m.clone())].into();
+    let n_arguments = vec![AlgebraicValue::Algebraic(n.clone())];
+    let state = CState::new().with_counted_population(
+        "indexed",
+        arguments.clone(),
+        Bitvector32Term::Constant(3),
+    );
+    assert_eq!(
+        state.counted_population("indexed", &arguments),
+        Some(&Bitvector32Term::Constant(3))
+    );
+    assert!(state.counted_population("indexed", &n_arguments).is_none());
+    let assumptions = PureFactContext::new()
+        .assume_proposition(Proposition::Equal(Term::Algebraic(m), Term::Algebraic(n)));
+    let (_, recovered, count) = state
+        .counted_population_proven_equal("indexed", &n_arguments, &assumptions)
+        .unwrap();
+    assert!(std::sync::Arc::ptr_eq(&arguments, &recovered));
+    assert_eq!(count, Bitvector32Term::Constant(3));
+    assert_eq!(
+        state.counted_population_sum("indexed", &[None], &assumptions),
+        count
+    );
+    assert_eq!(
+        state.counted_population_sum("indexed", &[Some(n_arguments[0].clone())], &assumptions),
+        count
+    );
+}
+
+#[test]
+fn symbolic_resource_indices_substitute_nested_payloads_without_memory_authority() {
+    let pointer = Pointer::symbolic(Variable(990_020));
+    let target = Pointer {
+        block: "indexed-target".into(),
+        offset: PointerOffsetTerm::Constant(12),
+    };
+    let ty = resource_index_type(
+        "Payload",
+        vec![
+            AlgebraicValueType::C(CValue::pointer(pointer.clone()).c_type()),
+            AlgebraicValueType::C(CType::Int32),
+        ],
+    );
+    let model = |p: Pointer, value: Bitvector32Term| AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![
+                AlgebraicValue::C(CValue::pointer(p)),
+                AlgebraicValue::C(int32(value)),
+            ],
+        },
+    };
+    let value = Bitvector32Term::Variable(Variable(990_021));
+    let original = indexed_resource(model(pointer.clone(), value.clone()), false);
+    let context = ResourceContext::new().unchecked_with_fact(CResourceFact::own(original.clone()));
+    let empty = PureFactContext::new();
+    let memory = memory_range(pointer, 0, 1);
+    assert!(!context.satisfies_fact(&CResourceFact::view_memory(memory.clone()), &empty));
+    assert!(!context.satisfies_fact(&CResourceFact::own_memory(memory), &empty));
+
+    let numeric = crate::kernel::reasoning::substitute_bitvector_variable_in_c_resource(
+        &original,
+        Variable(990_021),
+        &Bitvector32Term::Constant(7),
+    );
+    let source = Proposition::CResourceComposition(
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own(numeric)),
+    );
+    let substituted = crate::kernel::reasoning::substitute_pointer_variable_in_proposition(
+        &source,
+        Variable(990_020),
+        &target,
+    );
+    let expected = Proposition::CResourceComposition(ResourceContext::new().unchecked_with_fact(
+        CResourceFact::own(indexed_resource(
+            model(target, Bitvector32Term::Constant(7)),
+            false,
+        )),
+    ));
+    assert_eq!(substituted, expected);
+}
+
+#[test]
+fn symbolic_resource_indices_share_snapshots_and_scale_with_indexed_context() {
+    let ty = resource_index_type("Mark", vec![]);
+    let selected = CResourceFact::own(indexed_resource(
+        resource_index_variable(&ty, 991_000),
+        false,
+    ));
+    let renamed = CResourceFact::own(indexed_resource(
+        resource_index_variable(&ty, 991_001),
+        false,
+    ));
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::Equal(
+        Term::Algebraic(resource_index_variable(&ty, 991_000)),
+        Term::Algebraic(resource_index_variable(&ty, 991_001)),
+    ));
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let (_, build_work) = crate::instrumentation::measure_deterministic_work(|| {
+            let mut context = ResourceContext::new();
+            for i in 0..size {
+                let fact = CResourceFact::own(CResource::Token {
+                    name: format!("indexed_{i}"),
+                    arguments: vec![AlgebraicValue::Algebraic(resource_index_variable(
+                        &ty,
+                        992_000 + i,
+                    ))]
+                    .into(),
+                });
+                let cloned = fact.clone();
+                let (CResource::Token { arguments: a, .. }, CResource::Token { arguments: b, .. }) =
+                    (fact.resource(), cloned.resource())
+                else {
+                    unreachable!()
+                };
+                assert!(std::sync::Arc::ptr_eq(a, b));
+                context = context.unchecked_with_fact(fact);
+            }
+            context
+        });
+        let context = unrelated_token_context(size as usize).unchecked_with_fact(selected.clone());
+        let (remaining, transfer_work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.without_fact_delaying_normalization(&renamed, &assumptions)
+        });
+        assert_eq!(remaining.unwrap().facts().len(), size as usize);
+        samples.push((size, build_work, transfer_work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3).saturating_add(16),
+            "building ADT-indexed resources: {samples:?}"
+        );
+        assert!(
+            pair[1].2 <= pair[0].2.saturating_mul(2).saturating_add(16),
+            "fixed indexed transfer: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn symbolic_resource_indices_exact_transfer_scales_with_same_family_indices() {
+    let ty = resource_index_type("Mark", vec![]);
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let selected = CResourceFact::own(indexed_resource(resource_index_variable(&ty, 1), false));
+        let context = ResourceContext::new().unchecked_with_facts((1..=size).map(|id| {
+            CResourceFact::own(indexed_resource(resource_index_variable(&ty, id), false))
+        }));
+        let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.without_fact_delaying_normalization(&selected, &PureFactContext::new())
+        });
+        assert_eq!(remaining.unwrap().facts().len(), size as usize - 1);
+        samples.push((size, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(16),
+            "exact ADT index lookup: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn symbolic_resource_indices_clone_recursive_models_by_sharing() {
+    let ty = resource_index_type(
+        "Chain",
+        vec![AlgebraicValueType::Algebraic {
+            name: "Chain".into(),
+            arguments: vec![],
+        }],
+    );
+    for size in [8, 16, 32, 64] {
+        let mut model = AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: "Clear".into(),
+                fields: vec![],
+            },
+        };
+        for _ in 0..size {
+            model = AlgebraicTerm {
+                algebraic_type: ty.clone(),
+                node: AlgebraicTermNode::Constructor {
+                    variant: "Set".into(),
+                    fields: vec![AlgebraicValue::Algebraic(model)],
+                },
+            };
+        }
+        assert!(model.is_well_formed());
+        let resource = indexed_resource(model, false);
+        let cloned = resource.clone();
+        let (
+            CResource::Token {
+                arguments: left, ..
+            },
+            CResource::Token {
+                arguments: right, ..
+            },
+        ) = (&resource, &cloned)
+        else {
+            unreachable!()
+        };
+        assert!(std::sync::Arc::ptr_eq(left, right));
+    }
+}
+
 fn unrelated_token_context(size: usize) -> ResourceContext {
     ResourceContext::new().unchecked_with_facts(
         (0..size).map(|index| {
@@ -25,7 +353,7 @@ fn zero_owned_resource_is_identity_after_symbolic_resolution() {
     let required = CResourceFact::own_quantity(
         CResource::Token {
             name: "empty".to_string(),
-            arguments: vec![int32(7)],
+            arguments: vec![int32(7).into()].into(),
         },
         quantity,
     );
@@ -58,7 +386,7 @@ fn zero_resource_identity_ignores_unrelated_resources() {
     let required = CResourceFact::own_quantity(
         CResource::Token {
             name: "empty".to_string(),
-            arguments: vec![int32(7)],
+            arguments: vec![int32(7).into()].into(),
         },
         quantity,
     );
@@ -90,7 +418,7 @@ fn zero_resource_count_witness_needs_no_population_bucket() {
     let resource = CResourceFact::own_quantity(
         CResource::Composite {
             name: "empty".to_string(),
-            arguments: vec![int32(7)],
+            arguments: vec![int32(7).into()].into(),
         },
         Bitvector32Term::Constant(0),
     );
@@ -115,13 +443,13 @@ fn owned_resource_invariant_theorems_retain_context_premises() {
     let resource = CResourceFact::own_quantity(
         CResource::Token {
             name: "symbolic".to_string(),
-            arguments: vec![int32(7)],
+            arguments: vec![int32(7).into()].into(),
         },
         quantity.clone(),
     );
     let state = CState::new()
         .with_resource_context(ResourceContext::new().unchecked_with_fact(resource.clone()))
-        .with_counted_population("symbolic", vec![int32(7)], count.clone());
+        .with_counted_population("symbolic", vec![int32(7).into()].into(), count.clone());
     let count_claim = Proposition::ConditionIs(
         ConditionTerm::signed_less_equal(quantity.clone(), count),
         true,
@@ -165,13 +493,17 @@ fn owned_resource_invariant_theorems_do_not_search_the_context() {
     let resource = CResourceFact::own_quantity(
         CResource::Token {
             name: "symbolic_no_search".to_string(),
-            arguments: vec![int32(7)],
+            arguments: vec![int32(7).into()].into(),
         },
         quantity.clone(),
     );
     let state = CState::new()
         .with_resource_context(ResourceContext::new().unchecked_with_fact(resource.clone()))
-        .with_counted_population("symbolic_no_search", vec![int32(7)], count.clone());
+        .with_counted_population(
+            "symbolic_no_search",
+            vec![int32(7).into()].into(),
+            count.clone(),
+        );
     let claim = Proposition::ConditionIs(
         ConditionTerm::signed_less_equal(quantity.clone(), count.clone()),
         true,
@@ -460,7 +792,7 @@ fn resource_common_descendant_visits_only_branch_local_changes() {
     let merged = CResourceFact::own_quantity(
         CResource::Token {
             name: "mergeable".to_string(),
-            arguments: Vec::new(),
+            arguments: Vec::new().into(),
         },
         Bitvector32Term::Constant(2),
     );
@@ -965,7 +1297,7 @@ fn symbolic_declared_resource_quantity_splits_without_materializing_units() {
     let quantity = Bitvector32Term::var(Variable(700));
     let resource = CResource::Token {
         name: "permit".to_string(),
-        arguments: vec![int32(9)],
+        arguments: vec![int32(9).into()].into(),
     };
     let symbolic = CResourceFact::own_quantity(resource.clone(), quantity.clone());
     let unit = CResourceFact::own(resource.clone());
@@ -995,7 +1327,7 @@ fn symbolic_declared_resource_quantity_splits_without_materializing_units() {
 fn declared_resource_quantity_work_ignores_the_numeric_coefficient() {
     let resource = CResource::Token {
         name: "permit".to_string(),
-        arguments: vec![int32(9)],
+        arguments: vec![int32(9).into()].into(),
     };
     let symbolic_quantity = Bitvector32Term::var(Variable(701));
 
@@ -1059,7 +1391,7 @@ fn zero_declared_resource_quantity_is_the_composition_identity() {
     let zero = CResourceFact::own_quantity(
         CResource::Token {
             name: "permit".to_string(),
-            arguments: vec![int32(9)],
+            arguments: vec![int32(9).into()].into(),
         },
         Bitvector32Term::Constant(0),
     );
@@ -1142,7 +1474,7 @@ fn incremental_quantity_consumption_normalizes_only_the_exact_resource_bucket() 
     for size in [16_u32, 64, 256, 1024, 4096] {
         let target_resource = CResource::Token {
             name: "shared_name".to_string(),
-            arguments: vec![int32(size + 1)],
+            arguments: vec![int32(size + 1).into()].into(),
         };
         let unit = CResourceFact::Own(
             target_resource.clone(),
@@ -1213,7 +1545,7 @@ fn incremental_quantity_consumption_normalizes_only_the_exact_resource_bucket() 
     let unavailable = CResourceFact::own_quantity(
         CResource::Token {
             name: "target".to_string(),
-            arguments: Vec::new(),
+            arguments: Vec::new().into(),
         },
         Bitvector32Term::Constant(3),
     );
@@ -1333,11 +1665,11 @@ fn resource_context_observes_same_and_cross_family_separation() {
     ));
     let token = CResource::Token {
         name: "left".to_string(),
-        arguments: vec![],
+        arguments: vec![].into(),
     };
     let other_token = CResource::Token {
         name: "right".to_string(),
-        arguments: vec![],
+        arguments: vec![].into(),
     };
     let facts = ResourceContext::new()
         .unchecked_with_fact(CResourceFact::own(memory.clone()))
@@ -1367,7 +1699,7 @@ fn observable_abstract_resources_use_one_indexed_composition() {
         let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
             CResourceFact::own(CResource::Token {
                 name: format!("token_{index}"),
-                arguments: vec![],
+                arguments: vec![].into(),
             })
         }));
         let facts = context
@@ -1398,11 +1730,11 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
     };
     let left = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
-        arguments: vec![CValue::pointer(left_pointer.clone())],
+        arguments: vec![CValue::pointer(left_pointer.clone()).into()].into(),
     });
     let right = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
-        arguments: vec![CValue::pointer(right_pointer.clone())],
+        arguments: vec![CValue::pointer(right_pointer.clone()).into()].into(),
     });
     let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::pointer_equal(left_pointer, right_pointer),
@@ -1512,7 +1844,7 @@ fn resource_contains_projects_separation_to_children() {
     };
     let parent = CResource::Token {
         name: "parent".to_string(),
-        arguments: vec![],
+        arguments: vec![].into(),
     };
     let child = CResource::Memory(memory_range(base.clone(), 0, 1));
     let other = CResource::Memory(memory_range(base.clone(), 1, 2));

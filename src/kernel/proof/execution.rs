@@ -4283,7 +4283,7 @@ mod tests {
             .with_memory(
                 CMemory::new().store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1))),
             )
-            .with_counted_population("item", Vec::new(), Bitvector32Term::Constant(1));
+            .with_counted_population("item", Vec::new().into(), Bitvector32Term::Constant(1));
         let entry_state = crate::kernel::c_function_entry_state(&caller, &function, &[])
             .expect("the empty argument list should bind");
         let checked = CheckedFunctionEntry::check(
@@ -4312,7 +4312,7 @@ mod tests {
         );
 
         let changed_population =
-            caller.with_counted_population("item", Vec::new(), Bitvector32Term::Constant(2));
+            caller.with_counted_population("item", Vec::new().into(), Bitvector32Term::Constant(2));
         assert!(
             checked
                 .entry_state_for(&changed_population, &function, &[], &assumptions)

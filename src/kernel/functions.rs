@@ -4990,7 +4990,10 @@ fn evaluate_resource_population_body_resources(
             ))));
         }
         let mut population_state = callee_state.clone();
-        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            let Some(argument) = argument.as_c_value() else {
+                return Ok(Err(CRuntimeError::TypeMismatch));
+            };
             if parameter.c_type() != argument.c_type() {
                 return Ok(Err(CRuntimeError::TypeMismatch));
             }
@@ -5355,8 +5358,8 @@ fn counted_population_quantities(
     tracked_state: &CState,
     assumptions: &PureFactContext,
     track_ordinary_populations: bool,
-) -> BTreeMap<(String, Vec<CValue>), Bitvector32Term> {
-    let mut quantities = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
+) -> BTreeMap<(String, ResourceArguments), Bitvector32Term> {
+    let mut quantities = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in resources.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -6054,7 +6057,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
 /// deterministically from the variables already in use.
 pub(super) fn bind_composite_witnesses(
     definition: &CCompositeResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     state: &mut CState,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CValue>> {
@@ -6066,7 +6069,7 @@ pub(super) fn bind_composite_witnesses(
 /// separately, for callers whose evaluation state carries no resources.
 pub(super) fn bind_composite_witnesses_with_held(
     definition: &CCompositeResourceDefinition,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     state: &mut CState,
     held: &ResourceContext,
     assumptions: &PureFactContext,
@@ -6152,7 +6155,7 @@ pub(super) fn bind_composite_witnesses_with_held(
 fn held_child_witness(
     definition: &CCompositeResourceDefinition,
     witness: &str,
-    arguments: &[CValue],
+    arguments: &[AlgebraicValue],
     resources: &ResourceContext,
     assumptions: &PureFactContext,
 ) -> Option<Pointer> {
@@ -6160,7 +6163,7 @@ fn held_child_witness(
     let own_pointers = arguments
         .iter()
         .filter_map(|argument| match argument {
-            CValue::Pointer(pointer) => Some(pointer.pointer().clone()),
+            AlgebraicValue::C(CValue::Pointer(pointer)) => Some(pointer.pointer().clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -6177,8 +6180,10 @@ fn held_child_witness(
         .iter()
         .filter_map(|fact| match fact.resource() {
             CResource::Composite { name, arguments } if name == child_name => {
-                match arguments.as_slice() {
-                    [CValue::Pointer(pointer)] => Some(pointer.pointer().clone()),
+                match arguments.as_ref() {
+                    [AlgebraicValue::C(CValue::Pointer(pointer))] => {
+                        Some(pointer.pointer().clone())
+                    }
                     _ => None,
                 }
             }
@@ -6272,7 +6277,8 @@ pub(super) fn expand_composite_resource_fact_with_children(
     let mut state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(expansion_base.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -6602,7 +6608,7 @@ fn composite_names_pointer_base(composite: &CResourceFact, pointer: &Pointer) ->
         return false;
     };
     arguments.iter().any(|argument| {
-        let CValue::Pointer(argument) = argument else {
+        let AlgebraicValue::C(CValue::Pointer(argument)) = argument else {
             return false;
         };
         argument.pointer() == pointer
@@ -6725,7 +6731,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
     assumptions: &PureFactContext,
     include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
-    let mut populations = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
+    let mut populations = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in context.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -6779,7 +6785,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
         let body_active = match population_count {
             Some(_) => {
                 let mut population_state = state.clone();
-                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+                    let argument = argument.as_c_value()?;
                     if parameter.c_type() != argument.c_type() {
                         return None;
                     }
@@ -6809,7 +6816,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             }
             None if !definition.is_counted_population() && !include_ordinary => {
                 let mut population_state = state.clone();
-                for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+                for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+                    let argument = argument.as_c_value()?;
                     if parameter.c_type() != argument.c_type() {
                         return None;
                     }
@@ -6846,7 +6854,8 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             return None;
         }
         let mut population_state = state.clone();
-        for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+        for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            let argument = argument.as_c_value()?;
             if parameter.c_type() != argument.c_type() {
                 return None;
             }
@@ -6985,7 +6994,8 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -7067,7 +7077,8 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
         return None;
     }
     let mut state = CState::new().with_memory(memory.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -7146,7 +7157,8 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     let mut state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(resources.clone());
-    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let argument = argument.as_c_value()?;
         if parameter.c_type() != argument.c_type() {
             return None;
         }
@@ -7752,11 +7764,11 @@ fn evaluate_function_declared_resource_spec(
     let resource = match family {
         ResourceFamily::Composite => CResource::Composite {
             name: name.to_string(),
-            arguments: values,
+            arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
         ResourceFamily::Token => CResource::Token {
             name: name.to_string(),
-            arguments: values,
+            arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
         ResourceFamily::Memory => {
             return Ok(Err(CRuntimeError::FunctionContract(
