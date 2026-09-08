@@ -664,6 +664,18 @@ fn instantiate_proof_tactic(
                 algebraic_parameters,
             )?,
         }),
+        ProofTactic::Both(both) => ProofTactic::Both(ProofBoth {
+            left_tactics: instantiate_proof_tactics(
+                &both.left_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+            right_tactics: instantiate_proof_tactics(
+                &both.right_tactics,
+                substitution,
+                algebraic_parameters,
+            )?,
+        }),
         ProofTactic::Cases(cases) => ProofTactic::Cases(ProofCases {
             disjunction: proposition(&cases.disjunction)?,
             left_tactics: instantiate_proof_tactics(

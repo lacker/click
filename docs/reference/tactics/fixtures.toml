@@ -3,6 +3,11 @@
 # PUBLIC_TACTIC_FORMS and confirms that each needle remains in its fixture.
 
 [[form]]
+id = "both"
+path = "mdtests/proof_both_and.md"
+needle = "both { normalize(); } and {"
+
+[[form]]
 id = "mark"
 path = "mdtests/proof_mark_current_frontier.md"
 needle = "mark after_first_write;"

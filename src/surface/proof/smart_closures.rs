@@ -3600,6 +3600,25 @@ impl<'a> Proof<'a> {
                         proof_if.condition.clone(),
                     )?;
                 }
+                ProofTactic::Both(both) => {
+                    let (split_proof, split, ids) = proof.split_focused_both()?;
+                    let marker = split_proof.checkpoint();
+                    let Some(left_done) = split_proof
+                        .focus_branch(ids[0])?
+                        .try_focused_script_arm(&both.left_tactics, authoritative, generated)?
+                    else {
+                        return Ok(None);
+                    };
+                    let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
+                        &both.right_tactics,
+                        authoritative,
+                        generated,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    proof = both_done.join_focused_both(&marker, split, ids)?;
+                }
                 ProofTactic::Cases(proof_cases) => {
                     let (split_proof, split, ids) =
                         proof.split_focused_cases(proof_cases.disjunction.clone())?;

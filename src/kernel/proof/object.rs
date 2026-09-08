@@ -900,6 +900,50 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         ))
     }
 
+    /// Open the exact conjuncts without introducing either as an assumption.
+    pub(crate) fn split_proposition_both(
+        &self,
+        presentation: impl Fn(&P, bool) -> P,
+    ) -> Result<ProofSplit<L, ProofObligation<P, Arc<OutcomeProofState<S>>>, E>, &'static str> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or("`both` follows a completed proof")?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return Err("`both` requires a proposition goal");
+        };
+        let Proposition::And(left, right) = goal.proposition() else {
+            return Err("`both` requires an `and` goal");
+        };
+        let arm = |proposition: &Proposition, left: bool| {
+            let mut child = super::PropositionObligation::new(
+                proposition.clone(),
+                presentation(&goal.presentation, left),
+            );
+            child.outcome = goal.outcome.clone();
+            ProofBranch::new(ProofObligation::Proposition(child), branch.state.clone())
+        };
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [arm(left, true), arm(right, false)]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts: [Vec::new(), Vec::new()],
+        })
+    }
+
     pub(crate) fn split_proposition_cases(
         &self,
         disjunction: Proposition,

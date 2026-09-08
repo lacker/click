@@ -271,6 +271,13 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_tactics(output, &proof_if.else_tactics, indent + 1);
             line(output, &prefix, "}");
         }
+        ProofTactic::Both(both) => {
+            line(output, &prefix, "both {");
+            write_tactics(output, &both.left_tactics, indent + 1);
+            line(output, &prefix, "} and {");
+            write_tactics(output, &both.right_tactics, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::Cases(proof_cases) => {
             output.push_str(&prefix);
             output.push_str("cases (");

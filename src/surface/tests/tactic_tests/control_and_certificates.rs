@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn both_and_proves_exact_conjuncts_and_rejects_incomplete_arms() {
+    let source = r#"
+        theorem pair(x: int32) {
+            ensures x == x and (x <= x and x >= x) by {
+                both { normalize(); } and {
+                    both { normalize(); } and { normalize(); }
+                }
+            }
+        }
+    "#;
+    verify_c0_sources(source, &[]).expect("nested exact conjunction proofs");
+    for bad in [
+        source.replacen("both { normalize(); }", "both { }", 1),
+        source.replace("x >= x", "x > x"),
+        source.replace("} and {", "} else {"),
+    ] {
+        assert!(verify_c0_sources(&bad, &[]).is_err());
+    }
+    let leaking = r#"theorem leak(x: int32) {
+        ensures (x == 0 implies x == 0) and x == 0 by {
+            both { intro(); assumption(); } and { assumption(); }
+        }
+    }"#;
+    assert!(
+        verify_c0_sources(leaking, &[]).is_err(),
+        "left assumptions must not leak to the right"
+    );
+}
+
+#[test]
+fn both_and_outcome_expands_and_rechecks() {
+    let c = "int32 identity(int32 x) { return x; }";
+    let source = r#"verifying "identity.c";
+        int32 identity(int32 x) { ensures result == x and result <= x; } by {
+            step(); both { simp(); } and { simp(); }
+        }
+    "#;
+    let sources = [("identity.c", c)];
+    verify_c0_sources(source, &sources).expect("both at an outcome");
+    let expanded =
+        expand_c0_claim_source(source, &sources, "identity", CProofClaim::Grouped).unwrap();
+    assert!(expanded.contains("both {"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).expect("expanded child proofs");
+    let position = expansion::position_at_offset(source, source.find("both {").unwrap());
+    let selected =
+        expand_c0_tactic_source_at(source, &sources, position.line, position.column).unwrap();
+    verify_c0_sources(&selected, &sources).expect("selected both expansion");
+}
+
+#[test]
 fn parses_logical_if_with_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",

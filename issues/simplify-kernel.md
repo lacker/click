@@ -334,8 +334,11 @@ lowered goals needs a loop-specific scope interface. A proof body on
 `close_invariants` is approved. Its first prototype passed scalar verification
 and expansion, but the quantified census still failed: conjunction planning
 uses ordinary `have` scopes, re-lowering the child goals. Exact child-goal
-scopes are therefore part of the remaining interface design, not just an
-outer proof body. That prototype was reverted. A rejected key
+scopes are therefore required, not just an outer proof body. The new
+`both { ... } and { ... }` construct now supplies exact isolated conjunct
+scopes, including retained proof bodies for expansion. Wiring it into
+structural conjunction planning and restoring the closure body remain next.
+That closure-body prototype was reverted. A rejected key
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
 

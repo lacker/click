@@ -827,6 +827,10 @@ id = "language.word.spec"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.both"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.split"
 path = "reference/language/grammar.md#word-index"
 
@@ -1220,6 +1224,10 @@ id = "tactic.intro"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
+id = "tactic.both"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
 id = "tactic.split"
 path = "reference/tactics/index.md#proposition-reasoning"
 
@@ -1449,6 +1457,9 @@ id = "tactic-form.arithmetic-using"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.intro"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.both"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.split"

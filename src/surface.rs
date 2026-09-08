@@ -146,6 +146,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "assumption",
     "at",
     "auto",
+    "both",
     "bounded_execute",
     "branch",
     "by",
@@ -2152,6 +2153,7 @@ pub enum ProofTactic {
     Open(ProofOpen),
     If(ProofIf),
     Cases(ProofCases),
+    Both(ProofBoth),
     Branch(ProofBranch),
     Loop(StructuralClause),
     ObserveResource(ResourceClause),
@@ -2234,6 +2236,7 @@ pub enum SmartTacticKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlTactic {
+    Both,
     Have,
     Open,
     If,
@@ -2364,6 +2367,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "cases",
         syntax: "cases (A or B)",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "both",
+        syntax: "both",
         class: "control",
     },
     PublicTacticForm {
@@ -2507,6 +2515,10 @@ pub struct ProofCertificate {
 /// recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
+    Both {
+        left_proof: Box<ProofCertificate>,
+        right_proof: Box<ProofCertificate>,
+    },
     Mark(String),
     Step,
     UnfoldPredicate(String),
@@ -2609,6 +2621,8 @@ struct CertificateStructuralItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificatePathSegment {
+    LeftConjunct,
+    RightConjunct,
     Tactic(usize),
     HaveBody,
     OpenBody,
@@ -2671,6 +2685,20 @@ impl ProofCertificate {
 impl ProofStep {
     fn from_validated_tactic(tactic: &ProofTactic) -> Self {
         match tactic {
+            ProofTactic::Both(both) => Self::Both {
+                left_proof: Box::new(ProofCertificate::from_steps(
+                    both.left_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                )),
+                right_proof: Box::new(ProofCertificate::from_steps(
+                    both.right_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                )),
+            },
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
@@ -2860,6 +2888,13 @@ impl ProofStep {
 
     fn to_proof_tactic(&self) -> ProofTactic {
         match self {
+            Self::Both {
+                left_proof,
+                right_proof,
+            } => ProofTactic::Both(ProofBoth {
+                left_tactics: left_proof.to_proof_tactics(),
+                right_tactics: right_proof.to_proof_tactics(),
+            }),
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
@@ -3028,6 +3063,18 @@ fn validate_certificate_tactics(
         path.push(CertificatePathSegment::Tactic(index));
         let result = match tactic.class() {
             TacticClass::Simple(_) => Ok(()),
+            TacticClass::Control(ControlTactic::Both) => {
+                let ProofTactic::Both(both) = tactic else {
+                    unreachable!()
+                };
+                path.push(CertificatePathSegment::LeftConjunct);
+                validate_certificate_tactics(&both.left_tactics, path)?;
+                path.pop();
+                path.push(CertificatePathSegment::RightConjunct);
+                let result = validate_certificate_tactics(&both.right_tactics, path);
+                path.pop();
+                result
+            }
             tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
                 tactic_class,
                 path: path.clone(),
@@ -3227,6 +3274,7 @@ impl ProofTactic {
             Self::Open(_) => TacticClass::Control(ControlTactic::Open),
             Self::If(_) => TacticClass::Control(ControlTactic::If),
             Self::Cases(_) => TacticClass::Control(ControlTactic::Cases),
+            Self::Both(_) => TacticClass::Control(ControlTactic::Both),
             Self::Branch(_) => TacticClass::Control(ControlTactic::Branch),
             Self::Loop(_) => TacticClass::Control(ControlTactic::Loop),
         }
@@ -3276,6 +3324,13 @@ pub struct CertificateInductionArm {
     variant: String,
     bindings: Vec<String>,
     proof: Box<ProofCertificate>,
+}
+
+/// Prove the exact conjuncts in isolated child scopes of the current goal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofBoth {
+    pub left_tactics: Vec<ProofTactic>,
+    pub right_tactics: Vec<ProofTactic>,
 }
 
 /// Explicit elimination of a disjunctive fact: proof checking requires the written

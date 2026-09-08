@@ -491,6 +491,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
             Proof::supports_linear_source(&SourceProof::Script(proof.to_proof_tactics()))
         }
         ProofStep::Induct { .. }
+        | ProofStep::Both { .. }
         | ProofStep::StructuralInduct { .. }
         | ProofStep::ApplyInduction { .. }
         | ProofStep::Open { .. }

@@ -2767,7 +2767,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                 }
                             }
                             PostExecutionTactic::Normalize
-                            | PostExecutionTactic::NormalizeUsing(_) => {
+                            | PostExecutionTactic::NormalizeUsing(_)
+                            | PostExecutionTactic::Both(_) => {
+                                let closer_name =
+                                    if matches!(post_tactic, PostExecutionTactic::Both(_)) {
+                                        "both"
+                                    } else {
+                                        "normalize"
+                                    };
                                 let normalization_step = match post_tactic {
                                     PostExecutionTactic::NormalizeUsing(premises) => {
                                         ProofStep::NormalizeUsing(premises.clone())
@@ -2820,6 +2827,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         continue;
                                     };
                                     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+                                        if matches!(post_tactic, PostExecutionTactic::Both(_)) {
+                                            return Err(ClickError::new(
+                                                "`both` requires a return-state conjunction",
+                                            ));
+                                        }
                                         // Postconditions are conditional on return.
                                         // Normalization exposes that definitional
                                         // partial-correctness rule without requiring a
@@ -2881,7 +2893,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if let Some((rewritten, checkpoint)) =
                                         &rewritten_claim_proofs[claim_index]
                                     {
-                                        match rewritten.apply_step(normalization_step.clone()) {
+                                        match if let PostExecutionTactic::Both(both) = post_tactic {
+                                            rewritten.apply_both_source(both)
+                                        } else {
+                                            rewritten.apply_step(normalization_step.clone())
+                                        } {
                                             Ok(proof) => {
                                                 let certificate =
                                                     proof.certificate_since(checkpoint)?;
@@ -2902,7 +2918,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let mut closed = None;
                                     let mut last_error = None;
                                     for (goal, goal_facts) in goal_candidates {
-                                        match fixed_state_root
+                                        let focused = fixed_state_root
                                             .with_checked_outcome_facts(
                                                 &[
                                                     path_requirements.as_slice(),
@@ -2913,9 +2929,12 @@ pub(super) fn finish_ordered_proof<'a>(
                                             .focus_fixed_state_goal_with_surface(
                                                 goal,
                                                 Some(surface_goal.clone()),
-                                            )?
-                                            .apply_step(normalization_step.clone())
-                                        {
+                                            )?;
+                                        match if let PostExecutionTactic::Both(both) = post_tactic {
+                                            focused.apply_both_source(both)
+                                        } else {
+                                            focused.apply_step(normalization_step.clone())
+                                        } {
                                             Ok(proof) => {
                                                 closed = Some(proof);
                                                 break;
@@ -2941,7 +2960,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 }
                                 if !closed_any {
                                     return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` did not prove any current proposition goal"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `{closer_name}` did not prove any current proposition goal"
                                     )));
                                 }
                                 let tactics = retained_certificate

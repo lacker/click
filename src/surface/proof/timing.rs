@@ -34,6 +34,14 @@ impl SourceSiteKind {
 /// source location for nested or omitted automation without changing its
 /// intrinsic tactic class.
 pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKind {
+    if let ProofTactic::Both(_) = tactic {
+        // Like `have`, the selectable container owns its nested proof work.
+        return if ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).is_ok() {
+            SourceSiteKind::ControlContainer
+        } else {
+            SourceSiteKind::ExpandableAutomation
+        };
+    }
     if let ProofTactic::Have(have) = tactic {
         if smart_simp_unfold_prefix(&have.proof).is_some() {
             return SourceSiteKind::ExpandableAutomation;

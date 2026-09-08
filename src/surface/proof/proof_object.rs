@@ -609,6 +609,10 @@ pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
             script_contains_linear_search(&proof_if.then_tactics)
                 || script_contains_linear_search(&proof_if.else_tactics)
         }
+        ProofTactic::Both(both) => {
+            script_contains_linear_search(&both.left_tactics)
+                || script_contains_linear_search(&both.right_tactics)
+        }
         ProofTactic::Cases(proof_cases) => {
             script_contains_linear_search(&proof_cases.left_tactics)
                 || script_contains_linear_search(&proof_cases.right_tactics)
@@ -839,6 +843,11 @@ pub(in crate::surface::proof) fn linear_script_is_supported(tactics: &[ProofTact
                 ProofTactic::Simp => index + 1 == tactics.len(),
                 ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
                 ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
+                ProofTactic::Both(both) => {
+                    index + 1 == tactics.len()
+                        && branch_arm_is_supported(&both.left_tactics)
+                        && branch_arm_is_supported(&both.right_tactics)
+                }
                 ProofTactic::If(proof_if) => {
                     index + 1 == tactics.len()
                         && branch_arm_is_supported(&proof_if.then_tactics)

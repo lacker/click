@@ -20,6 +20,10 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_if.then_tactics, names);
                 collect_applied_theorems(&proof_if.else_tactics, names);
             }
+            ProofTactic::Both(both) => {
+                collect_applied_theorems(&both.left_tactics, names);
+                collect_applied_theorems(&both.right_tactics, names);
+            }
             ProofTactic::Cases(proof_cases) => {
                 collect_applied_theorems(&proof_cases.left_tactics, names);
                 collect_applied_theorems(&proof_cases.right_tactics, names);
@@ -3552,6 +3556,10 @@ pub(in crate::surface) fn validate_loop_initialization_tactics(
 ) -> Result<(), ClickError> {
     for tactic in tactics {
         match tactic {
+            ProofTactic::Both(both) => {
+                validate_loop_initialization_tactics(&both.left_tactics)?;
+                validate_loop_initialization_tactics(&both.right_tactics)?;
+            }
             ProofTactic::UnfoldPredicate(_)
             | ProofTactic::UnfoldFunction(_)
             | ProofTactic::ApplyTheorem(_)

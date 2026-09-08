@@ -822,6 +822,7 @@ pub(super) fn synthesize_surface_paths(
 
 #[derive(Clone)]
 pub(super) enum PostExecutionTactic {
+    Both(ProofBoth),
     Fold(ResourceClause),
     Construct(ResourceClause),
     CloseOpen {
@@ -1104,6 +1105,7 @@ pub(super) fn post_execution_tactic_timing(
     post_tactic: &PostExecutionTactic,
 ) -> (&'static str, &'static str) {
     match post_tactic {
+        PostExecutionTactic::Both(_) => ("both", "control"),
         PostExecutionTactic::Apply(_) => ("apply", "smart"),
         PostExecutionTactic::Have(have) => (
             "have",

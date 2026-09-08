@@ -2076,7 +2076,9 @@ fn direct_tactic_token_ranges(
                     })?;
                     if braces == 0 && parentheses == 0 && brackets == 0 {
                         let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
-                        if !matches!(continuation, Some("else" | "by")) {
+                        if !matches!(continuation, Some("else" | "by"))
+                            && !(tokens[start].text == "both" && continuation == Some("and"))
+                        {
                             let terminator = if continuation == Some(";") {
                                 cursor + 1
                             } else {

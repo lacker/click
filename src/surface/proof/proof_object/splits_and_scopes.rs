@@ -3,6 +3,61 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    pub(in crate::surface::proof) fn apply_both_source(
+        &self,
+        both: &ProofBoth,
+    ) -> Result<Self, ClickError> {
+        self.try_authoritative_linear_script(&[ProofTactic::Both(both.clone())])?
+            .ok_or_else(|| self.step_error("`both` requires complete proofs of both conjuncts"))
+    }
+
+    pub(in crate::surface::proof) fn split_focused_both(
+        &self,
+    ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
+        let (state, split, ids) = self
+            .state
+            .split_proposition_both(|parent, left| {
+                let mut child = parent.clone();
+                child.surface = match parent.surface.as_deref() {
+                    Some(ClickProposition::And(a, b)) => Some(Arc::new(if left {
+                        a.as_ref().clone()
+                    } else {
+                        b.as_ref().clone()
+                    })),
+                    _ => None,
+                };
+                child
+            })
+            .map_err(|message| self.step_error(message))?
+            .into_parts();
+        Ok((
+            Self {
+                context: self.context.clone(),
+                state,
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    focused_branch: self.focused_branch_id(),
+                    depth: self.node.depth,
+                }),
+            },
+            split,
+            ids,
+        ))
+    }
+
+    pub(in crate::surface::proof) fn join_focused_both(
+        &self,
+        marker: &ProofCheckpoint<'a>,
+        split: SplitId,
+        ids: [BranchId; 2],
+    ) -> Result<Self, ClickError> {
+        self.join_focused_branch(marker, split, ids, |left, right| ProofStep::Both {
+            left_proof: Box::new(left),
+            right_proof: Box::new(right),
+        })
+    }
+
     /// Splits the focused branch proposition goal into two labeled sibling case
     /// goals inside this same proof state.
     ///

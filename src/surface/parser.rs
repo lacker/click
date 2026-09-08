@@ -2724,6 +2724,18 @@ impl Parser {
             }
             return Ok(ProofTactic::Open(ProofOpen { resource, tactics }));
         }
+        if name == "both" {
+            let left_tactics = self.parse_possibly_empty_tactic_block()?;
+            self.expect_ident_spelling("and")?;
+            let right_tactics = self.parse_possibly_empty_tactic_block()?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Both(ProofBoth {
+                left_tactics,
+                right_tactics,
+            }));
+        }
         if name == "if" {
             let condition = self.parse_proposition()?;
             // A proof `if` branch may be empty: it contributes only its case

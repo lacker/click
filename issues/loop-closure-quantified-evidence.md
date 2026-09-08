@@ -194,12 +194,12 @@ exact goal therefore does not preserve exact goal identities throughout its
 subproofs. This identifies a remaining architectural gap; it does not establish
 that fixing this one arm alone will complete quantified planning.
 
-The next design must include exact child-goal scopes. The current `split()`
-checks a conjunction from already-established facts; it does not open child
-goals. Options are to give logical decomposition an explicit scoped body, or
-to let the closure body contain separately addressed exact obligation proofs.
-Whichever form is chosen, expansion must retain those child scopes rather
-than reconstructing them as ordinary `have` statements. Do not silently make
+The chosen exact child-goal construct is now `both { ... } and { ... }`.
+It opens the exact kernel conjuncts in isolated sibling scopes and retains
+their proof bodies through expansion. The current `split()` remains unchanged:
+it checks a conjunction from already-established facts. The remaining work is
+to use `both` in structural conjunction planning and connect the approved
+closure body to exact lowered obligations. Do not silently make
 `have` select a kernel goal by a same-written surface formula: that revives
 the snapshot/binder ambiguity this interface is intended to remove.
 

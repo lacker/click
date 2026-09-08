@@ -281,6 +281,132 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
 }
 
 #[test]
+fn both_and_scopes_are_isolated_check_provenance_and_scale() {
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let context = pure_identity_fixture();
+    let truth = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let other = Proposition::Equal(
+        Term::Bitvector32(Bitvector32Term::Constant(7)),
+        Term::Bitvector32(Bitvector32Term::Constant(7)),
+    );
+    let goal = Proposition::And(Box::new(truth.clone()), Box::new(other.clone()));
+    let samples = [16, 32, 64, 128].map(|size| {
+        let facts = (0..size)
+            .map(|i| Proposition::Predicate {
+                name: format!("ambient_{i}"),
+                arguments: vec![],
+            })
+            .collect::<Vec<_>>();
+        let root = Proof::for_pure_goal(
+            "both",
+            &facts,
+            goal.clone(),
+            &context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        let ((joined, split_proof, left_done, marker, split, ids), work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                let (split_proof, split, ids) = root.split_focused_both().unwrap();
+                let marker = split_proof.checkpoint();
+                assert_eq!(
+                    split_proof.focus_branch(ids[0]).unwrap().goal(),
+                    Some(&truth)
+                );
+                assert_eq!(
+                    split_proof.focus_branch(ids[1]).unwrap().goal(),
+                    Some(&other)
+                );
+                assert!(!split_proof.facts().contains(&truth));
+                assert!(!split_proof.facts().contains(&other));
+                let left_done = split_proof
+                    .focus_branch(ids[0])
+                    .unwrap()
+                    .apply_step(ProofStep::Normalize)
+                    .unwrap();
+                let right = left_done.focus_branch(ids[1]).unwrap();
+                assert!(!right.facts().contains(&truth));
+                let done = right.apply_step(ProofStep::Normalize).unwrap();
+                let joined = done.join_focused_both(&marker, split, ids).unwrap();
+                (joined, split_proof, left_done, marker, split, ids)
+            });
+        assert!(joined.is_complete());
+        assert!(left_done.join_focused_both(&marker, split, ids).is_err());
+        let (foreign, foreign_split, foreign_ids) = root.split_focused_both().unwrap();
+        let done = left_done
+            .focus_branch(ids[1])
+            .unwrap()
+            .apply_step(ProofStep::Normalize)
+            .unwrap();
+        assert!(
+            done.join_focused_both(&foreign.checkpoint(), foreign_split, foreign_ids)
+                .is_err()
+        );
+        assert_eq!(split_proof.branches().count(), 2);
+        assert!(matches!(
+            joined.certificate().steps(),
+            [ProofStep::Both { .. }]
+        ));
+        work
+    });
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+            "{samples:?}"
+        );
+    }
+}
+
+#[test]
+fn both_and_preserves_exact_binders_and_saved_snapshots() {
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let context = pure_identity_fixture();
+    let pointer = Pointer {
+        block: "cell".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().with_block("cell", 4).store(
+        pointer.clone(),
+        CValue::Int32(Bitvector32Term::Variable(Variable(11))),
+    );
+    let conjunct = |binder| Proposition::ForAll {
+        var: Variable(binder),
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    memory.clone().into(),
+                    Box::new(pointer.clone()),
+                )),
+                Box::new(Bitvector32Term::Variable(Variable(binder))),
+            ),
+            true,
+        )),
+    };
+    // The same saved value is bound in the left goal but free in the right.
+    // Opening child scopes must preserve this distinction without re-lowering.
+    let left = conjunct(11);
+    let right = conjunct(22);
+    let root = Proof::for_pure_goal(
+        "both snapshots",
+        &[],
+        Proposition::And(Box::new(left.clone()), Box::new(right.clone())),
+        &context,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let (split, _, ids) = root.split_focused_both().unwrap();
+    assert_eq!(split.focus_branch(ids[0]).unwrap().goal(), Some(&left));
+    assert_eq!(split.focus_branch(ids[1]).unwrap().goal(), Some(&right));
+}
+
+#[test]
 fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     let equality = |value| ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Value(int32(value))),

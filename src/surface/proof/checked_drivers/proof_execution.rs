@@ -429,6 +429,7 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
             premises: premises.clone(),
         }),
         ProofTactic::Have(have) => Some(PostExecutionTactic::Have(have.clone())),
+        ProofTactic::Both(both) => Some(PostExecutionTactic::Both(both.clone())),
         ProofTactic::Transport { source, target } => Some(PostExecutionTactic::Transport {
             source: source.clone(),
             target: target.clone(),

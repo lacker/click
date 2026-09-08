@@ -77,6 +77,7 @@ remains migration compatibility and should not be used in new proofs.
 
 | Surface form | Class | Valid state and transition | Failure, checking, and tools | Verified success |
 | --- | --- | --- | --- | --- |
+| `both { ... } and { ... }` | control | Prove the exact left and right children of an `and` goal in separate scopes. | A non-conjunction or unfinished arm fails. Arms inherit only the parent assumptions. The source container owns expansion of its nested proof. | [`proof_both_and.md`](https://github.com/lacker/click/blob/master/mdtests/proof_both_and.md) |
 | `simp()` | smart | On a proposition goal, search ambient pure facts and bounded rules for a simple proof. It never executes C. | A bounded miss leaves the goal open and reports the target. Click checks the chosen operations; expansion prints its proof steps, and profiling reports search plus leaves. | [`simp_postconditions.md`](https://github.com/lacker/click/blob/master/mdtests/simp_postconditions.md) |
 | `simp() using { P; ... }` | smart | On a proposition goal, search using exactly the listed proposition facts. | A missing fact or missing simple rule fails. Click uses the generated explicit proof rather than repeating search; expansion emits the named steps or reports the rule gap, and profiling reports the restricted site. | [`condition_search_explicit_decomposition.md`](https://github.com/lacker/click/blob/master/mdtests/condition_search_explicit_decomposition.md) |
 | `assumption()` | simple | Close the current goal when the same semantic fact is already available. | Lookup accepts representation-independent identity such as alpha-renamed quantified binders, condition polarity, and certified identity of a resource separation. It performs no normalization, implication extraction, or fact transport. Expansion leaves the step unchanged, and profiling charges one simple leaf. | [`simple_tactics.md`](https://github.com/lacker/click/blob/master/mdtests/simple_tactics.md) |
@@ -106,6 +107,13 @@ remains migration compatibility and should not be used in new proofs.
 | `open(resource) { ... }` | control | Temporarily replace a held composite resource with one body layer, check the nested proof, then fold it at scope exit. | Missing ownership, an undecided guard, or failure to restore the body fails. Click checks the exact resource transition; expansion recurses, and profiling reports descendants. | [`resource_population_open.md`](https://github.com/lacker/click/blob/master/mdtests/resource_population_open.md) |
 | `witness(name = value)` | simple | On an existential goal, instantiate the named binder with `value` and continue with the instantiated body. | A wrong binder, ill-typed value, or nonexistential goal fails. Click records the exact witness; expansion is unchanged, and profiling charges one instantiation. | [`witness_and_choose.md`](https://github.com/lacker/click/blob/master/mdtests/witness_and_choose.md) |
 | `choose(name from requirement(label))` | simple | From an exact existential requirement, introduce the named witness and its instantiated body into context. | An unknown label, wrong binder, or nonexistential fact fails. Click opens that exact fact; expansion is unchanged, and profiling charges one elimination. | [`witness_and_choose.md`](https://github.com/lacker/click/blob/master/mdtests/witness_and_choose.md) |
+
+`both { ... } and { ... }` proves an `A and B` goal by opening the exact `A`
+and `B` child goals. Both arms inherit the parent assumptions; neither inherits
+facts proved only in the other arm. This differs from `split()`, which closes
+a conjunction from already-established facts. Empty or unfinished arms fail.
+The `both` source location owns expansion and profiling of its nested proof;
+expansion preserves both bodies with their checked steps.
 
 `by simp;` is sugar for a script containing the same `simp()` operation at the
 same proof state. Neither form implicitly executes a function. Write

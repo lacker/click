@@ -265,6 +265,10 @@ fn prepare_pure_induction_tactics(
                     then_tactics: transform(&proof_if.then_tactics, hypothesis)?,
                     else_tactics: transform(&proof_if.else_tactics, hypothesis)?,
                 })),
+                ProofTactic::Both(both) => Ok(ProofTactic::Both(ProofBoth {
+                    left_tactics: transform(&both.left_tactics, hypothesis)?,
+                    right_tactics: transform(&both.right_tactics, hypothesis)?,
+                })),
                 ProofTactic::Cases(proof_cases) => Ok(ProofTactic::Cases(ProofCases {
                     disjunction: proof_cases.disjunction.clone(),
                     left_tactics: transform(&proof_cases.left_tactics, hypothesis)?,
@@ -411,6 +415,18 @@ fn prepare_structural_induction_arm_tactics(
                 )?,
                 else_tactics: prepare_structural_induction_arm_tactics(
                     &proof_if.else_tactics,
+                    setup,
+                    bindings,
+                )?,
+            })),
+            ProofTactic::Both(both) => Ok(ProofTactic::Both(ProofBoth {
+                left_tactics: prepare_structural_induction_arm_tactics(
+                    &both.left_tactics,
+                    setup,
+                    bindings,
+                )?,
+                right_tactics: prepare_structural_induction_arm_tactics(
+                    &both.right_tactics,
                     setup,
                     bindings,
                 )?,
@@ -2029,6 +2045,13 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::Rewrite(_)
         | ProofStep::Extract(_)
         | ProofStep::Contradiction(_) => true,
+        ProofStep::Both {
+            left_proof,
+            right_proof,
+        } => {
+            proof_supports_pure_certificate(left_proof)
+                && proof_supports_pure_certificate(right_proof)
+        }
         ProofStep::Cases {
             left_proof,
             right_proof,
@@ -2125,6 +2148,10 @@ fn pure_theorem_surface_certificate(
 ) -> Result<ProofCertificate, ClickError> {
     fn contains_restricted_simp(tactics: &[ProofTactic]) -> bool {
         tactics.iter().any(|tactic| match tactic {
+            ProofTactic::Both(both) => {
+                contains_restricted_simp(&both.left_tactics)
+                    || contains_restricted_simp(&both.right_tactics)
+            }
             ProofTactic::SimpUsing(_) => true,
             ProofTactic::If(proof_if) => {
                 contains_restricted_simp(&proof_if.then_tactics)
