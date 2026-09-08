@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use click::cli::{
-    files_with_extension, read_declared_sources, read_verifying_sources, source_refs,
-};
+use click::cli::{files_with_extension, read_verifying_sources, source_refs};
 use click::instrumentation::{self, ContractFallback};
 use click::surface::verify_c0_sources;
 
@@ -138,19 +136,13 @@ fn run_example_project(project: &Path) -> Result<(), String> {
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-        let c_sources = match source_status {
-            Some(SourceFixtureStatus::ParserOnly) => {
-                read_declared_sources(&click_path, &click_source)?
-            }
-            Some(SourceFixtureStatus::Verified) | None => {
-                read_verifying_sources(&click_path, &click_source)?
-            }
-        };
+        let c_sources = read_verifying_sources(&click_path, &click_source)?;
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
                 match verify_c0_sources(&click_source, &source_refs(&c_sources)) {
                     Err(error)
                         if error.message().starts_with("failed to parse C source")
+                            || error.message().starts_with("failed to parse C header")
                             || error.message().starts_with("failed to resolve includes") =>
                     {
                         eprintln!(
@@ -281,10 +273,13 @@ fn verify_source_integrity(project: &Path) -> Result<Option<SourceFixtureStatus>
                     Component::ParentDir | Component::RootDir | Component::Prefix(_)
                 )
             })
-            || path.extension().and_then(|extension| extension.to_str()) != Some("c")
+            || !(matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("c" | "h")
+            ) || name == "COPYING")
         {
             return Err(format!(
-                "`{}` line {} names an invalid C source path `{name}`",
+                "`{}` line {} names an invalid source fixture path `{name}`",
                 manifest_path.display(),
                 line_number + 1
             ));
@@ -318,7 +313,17 @@ fn verify_source_integrity(project: &Path) -> Result<Option<SourceFixtureStatus>
                 })
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    let expected_sources = expected.keys().cloned().collect::<BTreeSet<_>>();
+    // All C files remain mandatory. Headers and the upstream license may
+    // additionally be pinned without pretending they are translation units.
+    let expected_sources = expected
+        .keys()
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension == "c")
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
     if actual_sources != expected_sources {
         return Err(format!(
             "`{}` must cover exactly the project C sources; expected {expected_sources:?}, found {actual_sources:?}",
@@ -466,9 +471,17 @@ mod tests {
         fs::write(directory.join(SOURCE_METADATA), "status: verified\n").unwrap();
         let source = b"int32 unchanged(void) { return 0; }\n";
         fs::write(directory.join("fixture.c"), source).unwrap();
+        let header = b"#define VERSION 17\n";
+        fs::write(directory.join("fixture.h"), header).unwrap();
+        fs::write(directory.join("COPYING"), b"license\n").unwrap();
         fs::write(
             directory.join(SOURCE_MANIFEST),
-            format!("{}  fixture.c\n", hex_digest(sha256(source))),
+            format!(
+                "{}  fixture.c\n{}  fixture.h\n{}  COPYING\n",
+                hex_digest(sha256(source)),
+                hex_digest(sha256(header)),
+                hex_digest(sha256(b"license\n"))
+            ),
         )
         .unwrap();
 
@@ -476,6 +489,10 @@ mod tests {
             verify_source_integrity(&directory).unwrap(),
             Some(SourceFixtureStatus::Verified)
         );
+        fs::write(directory.join("fixture.h"), b"#define VERSION 18\n").unwrap();
+        let error = verify_source_integrity(&directory).unwrap_err();
+        assert!(error.contains("source integrity mismatch"), "{error}");
+        fs::write(directory.join("fixture.h"), header).unwrap();
         fs::write(
             directory.join("fixture.c"),
             b"int32 changed(void) { return 1; }\n",

@@ -85,18 +85,18 @@ general conditional expression.
   when a shared header is reached through multiple include paths.
 - `<stdint.h>` is accepted as a modeled no-op for the standard C0 type
   spellings; unknown system headers receive a source-named diagnostic.
-- Object-like macros with one supported integer or character literal are
-  expanded in source order across a translation unit and its included headers;
-  uses in comments and quoted literals remain untouched, and redefinitions or
-  other macro forms receive source-named diagnostics. `#undef NAME` removes a
-  macro and permits a later literal redefinition.
+- Object-like literal, string, alias, and expression macros are expanded in
+  source order across a translation unit and its included headers. Continued
+  lines are spliced before comment handling. Uses in comments and quoted
+  literals remain untouched. Recursion, oversized expansion, token pasting,
+  and redefinitions receive diagnostics. `#undef NAME` permits redefinition.
 - One- to three-parameter function-like macros perform ordinary substitution
   with balanced nested arguments and bounded replacement rescanning across
   source files and included headers. Wrong arity, empty arguments, duplicate
   parameter names, recursive expansion, stringification, and token pasting
   receive source-named diagnostics.
 - Function-like macros with more than three parameters, stringification, token
-  pasting, multi-token object-like macros, system headers other than the modeled
+  pasting, system headers other than the modeled
   `<stdint.h>`, relational comparisons, arithmetic, ternaries, and other
   general conditional expressions remain explicitly unsupported until a
   documented allowlist or preprocessor subset is implemented. One- to

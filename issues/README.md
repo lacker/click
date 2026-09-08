@@ -85,7 +85,7 @@ normal tooling-first policy and should then be added to this list.
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Functionality gaps: 26
+## Functionality gaps: 27
 
 C language coverage:
 
@@ -93,6 +93,7 @@ C language coverage:
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
+- [Model plain char and signed-byte string APIs](plain-char-string-api.md)
 - [Model forward and backward goto edges](goto.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)

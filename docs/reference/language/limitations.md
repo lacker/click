@@ -128,17 +128,20 @@ unsupported. Const-qualified static-storage aggregates are read-only, while
 automatic/local const aggregates remain unsupported.
 System header includes other than the modeled no-op `<stdint.h>`, function-like macros
 with more than three parameters, empty arguments, stringification, token pasting,
-or multi-token object-like macros, macro redefinitions without an intervening `#undef`,
+macro redefinitions without an intervening `#undef`,
 relational comparisons, arithmetic, ternaries, and other general conditional
 expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
 when both operands are integer or character literals, literal-valued macros, or
 `defined(NAME)`.
 Canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
 `#pragma once`, and the bounded conditional subset are supported. C0 also
-supports object-like macros whose
-replacement is one integer or character literal; those macros are expanded in
+supports object-like macros with literal, alias, and multi-token expression
+replacements; those macros are expanded in
 translation-unit order across a source file and its local headers, and `#undef NAME`
-removes one from the active macro state. The bounded
+removes one from the active macro state. Backslash-newline splicing precedes
+comment handling, including in continued definitions. Expansion is bounded by
+depth 64 and one megabyte per expanded line or replacement, plus four megabytes
+of cumulative scan work per line. The bounded
 conditional subset accepts `#if 0`, `#if 1`, `#if NAME` for a previously defined
 0/1 literal macro, `#ifdef NAME`, `#ifndef NAME`, `#if defined(NAME)`,
 `#if !defined(NAME)`, and those atoms combined with `!`, `&&`, `||`, or

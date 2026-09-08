@@ -1,8 +1,8 @@
 //! Source-bundle utilities for the C0 frontend.
 //!
 //! This is deliberately a small source expander, not a general C preprocessor.
-//! It expands supplied project-local headers, a narrow literal-only macro
-//! subset, a bounded function-like macro subset, a bounded
+//! It expands supplied project-local headers, object-like replacement macros,
+//! a bounded function-like macro subset, a bounded
 //! conditional-compilation subset, and rejects all other preprocessor
 //! directives so the C0 parser never silently verifies a different program.
 
@@ -141,7 +141,8 @@ struct ConditionalFrame {
 /// supported object-like and bounded function-like macro definitions are
 /// accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
-    let analysis = analyze_source(source_path, source)?;
+    let source = splice_source_lines(source);
+    let analysis = analyze_source(source_path, &source)?;
     collect_local_include_paths(source_path, &analysis)
 }
 
@@ -194,7 +195,8 @@ fn expand_source<'a>(
     include_site: Option<(&str, usize)>,
     expanded: &mut String,
 ) -> Result<(), CSourceError> {
-    let analysis = analyze_source(source_path, source)?;
+    let source = splice_source_lines(source);
+    let analysis = analyze_source(source_path, &source)?;
     if expanded_once.contains(source_path) {
         return Ok(());
     }
@@ -1082,15 +1084,13 @@ fn parse_directive<'a>(
         if trailing_comments_only(trailing) {
             return Ok(Some(SourceDirective::HeaderGuardDefine(name)));
         }
-        if let Some(value) = parse_macro_literal(trailing.trim_start()) {
-            return Ok(Some(SourceDirective::MacroDefinition {
+        return Ok(Some(match parse_macro_replacement(trailing.trim_start()) {
+            Ok(value) => SourceDirective::MacroDefinition {
                 name,
                 definition: MacroDefinition::ObjectLike(value),
-            }));
-        }
-        return Ok(Some(SourceDirective::Unsupported(format!(
-            "unsupported macro definition `#{directive}`; expected one integer or character literal"
-        ))));
+            },
+            Err(message) => SourceDirective::Unsupported(message.to_string()),
+        }));
     }
     if let Some(rest) = directive.strip_prefix("undef")
         && (rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
@@ -1318,15 +1318,75 @@ impl<'a> ConditionalParser<'a> {
     }
 }
 
-fn parse_macro_literal(input: &str) -> Option<String> {
-    let input = input.trim_start();
-    let end = if input.starts_with('\'') {
-        macro_character_literal_end(input)?
-    } else {
-        macro_integer_literal_end(input)?
-    };
-    let (literal, trailing) = input.split_at(end);
-    trailing_comments_only(trailing).then(|| literal.to_string())
+/// Phase-two splicing precedes comment/directive recognition. Blank padding
+/// after each logical line preserves the physical line of later diagnostics.
+fn splice_source_lines(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut pending = 0;
+    for line in source.split_inclusive('\n') {
+        let content = line.strip_suffix('\n');
+        if let Some(content) = content
+            && let Some(prefix) = content
+                .strip_suffix('\r')
+                .unwrap_or(content)
+                .strip_suffix('\\')
+        {
+            result.push_str(prefix);
+            pending += 1;
+            continue;
+        }
+        result.push_str(line);
+        for _ in 0..pending {
+            result.push('\n');
+        }
+        pending = 0;
+    }
+    for _ in 0..pending {
+        result.push('\n');
+    }
+    result
+}
+
+fn parse_macro_replacement(input: &str) -> Result<String, &'static str> {
+    let chars: Vec<_> = input.chars().collect();
+    let mut result = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\'' || ch == '"' {
+            let start = index;
+            index += 1;
+            while index < chars.len() && chars[index] != ch {
+                if chars[index] == '\\' {
+                    index += 1;
+                }
+                index += 1;
+            }
+            if index >= chars.len() {
+                return Err("unterminated literal in macro replacement");
+            }
+            index += 1;
+            result.extend(chars[start..index].iter());
+        } else if ch == '/' && chars.get(index + 1) == Some(&'/') {
+            break;
+        } else if ch == '/' && chars.get(index + 1) == Some(&'*') {
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            if index + 1 >= chars.len() {
+                return Err("unterminated comment in macro replacement");
+            }
+            index += 2;
+            result.push(' ');
+        } else if ch == '#' {
+            return Err("macro stringification and token pasting are not supported");
+        } else {
+            result.push(ch);
+            index += 1;
+        }
+    }
+    Ok(result.trim_end().to_string())
 }
 
 fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'static str> {
@@ -1502,9 +1562,12 @@ fn expand_macros_in_line(
 #[derive(Default)]
 struct MacroExpansionState {
     active: Vec<String>,
+    scanned_bytes: usize,
 }
 
 const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
+const MAX_MACRO_EXPANSION_BYTES: usize = 1_048_576;
+const MAX_MACRO_EXPANSION_WORK: usize = 4 * MAX_MACRO_EXPANSION_BYTES;
 
 fn expand_macro_text(
     text: &str,
@@ -1512,10 +1575,20 @@ fn expand_macro_text(
     in_block_comment: &mut bool,
     state: &mut MacroExpansionState,
 ) -> Result<String, String> {
+    state.scanned_bytes = state.scanned_bytes.saturating_add(text.len());
+    if state.scanned_bytes > MAX_MACRO_EXPANSION_WORK {
+        return Err("macro expansion exceeds the four-megabyte scan-work limit".to_string());
+    }
+    if text.len() > MAX_MACRO_EXPANSION_BYTES {
+        return Err("macro expansion exceeds the one-megabyte output limit".to_string());
+    }
     let chars = text.chars().collect::<Vec<_>>();
     let mut expanded = String::with_capacity(text.len());
     let mut index = 0;
     while index < chars.len() {
+        if expanded.len() > MAX_MACRO_EXPANSION_BYTES {
+            return Err("macro expansion exceeds the one-megabyte output limit".to_string());
+        }
         if *in_block_comment {
             let start = index;
             while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
@@ -1547,6 +1620,22 @@ fn expand_macro_text(
             expanded.extend(chars[start..index].iter().copied());
             continue;
         }
+        if chars[index].is_ascii_digit()
+            || (chars[index] == '.' && chars.get(index + 1).is_some_and(char::is_ascii_digit))
+        {
+            let start = index;
+            index += 1;
+            while index < chars.len()
+                && (is_identifier_continue(chars[index])
+                    || chars[index] == '.'
+                    || (matches!(chars[index], '+' | '-')
+                        && matches!(chars[index - 1], 'e' | 'E' | 'p' | 'P')))
+            {
+                index += 1;
+            }
+            expanded.extend(chars[start..index].iter());
+            continue;
+        }
         if is_identifier_start(chars[index]) {
             let start = index;
             index += 1;
@@ -1554,27 +1643,35 @@ fn expand_macro_text(
                 index += 1;
             }
             let name = chars[start..index].iter().collect::<String>();
+            if matches!(name.as_str(), "L" | "u" | "u8" | "U")
+                && matches!(chars.get(index), Some('\'' | '"'))
+            {
+                expanded.push_str(&name);
+                continue;
+            }
             let Some(definition) = macros.get(&name).cloned() else {
                 expanded.extend(chars[start..index].iter().copied());
                 continue;
             };
             match definition {
                 MacroDefinition::ObjectLike(value) => {
-                    expanded.push_str(&expand_macro_replacement(&name, &value, macros, state)?);
+                    let replacement = expand_macro_replacement(&name, &value, macros, state)?;
+                    append_macro_tokens(&mut expanded, &replacement, chars.get(index).copied());
                 }
                 MacroDefinition::FunctionLike {
                     parameters,
                     replacement,
                 } if chars.get(index) == Some(&'(') => {
                     let (arguments, end) = parse_macro_arguments(&chars, index, &name)?;
-                    expanded.push_str(&expand_function_macro(
+                    let replacement = expand_function_macro(
                         &name,
                         &parameters,
                         &replacement,
                         &arguments,
                         macros,
                         state,
-                    )?);
+                    )?;
+                    append_macro_tokens(&mut expanded, &replacement, chars.get(end).copied());
                     index = end;
                 }
                 MacroDefinition::FunctionLike { .. } => {
@@ -1586,7 +1683,27 @@ fn expand_macro_text(
         expanded.push(chars[index]);
         index += 1;
     }
+    if expanded.len() > MAX_MACRO_EXPANSION_BYTES {
+        return Err("macro expansion exceeds the one-megabyte output limit".to_string());
+    }
     Ok(expanded)
+}
+
+/// Substitution retains preprocessing-token boundaries: `PLUS+` with a
+/// replacement of `+` must not turn into the increment operator.
+fn append_macro_tokens(output: &mut String, replacement: &str, next: Option<char>) {
+    fn needs_space(left: Option<char>, right: Option<char>) -> bool {
+        let boundary = |ch: char| ch.is_whitespace() || "(){}[],;".contains(ch);
+        left.zip(right)
+            .is_some_and(|(left, right)| !boundary(left) && !boundary(right))
+    }
+    if needs_space(output.chars().next_back(), replacement.chars().next()) {
+        output.push(' ');
+    }
+    output.push_str(replacement);
+    if needs_space(output.chars().next_back(), next) {
+        output.push(' ');
+    }
 }
 
 fn expand_macro_replacement(
@@ -2059,7 +2176,120 @@ mod tests {
     }
 
     #[test]
-    fn literal_macro_redefinitions_and_nonliteral_replacements_are_rejected() {
+    fn object_macros_expand_expressions_strings_aliases_and_comments() {
+        let source = "#define MINOR 17\n#define NUM ((MINOR << 8) | 0) // note\n#define EXPORT extern\n#define VERSION \"0.17 # MINOR\"\n#define JOIN a/**/b\nEXPORT int version() { return NUM; }\nVERSION JOIN\n";
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(
+            expanded
+                .source()
+                .contains("extern int version() { return ((17 << 8) | 0); }")
+        );
+        assert!(expanded.source().contains("\"0.17 # MINOR\" a b"));
+    }
+
+    #[test]
+    fn splicing_precedes_comments_and_preserves_later_diagnostic_lines() {
+        let source = "#define VALUE \\\n(1 + \\\r\n2)\nint run() { return VAL\\\nUE; }\n// hidden \\\n#define BAD 4\nBAD\n";
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(expanded.source().contains("return (1 + 2);"));
+        assert!(expanded.source().ends_with("BAD\n"));
+        let error = local_include_paths("main.c", "#define A \\\n1\n#error no\n").unwrap_err();
+        assert!(error.to_string().starts_with("main.c:3:"));
+    }
+
+    #[test]
+    fn object_macro_recursion_and_amplification_are_bounded() {
+        let source = "#define A B\n#define B A\nA\n";
+        let error = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap_err();
+        assert!(error.to_string().contains("recursive macro expansion"));
+        let mut source = String::from("#define M0 1234567890\n");
+        for i in 1..=18 {
+            source.push_str(&format!("#define M{i} M{} M{}\n", i - 1, i - 1));
+        }
+        source.push_str("M18\n");
+        let error =
+            expand_includes("main.c", &BTreeMap::from([("main.c", source.as_str())])).unwrap_err();
+        assert!(error.to_string().contains("macro expansion exceeds"));
+        let mut macros = BTreeMap::from([
+            (
+                "EMPTY".to_string(),
+                MacroDefinition::FunctionLike {
+                    parameters: vec!["x".to_string()],
+                    replacement: String::new(),
+                },
+            ),
+            (
+                "M0".to_string(),
+                MacroDefinition::ObjectLike("EMPTY(1)".to_string()),
+            ),
+        ]);
+        for i in 1..=30 {
+            macros.insert(
+                format!("M{i}"),
+                MacroDefinition::ObjectLike(format!("M{} M{}", i - 1, i - 1)),
+            );
+        }
+        // Exercise the work boundary deterministically without spending the
+        // whole production budget on empty-output expansion in every gate.
+        let mut state = MacroExpansionState {
+            active: Vec::new(),
+            scanned_bytes: MAX_MACRO_EXPANSION_WORK - 1024,
+        };
+        let error = expand_macro_text("M30", &macros, &mut false, &mut state).unwrap_err();
+        assert!(error.to_string().contains("scan-work limit"));
+    }
+
+    #[test]
+    fn macro_substitution_keeps_preprocessing_token_boundaries() {
+        let source = "#define PLUS +\n#define SLASH /\n#define xFF 2\n#define L 1\nPLUS+ SLASH* 0xFF L\"wide\"\n";
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(expanded.source().contains("+ + / * 0xFF L\"wide\""));
+    }
+
+    #[test]
+    fn pinned_jsonc_header_reaches_the_char_type_boundary() {
+        let sources = BTreeMap::from([
+            (
+                "json_c_version.c",
+                include_str!("../../../examples/jsonc-existing-source/json_c_version.c"),
+            ),
+            (
+                "json_c_version.h",
+                include_str!("../../../examples/jsonc-existing-source/json_c_version.h"),
+            ),
+            (
+                "config.h",
+                include_str!("../../../examples/jsonc-existing-source/config.h"),
+            ),
+        ]);
+        let expanded = expand_includes("json_c_version.c", &sources).unwrap();
+        assert!(expanded.source().contains("return \"0.17\";"));
+        assert!(
+            expanded
+                .source()
+                .contains("return ((0 << 16) | (17 << 8) | 0);")
+        );
+        let error = crate::languages::c::syntax::parse_functions_for_source(
+            expanded.source(),
+            "json_c_version.c",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported C type `char`"));
+    }
+
+    #[test]
+    fn void_parameter_lists_mean_no_parameters_but_void_objects_are_rejected() {
+        use crate::languages::c::syntax::{parse_functions, validate_header};
+        validate_header("extern int version(void);").unwrap();
+        parse_functions("int version(void) { return 17; }").unwrap();
+        for parameters in ["void value", "int x, void", "void, int x", "const void"] {
+            let source = format!("int version({parameters}) {{ return 17; }}");
+            assert!(parse_functions(&source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn macro_redefinitions_and_unsupported_replacements_are_rejected() {
         let redefined = BTreeMap::from([(
             "main.c",
             "#define LIMIT 4\n#define LIMIT 5\nint32 run() { return LIMIT; }\n",
@@ -2068,7 +2298,7 @@ mod tests {
         assert!(error.to_string().contains("macro `LIMIT` is redefined"));
 
         let cases = [
-            ("#define LIMIT (1 + 2)\n", "unsupported macro definition"),
+            ("#define LIMIT first ## second\n", "token pasting"),
             (
                 "#define LIMIT(first, second, third, fourth) first\n",
                 "at most three identifier parameters",

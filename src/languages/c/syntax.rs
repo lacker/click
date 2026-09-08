@@ -7524,6 +7524,13 @@ impl Parser {
                 continue;
             }
             if parsed_type.c_type == C0Type::Void {
+                if parameters.is_empty()
+                    && self.peek() == Some(&Token::RParen)
+                    && !parsed_type.is_constant
+                    && !parsed_type.is_volatile
+                {
+                    return Ok(parameters);
+                }
                 return Err(self.error_here("function parameters cannot have type `void`"));
             }
             let name = self.expect_ident("parameter name")?;

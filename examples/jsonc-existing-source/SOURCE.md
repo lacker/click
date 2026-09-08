@@ -8,9 +8,16 @@ This project preserves `json_c_version.c` byte-for-byte from the json-c
 
 status: parser-only
 
-The source is intentionally recorded before the C0 frontend can accept it.
-The preprocessor/header boundary and the `const char*`/string-valued API are
-tracked by [multi-function files, prototypes, and includes](../../issues/multi-function-files-and-headers.md)
-and [file-scope objects and string literals](../../issues/global-variables.md).
+The C implementation, `json_c_version.h`, and `COPYING` are unchanged files
+from that same release. `config.h` is a local fixture configuration, not an
+upstream file: this translation unit uses none of the feature probes from
+upstream `cmake/config.h.in`. The configuration selects ordinary C declarations,
+without C++ or MSVC DLL exports. It is not a configuration for the whole library.
+
+The header now preprocesses successfully, including its continued numeric
+expression, string macro, and export alias. A source-expander regression checks
+both return expressions against these exact files. The remaining blocker is
+the [plain-char, signed-byte, and const-return model](../../issues/plain-char-string-api.md),
+not missing includes. The fixture is **not yet verified**.
 The source-integrity manifest is checked before the examples gate reports the
 expected parser-only result.
