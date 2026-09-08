@@ -2250,6 +2250,16 @@ fn assume_contract_propositions(
 fn assume_contract_proposition(assumptions: &mut PureFactContext, proposition: Proposition) {
     *assumptions = assumptions.clone().assume_proposition(proposition.clone());
     match proposition {
+        Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
+            // Linear decomposition of this explicitly selected premise.
+            for (left, right) in
+                super::spec::sequence_elements(&left).zip(super::spec::sequence_elements(&right))
+            {
+                if let Some(equality) = refinement_sequence_element_equality(left, right) {
+                    *assumptions = assumptions.clone().assume_proposition(equality);
+                }
+            }
+        }
         Proposition::And(left, right) => {
             assume_contract_proposition(assumptions, *left);
             assume_contract_proposition(assumptions, *right);
@@ -2317,6 +2327,29 @@ fn contract_refinement_proves(
         return false;
     }
     match proposition {
+        Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
+            let mut left = super::spec::sequence_elements(left);
+            let mut right = super::spec::sequence_elements(right);
+            loop {
+                match (left.next(), right.next()) {
+                    (Some(left), Some(right)) => {
+                        let Some(equality) = refinement_sequence_element_equality(left, right)
+                        else {
+                            return false;
+                        };
+                        if !contract_refinement_proves(assumptions, &equality, true) {
+                            return false;
+                        }
+                    }
+                    (None, None) => return true,
+                    _ => return false,
+                }
+            }
+        }
+        Proposition::Or(left, right) => {
+            return contract_refinement_proves(assumptions, left, true)
+                || contract_refinement_proves(assumptions, right, true);
+        }
         Proposition::And(left, right) => {
             return contract_refinement_proves(assumptions, left, true)
                 && contract_refinement_proves(assumptions, right, true);
@@ -2375,6 +2408,27 @@ fn contract_refinement_proves(
             })
 }
 
+// Sequence terms use logical equality. C integer equality agrees with it;
+// floating equality does not (NaNs and signed zero), and address equality
+// alone must not establish equality of pointer provenance.
+fn refinement_sequence_element_equality(left: &CValue, right: &CValue) -> Option<Proposition> {
+    if left.c_type() != right.c_type()
+        || !matches!(
+            left,
+            CValue::Int16(_)
+                | CValue::Int32(_)
+                | CValue::UInt8(_)
+                | CValue::UInt16(_)
+                | CValue::UInt32(_)
+                | CValue::Int64(_)
+                | CValue::UInt64(_)
+        )
+    {
+        return None;
+    }
+    c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
+}
+
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {
     match proposition {
         SpecProposition::Comparison { left, right, .. } => {
@@ -2402,12 +2456,19 @@ fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool 
 
 /// The first stateful refinement slice admits ordinary scalar propositions
 /// whose only stateful operation is a C memory access (possibly below
-/// `old`). Resource predicates, sequences, algebraic values, explicit memory
-/// snapshots, and user predicates remain outside this rule. The caller also
-/// requires the surrounding resource transition and mutable footprint to
-/// match exactly.
+/// `old`), including finite sequence comparisons and membership. Resource
+/// relations, algebraic values, and explicit memory snapshots remain outside
+/// this rule. The caller separately checks resource and footprint refinement.
 fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecProposition) -> bool {
     match proposition {
+        SpecProposition::SequenceComparison { left, right, .. } => {
+            spec_sequence_supports_stateful_memory_refinement(left)
+                && spec_sequence_supports_stateful_memory_refinement(right)
+        }
+        SpecProposition::SequenceMembership { element, sequence } => {
+            spec_expression_supports_stateful_memory_refinement(element)
+                && spec_sequence_supports_stateful_memory_refinement(sequence)
+        }
         SpecProposition::Comparison { left, right, .. } => {
             spec_expression_supports_stateful_memory_refinement(left)
                 && spec_expression_supports_stateful_memory_refinement(right)
@@ -2430,6 +2491,18 @@ fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecPropos
             spec_proposition_supports_stateful_memory_refinement(body)
         }
         _ => false,
+    }
+}
+
+fn spec_sequence_supports_stateful_memory_refinement(sequence: &SpecSequenceExpression) -> bool {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => elements
+            .iter()
+            .all(spec_expression_supports_stateful_memory_refinement),
+        SpecSequenceExpression::Concat(left, right) => {
+            spec_sequence_supports_stateful_memory_refinement(left)
+                && spec_sequence_supports_stateful_memory_refinement(right)
+        }
     }
 }
 

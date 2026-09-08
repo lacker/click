@@ -86,12 +86,17 @@ receive an `augment_rotate` callback, and erase helpers invoke `propagate`,
   predicate identity must be named; direct pointer formation remains opaque,
   and an unrelated unfold grants no authority.
 
+- Finite sequence comparisons and membership over current and entry memory
+  participate in refinement, including concatenation. Selected sequence
+  equalities supply their element equalities in linear work. Concrete and
+  abstract refinement proofs retain the ordinary resource and effect checks.
+
 The remaining semantic step is refinement for broader state-dependent
 propositions at concrete-pointer formation.
 Guarded effects participate in footprint containment, but stateful
 postconditions with conditional footprints require an explicit closed theorem
 and written case split; automatic concrete-pointer formation remains limited
-to an unguarded named footprint. Stateful sequence, algebraic,
+to an unguarded named footprint. Stateful algebraic,
 resource-relation, and explicit-memory-snapshot propositions are not yet part
 of refinement. The Linux augmented rbtree regressions below also remain to be
 added on top of those general rules.

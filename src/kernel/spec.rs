@@ -1243,14 +1243,14 @@ fn lower_spec_sequence_membership_at_state(
     Ok(paths)
 }
 
-fn sequence_elements(sequence: &SequenceTerm) -> SequenceElements<'_> {
+pub(super) fn sequence_elements(sequence: &SequenceTerm) -> SequenceElements<'_> {
     SequenceElements {
         pending: vec![sequence],
         current: None,
     }
 }
 
-struct SequenceElements<'a> {
+pub(super) struct SequenceElements<'a> {
     pending: Vec<&'a SequenceTerm>,
     current: Option<std::slice::Iter<'a, CValue>>,
 }
