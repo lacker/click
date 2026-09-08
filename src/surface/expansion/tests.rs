@@ -1378,9 +1378,11 @@ int32 contains(uint8 p[], int32 n) {
 #[test]
 fn expanded_bitvector_facts_print_parseable_negative_literals() {
     let c_source = "int32 all_bits() { return ~0; }";
+    // `~0` is -1, and a sidecar literal takes the same type it takes in C, so
+    // the claim is spelled with the negative literal the expansion prints.
     let click_source = r#"verifying "all_bits.c";
 int32 all_bits() {
-    ensures result == 4294967295 by auto;
+    ensures result == -1 by auto;
 }"#;
     let offset = click_source.find("auto").expect("auto should be present");
     let position = position_at_offset(click_source, offset);

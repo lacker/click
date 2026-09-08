@@ -4331,9 +4331,7 @@ impl Parser {
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
-            if let Some(Token::Number(value)) = self.peek_next().cloned()
-                && value <= i32::MAX as u32 + 1
-            {
+            if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
                 return Ok(ContractExpression::CFragment(CExpression::Value(int32(
                     0u32.wrapping_sub(value),
@@ -5185,9 +5183,7 @@ impl Parser {
 
     fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
-            if let Some(Token::Number(value)) = self.peek_next().cloned()
-                && value <= i32::MAX as u32 + 1
-            {
+            if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
                 return Ok(C0Expression::Int32Literal(0u32.wrapping_sub(value)));
             }
@@ -5523,6 +5519,20 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
 /// A segment may spell its base directly (`object.field`) or by address
 /// (`&object.field`); both name the same object, so field resolution has to
 /// see through the address-of. Anything else is not a named place.
+/// The magnitude of a literal that a leading `-` turns into an `int32`.
+///
+/// `int32` reaches one further below zero than above it, so the magnitude
+/// 2^31 is negatable even though the positive spelling of it is not an
+/// `int32`. The tokenizer therefore hands that one over as a wider literal
+/// and it narrows here, where the minus sign is in hand.
+fn negatable_int32_magnitude(token: &Token) -> Option<u32> {
+    match token {
+        Token::Number(value) if *value <= i32::MAX as u32 => Some(*value),
+        Token::Int64Number(value) if *value == i32::MAX as i64 + 1 => Some(i32::MAX as u32 + 1),
+        _ => None,
+    }
+}
+
 fn named_place_base(expression: &CExpression) -> Option<&String> {
     match expression {
         CExpression::Variable(name) => Some(name),

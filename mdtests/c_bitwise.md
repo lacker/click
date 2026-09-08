@@ -97,7 +97,7 @@ int32 bitwise_xor_or() {
 
 int32 bitwise_not_zero() {
     ensures surface_not: result == all_bits() by auto;
-    ensures concrete_not: result == 4294967295 by auto;
+    ensures concrete_not: result == -1 by auto;
 }
 
 int32 bitwise_uint8_promoted(uint8 x) {

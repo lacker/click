@@ -252,8 +252,20 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                     tokens.push(Token::UInt64Number(value));
                     index += 3;
                 } else {
-                    if let Ok(value) = u32::try_from(value) {
-                        tokens.push(Token::Number(value));
+                    // An unsuffixed decimal literal takes the same type it
+                    // takes in a C source: `int32` while it fits, then the
+                    // wider types. Admitting the whole `u32` range here made
+                    // a literal above `INT32_MAX` reach the kernel as that
+                    // bit pattern read as a signed `int32`, so `4294967295`
+                    // denoted -1 and compared equal to it.
+                    //
+                    // A magnitude of exactly 2^31 is narrowed by the unary
+                    // minus that consumes it, so `-2147483648` still denotes
+                    // `INT32_MIN` while the positive spelling does not.
+                    if let Ok(narrow) = u32::try_from(value)
+                        && narrow <= i32::MAX as u32
+                    {
+                        tokens.push(Token::Number(narrow));
                     } else if let Ok(value) = i64::try_from(value) {
                         tokens.push(Token::Int64Number(value));
                     } else {

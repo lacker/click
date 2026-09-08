@@ -875,6 +875,14 @@ int32 t() {
 
 ## 11. Sidecar integer literals in [2^31, 2^32) wrap to negative `int32`
 
+**Fixed** in `Type a sidecar literal the way a C source types it`; regressions
+`mdtests/sidecar_literal_types_match_c.md` and
+`mdtests/sidecar_literal_above_int32_rejected.md`. Two existing tests had
+encoded the old reading and were corrected in the same change:
+`mdtests/c_bitwise.md` and the expansion test
+`expanded_bitvector_facts_print_parseable_negative_literals` both claimed
+`~0 == 4294967295`, which is false in C, where the literal is a `long`.
+
 **Severity: high.** A spec author writing an ordinary unsigned constant gets a
 different number than they wrote, and the C frontend disagrees with the sidecar
 about the same digits.
