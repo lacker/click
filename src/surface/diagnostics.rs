@@ -153,6 +153,9 @@ pub(super) fn describe_pure_fact(
     arguments: &[CExpression],
 ) -> String {
     match fact {
+        Proposition::Not(body) => {
+            format!("not ({})", describe_pure_fact(body, parameters, arguments))
+        }
         Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_)) => {
             "algebraic value equality".to_string()
         }
@@ -200,6 +203,7 @@ pub(super) fn describe_pure_fact(
         }
         Proposition::ConditionIs(condition, value) => {
             let kind = match condition {
+                ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality",
                 ConditionTerm::Bitvector32SignedLessThan(_, _) => "signed less-than",
                 ConditionTerm::Bitvector32SignedLessEqual(_, _) => "signed less-or-equal",
                 ConditionTerm::Bitvector32SignedGreaterThan(_, _) => "signed greater-than",
@@ -1676,6 +1680,7 @@ pub(super) fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
 
 pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
     match condition {
+        ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality".to_string(),
         ConditionTerm::Constant(value) => value.to_string(),
         ConditionTerm::Variable(variable) => format!("cond{}", variable.0),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {

@@ -436,6 +436,12 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::NormalizeUsing(premises) => Ok(ProofTactic::NormalizeUsing(
+            premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: expand_declared_resource_proposition(
                 have.proposition,

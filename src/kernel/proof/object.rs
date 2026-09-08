@@ -125,6 +125,7 @@ pub(crate) enum PropositionCloseError {
     NotProposition,
     Unavailable,
     DoesNotNormalize,
+    ConditionalNormalization(super::fact_reasoning::ConditionalNormalizationError),
     ArithmeticPremiseUnavailable(usize),
     Arithmetic(super::fact_reasoning::ArithmeticCheckError),
     ExpectedIntroduction(Proposition),
@@ -597,6 +598,18 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         super::fact_reasoning::normalizes_context_free(goal.proposition())
             .then(|| self.closed_focused())
             .ok_or(PropositionCloseError::DoesNotNormalize)
+    }
+
+    pub(crate) fn apply_normalize_using(
+        &self,
+        premises: &[Proposition],
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        super::fact_reasoning::normalize_using_conditions(goal.proposition(), premises, facts)
+            .map_err(PropositionCloseError::ConditionalNormalization)?;
+        Ok(self.closed_focused())
     }
 
     pub(crate) fn apply_arithmetic(

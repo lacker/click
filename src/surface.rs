@@ -2159,6 +2159,7 @@ pub enum ProofTactic {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
@@ -2404,6 +2405,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "normalize-using",
+        syntax: "normalize() using",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "arithmetic",
         syntax: "arithmetic()",
         class: "simple",
@@ -2530,6 +2536,7 @@ pub enum ProofStep {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
@@ -2724,6 +2731,7 @@ impl ProofStep {
             ProofTactic::Assumption => Self::Assumption,
             ProofTactic::Extract(proposition) => Self::Extract(proposition.clone()),
             ProofTactic::Normalize => Self::Normalize,
+            ProofTactic::NormalizeUsing(premises) => Self::NormalizeUsing(premises.clone()),
             ProofTactic::ArithmeticUsing(premises) => Self::ArithmeticUsing(premises.clone()),
             ProofTactic::Intro => Self::Intro,
             ProofTactic::Split => Self::Split,
@@ -2903,6 +2911,7 @@ impl ProofStep {
             Self::Assumption => ProofTactic::Assumption,
             Self::Extract(proposition) => ProofTactic::Extract(proposition.clone()),
             Self::Normalize => ProofTactic::Normalize,
+            Self::NormalizeUsing(premises) => ProofTactic::NormalizeUsing(premises.clone()),
             Self::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(premises.clone()),
             Self::Intro => ProofTactic::Intro,
             Self::Split => ProofTactic::Split,
@@ -3187,7 +3196,9 @@ impl ProofTactic {
             Self::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
             Self::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
-            Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
+            Self::Normalize | Self::NormalizeUsing(_) => {
+                TacticClass::Simple(SimpleTactic::Normalize)
+            }
             Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),

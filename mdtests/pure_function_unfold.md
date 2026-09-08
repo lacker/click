@@ -13,7 +13,7 @@ theorem clamp_nonpositive_is_zero(n: int32) {
     requires n <= 0;
     ensures clamp_nonpositive(n) == 0 by {
         unfold(clamp_nonpositive(n));
-        normalize();
+        normalize() using { n <= 0; }
     }
 }
 ```

@@ -3523,6 +3523,7 @@ pub(in crate::surface) fn validate_loop_initialization_tactics(
             | ProofTactic::Have(_)
             | ProofTactic::Assumption
             | ProofTactic::Normalize
+            | ProofTactic::NormalizeUsing(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::Simp => {}
             ProofTactic::If(proof_if) => {

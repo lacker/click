@@ -3383,6 +3383,7 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                 | Bitvector32Term::AlgebraicMatch { .. } => {}
             },
             Node::Condition(condition, depth) => match condition {
+                ConditionTerm::AlgebraicEqual(_, _) => return false,
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
                 ConditionTerm::Bitvector32SignedLessThan(left, right)
                 | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -3816,6 +3817,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                 }
             }
             AtomicCanonicalizationTask::VisitCondition(condition) => match condition {
+                ConditionTerm::AlgebraicEqual(_, _) => condition_results.push(condition.clone()),
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {
                     condition_results.push(condition.clone())
                 }
@@ -4503,6 +4505,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
             bitvector_has_memory(left) || bitvector_has_memory(right)
         }
+        ConditionTerm::AlgebraicEqual(_, _) => true,
         ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
             let mut has_memory = false;
             float_condition.for_each_bitvector_term(|term| {
@@ -4525,6 +4528,10 @@ fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<Shar
         collect_bitvector_memories(right, memories);
     };
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_bitvector_memories(term, memories));
+            right.for_each_bitvector_term(|term| collect_bitvector_memories(term, memories));
+        }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
         | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
@@ -4693,6 +4700,8 @@ fn transport_framed_atomic_condition(
         ))
     };
     Some(match condition {
+        // Do not claim a snapshot bridge through an opaque algebraic value.
+        ConditionTerm::AlgebraicEqual(_, _) => return None,
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             let (left, right) = binary(left, right)?;
             ConditionTerm::signed_less_than(left, right)

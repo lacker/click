@@ -251,6 +251,16 @@ impl<'a> Proof<'a> {
                             "could not refresh the goal after function `unfold`: {message}"
                         ))
                     })?
+                } else if original_surface.is_none() {
+                    // A nested proof can carry a checked kernel goal without
+                    // retained source syntax. Unfold the selected occurrence
+                    // by the same exact defining equality in that case.
+                    rewrite_proposition_by_exact_equality(
+                        goal.kernel(),
+                        &equality,
+                        std::slice::from_ref(&equality),
+                    )
+                    .unwrap_or_else(|_| goal.kernel().clone())
                 } else {
                     goal.kernel().clone()
                 };

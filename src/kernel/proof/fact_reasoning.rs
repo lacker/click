@@ -828,6 +828,42 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
         .is_some()
 }
 
+/// Reduce only checked, explicitly cited conditions; never search ambient facts.
+pub(crate) fn normalize_using_conditions(
+    goal: &Proposition,
+    premises: &[Proposition],
+    facts: &super::ProofFacts,
+) -> Result<(), ConditionalNormalizationError> {
+    let mut conditions = std::collections::HashMap::new();
+    for (index, premise) in premises.iter().enumerate() {
+        if !facts.contains(premise)
+            && !condition_polarity_forms(premise)
+                .iter()
+                .any(|form| facts.contains(form))
+        {
+            return Err(ConditionalNormalizationError::UnavailablePremise(index));
+        }
+        let (condition, value) = crate::kernel::spec::proposition_as_single_condition(premise)
+            .ok_or(ConditionalNormalizationError::UnsupportedPremise(index))?;
+        if let Some(previous) = conditions.insert(condition, value)
+            && previous != value
+        {
+            return Err(ConditionalNormalizationError::UnsupportedPremise(index));
+        }
+    }
+    let reduced = super::term_rewrite::TermRewrite::for_conditions(&conditions).proposition(goal);
+    normalizes_context_free(&reduced)
+        .then_some(())
+        .ok_or(ConditionalNormalizationError::DoesNotNormalize)
+}
+
+#[derive(Debug)]
+pub(crate) enum ConditionalNormalizationError {
+    UnavailablePremise(usize),
+    UnsupportedPremise(usize),
+    DoesNotNormalize,
+}
+
 pub(crate) enum ForallInt32InstantiationError {
     RequiresUniversal,
     UnsupportedSort,
@@ -1009,13 +1045,10 @@ pub(crate) fn is_implicit_fact_transport_context(proposition: &Proposition) -> b
 /// `condition_polarity_equivalent`. Callers can probe an exact index for these
 /// instead of maintaining another project-sized index.
 pub(crate) fn condition_polarity_forms(proposition: &Proposition) -> Vec<Proposition> {
-    let (condition, value) = match proposition {
-        Proposition::ConditionIs(condition, value) => (condition.clone(), *value),
-        Proposition::Not(negated) => match negated.as_ref() {
-            Proposition::ConditionIs(condition, value) => (condition.clone(), !value),
-            _ => return Vec::new(),
-        },
-        _ => return Vec::new(),
+    let Some((condition, value)) =
+        crate::kernel::spec::proposition_as_single_condition(proposition)
+    else {
+        return Vec::new();
     };
     let mut conditions = vec![(condition, value)];
     if let Some((left, right, strict)) =
@@ -1066,6 +1099,17 @@ pub(crate) fn condition_polarity_forms(proposition: &Proposition) -> Vec<Proposi
     }
     let mut forms = Vec::new();
     for (condition, value) in conditions {
+        if let ConditionTerm::AlgebraicEqual(left, right) = &condition {
+            let equality = Proposition::Equal(
+                Term::Algebraic(*left.clone()),
+                Term::Algebraic(*right.clone()),
+            );
+            forms.push(if value {
+                equality
+            } else {
+                Proposition::Not(Box::new(equality))
+            });
+        }
         let direct = Proposition::ConditionIs(condition.clone(), value);
         if !forms.contains(&direct) {
             forms.push(direct);
@@ -1278,14 +1322,7 @@ pub(crate) fn condition_polarity_equivalent(left: &Proposition, right: &Proposit
     // A negated condition fact is the same total boolean condition with the
     // opposite expected value; flattening lets one form compare against
     // the other and against the canonical order form of either.
-    let flatten = |proposition: &Proposition| match proposition {
-        Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
-        Proposition::Not(negated) => match negated.as_ref() {
-            Proposition::ConditionIs(condition, value) => Some((condition.clone(), !value)),
-            _ => None,
-        },
-        _ => None,
-    };
+    let flatten = crate::kernel::spec::proposition_as_single_condition;
     let (Some((left_condition, left_value)), Some((right_condition, right_value))) =
         (flatten(left), flatten(right))
     else {

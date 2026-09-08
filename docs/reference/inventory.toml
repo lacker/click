@@ -1439,6 +1439,9 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic-form.normalize"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
+id = "tactic-form.normalize-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
 id = "tactic-form.arithmetic"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
@@ -2055,6 +2058,10 @@ path = "reference/library/index.md#list_contains_nil"
 [[item]]
 id = "stdlib.theorem.list_contains_cons"
 path = "reference/library/index.md#list_contains_cons"
+
+[[item]]
+id = "stdlib.theorem.list_contains_append"
+path = "reference/library/index.md#list_contains_append"
 
 [[item]]
 id = "stdlib.function.count"

@@ -2954,6 +2954,13 @@ impl Parser {
             }
             "normalize" => {
                 self.expect_empty_tactic_args(&name)?;
+                if self.peek_ident() == Some("using") {
+                    let premises = self.parse_exact_premises()?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::NormalizeUsing(premises));
+                }
                 ProofTactic::Normalize
             }
             "arithmetic" => {

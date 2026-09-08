@@ -16,10 +16,13 @@ theorem countdown_is_zero(n: int32) {
     ensures countdown(n) == 0 by {
         induct(n) as ih;
         if n <= 0 {
-            simp();
+            unfold(countdown(n));
+            normalize() using { n <= 0; }
         } else {
             apply(ih(n - 1));
-            simp();
+            unfold(countdown(n));
+            rewrite(countdown(n - 1) == 0);
+            normalize();
         }
     }
 }

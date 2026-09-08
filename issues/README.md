@@ -87,6 +87,8 @@ normal tooling-first policy and should then be added to this list.
 
 ## Functionality gaps: 26
 
+- [Expand generic theorem templates](generic-theorem-template-expansion.md)
+
 C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
@@ -116,7 +118,6 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
-- [Rewrite algebraic arguments inside scalar-valued pure calls](algebraic-rewrite-through-scalar-calls.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 - [Add modules and imports for Click specifications](specification-imports.md)

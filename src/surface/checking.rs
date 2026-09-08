@@ -1,6 +1,7 @@
 use super::diagnostics::*;
 use super::*;
 
+mod algebraic_rewrite;
 mod contract_evaluation;
 mod effects;
 mod predicates;

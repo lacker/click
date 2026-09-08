@@ -1102,6 +1102,7 @@ pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
     };
     match condition {
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => condition.clone(),
+        ConditionTerm::AlgebraicEqual(_, _) => condition.clone(),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             let (left, right) = binary(left, right);
             ConditionTerm::Bitvector32SignedLessThan(left, right)
@@ -1510,6 +1511,7 @@ fn substitute_load_variables(
                 }
             }
             Task::VisitCondition(condition) => match condition {
+                ConditionTerm::AlgebraicEqual(_, _) => condition_results.push(condition.clone()),
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {
                     condition_results.push(condition.clone())
                 }
@@ -2012,6 +2014,9 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
 
 fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
     match condition {
+        // Until memory canonicalization traverses ADTs, conservatively disable
+        // the memory-free fast path for this logical condition.
+        ConditionTerm::AlgebraicEqual(_, _) => true,
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)

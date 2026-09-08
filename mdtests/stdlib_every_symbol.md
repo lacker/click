@@ -17,6 +17,10 @@ int32 docs_identity(int32 value) {
 verifying "stdlib_every_symbol.c";
 
 theorem list_laws(xs: List<int32>, ys: List<int32>, zs: List<int32>, value: int32) {
+    ensures list_contains(list_append(xs, ys), value)
+        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        apply(list_contains_append(xs, ys, value));
+    }
     ensures list_append(List<int32>::Nil, xs) == xs by {
         apply(list_append_left_identity(xs));
         assumption();

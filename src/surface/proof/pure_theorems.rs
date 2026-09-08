@@ -1318,6 +1318,7 @@ fn verify_theorem_ensure(
                         claim_label,
                         &context.requires,
                         &goal,
+                        Some(surface_goal),
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
@@ -1996,6 +1997,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::UnfoldFunction(_)
         | ProofStep::Assumption
         | ProofStep::Normalize
+        | ProofStep::NormalizeUsing(_)
         | ProofStep::ArithmeticUsing(_)
         | ProofStep::Intro
         | ProofStep::Induct { .. }
@@ -2073,10 +2075,12 @@ fn check_pure_script_with_proof(
         return Ok(None);
     }
 
-    let checked = if tactics
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::ArithmeticUsing(_)))
-    {
+    let checked = if tactics.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::ArithmeticUsing(_) | ProofTactic::NormalizeUsing(_)
+        )
+    }) {
         root.try_authoritative_linear_script(tactics)?
     } else {
         root.try_linear_script(tactics)?
@@ -3406,6 +3410,7 @@ pub(super) fn validate_pure_theorem_certificate(
         claim_label,
         requires,
         goal,
+        None,
         predicate_environment,
         click_function_environment,
         theorem_environment,
@@ -3420,6 +3425,7 @@ fn prove_pure_theorem_script(
     claim_label: &str,
     requires: &[Proposition],
     goal: &Proposition,
+    surface_goal: Option<&ClickProposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
@@ -3432,6 +3438,7 @@ fn prove_pure_theorem_script(
             claim_label,
             requires,
             goal,
+            surface_goal,
             predicate_environment,
             click_function_environment,
             theorem_environment,
@@ -3882,6 +3889,7 @@ fn prove_pure_theorem_tactics(
     claim_label: &str,
     requires: &[Proposition],
     original_goal: &Proposition,
+    original_surface_goal: Option<&ClickProposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
@@ -3902,7 +3910,9 @@ fn prove_pure_theorem_tactics(
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();
     let mut goal = original_goal.clone();
-    let mut surface_goal = induction_setup.map(|setup| setup.surface_goal.clone());
+    let mut surface_goal = original_surface_goal
+        .cloned()
+        .or_else(|| induction_setup.map(|setup| setup.surface_goal.clone()));
     let mut closed = false;
     let mut induction_active = false;
 
@@ -4479,6 +4489,34 @@ fn prove_pure_theorem_tactics(
                         describe_pure_fact(&goal, &[], &[])
                     )));
                 }
+                closed = true;
+            }
+            ProofTactic::NormalizeUsing(surface_premises) => {
+                let premises = surface_premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(ClickError::new)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                crate::kernel::proof::fact_reasoning::normalize_using_conditions(
+                    &goal,
+                    &premises,
+                    &crate::kernel::proof::ProofFacts::from_ordered(&available),
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`normalize using` failed for `{claim_label}`: {error:?}"
+                    ))
+                })?;
                 closed = true;
             }
             ProofTactic::ArithmeticUsing(surface_premises) => {

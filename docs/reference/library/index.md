@@ -75,8 +75,8 @@ function list_contains<T>(xs: List<T>, value: T) -> int32
 ```
 
 Returns `1` for membership and `0` otherwise, using element equality.
-Currently its checked constructor laws support C scalar and pointer elements;
-conditional equality for algebraic-valued elements remains an ADT gap.
+Its checked laws support C scalar, pointer, and algebraic-valued elements,
+including nested lists. Comparisons of unknown algebraic values stay symbolic.
 
 **Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
 
@@ -190,6 +190,53 @@ theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
 ```
 
 **Verified use:** [`mdtests/stdlib_list.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list.md).
+
+### `list_contains_append`
+
+```click
+theorem list_contains_append<T>(xs: List<T>, ys: List<T>, value: T) {
+    ensures list_contains(list_append(xs, ys), value)
+        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        induct(xs) as ih {
+            List::Nil => {
+                unfold(list_append(List<T>::Nil, ys));
+                unfold(list_contains(List<T>::Nil, value));
+                simp();
+            }
+            List::Cons(head, tail) => {
+                apply(ih(tail));
+                apply(list_append_cons(head, tail, ys));
+                rewrite(list_append(List<T>::Cons(head, tail), ys)
+                    == List<T>::Cons(head, list_append(tail, ys)));
+                if head == value {
+                    apply(list_contains_cons(head, list_append(tail, ys), value));
+                    rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
+                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                    apply(list_contains_cons(head, tail, value));
+                    rewrite(list_contains(List<T>::Cons(head, tail), value)
+                        == if head == value { 1 } else { list_contains(tail, value) });
+                    normalize() using { head == value; }
+                } else {
+                    apply(list_contains_cons(head, list_append(tail, ys), value));
+                    rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
+                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                    apply(list_contains_cons(head, tail, value));
+                    rewrite(list_contains(List<T>::Cons(head, tail), value)
+                        == if head == value { 1 } else { list_contains(tail, value) });
+                    rewrite(list_contains(list_append(tail, ys), value)
+                        == if list_contains(tail, value) == 1 { 1 } else { list_contains(ys, value) });
+                    normalize() using { not(head == value); }
+                }
+            }
+        }
+    }
+}
+```
+
+Membership through append, proved by structural induction with explicit
+conditional reduction in each constructor case.
+
+**Verified use:** [`mdtests/stdlib_list_compositionality.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_list_compositionality.md).
 
 ## Signed `int32` theorems
 

@@ -3741,12 +3741,13 @@ pub(super) fn evaluate_spec_if_paths(
             &condition_path.facts,
             &condition_path.obligations,
         );
-        let condition_truth = if branch_assumptions.proves(&condition_path.proposition) {
+        // Logical expressions must have the same shape at declaration and
+        // application sites. Ambient proof facts justify explicit reductions,
+        // not a different expression during lowering.
+        let context_free = PureFactContext::new();
+        let condition_truth = if context_free.proves(&condition_path.proposition) {
             Some(true)
-        } else if assumptions_prove_proposition_false(
-            &branch_assumptions,
-            &condition_path.proposition,
-        ) {
+        } else if assumptions_prove_proposition_false(&context_free, &condition_path.proposition) {
             Some(false)
         } else {
             None
@@ -4111,11 +4112,13 @@ pub(super) fn proposition_as_single_condition(
 ) -> Option<(ConditionTerm, bool)> {
     match proposition {
         Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => Some((
+            ConditionTerm::AlgebraicEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        )),
         Proposition::Not(body) => {
-            let Proposition::ConditionIs(condition, value) = body.as_ref() else {
-                return None;
-            };
-            Some((condition.clone(), !*value))
+            let (condition, value) = proposition_as_single_condition(body)?;
+            Some((condition, !value))
         }
         _ => None,
     }

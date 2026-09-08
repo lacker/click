@@ -1,6 +1,29 @@
 use super::*;
 
 impl PureFactContext {
+    pub(super) fn decide_algebraic_equality(
+        &self,
+        left: &AlgebraicTerm,
+        right: &AlgebraicTerm,
+    ) -> Option<bool> {
+        if let Some(value) = self.exact_condition_value(&ConditionTerm::AlgebraicEqual(
+            Box::new(left.clone()),
+            Box::new(right.clone()),
+        )) {
+            return Some(value);
+        }
+        let equality = Proposition::Equal(
+            Term::Algebraic(left.clone()),
+            Term::Algebraic(right.clone()),
+        );
+        if self.proves(&equality) {
+            Some(true)
+        } else if self.proves(&Proposition::Not(Box::new(equality))) {
+            Some(false)
+        } else {
+            None
+        }
+    }
     fn direct_bitvector_equality_evidence(
         &self,
         left: &Bitvector32Term,
@@ -273,6 +296,9 @@ impl PureFactContext {
 
     fn decide_inner(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
+            ConditionTerm::AlgebraicEqual(left, right) => {
+                self.decide_algebraic_equality(left, right)
+            }
             ConditionTerm::Constant(value) => Some(*value),
             _ => {
                 if let Some(value) = self.exact_condition_value(condition) {
@@ -835,6 +861,10 @@ impl PureFactContext {
         condition: &ConditionTerm,
     ) -> ConditionTerm {
         match condition {
+            ConditionTerm::AlgebraicEqual(left, right) => self
+                .decide_algebraic_equality(left, right)
+                .map(ConditionTerm::Constant)
+                .unwrap_or_else(|| condition.clone()),
             ConditionTerm::Constant(value) => ConditionTerm::Constant(*value),
             ConditionTerm::Variable(variable) => ConditionTerm::Variable(*variable),
             ConditionTerm::Bitvector32SignedLessThan(left, right) => {

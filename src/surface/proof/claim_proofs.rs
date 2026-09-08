@@ -2766,7 +2766,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                     );
                                 }
                             }
-                            PostExecutionTactic::Normalize => {
+                            PostExecutionTactic::Normalize
+                            | PostExecutionTactic::NormalizeUsing(_) => {
+                                let normalization_step = match post_tactic {
+                                    PostExecutionTactic::NormalizeUsing(premises) => {
+                                        ProofStep::NormalizeUsing(premises.clone())
+                                    }
+                                    _ => ProofStep::Normalize,
+                                };
                                 let mut closed_any = false;
                                 let transition_facts = path.execution_facts();
                                 // Claim closers focus fresh obligation roots;
@@ -2817,6 +2824,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                         // Normalization exposes that definitional
                                         // partial-correctness rule without requiring a
                                         // nonexistent return value or state.
+                                        if matches!(
+                                            normalization_step,
+                                            ProofStep::NormalizeUsing(_)
+                                        ) {
+                                            return Err(ClickError::new(
+                                                "`normalize using` requires a return-state proposition; use context-free `normalize()` for a divergent path",
+                                            ));
+                                        }
                                         closures[claim_index] = ClaimClosure::by_exact_check();
                                         closed_any = true;
                                         continue;
@@ -2866,7 +2881,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if let Some((rewritten, checkpoint)) =
                                         &rewritten_claim_proofs[claim_index]
                                     {
-                                        match rewritten.apply_step(ProofStep::Normalize) {
+                                        match rewritten.apply_step(normalization_step.clone()) {
                                             Ok(proof) => {
                                                 let certificate =
                                                     proof.certificate_since(checkpoint)?;
@@ -2899,7 +2914,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 goal,
                                                 Some(surface_goal.clone()),
                                             )?
-                                            .apply_step(ProofStep::Normalize)
+                                            .apply_step(normalization_step.clone())
                                         {
                                             Ok(proof) => {
                                                 closed = Some(proof);
@@ -2932,7 +2947,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 let tactics = retained_certificate
                                     .as_ref()
                                     .map(ProofCertificate::to_proof_tactics)
-                                    .unwrap_or_else(|| vec![ProofTactic::Normalize]);
+                                    .unwrap_or_else(|| vec![normalization_step.to_proof_tactic()]);
                                 for tactic in tactics {
                                     record_post_execution_surface_tactic(
                                         deferred.surface_recorded,

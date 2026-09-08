@@ -12,10 +12,13 @@ theorem by_two_is_zero(n: int32) {
     ensures by_two(n) == 0 by {
         induct(n) as ih;
         if n <= 1 {
-            simp();
+            unfold(by_two(n));
+            normalize() using { n <= 1; }
         } else {
             apply(ih(n - 2));
-            simp();
+            unfold(by_two(n));
+            rewrite(by_two(n - 2) == 0);
+            normalize();
         }
     }
 }

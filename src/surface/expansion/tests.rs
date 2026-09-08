@@ -1,6 +1,115 @@
 use super::*;
 
 #[test]
+fn conditional_normalization_roundtrips_and_rejects_tampering() {
+    let source = r#"
+theorem client(xs: List<int32>, ys: List<int32>) {
+    requires not(xs == ys);
+    ensures (if xs == ys { 1 } else { 0 }) == 0 by {
+        normalize() using { not(xs == ys); }
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("conditional client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("simple conditional normalization roundtrips");
+    assert!(expanded.contains("normalize() using"));
+    verify_c0_sources(&expanded, &[]).expect("conditional certificate rechecks");
+    for tampered in [
+        expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+        expanded.replace("not(xs == ys)", "xs == ys"),
+        expanded.replace("else { 0 }) == 0", "else { 0 }) == 1"),
+    ] {
+        assert_ne!(tampered, expanded);
+        assert!(verify_c0_sources(&tampered, &[]).is_err());
+    }
+}
+
+#[test]
+fn generic_template_expansion_reports_missing_instantiation() {
+    let source = r#"
+theorem client<T>(xs: List<T>, ys: List<T>) {
+    requires not(xs == ys);
+    ensures (if xs == ys { 1 } else { 0 }) == 0 by {
+        normalize() using { not(xs == ys); }
+    }
+}
+"#;
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0)
+        .expect("generic parameter lists have source locations");
+    let error = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect_err("a template has no concrete checked certificate to expand");
+    assert!(
+        error.message.contains("concrete type instance"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn smart_conditional_normalization_emits_checked_evidence() {
+    let source = r#"
+function same_list(xs: List<int32>, ys: List<int32>) -> int32 {
+    if xs == ys { 1 } else { 0 }
+}
+theorem client(xs: List<int32>, ys: List<int32>) {
+    requires not(xs == ys);
+    ensures same_list(xs, ys) == 0 by { simp(); }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("smart conditional proof verifies");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("smart conditional proof expands");
+    assert!(expanded.contains("normalize() using"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("emitted conditional evidence rechecks");
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("requires not(xs == ys);", "requires xs == ys;"),
+            &[],
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn nested_list_membership_expands_and_rechecks() {
+    let source = r#"
+theorem client(xs: List<List<int32>>, ys: List<List<int32>>, value: List<int32>) {
+    ensures list_contains(list_append(xs, ys), value)
+        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        apply(list_contains_append(xs, ys, value));
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("nested-list client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 0).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("nested-list application expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded nested-list client rechecks");
+}
+
+#[test]
+fn scalar_call_congruence_expands_and_rejects_tampering() {
+    let source = r#"
+theorem client(xs: List<int32>, ys: List<int32>, value: int32) {
+    requires xs == ys;
+    ensures list_contains(xs, value) == list_contains(ys, value) by {
+        rewrite(xs == ys);
+        simp();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("rewrite client verifies before expansion");
+    let position = c0_tactic_source_position(source, &[], "client.ensures_0", 1).unwrap();
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column)
+        .expect("rewritten scalar goal expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded rewrite client rechecks");
+    let tampered = expanded.replace("requires xs == ys;", "requires xs == xs;");
+    assert!(verify_c0_sources(&tampered, &[]).is_err());
+}
+
+#[test]
 fn library_list_theorem_application_expands_and_rechecks() {
     let source = r#"
 theorem client(xs: List<int32>, ys: List<int32>, zs: List<int32>) {

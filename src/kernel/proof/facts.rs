@@ -817,6 +817,10 @@ fn collect_condition_bitvector_atoms(
     atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
 ) {
     match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+            right.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
+        }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
         | ConditionTerm::Bitvector32SignedGreaterThan(left, right)

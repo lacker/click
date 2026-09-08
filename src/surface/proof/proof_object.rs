@@ -427,6 +427,7 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
         ProofTactic::ArithmeticUsing(premises) => {
             Some(ProofStep::ArithmeticUsing(premises.clone()))
         }
+        ProofTactic::NormalizeUsing(premises) => Some(ProofStep::NormalizeUsing(premises.clone())),
         ProofTactic::Intro => Some(ProofStep::Intro),
         ProofTactic::Split => Some(ProofStep::Split),
         ProofTactic::Left => Some(ProofStep::Left),

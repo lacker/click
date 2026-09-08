@@ -240,6 +240,8 @@ impl PointerOffsetTerm {
 pub enum ConditionTerm {
     Constant(bool),
     Variable(Variable),
+    /// Logical equality of immutable algebraic values, not a C comparison.
+    AlgebraicEqual(Box<AlgebraicTerm>, Box<AlgebraicTerm>),
     Bitvector32SignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
@@ -931,6 +933,77 @@ pub struct AlgebraicResultMatchArm {
 }
 
 impl AlgebraicTerm {
+    /// Visit scalar payload roots without expanding datatype schemas or copying
+    /// terms. Callers decide how far to traverse each scalar expression.
+    pub(crate) fn for_each_bitvector_term(&self, mut visit: impl FnMut(&Bitvector32Term)) {
+        enum Node<'a> {
+            Algebraic(&'a AlgebraicTerm),
+            Value(&'a CValue),
+            Offset(&'a PointerOffsetTerm),
+        }
+        let mut pending = vec![Node::Algebraic(self)];
+        while let Some(node) = pending.pop() {
+            match node {
+                Node::Algebraic(term) => match &term.node {
+                    AlgebraicTermNode::Variable(_) => {}
+                    AlgebraicTermNode::Constructor { fields, .. } => {
+                        for field in fields {
+                            pending.push(match field {
+                                AlgebraicValue::C(v) => Node::Value(v),
+                                AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
+                            });
+                        }
+                    }
+                    AlgebraicTermNode::Match { scrutinee, arms } => {
+                        pending.push(Node::Algebraic(scrutinee));
+                        for arm in arms {
+                            pending.push(Node::Algebraic(&arm.body));
+                            for binding in &arm.bindings {
+                                pending.push(match binding {
+                                    AlgebraicValue::C(v) => Node::Value(v),
+                                    AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
+                                });
+                            }
+                        }
+                    }
+                    AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+                        for argument in arguments {
+                            pending.push(match argument {
+                                PureFunctionArgument::Value(v)
+                                | PureFunctionArgument::ArrayRef { pointer: v, .. } => {
+                                    Node::Value(v)
+                                }
+                                PureFunctionArgument::Algebraic(v) => Node::Algebraic(v),
+                            });
+                        }
+                    }
+                },
+                Node::Value(value) => match value {
+                    CValue::Void => {}
+                    CValue::Pointer(v) => pending.push(Node::Offset(&v.pointer().offset)),
+                    CValue::Int16(v)
+                    | CValue::UInt16(v)
+                    | CValue::UInt8(v)
+                    | CValue::Int32(v)
+                    | CValue::UInt32(v)
+                    | CValue::Int64(v)
+                    | CValue::UInt64(v)
+                    | CValue::Float32(v)
+                    | CValue::Float64(v) => visit(v),
+                },
+                Node::Offset(offset) => match offset {
+                    PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+                    PointerOffsetTerm::Add(a, b) => {
+                        pending.push(Node::Offset(a));
+                        pending.push(Node::Offset(b));
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, .. }
+                    | PointerOffsetTerm::Int64Scaled { value, .. } => visit(value),
+                },
+            }
+        }
+    }
+
     /// Returns a constructor's fields only when the constructor is formed
     /// against this term's resolved datatype schema. Logical variables are
     /// well formed but have no constructor fields.

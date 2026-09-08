@@ -7,6 +7,9 @@ impl PureFactContext {
         }
 
         match condition {
+            ConditionTerm::AlgebraicEqual(left, right) => {
+                self.decide_algebraic_equality(left, right)
+            }
             ConditionTerm::Constant(value) => Some(*value),
             ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerEqual(left, right)

@@ -99,6 +99,90 @@ fn checked_algebraic_constructor_rules_are_sound() {
 }
 
 #[test]
+fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
+    let ty = maybe_int32_type();
+    let left = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_100)),
+    };
+    let right = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_101)),
+    };
+    let condition = ConditionTerm::AlgebraicEqual(Box::new(left.clone()), Box::new(right.clone()));
+    let equality = Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right));
+    assert_eq!(PureFactContext::new().decide(&condition), None);
+    for expected in [true, false] {
+        let premise = if expected {
+            equality.clone()
+        } else {
+            Proposition::Not(Box::new(equality.clone()))
+        };
+        let facts = PureFactContext::new().assume_proposition(premise.clone());
+        assert_eq!(facts.decide(&condition), Some(expected));
+        let condition_fact = Proposition::ConditionIs(condition.clone(), expected);
+        assert!(
+            crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
+                &premise,
+                &condition_fact
+            )
+        );
+        assert!(
+            crate::kernel::proof::fact_reasoning::condition_polarity_forms(&condition_fact)
+                .contains(&premise)
+        );
+        assert!(
+            !crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
+                &premise,
+                &Proposition::ConditionIs(condition.clone(), !expected)
+            )
+        );
+    }
+    let distinct = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(&ty, "None", vec![])),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    assert_eq!(PureFactContext::new().decide(&distinct), Some(false));
+}
+
+#[test]
+fn algebraic_condition_substitution_visits_scalar_fields() {
+    let ty = maybe_int32_type();
+    let variable = Variable(89_102);
+    let condition = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Variable(variable))],
+        )),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    let mut variables = BTreeSet::new();
+    collect_condition_bitvector_variables(&condition, &mut variables);
+    assert_eq!(variables, BTreeSet::from([variable]));
+    let rewritten = substitute_bitvector_variable_in_condition(
+        &condition,
+        variable,
+        &Bitvector32Term::Constant(0),
+    );
+    assert_eq!(PureFactContext::new().decide(&rewritten), Some(true));
+    let value = Bitvector32Term::If {
+        condition: Box::new(condition),
+        then_term: Box::new(Bitvector32Term::Constant(1)),
+        else_term: Box::new(Bitvector32Term::Constant(0)),
+    };
+    assert!(!crate::kernel::term_is_shallow_structural_cache_key(&value));
+}
+
+#[test]
 fn distinct_algebraic_constructors_make_the_context_inconsistent() {
     let algebraic_type = maybe_int32_type();
     let conflict = Proposition::Equal(

@@ -158,6 +158,11 @@ path = "mdtests/simple_tactics.md"
 needle = "normalize();"
 
 [[form]]
+id = "normalize-using"
+path = "mdtests/normalize_using.md"
+needle = "normalize() using { not(xs == ys); }"
+
+[[form]]
 id = "intro"
 path = "mdtests/copy_n_segment_invariant.md"
 needle = "intro();"
