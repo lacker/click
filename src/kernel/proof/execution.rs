@@ -2208,6 +2208,7 @@ pub(crate) struct ExecutionProofCore {
 
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct CheckedLoopInvariantLowerings {
+    pub(super) body: Option<super::object::CheckedInvariantBody>,
     pub(super) snapshot: SharedValue<CState>,
     pub(super) checks: Vec<crate::kernel::CLoopInvariantCheck>,
     pub(super) paths: Vec<Arc<crate::kernel::loops::CheckedInvariantLowering>>,

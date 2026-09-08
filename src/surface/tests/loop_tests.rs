@@ -20,7 +20,9 @@ fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
         }
     "#;
     let sources = [("count.c", c_source)];
+    let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(source, &sources).expect("the body must prove the exact closure obligations");
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
     let position =
         expansion::position_at_offset(source, source.find("close_invariants by").unwrap());
     let expanded = expand_c0_tactic_source_at(source, &sources, position.line, position.column)
@@ -65,10 +67,12 @@ fn explicit_invariant_body_quantified_bubble_census() {
         expand_c0_claim_source(click, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
     assert!(expanded.contains("close_invariants();"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
     let expanded =
         expand_c0_claim_source(&explicit, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
     verify_c0_sources(&expanded, &sources).unwrap();
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
 #[test]

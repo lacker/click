@@ -2,6 +2,9 @@
 
 The `by` keyword introduces a proof of the exact back-edge obligations.
 Expansion retains its child scopes, rather than restating the goals as haves.
+The completed body supplies the closure evidence; the legacy invariant prover
+does not independently prove these obligations again. Read-safety obligations
+are part of the body goal, not assumptions supplied to it.
 
 ```c filename=count.c
 int32 count() {

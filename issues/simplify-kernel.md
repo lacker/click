@@ -339,10 +339,12 @@ scopes are therefore required, not just an outer proof body. The new
 scopes, including retained proof bodies for expansion. Structural conjunction
 planning now uses those scopes directly. `close_invariants by { ... }` now
 checks and retains a proof of the exact collected value/safety goals; scalar
-and quantified bubble proofs expand and recheck. Existing kernel bundle
-preparation/validation remains an independent requirement, so the legacy
-preparation migration is not yet complete.
-That closure-body prototype was reverted. A rejected key
+and quantified bubble proofs expand and recheck. The kernel now creates the
+exact body scope and retains its completed checked result as context-bound
+bundle evidence. Preparation validates this evidence without legacy discovery;
+missing or stale evidence still rejects. Bare closers and automatic preservation
+planning still use legacy preparation and the prefix probe, so their migration
+is the next step. The earlier outer-scope-only prototype was reverted. A rejected key
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
 
