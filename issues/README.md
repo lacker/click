@@ -74,10 +74,10 @@ normal tooling-first policy and should then be added to this list.
 
 ## Soundness bugs: 1
 
-- [Bug bash: soundness holes and C mis-models found on 2026-09-06](bugbash.md)
-  bundles 24 root causes with reproductions, each of which certifies a claim
-  that is false under C. Split each section into its own file as it is picked
-  up.
+- [Bug bash: open soundness holes and C mis-models](bugbash.md) bundles 16 root
+  causes with reproductions, each of which certifies a claim that is false
+  under C or models a construct differently from C. Split each section into
+  its own file as it is picked up.
 
 ## Architecture issues: 4
 
