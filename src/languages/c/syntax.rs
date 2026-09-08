@@ -126,6 +126,7 @@ struct StaticAddress {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
+    pub(crate) program_entry_state: Option<std::sync::Arc<crate::kernel::CState>>,
     return_type: C0Type,
     return_pointee_constant: bool,
     return_struct_name: Option<String>,
@@ -1978,6 +1979,7 @@ impl C0Function {
             return_pointer_struct_name: None,
             name,
             inline_body: false,
+            program_entry_state: None,
             parameters,
             body: C0Statement::Skip,
             structs: BTreeMap::new(),
@@ -2397,6 +2399,9 @@ impl C0Function {
             self.body.to_kernel_statement(),
         );
         function = function.with_return_pointee_constant(self.return_pointee_constant);
+        if self.program_entry_state.is_some() {
+            function = function.with_program_entry();
+        }
         if self.inline_body {
             function = function.with_inline_body();
         }
@@ -2408,31 +2413,59 @@ impl C0Function {
                 .to_kernel_aggregate_layout();
             function = function.with_return_aggregate_layout(layout);
         }
+        self.with_kernel_static_storage(function, true)
+    }
+
+    /// Startup needs storage declarations, not another copy of each body
+    /// or each function's complete visible global environment.
+    pub(crate) fn to_kernel_static_storage(
+        &self,
+        include_globals: bool,
+    ) -> crate::kernel::CFunction {
+        self.with_kernel_static_storage(
+            crate::kernel::CFunction::new(
+                crate::kernel::CType::Void,
+                self.name.clone(),
+                vec![],
+                crate::kernel::CStatement::Skip,
+            ),
+            include_globals,
+        )
+    }
+
+    fn with_kernel_static_storage(
+        &self,
+        mut function: crate::kernel::CFunction,
+        include_globals: bool,
+    ) -> crate::kernel::CFunction {
+        if include_globals {
+            function = function
+                .with_global_variables(
+                    self.globals
+                        .values()
+                        .filter_map(|global| self.to_kernel_global(global))
+                        .collect(),
+                )
+                .with_global_arrays(
+                    self.global_arrays
+                        .values()
+                        .filter_map(C0GlobalArray::to_kernel_global_array)
+                        .collect(),
+                )
+                .with_global_aggregates(
+                    self.global_aggregates
+                        .values()
+                        .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
+                        .collect(),
+                )
+                .with_global_aggregate_arrays(
+                    self.global_aggregate_arrays
+                        .values()
+                        .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
+                        .collect(),
+                );
+        }
         function
-            .with_global_variables(
-                self.globals
-                    .values()
-                    .filter_map(|global| self.to_kernel_global(global))
-                    .collect(),
-            )
-            .with_global_arrays(
-                self.global_arrays
-                    .values()
-                    .filter_map(C0GlobalArray::to_kernel_global_array)
-                    .collect(),
-            )
-            .with_global_aggregates(
-                self.global_aggregates
-                    .values()
-                    .filter_map(C0GlobalAggregate::to_kernel_global_aggregate)
-                    .collect(),
-            )
-            .with_global_aggregate_arrays(
-                self.global_aggregate_arrays
-                    .values()
-                    .filter_map(C0GlobalAggregateArray::to_kernel_global_aggregate_array)
-                    .collect(),
-            )
             .with_static_variables(
                 self.static_locals
                     .values()
@@ -5681,6 +5714,7 @@ impl Parser {
             return_pointer_struct_name: header.return_pointer_struct_name,
             name: header.name,
             inline_body,
+            program_entry_state: None,
             parameters: header.parameters,
             body,
             structs: self.structs.clone(),

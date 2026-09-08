@@ -648,6 +648,15 @@ impl CStringLiteral {
 }
 
 impl CFunction {
+    pub(crate) fn with_program_entry(mut self) -> Self {
+        self.program_entry = true;
+        self
+    }
+
+    pub fn is_program_entry(&self) -> bool {
+        self.program_entry
+    }
+
     pub fn new(
         return_type: CType,
         name: impl Into<String>,
@@ -658,6 +667,7 @@ impl CFunction {
             return_type,
             return_pointee_constant: false,
             return_aggregate_layout: None,
+            program_entry: false,
             name: name.into(),
             inline_body: false,
             parameters,

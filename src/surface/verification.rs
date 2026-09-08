@@ -1387,15 +1387,16 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             // mutable frame (for example `consumes p[1..2]`) is covered by
             // the resource transition, while explicit mutable frames require
             // an Effect claim.
-            let rule = c_verified_function_rule(contract_function, &certified_claims).ok_or_else(
-                || {
-                    ClickError::new(format!(
-                        "could not package verified contract for `{}`",
-                        function_block.signature.name()
-                    ))
-                },
-            )?;
-            function_environment = function_environment.with_verified_function_rule(rule);
+            if !contract_function.is_program_entry() {
+                let rule = c_verified_function_rule(contract_function, &certified_claims)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "could not package verified contract for `{}`",
+                            function_block.signature.name()
+                        ))
+                    })?;
+                function_environment = function_environment.with_verified_function_rule(rule);
+            }
         }
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::FunctionFinished {
@@ -2823,6 +2824,91 @@ pub(in crate::surface) fn parse_verified_sources(
         }
     }
 
+    if parsed.contains_key("main") {
+        let mut storage_functions = parsed
+            .values()
+            .map(|(_, function)| function.to_kernel_static_storage(function.name() == "main"))
+            .collect::<Vec<_>>();
+        // Main already supplies the linked external objects and its own
+        // translation unit's private objects. Visit each remaining unit's
+        // declarations once, including data-only files; do not copy every
+        // function body or its whole visible global map at startup.
+        let main_source = &parsed["main"].0;
+        for source_path in units.keys().filter(|path| *path != main_source) {
+            let visible_globals = globals_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &globals[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_arrays = global_arrays_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_arrays[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_aggregates = global_aggregates_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_aggregates[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let visible_aggregate_arrays = global_aggregate_arrays_by_source[source_path]
+                .iter()
+                .map(|(name, object)| {
+                    (
+                        name.clone(),
+                        if object.is_file_static() {
+                            object
+                        } else {
+                            &global_aggregate_arrays[name]
+                        }
+                        .clone(),
+                    )
+                })
+                .collect();
+            let storage = syntax::C0Function::external(syntax::C0Type::Void, String::new(), vec![])
+                .with_globals(visible_globals)
+                .with_global_arrays(visible_arrays)
+                .with_global_aggregates(visible_aggregates)
+                .with_global_aggregate_arrays(visible_aggregate_arrays);
+            storage
+                .validate_static_initializers()
+                .map_err(|error| ClickError::new(error.to_string()))?;
+            storage_functions.push(storage.to_kernel_static_storage(true));
+        }
+        parsed
+            .get_mut("main")
+            .expect("main was found")
+            .1
+            .program_entry_state = Some(std::sync::Arc::new(
+            crate::kernel::initialize_c_program_storage(storage_functions),
+        ));
+    }
     Ok(parsed)
 }
 

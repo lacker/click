@@ -2024,10 +2024,30 @@ pub(super) fn initial_claim_context(
     ),
     ClickError,
 > {
-    let (mut state, arguments) =
-        initial_call_state(function_block.requires(), parsed_function.parameters())?;
-    state =
-        crate::kernel::initialize_c_function_globals(&state, &parsed_function.to_kernel_function());
+    let (mut state, arguments) = if let Some(startup) = &parsed_function.program_entry_state {
+        if !function_block.requires().is_empty() || !parsed_function.parameters().is_empty() {
+            return Err(ClickError::new(
+                "program-entry main currently requires no parameters or preconditions; static ownership comes from startup",
+            ));
+        }
+        (
+            crate::kernel::initialize_c_function_globals(
+                startup,
+                &parsed_function.to_kernel_function(),
+            ),
+            vec![],
+        )
+    } else {
+        let (state, arguments) =
+            initial_call_state(function_block.requires(), parsed_function.parameters())?;
+        (
+            crate::kernel::initialize_c_function_globals(
+                &state,
+                &parsed_function.to_kernel_function(),
+            ),
+            arguments,
+        )
+    };
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();
     for requirement in function_block.requires() {

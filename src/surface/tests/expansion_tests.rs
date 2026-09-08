@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn program_entry_expansion_reverifies() {
+    let c_source = "int state = 7; int main(void) { state += 1; return state; }";
+    let click_source =
+        "verifying \"main.c\"; int main() { ensures result == 8; } by { execute(); simp(); }";
+    let sources = [("main.c", c_source)];
+    let verified = verify_c0_sources(click_source, &sources).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let rewritten = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
+    verify_c0_sources(&rewritten, &sources).unwrap();
+}
+
+#[test]
+fn program_entry_collects_data_only_private_and_uncalled_local_storage() {
+    let sources = [
+        ("data.c", "static int private_state = 11; int zero;"),
+        (
+            "main.c",
+            "extern int zero; int unused(void) { static int local = 5; return local; } int main(void) { return zero; }",
+        ),
+    ];
+    let click_source = "verifying \"data.c\"; verifying \"main.c\"; int main() { ensures result == 0; } by { execute(); simp(); }";
+    let file = crate::surface::verification::parse_c0_click_file(click_source, &sources).unwrap();
+    let parsed =
+        crate::surface::verification::parse_verified_sources(&file, &sources.into_iter().collect())
+            .unwrap();
+    let startup = parsed["main"].1.program_entry_state.as_ref().unwrap();
+    assert_eq!(startup.resources().facts().len(), 3);
+    assert!(parsed["unused"].1.program_entry_state.is_none());
+    verify_c0_sources(click_source, &sources).unwrap();
+}
+
+#[test]
 fn const_char_return_expansion_preserves_target_and_qualification() {
     let c_source = "const char *version(void) { return \"0.17\"; }";
     let click_source = r#"verifying "version.c";

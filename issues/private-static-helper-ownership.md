@@ -39,6 +39,13 @@ those helpers. The integer-narrowing prerequisite is separate from this gap.
 
 ## Acceptance criteria
 
+The startup policy is now chosen: a distinguished, parameterless `main`
+proof starts with the program's initialized static ownership and is not
+published as a reusable call contract. This is not a module abstraction.
+The remaining surface integration includes
+[static resource proof bindings](static-resource-proof-bindings.md).
+The private wrapper/PCG acceptance tests below are still outstanding.
+
 - Choose and document a checked mechanism for private static ownership at
   public call boundaries; do not unconditionally mint ownership on every call.
 - Prove the unchanged two-file pattern, repeated calls, and independent

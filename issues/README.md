@@ -76,7 +76,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (13)
+## P2: after launch (17)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling
@@ -87,6 +87,10 @@ C language coverage:
 
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
+- [Retain static bindings in resource proof steps](static-resource-proof-bindings.md)
+- [Preserve unsigned element types in composite ranges](composite-unsigned-range-materialization.md)
+- [Preserve pointee types in specification dereferences](specification-dereference-types.md)
+- [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model forward and backward goto edges](goto.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)

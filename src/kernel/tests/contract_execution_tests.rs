@@ -1,5 +1,30 @@
 use super::*;
 
+#[test]
+fn certified_program_entry_claims_do_not_authorize_ordinary_calls() {
+    let function = c_function(CType::Int32, "main", vec![], c_return(c_int32_literal(0)))
+        .with_program_entry()
+        .with_contract(
+            vec![],
+            vec![],
+            vec![],
+            vec![CFunctionContractClaim::body_safety()],
+            true,
+        );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        vec![],
+        vec![],
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let claims = c_verified_function_contract_claims(&function, &execution).unwrap();
+    assert!(!claims.is_empty());
+    assert!(c_verified_function_rule(function, &claims).is_none());
+}
+
 fn pool_resource_spec(name: &str) -> CResourceSpec {
     CResourceSpec::Composite {
         access: CResourceAccessMode::Own,

@@ -2075,7 +2075,8 @@ pub fn c_verified_function_rule(
     function: CFunction,
     proofs: &[CVerifiedFunctionContractClaim],
 ) -> Option<CVerifiedFunctionRule> {
-    if !function.opaque_contract_supported()
+    if function.is_program_entry()
+        || !function.opaque_contract_supported()
         || function.contract_claims().is_empty()
         || !function_contract_claims_are_complete(&function)
         || proofs.iter().any(|proof| proof.function != function)
@@ -2093,7 +2094,8 @@ pub fn c_verified_function_rule(
 /// contract still has to be structurally complete and representable by the
 /// kernel, but no body-safety or postcondition proof is claimed for it.
 pub fn c_external_function_rule(function: CFunction) -> Option<CExternalFunctionRule> {
-    (function.opaque_contract_supported()
+    (!function.is_program_entry()
+        && function.opaque_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
     .then_some(CExternalFunctionRule { function })
@@ -2124,7 +2126,8 @@ pub fn c_function_termination_plan(
 pub(crate) fn c_recursive_function_contract_hypothesis(
     function: CFunction,
 ) -> Option<CVerifiedFunctionRule> {
-    (function.opaque_contract_supported()
+    (!function.is_program_entry()
+        && function.opaque_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
     .then_some(CVerifiedFunctionRule { function })

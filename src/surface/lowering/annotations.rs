@@ -297,6 +297,9 @@ pub(in crate::surface) fn annotated_function(
     )
     .with_return_pointee_constant(parsed_function.return_pointee_is_constant())
     .with_source_body(source_body);
+    if parsed_kernel_function.is_program_entry() {
+        function = function.with_program_entry();
+    }
     if let Some(struct_name) = parsed_function.return_struct_name() {
         let layout = parsed_function
             .structs()
@@ -734,6 +737,19 @@ pub(in crate::surface) fn function_contract_summary(
 
     let mut mutable = Vec::new();
     if function_block.effects().is_empty() {
+        if let Some(startup) = &parsed_function.program_entry_state {
+            mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
+                let range = fact.memory_own_range()?;
+                Some(
+                    CMemorySegment::new(
+                        CExpression::Value(CValue::pointer(range.base().clone())),
+                        CExpression::Value(CValue::Int32(range.start().clone())),
+                        CExpression::Value(CValue::Int32(range.end().clone())),
+                    )
+                    .with_element_width(range.element_width()),
+                )
+            }));
+        }
         for requirement in function_block.requires() {
             if let Requirement::Resource(resource) = requirement.inner() {
                 collect_owned_resource_memory_segments(

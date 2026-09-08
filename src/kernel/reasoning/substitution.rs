@@ -2757,6 +2757,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     to: &Bitvector32Term,
 ) -> CFunction {
     CFunction {
+        program_entry: function.program_entry,
         return_type: function.return_type,
         return_pointee_constant: function.return_pointee_constant,
         name: function.name.clone(),
@@ -5486,6 +5487,7 @@ fn substitute_pointer_variable_in_c_function(
     to: &Pointer,
 ) -> CFunction {
     CFunction {
+        program_entry: function.program_entry,
         return_type: function.return_type,
         return_pointee_constant: function.return_pointee_constant,
         name: function.name.clone(),

@@ -1798,6 +1798,7 @@ impl CAggregateLayout {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
+    pub(super) program_entry: bool,
     pub(super) return_type: CType,
     pub(super) return_pointee_constant: bool,
     pub(super) return_aggregate_layout: Option<CAggregateLayout>,

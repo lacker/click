@@ -4198,7 +4198,93 @@ fn coerce_c_function_arguments(
 /// use a function-qualified block identity and are therefore initialized once
 /// for the whole symbolic execution, not once per call frame.
 pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
-    let mut state = state.clone();
+    initialize_c_function_globals_owned(state.clone(), function)
+}
+
+/// Constructs a fresh startup state, never an ordinary call transition.
+/// Storage identities coalesce aliases before permissions are issued. No
+/// incoming state is accepted, so this cannot replenish consumed resources.
+pub(crate) fn initialize_c_program_storage(
+    functions: impl IntoIterator<Item = CFunction>,
+) -> CState {
+    let mut state = CState::new();
+    for function in functions {
+        state = initialize_c_function_globals_owned(state, &function);
+        // Private source spellings are lexical bindings, not program globals.
+        state.locals = CLocalEnvironment::default();
+    }
+    state.resources = initial_static_resources(&state.memory, || {});
+    state
+}
+
+/// Partition physical storage using its initialized cell types. Adjacent
+/// cells of one width form an ordinary typed array range; padding and opaque
+/// union storage remain byte ranges. No cross-width ownership rule is added.
+fn initial_static_resources(memory: &CMemory, mut visit: impl FnMut()) -> ResourceContext {
+    let mut cells_by_block = BTreeMap::<PointerBlock, Vec<(u32, u32)>>::new();
+    for (pointer, value) in memory.cells.iter() {
+        visit();
+        let PointerOffsetTerm::Constant(offset) = pointer.offset else {
+            unreachable!("static initializers have constant cell offsets");
+        };
+        cells_by_block
+            .entry(pointer.block.clone())
+            .or_default()
+            .push((
+                u32::try_from(offset).expect("static cell offset"),
+                value.byte_width(),
+            ));
+    }
+    let mut resources = ResourceContext::default();
+    for (identity, block) in memory.blocks.iter() {
+        visit();
+        let size = block.size().as_const().expect("static block size");
+        let mut ranges = Vec::<(u32, u32, u32)>::new();
+        let mut cursor = 0;
+        for &(offset, width) in cells_by_block.get(identity).into_iter().flatten() {
+            visit();
+            assert!(offset >= cursor && offset.checked_add(width).is_some_and(|end| end <= size));
+            if offset > cursor {
+                ranges.push((cursor, offset, 1));
+            }
+            if let Some((_, end, previous_width)) = ranges.last_mut()
+                && *end == offset
+                && *previous_width == width
+            {
+                *end = offset + width;
+            } else {
+                ranges.push((offset, offset + width, width));
+            }
+            cursor = offset + width;
+        }
+        if cursor < size {
+            ranges.push((cursor, size, 1));
+        }
+        for (start, end, width) in ranges {
+            visit();
+            let range = CMemoryRange::new_with_element_width(
+                Pointer {
+                    block: identity.clone(),
+                    offset: PointerOffsetTerm::Constant(i64::from(start)),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant((end - start) / width),
+                width,
+            );
+            resources = resources.unchecked_with_fact(if block.is_read_only() {
+                CResourceFact::view_memory(range)
+            } else {
+                CResourceFact::own_memory(range)
+            });
+        }
+    }
+    resources
+}
+
+#[cfg(test)]
+mod program_entry_tests;
+
+fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) -> CState {
     for literal in function.string_literals() {
         let slot = CMemory::string_literal_pointer(function.name(), literal.name());
         if !state.memory.has_block(&slot.block) {
@@ -4227,9 +4313,10 @@ pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction
             Bitvector32Term::Constant(literal.bytes().len() as u32),
             1,
         ));
-        if !state
-            .resources
-            .contains_exact_representation(&literal_resource)
+        if !function.is_program_entry()
+            && !state
+                .resources
+                .contains_exact_representation(&literal_resource)
         {
             state.resources = state
                 .resources
