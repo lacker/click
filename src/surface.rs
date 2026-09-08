@@ -170,6 +170,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "else",
     "ensures",
     "ensuring",
+    "executes",
     "entry",
     "enum",
     "enumerate",
@@ -531,8 +532,15 @@ pub struct TheoremDefinition {
     name: String,
     type_parameters: Vec<String>,
     parameters: Vec<FunctionParameter>,
+    executes: Option<TheoremExecution>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremExecution {
+    callback: String,
+    parameters: Vec<FunctionParameter>,
 }
 
 /// A named behavioral interface for a function pointer. The embedded block

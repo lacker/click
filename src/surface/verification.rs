@@ -177,6 +177,7 @@ fn verify_click_file_theorems_with_environment(
         &predicate_environment,
         &click_function_environment,
         function_environment,
+        &ResourceEnvironment::new(&combined_resource_definitions(file)?),
     )?;
     Ok(verified
         .into_iter()
@@ -832,6 +833,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &predicate_environment,
             &click_function_environment,
             Some(&function_environment),
+            &resource_environment,
         )?;
         // Verified pure theorems over supported kernel binders become closed
         // universally-quantified facts, so kernel contract certification can
@@ -2826,7 +2828,9 @@ pub(in crate::surface) fn parse_verified_sources(
     Ok(parsed)
 }
 
-fn external_c0_function(function_block: &FunctionBlock) -> syntax::C0Function {
+pub(in crate::surface) fn external_c0_function(
+    function_block: &FunctionBlock,
+) -> syntax::C0Function {
     syntax::C0Function::external(
         function_block.signature().return_type(),
         function_block.signature().name().to_string(),

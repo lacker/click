@@ -750,14 +750,14 @@ fn find_theorem(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, Cl
             continue;
         }
         let parameters_close = matching_delimiter(tokens, parameters_open, "(", ")")?;
-        if tokens
-            .get(parameters_close + 1)
-            .map(|token| token.text.as_str())
-            != Some("{")
-        {
+        let mut body_open = parameters_close + 1;
+        if tokens.get(body_open).map(|token| token.text.as_str()) == Some("executes") {
+            let arguments_open = body_open + 2;
+            body_open = matching_delimiter(tokens, arguments_open, "(", ")")? + 1;
+        }
+        if tokens.get(body_open).map(|token| token.text.as_str()) != Some("{") {
             continue;
         }
-        let body_open = parameters_close + 1;
         let body_close = matching_delimiter(tokens, body_open, "{", "}")?;
         return Ok(FunctionSource {
             body_open,

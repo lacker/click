@@ -941,6 +941,19 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
+        let executes = if self.peek_ident() == Some("executes") {
+            self.position += 1;
+            let callback = self.expect_ident("callback parameter")?;
+            self.expect(Token::LParen)?;
+            let call_parameters = self.parse_parameters()?;
+            self.expect(Token::RParen)?;
+            Some(TheoremExecution {
+                callback,
+                parameters: call_parameters.parameters,
+            })
+        } else {
+            None
+        };
         self.expect(Token::LBrace)?;
 
         let parameter_names = parsed_parameters
@@ -1100,6 +1113,7 @@ impl Parser {
             name,
             type_parameters,
             parameters: parsed_parameters.parameters,
+            executes,
             requires,
             ensures,
         })

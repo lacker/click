@@ -1,6 +1,81 @@
 use super::*;
 
 #[test]
+fn executed_refinement_checks_the_exact_call_and_source_premises() {
+    let template = c_function(
+        CType::Void,
+        "interface",
+        vec![c_parameter("x", CType::Int32)],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true);
+    let source = CFunctionContract::new("Source", template.clone()).unwrap();
+    let target = CFunctionContract::new("Target", template.clone()).unwrap();
+    let pointer_type = source.function_pointer_type();
+    let premise = SpecProposition::Predicate {
+        name: source.predicate_name(),
+        arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+            c_variable("callback"),
+        ))],
+    };
+    let conclusion = Proposition::Predicate {
+        name: target.predicate_name(),
+        arguments: vec![
+            Term::CState(CState::new()),
+            Term::CValue(CValue::Pointer(CPointerValue::new(
+                Pointer {
+                    block: PointerBlock::FunctionSymbolic(Variable(0)),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                pointer_type,
+            ))),
+        ],
+    };
+    let environment = CExecutionEnvironment::new()
+        .with_function_contract(source)
+        .with_function_contract(target);
+    // Isolate the implication boundary: its input is an already trusted rule.
+    // Ordinary execution certification is covered by the mdtests.
+    for (callee, argument, sources, extra_premise, valid) in [
+        ("callback", c_variable("x"), vec!["Source"], false, true),
+        ("other", c_variable("x"), vec!["Source"], false, false),
+        ("callback", c_int32_literal(1), vec!["Source"], false, false),
+        ("callback", c_variable("x"), vec!["Target"], false, false),
+        ("callback", c_variable("x"), vec![], false, false),
+        ("callback", c_variable("x"), vec!["Source"], true, false),
+    ] {
+        let mut requirements = vec![premise.clone()];
+        if extra_premise {
+            requirements.insert(0, premise.clone());
+        }
+        let function = c_function(
+            CType::Void,
+            "wrapper",
+            vec![
+                c_parameter("x", CType::Int32),
+                c_parameter("callback", pointer_type),
+            ],
+            CStatement::Call {
+                function_name: callee.to_string(),
+                arguments: vec![argument],
+            },
+        )
+        .with_contract(requirements, vec![], vec![], vec![], true);
+        assert_eq!(
+            crate::kernel::prove_executed_contract_refinement(
+                &environment,
+                &sources,
+                "Target",
+                conclusion.clone(),
+                &CVerifiedFunctionRule { function },
+            )
+            .is_some(),
+            valid
+        );
+    }
+}
+
+#[test]
 fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
     let contract = interface(0);
     for count in [0, 16, 64, 256] {

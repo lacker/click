@@ -1957,6 +1957,11 @@ pub struct C0SyntaxError {
 }
 
 impl C0Function {
+    /// An explicitly declared one-call proof, represented with ordinary C AST nodes.
+    pub(crate) fn with_proof_body(mut self, body: C0Statement) -> Self {
+        self.body = body;
+        self
+    }
     pub(crate) fn with_return_pointee_constant(mut self, constant: bool) -> Self {
         self.return_pointee_constant = constant;
         self

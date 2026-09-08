@@ -4649,6 +4649,99 @@ pub(crate) fn prove_c_function_contract_refinement(
     })
 }
 
+mod contract_interface_identity;
+
+/// A checked one-call wrapper proves a contract implication. The wrapper's
+/// only extra inputs are source contracts for its last, arbitrary callback
+/// parameter. Its body must call precisely that parameter with every other
+/// parameter in order. No target-contract assumption authorizes this call.
+pub(crate) fn prove_executed_contract_refinement(
+    environment: &CExecutionEnvironment,
+    source_names: &[&str],
+    target_name: &str,
+    conclusion: Proposition,
+    rule: &CVerifiedFunctionRule,
+) -> Option<CVerifiedPureTheorem> {
+    if source_names.is_empty() {
+        return None;
+    }
+    let target = environment.get_function_contract(target_name)?;
+    let mut function = rule.function.clone();
+    let callback = function.parameters.pop()?;
+    if callback.c_type() != target.function_pointer_type() || function.return_type() != CType::Void
+    {
+        return None;
+    }
+    let call = CStatement::Call {
+        function_name: callback.name().to_string(),
+        arguments: function
+            .parameters
+            .iter()
+            .map(|parameter| CExpression::Variable(parameter.name().to_string()))
+            .collect(),
+    };
+    if function.body() != &call || function.source_body() != &call {
+        return None;
+    }
+    for source_name in source_names.iter().rev() {
+        let source = environment.get_function_contract(source_name)?;
+        if callback.c_type() != source.function_pointer_type() {
+            return None;
+        }
+        let source_requirement = SpecProposition::Predicate {
+            name: source.predicate_name(),
+            arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+                CExpression::Variable(callback.name().to_string()),
+            ))],
+        };
+        if function.contract_requires.pop()? != source_requirement {
+            return None;
+        }
+    }
+    if !contract_interface_identity::same_interface(target, &function) {
+        return None;
+    }
+    let Proposition::Predicate { name, arguments } = &conclusion else {
+        return None;
+    };
+    let [
+        state @ Term::CState(_),
+        Term::CValue(CValue::Pointer(pointer)),
+    ] = arguments.as_slice()
+    else {
+        return None;
+    };
+    let PointerBlock::FunctionSymbolic(variable) = pointer.pointer().block else {
+        return None;
+    };
+    if name != &target.predicate_name()
+        || pointer.c_type() != target.function_pointer_type()
+        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+    {
+        return None;
+    }
+    let mut implication = conclusion.clone();
+    for source_name in source_names.iter().rev() {
+        let premise = Proposition::Predicate {
+            name: environment
+                .get_function_contract(source_name)?
+                .predicate_name(),
+            arguments: vec![
+                state.clone(),
+                Term::CValue(CValue::Pointer(pointer.clone())),
+            ],
+        };
+        implication = Proposition::Implies(Box::new(premise), Box::new(implication));
+    }
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(Proposition::ForAll {
+            var: variable,
+            sort: Sort::CPointer(pointer.c_type()),
+            body: Box::new(implication),
+        }),
+    })
+}
+
 fn rewrite_int32_term_by_exact_equality(
     term: &Bitvector32Term,
     from: &Bitvector32Term,

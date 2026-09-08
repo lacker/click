@@ -3207,6 +3207,72 @@ fn recorded_evidence_consumes_the_source_not_the_driver_frontier() {
 }
 
 #[test]
+fn void_fallthrough_completion_requires_consuming_the_entire_source() {
+    for (return_type, pending_return) in [
+        (CType::Void, false),
+        (CType::Void, true),
+        (CType::Int32, false),
+    ] {
+        let body = if pending_return {
+            CStatement::Seq(
+                std::sync::Arc::new(CStatement::Skip),
+                std::sync::Arc::new(c_return(c_void_value())),
+            )
+        } else {
+            CStatement::Skip
+        };
+        let function = c_function(return_type, "fallthrough", Vec::new(), body);
+        let caller = CState::new();
+        let entry = c_function_entry_state(&caller, &function, &[]).expect("entry");
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            caller.clone(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        core.record_statement_transition(
+            &function,
+            &[],
+            Theorem::new(Proposition::CStatementVerifies {
+                state: entry.clone(),
+                statement: CStatement::Skip,
+                outcome: CStatementOutcome::Normal(entry.clone()),
+            }),
+            PureFactContext::new(),
+            &[],
+            &[],
+        )
+        .expect("checked next statement");
+        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+            &caller,
+            &function,
+            CStatementOutcome::Return {
+                value: CValue::Void,
+                state: entry,
+            },
+            Vec::new(),
+            &PureFactContext::new(),
+        );
+        let candidates = c_function_execution_candidates_from_outcomes(
+            caller,
+            function.clone(),
+            Vec::new(),
+            vec![(outcome, Vec::new(), obligations)],
+        );
+        let result = core.checked_function_execution(
+            &candidates,
+            &function,
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+        );
+        assert_eq!(
+            result.is_ok(),
+            return_type == CType::Void && !pending_return
+        );
+    }
+}
+
+#[test]
 fn a_completed_proof_object_yields_its_checked_execution() {
     // Completion composes the checked traces into one path per trace
     // concluding the candidate's outcome; an open trace yields nothing.

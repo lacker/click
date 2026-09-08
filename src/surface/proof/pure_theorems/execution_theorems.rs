@@ -1,0 +1,273 @@
+//! Explicit theorem execution uses the ordinary grouped C proof and its
+//! checked execution artifacts. Only the final contract implication is new.
+use super::*;
+use crate::surface::verification::{
+    substitute_contract_segment, substitute_resource_clause_for_summary,
+};
+
+fn substitute_requirement(
+    r: &Requirement,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<Requirement, String> {
+    Ok(match r {
+        Requirement::Proposition(p) => {
+            Requirement::Proposition(substitute_click_proposition(p, substitutions)?)
+        }
+        Requirement::Resource(r) => {
+            Requirement::Resource(substitute_resource_clause_for_summary(r, substitutions)?)
+        }
+        Requirement::LoadableSegment { segment } => Requirement::LoadableSegment {
+            segment: substitute_contract_segment(segment, substitutions)?,
+        },
+        Requirement::Labeled { label, requirement } => Requirement::Labeled {
+            label: label.clone(),
+            requirement: Box::new(substitute_requirement(requirement, substitutions)?),
+        },
+    })
+}
+
+pub(super) fn verify_execution_theorem(
+    theorem: &TheoremDefinition,
+    predicates: &PredicateEnvironment,
+    functions: &ClickFunctionEnvironment,
+    theorems: &TheoremEnvironment,
+    environment: Option<&CExecutionEnvironment>,
+    resources: &ResourceEnvironment,
+) -> Result<VerifiedPureTheorem, ClickError> {
+    let execution = theorem.executes.as_ref().expect("execution declaration");
+    let error = |message: &str| {
+        ClickError::new(format!("theorem `{}` executes: {message}", theorem.name()))
+    };
+    let environment = environment.ok_or_else(|| error("requires a C contract environment"))?;
+    let [callback] = theorem.parameters() else {
+        return Err(error("requires exactly one callback theorem parameter"));
+    };
+    if !theorem.type_parameters().is_empty() || callback.name() != execution.callback {
+        return Err(error(
+            "the executed callback must be the theorem's function-pointer parameter",
+        ));
+    }
+    let mut names = BTreeSet::from([execution.callback.clone()]);
+    for parameter in &execution.parameters {
+        if !names.insert(parameter.name().to_string()) || parameter.name() == "result" {
+            return Err(error(
+                "call argument names must be distinct from each other, the callback, and result",
+            ));
+        }
+    }
+    let [ensure] = theorem.ensures() else {
+        return Err(error("requires exactly one target-contract conclusion"));
+    };
+    let Ensure::Proposition(
+        goal @ ClickProposition::PredicateCall {
+            name: target_name,
+            arguments,
+        },
+    ) = ensure.ensure()
+    else {
+        return Err(error(
+            "the conclusion must be a contract for the executed callback",
+        ));
+    };
+    let is_callback = |arguments: &[ContractExpression]| {
+        matches!(arguments, [ContractExpression::Binding(name)] if name == &execution.callback)
+            || matches!(arguments, [ContractExpression::CFragment(CExpression::Variable(name))] if name == &execution.callback)
+    };
+    if !is_callback(arguments) {
+        return Err(error("the conclusion must describe the executed callback"));
+    }
+    let target = predicates
+        .contract_definition(target_name)
+        .ok_or_else(|| error("the conclusion must name a function contract"))?;
+    if theorem.requires().is_empty() {
+        return Err(error("requires at least one source-contract assumption"));
+    }
+    let mut source_names = Vec::new();
+    for requirement in theorem.requires() {
+        let Some(ClickProposition::PredicateCall { name, arguments }) = requirement.proposition()
+        else {
+            return Err(error(
+                "requires a source-contract assumption for the executed callback",
+            ));
+        };
+        let source = predicates
+            .contract_definition(name)
+            .ok_or_else(|| error("the source assumption must name a function contract"))?;
+        if !is_callback(arguments) {
+            return Err(error(
+                "the source assumption must describe the executed callback",
+            ));
+        }
+        if callback.c_type() != source.function_pointer_type() {
+            return Err(error(
+                "executes signature does not match the source contract",
+            ));
+        }
+        source_names.push(name.as_str());
+    }
+    if callback.c_type() != target.function_pointer_type()
+        || execution.parameters.len() != target.function_block().signature().parameters().len()
+        || execution
+            .parameters
+            .iter()
+            .zip(target.function_block().signature().parameters())
+            .any(|(written, declared)| {
+                written.c_type() != declared.c_type()
+                    || written.struct_name() != declared.struct_name()
+                    || written.pointee_is_constant() != declared.pointee_is_constant()
+            })
+    {
+        return Err(error(
+            "executes signature does not match the callback and target contract",
+        ));
+    }
+    if target.function_block().signature().return_type() != C0Type::Void {
+        return Err(error("this execution-proof slice requires a void callback"));
+    }
+    let SourceProof::Script(tactics) = ensure.proof() else {
+        return Err(error("requires an explicit execution proof block"));
+    };
+    let substitutions = target
+        .function_block()
+        .signature()
+        .parameters()
+        .iter()
+        .zip(&execution.parameters)
+        .map(|(declared, written)| {
+            (
+                declared.name().to_string(),
+                ContractExpression::CFragment(CExpression::Variable(written.name().to_string())),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut block = target.function_block().clone();
+    block.signature.name = theorem.name().to_string();
+    block.signature.parameters = execution.parameters.clone();
+    block.signature.parameters.push(callback.clone());
+    block.requires = block
+        .requires
+        .iter()
+        .map(|r| substitute_requirement(r, &substitutions))
+        .collect::<Result<_, _>>()
+        .map_err(ClickError::new)?;
+    block.requires.extend(theorem.requires().iter().cloned());
+    for clause in &mut block.ensures {
+        clause.ensure = match &clause.ensure {
+            Ensure::Proposition(p) => Ensure::Proposition(
+                substitute_click_proposition(p, &substitutions).map_err(ClickError::new)?,
+            ),
+            Ensure::Resource(r) => Ensure::Resource(
+                substitute_resource_clause_for_summary(r, &substitutions)
+                    .map_err(ClickError::new)?,
+            ),
+        };
+    }
+    for clause in &mut block.effects {
+        if let Effect::Mutable(segments) = &mut clause.effect {
+            *segments = segments
+                .iter()
+                .map(|s| substitute_contract_segment(s, &substitutions))
+                .collect::<Result<_, _>>()
+                .map_err(ClickError::new)?;
+        }
+    }
+    block.grouped_proof = Some(ensure.proof().clone());
+    let parsed = crate::surface::verification::external_c0_function(&block).with_proof_body(
+        syntax::C0Statement::Call {
+            function_name: execution.callback.clone(),
+            arguments: execution
+                .parameters
+                .iter()
+                .map(|p| syntax::C0Expression::Variable(p.name().to_string()))
+                .collect(),
+        },
+    );
+    let claims = function_claims(&block);
+    let verified = prove_claims_by_grouped_script(
+        None,
+        "",
+        &block,
+        &parsed,
+        &claims,
+        environment,
+        predicates,
+        functions,
+        resources,
+        theorems,
+        tactics,
+    )?;
+    let (state, arguments, facts, _) = initial_claim_context(
+        &block,
+        &parsed,
+        resources,
+        predicates,
+        functions,
+        theorem.name(),
+    )?;
+    let function = annotated_function(
+        &block, &parsed, &state, &arguments, predicates, functions, resources, false,
+    )?;
+    let artifacts = verified
+        .iter()
+        .map(|v| v.checked_execution.clone())
+        .collect::<Vec<_>>();
+    let execution =
+        prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(
+            state,
+            function.clone(),
+            arguments,
+            facts,
+            environment.clone(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+            &artifacts,
+            &[],
+        );
+    let propositions = verified
+        .iter()
+        .filter_map(|v| v.checked_proposition.clone())
+        .collect::<Vec<_>>();
+    let claims = c_verified_function_contract_claims_with_checked_propositions(
+        &function,
+        &execution,
+        &propositions,
+    )
+    .ok_or_else(|| error("the one-call proof did not certify every target obligation"))?;
+    let rule = c_verified_function_rule(function, &claims)
+        .ok_or_else(|| error("the one-call proof did not establish a checked contract"))?;
+    let context = pure_theorem_context(theorem, predicates, functions)?;
+    let conclusion = lower_pure_theorem_proposition(
+        theorem.name(),
+        goal,
+        &context.values,
+        &context.array_refs,
+        &context.memory,
+        predicates,
+        functions,
+    )
+    .map_err(ClickError::new)?;
+    let authority = crate::kernel::prove_executed_contract_refinement(
+        environment,
+        &source_names,
+        target_name,
+        conclusion.clone(),
+        &rule,
+    )
+    .ok_or_else(|| {
+        error("the checked call does not establish the declared contract implication")
+    })?;
+    let certificate = verified
+        .first()
+        .ok_or_else(|| error("missing execution proof"))?
+        .expanded_proof_certificate()?;
+    Ok(VerifiedPureTheorem {
+        theorem_definition: theorem.clone(),
+        ensure_index: 0,
+        ensure_clause: ensure.clone(),
+        proof_kind: ProofKind::TacticScript,
+        proof: Some(certificate),
+        requires: context.requires,
+        conclusion,
+        kernel_authority: Some(authority),
+    })
+}

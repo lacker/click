@@ -2061,7 +2061,23 @@ fn execute_step_from_frontier_position_selecting_path(
     append_execution_effect_facts(&mut execution.core.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
     let successor_pure_facts = transition.pure_facts;
-    let outcome = transition.outcome;
+    // Falling off a void function is a return in the kernel's C semantics.
+    // A source-less one-call proof can reach this boundary without the
+    // explicit return node normally inserted by C parsing.
+    let outcome = match transition.outcome {
+        CStatementOutcome::Normal(state)
+            if function.return_type() == crate::kernel::CType::Void
+                && remaining.is_none()
+                && execution.core.frontier.region == ExecutionRegionKind::Function
+                && execution.core.frontier.continuations.is_empty() =>
+        {
+            CStatementOutcome::Return {
+                value: CValue::Void,
+                state,
+            }
+        }
+        outcome => outcome,
+    };
     if let Some(statement_exit_state) = match &outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)

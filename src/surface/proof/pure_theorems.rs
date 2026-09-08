@@ -4,15 +4,31 @@ use crate::kernel::c_function_contract_refinement_obligations;
 
 const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;
 
+mod execution_theorems;
+use execution_theorems::verify_execution_theorem;
+
 pub(in crate::surface) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(&[]);
     for theorem in theorem_definitions {
+        if theorem.executes.is_some() {
+            verified.push(verify_execution_theorem(
+                theorem,
+                predicate_environment,
+                click_function_environment,
+                &theorem_environment,
+                function_environment,
+                resource_environment,
+            )?);
+            theorem_environment.insert(theorem.clone());
+            continue;
+        }
         {
             let mut symbolic;
             let checked = if theorem.type_parameters().is_empty() {

@@ -651,7 +651,9 @@ fn validate_theorem_definition(
             click_function_types,
             &format!("ensures clause in theorem `{}`", theorem.name()),
         )?;
-        validate_pure_theorem_proof(theorem.name(), ensure.proof())?;
+        if theorem.executes.is_none() {
+            validate_pure_theorem_proof(theorem.name(), ensure.proof())?;
+        }
     }
 
     Ok(())

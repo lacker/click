@@ -32,6 +32,7 @@ documentation inventory keep the following accepted words synchronized.
 | --- | --- |
 | `verifying` | C-source declaration. |
 | `predicate`, `function`, `theorem`, `contract` | Top-level logic and behavioral-interface declarations; `function` also starts a C contract. |
+| `executes` | Gives a contract-refinement theorem an explicit one-callback execution frontier. |
 | `spec`, `enum`, `match` | Specification-only algebraic datatype declarations and exhaustive elimination. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
@@ -90,7 +91,8 @@ predicate-declaration := "predicate" identifier parameters proposition-block
 function-declaration  := "function" identifier parameters
                          ("->" type)? decreases-clause? expression-block
 resource-declaration  := "resource" identifier parameters resource-body
-theorem-declaration   := "theorem" identifier parameters theorem-body
+theorem-declaration   := "theorem" identifier parameters executes-clause? theorem-body
+executes-clause      := "executes" identifier "(" c-parameters ")"
 named-contract-declaration := "contract" c-signature contract-body
 c-function-contract   := "function" c-signature contract-body
 ```

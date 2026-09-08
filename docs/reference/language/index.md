@@ -449,6 +449,60 @@ the next `step()`. After function exit it is checked separately on each
 path, where `result`, post-state expressions, and ordinary `old(...)` arguments
 can be evaluated.
 
+## Callback execution theorems
+
+An ordinary theorem has no execution frontier. An explicit `executes` clause
+instead proves a contract implication by checking one arbitrary callback call:
+
+<!-- verified-example: mdtests/c_contract_executes_buffer.md -->
+```click
+resource Buffer(data: int32*, count: int32) {
+    owns data[0..count];
+}
+contract void Raw(int32* data, int32 count) {
+    requires count >= 0;
+    owns data[0..count];
+}
+contract void Buffered(int32* data, int32 count) {
+    requires count >= 0;
+    owns Buffer(data, count);
+}
+theorem raw_is_buffered(callback: void (*)(int32*, int32))
+    executes callback(int32* data, int32 count)
+{
+    requires Raw(callback);
+    ensures Buffered(callback) by {
+        unfold(Buffer(data, count));
+        step(Raw);
+        fold(Buffer(data, count));
+        simp();
+    }
+}
+```
+
+The proof starts with arbitrary call arguments and the **target contract's**
+input requirements and resources. It knows only the callback contracts in the
+theorem's premises or established by checked proof steps—not the target
+contract fact being proved. The call checks the selected source contract's
+requirements and performs its resource transition and effects. The remaining
+proof must establish all target postconditions, returned resources, and effect
+bounds. Unrelated owned resources use ordinary framing.
+
+These are ordinary execution proof blocks: `have`, theorem application,
+rewriting, proof cases, `fold`, `unfold`, and the usual closing tactics retain
+their normal meanings. Every feasible proof case must execute the call. The
+checked result is a reusable contract implication: `apply(raw_is_buffered(f))`
+establishes `Buffered(f)`, after which an ordinary caller can use
+`step(Buffered)`. Expansion preserves the explicit contract selection.
+
+This slice supports one nongeneric, void-returning callback theorem parameter,
+one target-contract conclusion, and one or more source-contract premises for
+that same pointer. The `executes` arguments use C parameter spelling, match
+the callback signature, and are bound only inside the execution proof; they
+cannot escape into theorem premises or conclusions. Their names must be
+distinct from the callback and from `result`. Non-void callback theorems and
+additional theorem parameters remain outside this slice.
+
 ## Requirements
 
 Requirements are shared by all guarantees for the function.

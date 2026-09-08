@@ -2771,11 +2771,13 @@ fn trace_completion(
     function: &CFunction,
     events: &[CheckedExecutionEvent],
     assumptions: &PureFactContext,
+    checked_void_fallthrough: bool,
 ) -> Result<(CStatementOutcome, PureFactContext, Vec<ExecutionPureFact>), &'static str> {
     if !events_use_the_function_definitions(function, events) {
         return Err("a retained resource event was checked under other composite definitions");
     }
     let mut completed: Option<(CStatementOutcome, PureFactContext)> = None;
+    let mut fallthrough = None;
     let mut interface_execution_facts: Vec<ExecutionPureFact> = Vec::new();
     for (index, event) in events.iter().enumerate() {
         match event {
@@ -2789,7 +2791,21 @@ fn trace_completion(
                     return Err("retained statement evidence has a non-statement conclusion");
                 };
                 match outcome {
-                    CStatementOutcome::Normal(_) => {}
+                    CStatementOutcome::Normal(state) => {
+                        let context = match events.get(index + 1) {
+                            Some(CheckedExecutionEvent::Context(context)) => context.clone(),
+                            _ => {
+                                crate::kernel::api::proof_evidence_assumptions(theorem, assumptions)
+                            }
+                        };
+                        fallthrough = Some((
+                            CStatementOutcome::Return {
+                                value: CValue::Void,
+                                state: state.clone(),
+                            },
+                            context,
+                        ));
+                    }
                     CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => {}
                     CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
                         // The path completes under the context its final
@@ -2809,6 +2825,7 @@ fn trace_completion(
                 }
             }
             CheckedExecutionEvent::Branch(branch) => {
+                fallthrough = None;
                 if completed.is_some() {
                     return Err("a trace continues past its completing theorem");
                 }
@@ -2826,6 +2843,7 @@ fn trace_completion(
             CheckedExecutionEvent::Condition(_)
             | CheckedExecutionEvent::ResourceObservation(_)
             | CheckedExecutionEvent::ResourceRewrite(_) => {
+                fallthrough = None;
                 if completed.is_some() {
                     return Err("a trace continues past its completing theorem");
                 }
@@ -2837,7 +2855,9 @@ fn trace_completion(
             | CheckedExecutionEvent::Call(_) => {}
         }
     }
-    let Some((outcome, executed_under)) = completed else {
+    let Some((outcome, executed_under)) =
+        completed.or_else(|| checked_void_fallthrough.then_some(fallthrough).flatten())
+    else {
         return Err("a trace does not reach a return");
     };
     Ok((outcome, executed_under, interface_execution_facts))
@@ -3994,8 +4014,14 @@ impl ExecutionProofCore {
         }
         let mut paths = Vec::with_capacity(candidates.paths().len());
         for (candidate, trace) in candidates.paths().iter().zip(&self.execution_evidence) {
-            let (completed, statement_assumptions, interface_execution_facts) =
-                trace_completion(function, &trace.to_vec(), &assumptions)?;
+            let (completed, statement_assumptions, interface_execution_facts) = trace_completion(
+                function,
+                &trace.to_vec(),
+                &assumptions,
+                function.return_type() == crate::kernel::CType::Void
+                    && self.evidence_source.is_none()
+                    && self.frontier.region == ExecutionRegionKind::Function,
+            )?;
             let (outcome, obligations) = crate::kernel::c_function_outcome_from_statement_outcome(
                 candidates.state(),
                 function,
