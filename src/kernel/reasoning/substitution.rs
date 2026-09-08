@@ -1224,6 +1224,7 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)
@@ -2150,6 +2151,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
         SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
             substitute_bitvector_variable_in_spec_expression(expression, from, to),
         )),
+        SpecExpression::Cast(expression, target_type) => SpecExpression::Cast(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                expression, from, to,
+            )),
+            *target_type,
+        ),
         SpecExpression::If {
             condition,
             then_branch,
@@ -3192,6 +3199,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         }
         Bitvector32Term::UInt64From32(value) => {
             Bitvector32Term::uint64_from_32(substitute_bitvector_variable(value, from, to))
+        }
+        Bitvector32Term::UInt32From64(value) => {
+            Bitvector32Term::uint32_from_64(substitute_bitvector_variable(value, from, to))
         }
         Bitvector32Term::Int64FromUInt32(value) => {
             Bitvector32Term::int64_from_uint32(substitute_bitvector_variable(value, from, to))
@@ -5125,6 +5135,12 @@ fn substitute_pointer_variable_in_spec_expression(
         SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
             substitute_pointer_variable_in_spec_expression(expression, from, to),
         )),
+        SpecExpression::Cast(expression, target_type) => SpecExpression::Cast(
+            Box::new(substitute_pointer_variable_in_spec_expression(
+                expression, from, to,
+            )),
+            *target_type,
+        ),
         SpecExpression::If {
             condition,
             then_branch,

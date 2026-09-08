@@ -3003,7 +3003,7 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
             spec_expression_supports_stateful_memory_refinement(left)
                 && spec_expression_supports_stateful_memory_refinement(right)
         }
-        SpecExpression::BitwiseNot(body) => {
+        SpecExpression::BitwiseNot(body) | SpecExpression::Cast(body, _) => {
             spec_expression_supports_stateful_memory_refinement(body)
         }
         SpecExpression::If {
@@ -3124,9 +3124,9 @@ fn spec_expression_is_state_independent(expression: &SpecExpression) -> bool {
             spec_expression_is_state_independent(left)
                 && spec_expression_is_state_independent(right)
         }
-        SpecExpression::BitwiseNot(body) | SpecExpression::LoopEntrySnapshot(body) => {
-            spec_expression_is_state_independent(body)
-        }
+        SpecExpression::BitwiseNot(body)
+        | SpecExpression::LoopEntrySnapshot(body)
+        | SpecExpression::Cast(body, _) => spec_expression_is_state_independent(body),
         SpecExpression::If {
             condition,
             then_branch,

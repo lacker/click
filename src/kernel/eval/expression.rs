@@ -650,6 +650,9 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             Some(CValue::Int32(value))
         }
         (CType::Int32, CValue::UInt32(value)) => Some(CValue::Int32(value)),
+        (CType::UInt32, CValue::Int64(value) | CValue::UInt64(value)) => {
+            Some(CValue::UInt32(Bitvector32Term::uint32_from_64(value)))
+        }
         (CType::Int32, CValue::Int64(value)) => {
             let value = value.int64_as_const()?;
             let value = i32::try_from(value).ok()?;
@@ -869,7 +872,7 @@ fn narrowing_context(type_name: &str, lower: bool) -> &'static str {
     }
 }
 
-fn cast_c_value_to_type(
+pub(in crate::kernel) fn cast_c_value_to_type(
     value: CValue,
     target_type: CType,
     obligations: &mut Vec<ProofObligation>,

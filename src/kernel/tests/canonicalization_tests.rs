@@ -120,6 +120,7 @@ fn collect_offset_load_variables_from_term(
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)
@@ -226,6 +227,7 @@ fn assert_scaled_index_free_of_raw_loads(
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)
@@ -467,6 +469,7 @@ fn canonical_term_is_idempotent_for_every_term_shape() {
         load.clone(),
         unary!(Int64From32, load.clone()),
         unary!(UInt64From32, load.clone()),
+        unary!(UInt32From64, load.clone()),
         unary!(Int64FromUInt32, load.clone()),
         unary!(UInt64FromInt32, load.clone()),
         unary!(UInt64FromInt64, load.clone()),

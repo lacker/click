@@ -6141,6 +6141,8 @@ impl Parser {
                 .with_constant(parsed_type.is_constant);
                 let declaration = declaration.with_tentative(tentative);
                 self.register_global_aggregate_declaration(name.clone(), declaration)?;
+                self.variable_struct_values
+                    .insert(kernel_name.clone(), struct_name.clone());
                 self.variable_types
                     .insert(name.clone(), struct_value_type(layout));
                 self.variable_structs
@@ -8612,7 +8614,11 @@ impl Parser {
                     self.push_scope();
                     let init = self.parse_for_initializer()?;
                     self.expect(Token::Semicolon)?;
-                    let condition = self.parse_expression()?;
+                    let condition = if self.peek() == Some(&Token::Semicolon) {
+                        C0Expression::Int32Literal(1)
+                    } else {
+                        self.parse_expression()?
+                    };
                     self.expect(Token::Semicolon)?;
                     let step = self.parse_for_step()?;
                     self.expect(Token::RParen)?;

@@ -63,6 +63,31 @@ fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
 }
 
 impl Bitvector32Term {
+    // Local structural bounds only: do not search assumptions or traverse an
+    // unrelated expression tree to establish a shift-count bound.
+    fn unsigned32_upper_bound(&self) -> u32 {
+        match self {
+            Self::Constant(value) => *value,
+            Self::BitwiseAnd(left, right) => match (left.as_ref(), right.as_ref()) {
+                (Self::Constant(mask), _) | (_, Self::Constant(mask)) => *mask,
+                _ => u32::MAX,
+            },
+            Self::UInt32From64(value) => match value.as_ref() {
+                Self::UInt64LogicalShiftRight(_, count) => {
+                    let count = match count.as_ref() {
+                        Self::Constant(count) if *count < 64 => *count,
+                        Self::UInt64Constant(count) if *count < 64 => *count as u32,
+                        Self::Int64Constant(count) if (0..64).contains(count) => *count as u32,
+                        _ => return u32::MAX,
+                    };
+                    (u64::MAX >> count).min(u32::MAX as u64) as u32
+                }
+                _ => u32::MAX,
+            },
+            _ => u32::MAX,
+        }
+    }
+
     pub(crate) fn opaque_conversion(name: impl Into<String>, value: Self) -> Self {
         Self::PureFunctionApplication {
             name: name.into(),
@@ -142,6 +167,7 @@ impl Bitvector32Term {
             | Self::Int64From32(_)
             | Self::Int64FromUInt32(_)
             | Self::UInt64From32(_)
+            | Self::UInt32From64(_)
             | Self::UInt64FromInt32(_)
             | Self::UInt64FromInt64(_)
             | Self::Int64Add(_, _)
@@ -1258,6 +1284,20 @@ impl Bitvector32Term {
         }
     }
 
+    pub(crate) fn uint32_from_64(value: Self) -> Self {
+        // Children are already constructed bottom-up. Only inspect the root:
+        // rescanning the operand here makes repeated conversions quadratic.
+        match value {
+            Self::UInt64Constant(bits) => Self::Constant(bits as u32),
+            Self::Int64Constant(bits) => Self::Constant(bits as u32),
+            Self::UInt64From32(value)
+            | Self::Int64From32(value)
+            | Self::Int64FromUInt32(value)
+            | Self::UInt64FromInt32(value) => *value,
+            value => Self::UInt32From64(Box::new(value)),
+        }
+    }
+
     pub(crate) fn uint64_from_32(value: Self) -> Self {
         match value {
             Self::Constant(value) => Self::UInt64Constant(u64::from(value)),
@@ -1419,6 +1459,11 @@ impl Bitvector32Term {
     }
 
     pub(crate) fn uint64_add(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::UInt64Constant(0), _) => return right,
+            (_, Self::UInt64Constant(0)) => return left,
+            _ => {}
+        }
         Self::uint64_binary(
             left,
             right,
@@ -1960,6 +2005,11 @@ impl ConditionTerm {
     }
 
     pub(crate) fn unsigned_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if let Bitvector32Term::Constant(bound) = &right
+            && left.unsigned32_upper_bound() < *bound
+        {
+            return Self::Constant(true);
+        }
         let sign_bit = Bitvector32Term::Constant(0x8000_0000);
         Self::signed_less_than(
             Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
@@ -1968,6 +2018,11 @@ impl ConditionTerm {
     }
 
     pub(crate) fn unsigned_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if let Bitvector32Term::Constant(bound) = &right
+            && left.unsigned32_upper_bound() <= *bound
+        {
+            return Self::Constant(true);
+        }
         let sign_bit = Bitvector32Term::Constant(0x8000_0000);
         Self::signed_less_equal(
             Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
@@ -1976,6 +2031,11 @@ impl ConditionTerm {
     }
 
     pub(crate) fn unsigned_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if let Bitvector32Term::Constant(bound) = &right
+            && left.unsigned32_upper_bound() <= *bound
+        {
+            return Self::Constant(false);
+        }
         let sign_bit = Bitvector32Term::Constant(0x8000_0000);
         Self::signed_greater_than(
             Bitvector32Term::bitwise_xor(left, sign_bit.clone()),
@@ -1984,6 +2044,11 @@ impl ConditionTerm {
     }
 
     pub(crate) fn unsigned_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        if let Bitvector32Term::Constant(bound) = &right
+            && left.unsigned32_upper_bound() < *bound
+        {
+            return Self::Constant(false);
+        }
         let sign_bit = Bitvector32Term::Constant(0x8000_0000);
         Self::signed_greater_equal(
             Bitvector32Term::bitwise_xor(left, sign_bit.clone()),

@@ -955,7 +955,19 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::Cast {
             expression,
             target_type,
-        } => format!("({target_type:?}){}", describe_c_expression(expression)),
+        } => {
+            let spelling = match target_type {
+                CType::Int16 => "int16".to_string(),
+                CType::Int32 => "int32".to_string(),
+                CType::UInt8 => "uint8".to_string(),
+                CType::UInt16 => "uint16".to_string(),
+                CType::UInt32 => "uint32".to_string(),
+                CType::Int64 => "int64".to_string(),
+                CType::UInt64 => "uint64".to_string(),
+                _ => format!("{target_type:?}"),
+            };
+            format!("({spelling})({})", describe_c_expression(expression))
+        }
         CExpression::FloatNegate(expression) => format!("-{}", describe_c_expression(expression)),
         CExpression::FloatClassification {
             expression,
@@ -1515,6 +1527,10 @@ pub(super) fn describe_bitvector_with_context(
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value) => format!(
             "cast64({})",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
+        Bitvector32Term::UInt32From64(value) => format!(
+            "truncate32({})",
             describe_bitvector_with_context(value, parameters, arguments)
         ),
         Bitvector32Term::Int64Add(left, right) | Bitvector32Term::UInt64Add(left, right) => {

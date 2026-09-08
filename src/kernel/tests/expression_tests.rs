@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn unsigned_64_to_32_narrowing_preserves_only_low_bits() {
+    for (input, expected) in [
+        (Bitvector32Term::UInt64Constant(u64::MAX), u32::MAX),
+        (Bitvector32Term::UInt64Constant((1u64 << 32) + 7), 7),
+        (Bitvector32Term::Int64Constant(-1), u32::MAX),
+        (Bitvector32Term::Int64Constant(i64::MIN), 0),
+    ] {
+        assert_eq!(
+            Bitvector32Term::uint32_from_64(input),
+            Bitvector32Term::Constant(expected)
+        );
+    }
+    let x = Bitvector32Term::Variable(Variable(1));
+    for wide in [
+        Bitvector32Term::uint64_from_32(x.clone()),
+        Bitvector32Term::int64_from_32(x.clone()),
+        Bitvector32Term::int64_from_uint32(x.clone()),
+        Bitvector32Term::uint64_from_int32(x.clone()),
+    ] {
+        assert_eq!(Bitvector32Term::uint32_from_64(wide), x);
+    }
+    let narrow = Bitvector32Term::uint32_from_64(x.clone());
+    assert_ne!(narrow, x);
+    assert_ne!(Bitvector32Term::uint64_from_32(narrow), x);
+}
+
+#[test]
+fn narrowed_shift_bounds_do_not_discard_possible_high_counts() {
+    let x = Bitvector32Term::Variable(Variable(1));
+    for count in 0..=64 {
+        let narrowed =
+            Bitvector32Term::uint32_from_64(Bitvector32Term::uint64_logical_shift_right(
+                x.clone(),
+                Bitvector32Term::Constant(count),
+            ));
+        let below =
+            ConditionTerm::unsigned_less_than(narrowed.clone(), Bitvector32Term::Constant(32));
+        let above = ConditionTerm::unsigned_greater_equal(narrowed, Bitvector32Term::Constant(32));
+        if (59..64).contains(&count) {
+            assert_eq!(below, ConditionTerm::Constant(true));
+            assert_eq!(above, ConditionTerm::Constant(false));
+        } else {
+            assert_ne!(below, ConditionTerm::Constant(true));
+            assert_ne!(above, ConditionTerm::Constant(false));
+        }
+    }
+    for mask in [0, 31, 32, u32::MAX] {
+        let masked = Bitvector32Term::bitwise_and(x.clone(), Bitvector32Term::Constant(mask));
+        let below = ConditionTerm::unsigned_less_than(masked, Bitvector32Term::Constant(32));
+        assert_eq!(below == ConditionTerm::Constant(true), mask < 32);
+    }
+}
+
+#[test]
 fn bitwise_xor_normalizes_swap_identities() {
     let x = Bitvector32Term::Variable(Variable(1));
     let y = Bitvector32Term::Variable(Variable(2));

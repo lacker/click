@@ -1410,6 +1410,9 @@ fn substitute_load_variables(
                     Bitvector32Term::UInt64From32(value) => {
                         visit_unary!(Bitvector32Term::UInt64From32, value, tasks)
                     }
+                    Bitvector32Term::UInt32From64(value) => {
+                        visit_unary!(Bitvector32Term::UInt32From64, value, tasks)
+                    }
                     Bitvector32Term::UInt64FromInt32(value) => {
                         visit_unary!(Bitvector32Term::UInt64FromInt32, value, tasks)
                     }
@@ -1960,6 +1963,7 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)
         | Bitvector32Term::Int64BitwiseNot(value)

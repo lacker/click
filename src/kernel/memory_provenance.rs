@@ -3380,6 +3380,7 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                 | Bitvector32Term::Int64From32(value)
                 | Bitvector32Term::Int64FromUInt32(value)
                 | Bitvector32Term::UInt64From32(value)
+                | Bitvector32Term::UInt32From64(value)
                 | Bitvector32Term::UInt64FromInt32(value)
                 | Bitvector32Term::UInt64FromInt64(value)
                 | Bitvector32Term::Int64BitwiseNot(value)
@@ -3737,6 +3738,9 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                     }
                     Bitvector32Term::UInt64From32(value) => {
                         visit_unary!(Bitvector32Term::UInt64From32, value, tasks)
+                    }
+                    Bitvector32Term::UInt32From64(value) => {
+                        visit_unary!(Bitvector32Term::UInt32From64, value, tasks)
                     }
                     Bitvector32Term::UInt64FromInt32(value) => {
                         visit_unary!(Bitvector32Term::UInt64FromInt32, value, tasks)
@@ -4447,6 +4451,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             | Bitvector32Term::Float64Negate(term) => bitvector_has_memory(term),
             Bitvector32Term::Int64From32(term)
             | Bitvector32Term::UInt64From32(term)
+            | Bitvector32Term::UInt32From64(term)
             | Bitvector32Term::Int64FromUInt32(term)
             | Bitvector32Term::UInt64FromInt32(term)
             | Bitvector32Term::UInt64FromInt64(term) => bitvector_has_memory(term),
@@ -4684,6 +4689,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
         | Bitvector32Term::UInt64BitwiseNot(term)
         | Bitvector32Term::Int64From32(term)
         | Bitvector32Term::UInt64From32(term)
+        | Bitvector32Term::UInt32From64(term)
         | Bitvector32Term::Int64FromUInt32(term)
         | Bitvector32Term::UInt64FromInt32(term)
         | Bitvector32Term::UInt64FromInt64(term) => collect_bitvector_memories(term, memories),
@@ -4980,6 +4986,9 @@ fn transport_framed_atomic_bitvector(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
         ),
         Bitvector32Term::UInt64From32(value) => Bitvector32Term::uint64_from_32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+        ),
+        Bitvector32Term::UInt32From64(value) => Bitvector32Term::uint32_from_64(
             transport_framed_atomic_bitvector(value, after, assumptions)?,
         ),
         Bitvector32Term::Int64FromUInt32(value) => Bitvector32Term::int64_from_uint32(
@@ -5391,6 +5400,7 @@ enum ExactLoadUnary {
     BitwiseNot,
     Int64From32,
     UInt64From32,
+    UInt32From64,
     Int64FromUInt32,
     UInt64FromInt32,
     UInt64FromInt64,
@@ -5472,6 +5482,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
             ExactLoadUnary::BitwiseNot => Bitvector32Term::bitwise_not(value),
             ExactLoadUnary::Int64From32 => Bitvector32Term::int64_from_32(value),
             ExactLoadUnary::UInt64From32 => Bitvector32Term::uint64_from_32(value),
+            ExactLoadUnary::UInt32From64 => Bitvector32Term::uint32_from_64(value),
             ExactLoadUnary::Int64FromUInt32 => Bitvector32Term::int64_from_uint32(value),
             ExactLoadUnary::UInt64FromInt32 => Bitvector32Term::uint64_from_int32(value),
             ExactLoadUnary::UInt64FromInt64 => Bitvector32Term::uint64_from_int64(value),
@@ -5664,6 +5675,9 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                     }
                     Bitvector32Term::UInt64From32(value) => {
                         push_unary(&mut tasks, ExactLoadUnary::UInt64From32, value)
+                    }
+                    Bitvector32Term::UInt32From64(value) => {
+                        push_unary(&mut tasks, ExactLoadUnary::UInt32From64, value)
                     }
                     Bitvector32Term::Int64FromUInt32(value) => {
                         push_unary(&mut tasks, ExactLoadUnary::Int64FromUInt32, value)

@@ -1152,6 +1152,9 @@ impl PureFactContext {
             Bitvector32Term::UInt64From32(value) => {
                 Bitvector32Term::uint64_from_32(self.simplify_bitvector_under_assumptions(value))
             }
+            Bitvector32Term::UInt32From64(value) => {
+                Bitvector32Term::uint32_from_64(self.simplify_bitvector_under_assumptions(value))
+            }
             Bitvector32Term::UInt64FromInt32(value) => {
                 Bitvector32Term::uint64_from_int32(self.simplify_bitvector_under_assumptions(value))
             }

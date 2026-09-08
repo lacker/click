@@ -280,6 +280,13 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         *value.clone(),
                         *value,
                     ),
+                    Bitvector32Term::UInt32From64(value) => push_havoc_binary(
+                        &mut identity,
+                        &mut tasks,
+                        "tu32f64",
+                        *value.clone(),
+                        *value,
+                    ),
                     Bitvector32Term::Int64FromUInt32(value) => push_havoc_binary(
                         &mut identity,
                         &mut tasks,

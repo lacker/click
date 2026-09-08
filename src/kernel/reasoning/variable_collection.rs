@@ -524,7 +524,7 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
         }
-        SpecExpression::BitwiseNot(expression) => {
+        SpecExpression::BitwiseNot(expression) | SpecExpression::Cast(expression, _) => {
             collect_spec_expression_bitvector_variables(expression, variables);
         }
         SpecExpression::If {
@@ -1151,6 +1151,7 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         | Bitvector32Term::UInt64BitwiseNot(value)
         | Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
         | Bitvector32Term::Int64FromUInt32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value)

@@ -332,12 +332,12 @@ fn expand_source<'a>(
             }
             SourceDirective::Include(_) => expanded.push('\n'),
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if header != "stdint.h" {
+                if !matches!(header.as_str(), "stdint.h" | "inttypes.h") {
                     return Err(CSourceError::new(
                         source_path,
                         line_number,
                         format!(
-                            "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
                         ),
                     ));
                 }
@@ -488,12 +488,12 @@ fn collect_local_include_paths(
             }
             SourceDirective::Include(_) => {}
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if header != "stdint.h" {
+                if !matches!(header.as_str(), "stdint.h" | "inttypes.h") {
                     return Err(CSourceError::new(
                         source_path,
                         line_number,
                         format!(
-                            "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
                         ),
                     ));
                 }
@@ -556,6 +556,9 @@ fn evaluate_condition(
             "unsupported conditional expression `#{directive_name} {value}`; expected `0` or `1`, or a supported comparison"
         )),
         Conditional::Macro(name) => {
+            if !defined_macros.contains(name) {
+                return Ok(ConditionalTruth::False);
+            }
             let Some(value) = macros.get(name).and_then(MacroDefinition::object_value) else {
                 return Err(format!(
                     "unsupported conditional expression `#{directive_name} {name}`; expected a previously defined literal macro"
@@ -637,11 +640,17 @@ fn evaluate_condition_for_discovery(
             }
         }
         Conditional::ValueLiteral(_) => ConditionalTruth::Unknown,
-        Conditional::Macro(name) => macros
-            .get(name)
-            .and_then(MacroDefinition::object_value)
-            .and_then(|value| macro_condition_truth(value))
-            .unwrap_or(ConditionalTruth::Unknown),
+        Conditional::Macro(name) => {
+            if !may_have_external_macros && !defined_macros.contains(name) {
+                ConditionalTruth::False
+            } else {
+                macros
+                    .get(name)
+                    .and_then(MacroDefinition::object_value)
+                    .and_then(|value| macro_condition_truth(value))
+                    .unwrap_or(ConditionalTruth::Unknown)
+            }
+        }
         Conditional::Ifdef(name) => {
             if defined_macros.contains(name) {
                 ConditionalTruth::True
@@ -754,6 +763,9 @@ fn evaluate_comparison_operand(
             )
         }),
         Conditional::Macro(name) => {
+            if !defined_macros.contains(name) {
+                return Ok(0);
+            }
             let Some(value) = macros.get(name).and_then(MacroDefinition::object_value) else {
                 return Err(format!(
                     "unsupported conditional expression `#{directive_name}`; expected `{name}` to be a previously defined literal macro"
@@ -781,10 +793,16 @@ fn comparison_operand_for_discovery(
     match condition {
         Conditional::Literal(value) => Some(u64::from(*value)),
         Conditional::ValueLiteral(value) => preprocessor_literal_value(value),
-        Conditional::Macro(name) => macros
-            .get(name)
-            .and_then(MacroDefinition::object_value)
-            .and_then(|value| preprocessor_literal_value(value)),
+        Conditional::Macro(name) => {
+            if !may_have_external_macros && !defined_macros.contains(name) {
+                Some(0)
+            } else {
+                macros
+                    .get(name)
+                    .and_then(MacroDefinition::object_value)
+                    .and_then(|value| preprocessor_literal_value(value))
+            }
+        }
         Conditional::Defined(name) => {
             if defined_macros.contains(name) {
                 Some(1)
@@ -998,7 +1016,9 @@ fn parse_directive<'a>(
                     ));
                 };
                 let header = &rest[1..end];
-                if header == "stdint.h" && trailing_comments_only(&rest[end + 1..]) {
+                if matches!(header, "stdint.h" | "inttypes.h")
+                    && trailing_comments_only(&rest[end + 1..])
+                {
                     return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
                 }
                 if !trailing_comments_only(&rest[end + 1..]) {
@@ -1009,7 +1029,7 @@ fn parse_directive<'a>(
                     ));
                 }
                 return Ok(Some(SourceDirective::Unsupported(format!(
-                    "system header `<{header}>` is not supported; only `<stdint.h>` is modeled"
+                    "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
                 ))));
             }
             return Err(CSourceError::new(

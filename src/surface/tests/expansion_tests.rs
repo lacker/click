@@ -121,6 +121,29 @@ fn smart_simp_expansion_checks_as_surface_click() {
 }
 
 #[test]
+fn unsigned_narrowing_snapshot_expansion_reverifies() {
+    let c_source = "struct state { unsigned long value; }; unsigned int take(struct state *p) { unsigned int result = p->value; p->value += 1; return result; }";
+    let click_source = r#"
+        verifying "take.c";
+        unsigned int take(struct state *p) {
+            requires loadable(p->value);
+            consumes p->value;
+            produces p->value;
+            ensures result == old((uint32)p->value);
+            ensures p->value == old(p->value) + 1u64;
+        } by { execute(); simp(); }
+    "#;
+    let verified =
+        verify_c0_sources(click_source, &[("take.c", c_source)]).expect("narrowing proof verifies");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("narrowing proof has a printable certificate");
+    let rewritten = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
+    verify_c0_sources(&rewritten, &[("take.c", c_source)])
+        .unwrap_or_else(|error| panic!("{error:?}\n{rewritten}"));
+}
+
+#[test]
 fn selected_post_execution_simp_waits_for_its_surface_closer() {
     let c_source = r#"
             int32 identity(int32 x) {
