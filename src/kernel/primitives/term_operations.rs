@@ -2699,6 +2699,15 @@ impl Pointer {
         }
     }
 
+    /// Whether this pointer is in the null object's block, at any offset.
+    ///
+    /// Unlike a null test, this stays true for a pointer already displaced
+    /// from null, so a second displacement is judged the same way as the
+    /// first.
+    pub(in crate::kernel) fn is_in_null_block(&self) -> bool {
+        self.block == PointerBlock::Concrete("null".to_string())
+    }
+
     pub(crate) fn symbolic(variable: Variable) -> Self {
         Self {
             block: PointerBlock::Symbolic(variable),

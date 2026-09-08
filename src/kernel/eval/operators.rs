@@ -1481,6 +1481,22 @@ fn pointer_offset_by_elements_paths(
     let pointer_type = pointer.c_type();
     let pointee_volatile = pointer.pointee_volatile();
     let pointer = pointer.into_pointer();
+
+    // C11 6.5.6p8 defines additive pointer arithmetic only for a pointer that
+    // designates an element of an array object or one past its end. A null
+    // pointer designates no object, so the sum has no value to compare or
+    // dereference; without this the displaced pointer carried a nonzero
+    // offset and compared unequal to null, which decided a branch C leaves
+    // undefined. Displacing by zero is left alone: it is the shape real code
+    // writes, and C23 defines it.
+    if pointer.is_in_null_block() && offset != Bitvector32Term::Constant(0) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+            facts,
+            obligations,
+        }];
+    }
+
     let result = pointer.offset_by_typed_elements(offset.clone(), byte_width, unsigned, wide);
     let mut guards = Vec::new();
 
