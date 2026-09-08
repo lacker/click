@@ -8532,7 +8532,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 }
 
 #[test]
-fn explicit_invariant_body_scales_and_does_not_replace_kernel_validation() {
+fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
     let file = crate::surface::parse("int32 region(int32 x) { ensures result == x; }").unwrap();
     let block = &file.function_blocks()[0];
     let predicates = PredicateEnvironment::new(&[]);
@@ -8613,9 +8613,14 @@ fn explicit_invariant_body_scales_and_does_not_replace_kernel_validation() {
             closed.certificate().steps(),
             [ProofStep::CloseInvariantsBy(_)]
         ));
-        // The source proof is not a kernel bundle-acceptance token. Mandatory
-        // preparation and validation still reject missing bundle evidence.
-        assert!(closed.certify_loop_invariant_bundle(&checks).is_err());
+        // A bare request is not evidence; the completed kernel-owned scope is.
+        assert!(
+            root.apply_step(ProofStep::CloseInvariants)
+                .unwrap()
+                .certify_loop_invariant_bundle(&checks)
+                .is_err()
+        );
+        closed.certify_loop_invariant_bundle(&checks).unwrap();
         assert!(
             closed
                 .apply_close_invariants_body(&[ProofTactic::Normalize])

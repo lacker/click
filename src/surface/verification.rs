@@ -2993,7 +2993,13 @@ pub(in crate::surface) fn build_function_environment(
                 definition.name()
             ))
         })?;
-        environment = environment.with_function_contract(contract);
+        environment = environment.with_function_contract(
+            contract.with_proof_parameter_count(
+                definition
+                    .proof_parameters()
+                    .map_or(0, |parameters| parameters.len()),
+            ),
+        );
     }
     for (_, function) in parsed_sources.values() {
         let function = match function_blocks

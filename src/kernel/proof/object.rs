@@ -71,6 +71,26 @@ pub(crate) struct ProofCompletion<'a> {
     _proof: std::marker::PhantomData<&'a ()>,
 }
 
+/// A kernel-created exact invariant judgment, paired with its execution inputs.
+/// Callers can run the root but cannot replace the judgment or its premises.
+#[cfg_attr(test, derive(Clone))]
+pub(crate) struct InvariantBodyScope<L, O, E> {
+    root: ProofObject<L, O, E>,
+    binding: super::execution::CheckedLoopInvariantLowerings,
+}
+
+#[derive(Clone)]
+pub(super) struct CheckedInvariantBody {
+    goal: Proposition,
+    proof: super::CheckedProposition,
+}
+
+impl CheckedInvariantBody {
+    pub(super) fn recheck(&self) -> bool {
+        self.proof.proposition() == &self.goal
+    }
+}
+
 pub(crate) struct ProofSplit<L, O, E> {
     proof: ProofObject<L, O, E>,
     split: super::SplitId,
@@ -1048,6 +1068,171 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
     }
 }
 
+impl<L: Clone, P: Clone, T: Clone, S: Clone>
+    ProofObject<L, ProofObligation<P, Arc<OutcomeProofState<T>>>, ProofExecutionState<S>>
+{
+    /// The kernel constructs the exact root and its complete premises. The
+    /// language supplies presentation only, never obligations or assumptions.
+    pub(crate) fn open_invariant_body(
+        &self,
+        loop_entry: &crate::kernel::CState,
+        checks: &[crate::kernel::CLoopInvariantCheck],
+        presentation: impl FnOnce(&Proposition) -> P,
+    ) -> Result<
+        (
+            Self,
+            InvariantBodyScope<
+                L,
+                ProofObligation<P, Arc<OutcomeProofState<T>>>,
+                ProofExecutionState<S>,
+            >,
+        ),
+        String,
+    > {
+        let (branch, execution) = self
+            .focused_frontier_execution()
+            .map_err(|_| "invariant body requires an execution frontier")?;
+        if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody
+            || !execution.core.frontier.is_at_region_boundary()
+            || execution.core.region_invariants_close_requested
+        {
+            return Err("invariant body requires an unclosed loop back edge".into());
+        }
+        let mut facts = branch.state.facts.clone();
+        for fact in execution.core.effect_facts.iter() {
+            facts = facts.with_fact(fact.proposition().clone());
+        }
+        for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
+            facts = facts.with_fact(fact);
+        }
+        let obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+            &execution.core.state,
+            loop_entry,
+            checks,
+            facts.assumptions(),
+        )
+        .map_err(|_| "could not lower explicit invariant obligations")?;
+        let goal = obligations
+            .iter()
+            .rev()
+            .map(|obligation| obligation.proposition().clone())
+            .reduce(|right, left| Proposition::And(Box::new(left), Box::new(right)))
+            .unwrap_or(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::Constant(true),
+                true,
+            ));
+        let display = presentation(&goal);
+        let root = Self::root(
+            self.state.locals.clone(),
+            ProofBranch::new(
+                ProofObligation::Proposition(super::PropositionObligation::new(goal, display)),
+                ProofBranchState {
+                    facts,
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: branch.state.execution.clone(),
+                },
+            ),
+        );
+        let scope = InvariantBodyScope {
+            root: root.clone(),
+            binding: super::execution::CheckedLoopInvariantLowerings {
+                snapshot: execution.core.state.clone(),
+                checks: checks.to_vec(),
+                facts: branch.state.facts.clone(),
+                effects: execution.core.effect_facts.clone(),
+                paths: Vec::new(),
+                path_count: 0,
+                body: None,
+            },
+        };
+        Ok((root, scope))
+    }
+
+    /// Retain the completed proof's own checked result, never a result minted
+    /// from the requested goal. Exact root identity additionally binds its
+    /// assumptions and all conjuncts to the kernel-created scope.
+    pub(crate) fn retain_invariant_body(
+        &self,
+        scope: InvariantBodyScope<
+            L,
+            ProofObligation<P, Arc<OutcomeProofState<T>>>,
+            ProofExecutionState<S>,
+        >,
+        completed: &Self,
+    ) -> Result<Self, String> {
+        if !std::ptr::eq(
+            scope.root.state.open_branches.root_branch(),
+            completed.state.open_branches.root_branch(),
+        ) {
+            return Err("invariant body belongs to another proof root".into());
+        }
+        let proof = completed
+            .completed_proposition()
+            .ok_or("invariant body has incomplete obligations")?;
+        let ProofObligation::Proposition(goal) =
+            &scope.root.state.open_branches.root_branch().obligation
+        else {
+            return Err("invariant body lost its proposition root".into());
+        };
+        if proof.proposition() != goal.proposition() {
+            return Err("invariant body completed a different judgment".into());
+        }
+        let (branch, execution) = self
+            .focused_frontier_execution()
+            .map_err(|_| "invariant body requires an execution frontier")?;
+        if !execution.core.frontier.is_at_region_boundary() {
+            return Err("invariant body requires the loop back edge".into());
+        }
+        if !scope
+            .binding
+            .snapshot
+            .shares_storage_with(&execution.core.state)
+            || !scope
+                .binding
+                .facts
+                .shares_premises_with(&branch.state.facts)
+            || !scope
+                .binding
+                .effects
+                .shares_storage_with(&execution.core.effect_facts)
+        {
+            return Err("invariant body belongs to another execution context".into());
+        }
+        let mut binding = scope.binding;
+        binding.body = Some(CheckedInvariantBody {
+            goal: goal.proposition().clone(),
+            proof,
+        });
+        let requested = self
+            .request_frontier_invariant_closure()
+            .map_err(|_| "invariant body requires an unclosed loop frontier")?;
+        let (branch, execution) = requested
+            .focused_frontier_execution()
+            .map_err(|_| "invariant body lost its frontier")?;
+        let mut core = execution.core.clone();
+        core.checked_invariant_lowerings = Some(Arc::new(binding));
+        Ok(Self::new(
+            ProofState {
+                locals: requested.state.locals.clone(),
+                open_branches: requested.state.open_branches.with_branch_state_at(
+                    requested.focused_branch,
+                    ProofBranchState {
+                        facts: branch.state.facts.clone(),
+                        unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                        execution: Some(Arc::new(ProofExecutionState::new(
+                            core,
+                            execution.presentation.clone(),
+                        ))),
+                    },
+                ),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            requested.focused_branch,
+        ))
+    }
+}
+
 impl<L: Clone, P: Clone, O: Clone, S: Clone>
     ProofObject<L, ProofObligation<P, O>, ProofExecutionState<S>>
 {
@@ -1168,6 +1353,10 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
             return Err("invariant lowering requires a loop body".into());
         }
+        if execution.core.checked_invariant_lowerings.is_some() {
+            self.validate_checked_invariant_lowerings(checks)?;
+            return Ok(self.clone());
+        }
         let mut facts = branch.state.facts.clone();
         for fact in execution.core.effect_facts.iter() {
             facts = facts.with_fact(fact.proposition().clone());
@@ -1191,6 +1380,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                 effects: core.effect_facts.clone(),
                 path_count: paths.len(),
                 paths: paths,
+                body: None,
             }));
         let state = ProofBranchState {
             facts: branch.state.facts.clone(),
@@ -1243,6 +1433,12 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             return Err(
                 "invariant closure evidence belongs to a different invariant bundle".into(),
             );
+        }
+        if let Some(body) = &evidence.body {
+            if !evidence.paths.is_empty() || evidence.path_count != 0 || !body.recheck() {
+                return Err("invariant closure has invalid body evidence".into());
+            }
+            return Ok(());
         }
         if evidence.paths.len() != evidence.path_count
             || (!checks.is_empty() && evidence.paths.is_empty())
@@ -1821,6 +2017,247 @@ mod tests {
     use super::*;
     use crate::kernel::proof::PropositionObligation;
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
+
+    #[test]
+    fn invariant_body_evidence_requires_exact_complete_root_and_context() {
+        use crate::kernel::proof::{
+            ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
+        };
+        use crate::kernel::{
+            CComparisonOperator, CLoopInvariantCheck, CState, CValue, SpecExpression,
+            SpecProposition,
+        };
+        type TestProof = ProofObject<
+            (),
+            ProofObligation<(), Arc<OutcomeProofState<()>>>,
+            ProofExecutionState<()>,
+        >;
+        let root = |facts: ProofFacts, core: ExecutionProofCore| -> TestProof {
+            ProofObject::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(ProofExecutionState::new(core, ()))),
+                    },
+                ),
+            )
+        };
+        let checks = [0, 1].map(|value| {
+            CLoopInvariantCheck::new(
+                SpecProposition::Comparison {
+                    left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))),
+                    operator: CComparisonOperator::LessEqual,
+                    right: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))),
+                },
+                None,
+                None,
+            )
+        });
+        let entry = CState::new();
+        let samples = [16, 32, 64, 128].map(|size| {
+            let facts = ProofFacts::from_ordered(
+                &(0..size)
+                    .map(|i| Proposition::Predicate {
+                        name: format!("unrelated_{i}"),
+                        arguments: vec![],
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let core = ExecutionProofCore::at_entry(
+                CState::new(),
+                ExecutionFrontier {
+                    region: ExecutionRegionKind::LoopBody,
+                    position: FrontierPosition::RegionBoundary,
+                    ..Default::default()
+                },
+            );
+            let frontier = root(facts.clone(), core);
+            let before = crate::kernel::loops::invariant_discovery_calls();
+            let ((body, scope), opening_work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    frontier
+                        .open_invariant_body(&entry, &checks, |_| ())
+                        .unwrap()
+                });
+            assert!(
+                frontier
+                    .retain_invariant_body(scope.clone(), &body)
+                    .is_err()
+            );
+            // Even the same exact goal and premises in a fresh root are not this scope.
+            let unrelated = TestProof::root((), body.state.open_branches.root_branch().clone())
+                .apply_normalize()
+                .ok()
+                .unwrap();
+            assert!(
+                frontier
+                    .retain_invariant_body(scope.clone(), &unrelated)
+                    .is_err()
+            );
+            let complete = body.apply_normalize().ok().unwrap();
+            let ((closed, prepared), closing_work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    let closed = frontier
+                        .retain_invariant_body(scope.clone(), &complete)
+                        .unwrap();
+                    closed
+                        .validate_checked_invariant_lowerings(&checks)
+                        .unwrap();
+                    let prepared = closed
+                        .retain_checked_invariant_lowerings(&entry, &checks)
+                        .unwrap();
+                    (closed, prepared)
+                });
+            assert_eq!(before, crate::kernel::loops::invariant_discovery_calls());
+            assert!(prepared.shares_state_with(&closed));
+            assert!(
+                closed
+                    .validate_checked_invariant_lowerings(&checks[..1])
+                    .is_err()
+            );
+            let core = closed.execution_view().unwrap().execution().core.clone();
+            for variant in 0..4 {
+                let mut changed = core.clone();
+                let mut changed_facts = facts.clone();
+                match variant {
+                    0 => changed.state = CState::new().into(),
+                    1 => changed.effect_facts = Vec::new().into(),
+                    2 => {
+                        changed_facts = facts.with_fact(Proposition::Predicate {
+                            name: "other_arm".into(),
+                            arguments: vec![],
+                        })
+                    }
+                    _ => {
+                        Arc::make_mut(changed.checked_invariant_lowerings.as_mut().unwrap()).body =
+                            None
+                    }
+                }
+                let stale = root(changed_facts, changed);
+                assert!(stale.validate_checked_invariant_lowerings(&checks).is_err());
+                assert!(
+                    stale
+                        .retain_checked_invariant_lowerings(&entry, &checks)
+                        .is_err(),
+                    "invalid supplied evidence must not fall back to discovery"
+                );
+                if variant < 3 {
+                    assert!(
+                        stale
+                            .retain_invariant_body(scope.clone(), &complete)
+                            .is_err()
+                    );
+                }
+            }
+            let mut wrong = core;
+            Arc::make_mut(wrong.checked_invariant_lowerings.as_mut().unwrap())
+                .body
+                .as_mut()
+                .unwrap()
+                .goal =
+                Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true);
+            assert!(
+                root(facts, wrong)
+                    .validate_checked_invariant_lowerings(&checks)
+                    .is_err()
+            );
+            opening_work + closing_work
+        });
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0].saturating_mul(2).saturating_add(8),
+                "{samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn invariant_body_does_not_assume_provisional_read_safety() {
+        use crate::kernel::proof::{
+            ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
+        };
+        use crate::kernel::{
+            CComparisonOperator, CLoopInvariantCheck, CState, CType, CValue, Pointer,
+            PointerOffsetTerm, SpecExpression, SpecMemory, SpecProposition,
+        };
+        type TestProof = ProofObject<
+            (),
+            ProofObligation<(), Arc<OutcomeProofState<()>>>,
+            ProofExecutionState<()>,
+        >;
+        let load = SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(
+                crate::kernel::CPointerValue::new(
+                    Pointer {
+                        block: "unallocated".into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    CType::Int32Pointer,
+                ),
+            ))),
+            value_type: CType::Int32,
+        };
+        // The value is reflexively equal, but evaluating it still requires a
+        // read proof. No memory resource or safety premise is available.
+        let checks = [CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: load.clone(),
+                operator: CComparisonOperator::Equal,
+                right: load,
+            },
+            None,
+            None,
+        )];
+        let frontier = TestProof::root(
+            (),
+            ProofBranch::new(
+                ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                ProofBranchState {
+                    facts: ProofFacts::default(),
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: Some(Arc::new(ProofExecutionState::new(
+                        ExecutionProofCore::at_entry(
+                            CState::new(),
+                            ExecutionFrontier {
+                                region: ExecutionRegionKind::LoopBody,
+                                position: FrontierPosition::RegionBoundary,
+                                ..Default::default()
+                            },
+                        ),
+                        (),
+                    ))),
+                },
+            ),
+        );
+        let (body, scope) = frontier
+            .open_invariant_body(&CState::new(), &checks, |_| ())
+            .unwrap();
+        assert!(body.apply_normalize().is_err());
+        assert!(
+            body.apply_assumption(PropositionAssumptionContext::Pure)
+                .is_err()
+        );
+        assert!(
+            frontier
+                .retain_invariant_body(scope.clone(), &body)
+                .is_err()
+        );
+        // Proving the same goal under an extra assumption cannot fill this scope.
+        let mut assumed = body.state.open_branches.root_branch().clone();
+        let ProofObligation::Proposition(goal) = &assumed.obligation else {
+            panic!("missing goal")
+        };
+        assumed.state.facts = assumed.state.facts.with_fact(goal.proposition().clone());
+        let unrelated = TestProof::root((), assumed)
+            .apply_assumption(PropositionAssumptionContext::Exact)
+            .ok()
+            .unwrap();
+        assert!(frontier.retain_invariant_body(scope, &unrelated).is_err());
+    }
 
     #[test]
     fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {

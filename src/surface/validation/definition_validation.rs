@@ -272,6 +272,30 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .collect::<BTreeSet<_>>();
 
     let mut function_specs = BTreeSet::new();
+    for definition in file.contract_definitions() {
+        let variables =
+            function_signature_type_environment(definition.function_block().signature(), false);
+        for parameter in definition.proof_parameters().unwrap_or(&[]) {
+            let ResourceClause::Named { binding, .. } = parameter else {
+                unreachable!()
+            };
+            if variables.contains_key(&binding.name) {
+                return Err(ClickError::new(format!(
+                    "contract proof parameter `{}` conflicts with a C parameter",
+                    binding.name
+                )));
+            }
+            validate_resource_clause(
+                parameter,
+                &resources,
+                &recursive_resources,
+                &click_functions,
+                &click_function_types,
+                &variables,
+                &format!("proof parameter in contract `{}`", definition.name()),
+            )?;
+        }
+    }
     let mut contract_and_function_blocks = file
         .contract_definitions()
         .iter()

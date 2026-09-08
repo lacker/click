@@ -1736,6 +1736,16 @@ fn verify_lowered_invariant_path(
     Ok(Some((merged_facts, merged_obligations, lowering)))
 }
 
+#[cfg(test)]
+thread_local! {
+    static INVARIANT_DISCOVERY_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn invariant_discovery_calls() -> usize {
+    INVARIANT_DISCOVERY_CALLS.get()
+}
+
 pub(super) fn verify_invariant_checks_at_back_edge_using(
     state: &CState,
     loop_entry_state: &CState,
@@ -1743,6 +1753,8 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Result<Vec<std::sync::Arc<CheckedInvariantLowering>>, String> {
+    #[cfg(test)]
+    INVARIANT_DISCOVERY_CALLS.set(INVARIANT_DISCOVERY_CALLS.get() + 1);
     let mut contexts = vec![(Vec::new(), Vec::new())];
     let mut lowerings = Vec::new();
     for (check_index, check) in checks.iter().enumerate() {

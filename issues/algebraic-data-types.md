@@ -178,6 +178,29 @@ are ordinary symbolic Click values, not freely assignable ghost storage.
 No field value itself grants memory authority. A model change must
 re-establish the resource's relation to the concrete memory.
 
+### Explicit named-contract proof parameters
+
+The declaration/application front end supports
+`contract Read(cell: marked_cell(p)) for int32(int32* p) { owns cell; ... }`
+and `step(Read(first))`. Proof parameters are explicitly declared typed
+resource handles; the signature after `for` supplies the actual C parameters.
+There are no defaults, inferred application arguments, or positional lists
+derived from ownership clauses. Ordinary inline contracts retain their form.
+
+Empty explicit applications verify and expand to recheckable proofs.
+Nonempty applications check arity, resource family, scope, and duplicate
+exclusive arguments, then reject missing checked transport. Unused declared
+parameters must not be erased to make a contract callable with no arguments.
+See [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
+and [contract_explicit_empty_application.md](../mdtests/contract_explicit_empty_application.md).
+
+Next connect explicitly selected caller identities to callee binders, check
+resource arguments against the C call values, and return the same identities
+with post-state fields constrained only by the callee's guarantees. Regressions
+must distinguish two same-family instances, frame the unselected one, reject
+missing ownership and aliasing, and reject unpromised field preservation.
+Preserve exact call-entry snapshots and recheck expanded certificates.
+
 The existing contract `let ... where` introduces separate existential witnesses
 per clause; it must not silently become a shared instance binding. Do not
 replace arbitrary-state proofs with concrete-only models or add ghost C arguments.

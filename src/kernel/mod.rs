@@ -10,6 +10,8 @@ mod assumptions;
 mod eval;
 mod functions;
 mod loops;
+#[cfg(test)]
+pub(crate) use loops::invariant_discovery_calls;
 mod memory_provenance;
 mod primitives;
 pub(crate) mod proof;

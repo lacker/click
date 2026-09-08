@@ -3,6 +3,155 @@ use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
 #[test]
+fn explicit_contract_parameters_are_declared_not_implicit_ownership() {
+    let file = parser::parse(
+        r#"
+        resource marker(p: int32*) { field revision: int32; }
+        contract Read(cell: marker(p)) for int32(int32* p) {
+            owns cell;
+            ensures cell.revision == old(cell.revision);
+        }
+        contract Unowned(cell: marker(p)) for int32(int32* p) { ensures result == 0; }
+    "#,
+    )
+    .unwrap();
+    let definition = &file.contract_definitions()[0];
+    assert_eq!(definition.name(), "Read");
+    assert_eq!(definition.proof_parameters().unwrap().len(), 1);
+    assert_eq!(
+        definition.function_block().signature().parameters().len(),
+        1
+    );
+    assert!(
+        file.contract_definitions()[1]
+            .function_block()
+            .requires()
+            .is_empty()
+    );
+    let header = "resource marker(p: int32*) { field revision: int32; }";
+    for invalid in [
+        "contract C(cell: marker(p), cell: marker(p)) for int32(int32* p) {}",
+        "contract C(cell: marker(p), cell) for int32(int32* p) {}",
+        "contract C(p: marker(p)) for int32(int32* p) {}",
+        "contract C(cell: marker(0)) for int32() {}",
+        "contract C(cell: missing()) for int32() {}",
+        "contract C(cell: marker(p) = other) for int32(int32* p) {}",
+        "contract C() for int32(int32* p) { owns hidden: marker(p); }",
+        "contract C(cell: marker(p)) for int32(int32* p) { owns cell; owns cell; }",
+    ] {
+        let invalid = invalid.replace("{}", "{ ensures result == 0; }");
+        assert!(
+            parser::parse(&format!("{header} {invalid}")).is_err(),
+            "must reject {invalid}"
+        );
+    }
+}
+
+#[test]
+fn explicit_contract_applications_preserve_arguments_when_printed() {
+    let source = r#"
+        resource marker() { field revision: int32; }
+        contract Touch(cell: marker()) for int32() { owns cell; }
+        int32 f() { owns first: marker(); owns second: marker(); }
+        by { step(Touch(second)); }
+    "#;
+    let file = parser::parse(source).unwrap();
+    let SourceProof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+        panic!("expected script")
+    };
+    let printed = printing::format_proof_tactics(tactics).unwrap();
+    assert!(printed.contains("step(Touch(second));"));
+    let ProofTactic::StepContract(application) = &tactics[0] else {
+        panic!("expected application")
+    };
+    assert_eq!(application.arguments.as_ref().unwrap()[0].name, "second");
+    assert!(parser::parse(&source.replace("Touch(second)", "Touch(missing)")).is_err());
+}
+
+#[test]
+fn explicit_contract_empty_application_verifies_and_expands() {
+    let source = r#"verifying "invoke.c";
+        contract Identity() for int32(int32 x) { ensures result == x; }
+        int32 invoke(int32 (*callback)(int32), int32 x) {
+            requires Identity(callback);
+            ensures result == x;
+        } by { step(Identity()); execute(); simp(); }
+    "#;
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)(int32), int32 x) { return callback(x); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    assert!(expanded.contains("step(Identity());"));
+    verify_c0_sources(
+        &source.replace("by { step(Identity()); execute(); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    let error =
+        verify_c0_sources(&source.replace("step(Identity())", "step(Identity)"), &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("requires explicit application syntax"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn explicit_contract_application_checks_arguments_and_does_not_fake_transport() {
+    let source = r#"verifying "invoke.c";
+        resource marker() { field revision: int32; }
+        resource other() { field revision: int32; }
+        contract Touch(cell: marker()) for int32() { owns cell; ensures result == 0; }
+        int32 invoke(int32 (*callback)()) {
+            requires Touch(callback);
+            owns first: marker(); owns second: other();
+            ensures result == 0;
+        } by { step(Touch(first)); simp(); }
+    "#;
+    // C0 spells the empty function-pointer parameter list `()`.
+    let c = [(
+        "invoke.c",
+        "int32 invoke(int32 (*callback)()) { return callback(); }",
+    )];
+    for (application, diagnostic) in [
+        ("Touch", "requires explicit application syntax"),
+        ("Touch()", "expects 1 proof argument(s), got 0"),
+        ("Touch(first, second)", "expects 1 proof argument(s), got 2"),
+        ("Touch(second)", "expects resource `marker`, got `other`"),
+        ("Touch(first)", "require checked call transport"),
+    ] {
+        let error =
+            verify_c0_sources(&source.replace("Touch(first)", application), &c).unwrap_err();
+        assert!(error.message().contains(diagnostic), "{}", error.message());
+    }
+    let duplicate = source
+        .replace("cell: marker()", "cell: marker(), another: marker()")
+        .replace("owns cell;", "owns cell; owns another;")
+        .replace("Touch(first)", "Touch(first, first)");
+    let error = verify_c0_sources(&duplicate, &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("cannot supply two contract proof parameters"),
+        "{}",
+        error.message()
+    );
+    let unowned = source
+        .replace("owns cell;", "")
+        .replace("step(Touch(first))", "step()");
+    let error = verify_c0_sources(&unowned, &c).unwrap_err();
+    assert!(
+        error.message().contains("require checked call transport"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn named_resource_bindings_preserve_symbolic_fields_and_recheck_expansion() {
     let source = r#"verifying "identity.c";
         spec enum Mark { Clear, Set }

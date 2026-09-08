@@ -221,11 +221,21 @@ retaining a `CloseInvariantsBy` proof object. `both` preserves exact child
 identities. Empty, incomplete, premature, repeated, and missing-`by` bodies
 are rejected; a failed body never falls back to the automatic closer.
 
-This is deliberately an additional source proof, not a replacement for kernel
-bundle evidence: the existing preparation and independent bundle validation
-still run. A regression checks that completing a body alone cannot bypass
-missing kernel lowering evidence. Removing that remaining legacy preparation
-still requires a separately validated, context-bound evidence interface.
+The body now supplies kernel bundle evidence. The kernel creates the exact
+root and its premises, and accepts only the completed checked result from that
+same root. An equal-looking goal proved in a fresh scope, including a scope
+with extra assumptions, cannot be substituted. The resulting evidence binds
+the execution snapshot, premise-store root, execution effects, and invariant
+selection. Preparation validates an existing bundle instead of invoking the
+legacy prover; stale or invalid supplied evidence fails without fallback.
+Bare `close_invariants();` remains a request and still uses legacy preparation.
+
+Boundary regressions reject uncompleted roots, substituted proofs, changed
+snapshots/premises/effects/checks, omitted evidence, and altered goals. A read
+reflexivity regression requires its provisional safety obligation even though
+the value equality is trivial. Four-size deterministic tests cover scope
+creation, retention, and closure against unrelated premises. Discovery counters
+pin the absence of legacy back-edge proof construction on the body path.
 
 Scalar and quantified `bubble_pass3_max_suffix.md` proofs verify and expand
 with bodies while preserving the original C. Rechecking the expanded bubble
@@ -252,21 +262,21 @@ The binding checks are constant-time storage comparisons; proof checking is
 charged to the supplied evidence. A four-size deterministic regression covers
 the whole kernel consumer against growing unrelated fact stores.
 
-This separates construction from consumption; it does **not** remove the
-general/simp construction ladder from preparation. The prefix probe was
+This separates construction from consumption. Explicit bodies now avoid the
+general/simp construction ladder, but bare closers still use it. The prefix probe was
 retained after the failed explicit-preparation experiment described above.
-Expanded source still prepares internal lowering records while being checked.
+Expanded source with bare closers still prepares internal lowering records while being checked.
 Removing that discovery, and replacing the independent state-join reasoning,
 remain separate migration work. Do-while paths proven unable to continue need
 no back-edge bundle and retain the existing exit classification.
 
 ### Still outstanding
 
-1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Connect the newly
-   explicit value/safety proofs to the exact lowered goals without
-   an unsafe binder shortcut. Prefer exact lowered-goal scopes; if using
-   renaming evidence instead, implement the snapshot-dependency regression
-   and scaling requirements above before consuming it as authority.
+1. Keep `bubble_pass3_max_suffix.md` and its C unchanged. Explicit bodies now
+   connect the value/safety proofs to exact lowered goals. Make automatic
+   preservation planning emit these bodies instead of bare closer requests,
+   preserving the useful named invariant premises without re-lowering child
+   goals through ordinary `have` scopes.
 2. Replace the planner's internal general/simp derivation construction with
    explicit proof operations while preserving complete path and safety coverage.
    Retain actual proofs without trusting surface spellings or requiring
