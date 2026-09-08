@@ -8664,6 +8664,23 @@ impl Parser {
                         self.current_return_pointee_constant,
                         &expression,
                     )?;
+                    // Check wide-to-int representability at the return statement,
+                    // where the proof can discharge its bounds from call facts.
+                    // Deferring this conversion until function finalization leaves
+                    // those obligations outside the statement proof frontier.
+                    let expression = if self.current_return_type == C0Type::Int32
+                        && matches!(
+                            self.source_expression_type(&expression),
+                            Some(C0Type::Int64 | C0Type::UInt64)
+                        ) {
+                        C0Expression::Cast {
+                            expression: Box::new(expression),
+                            c_type: C0Type::Int32,
+                            struct_name: None,
+                        }
+                    } else {
+                        expression
+                    };
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
                 }

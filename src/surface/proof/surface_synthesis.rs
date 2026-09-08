@@ -11,6 +11,7 @@ struct SurfaceSynthesisBudget {
 }
 
 thread_local! {
+    static SYNTHESIS_QUALIFIED_SOURCES: std::cell::RefCell<Option<SurfacePropositionMap>> = const { std::cell::RefCell::new(None) };
     static SYNTHESIS_ENTRY_STATE: std::cell::RefCell<Option<CState>> = const { std::cell::RefCell::new(None) };
     static SURFACE_SYNTHESIS_BUDGET: std::cell::RefCell<Option<SurfaceSynthesisBudget>> =
         const { std::cell::RefCell::new(None) };
@@ -18,6 +19,20 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static SURFACE_SYNTHESIS_BITVECTOR_NESTING: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
+}
+
+pub(super) struct QualifiedSynthesisScope(Option<SurfacePropositionMap>);
+
+impl QualifiedSynthesisScope {
+    pub(super) fn enter(sources: &SurfacePropositionMap) -> Self {
+        Self(SYNTHESIS_QUALIFIED_SOURCES.with(|slot| slot.replace(Some(sources.clone()))))
+    }
+}
+
+impl Drop for QualifiedSynthesisScope {
+    fn drop(&mut self) {
+        SYNTHESIS_QUALIFIED_SOURCES.with(|slot| slot.replace(self.0.take()));
+    }
 }
 
 struct SynthesisEntryScope(Option<CState>);
@@ -699,19 +714,28 @@ fn synthesize_surface_proposition_with_bound_variables(
         });
     }
     let (left, operator, right) = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
             (left, ComparisonOperator::LessThan, right)
         }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+        ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
             (left, ComparisonOperator::LessEqual, right)
         }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
             (left, ComparisonOperator::GreaterThan, right)
         }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
             (left, ComparisonOperator::GreaterEqual, right)
         }
-        ConditionTerm::Bitvector32Equal(left, right) => (left, ComparisonOperator::Equal, right),
+        ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right) => (left, ComparisonOperator::Equal, right),
         _ => return None,
     };
     let surface_left =
@@ -806,7 +830,8 @@ pub(in crate::surface) fn synthesize_surface_equality_across_points(
         })
     };
     let (left, right) = match condition {
-        ConditionTerm::Bitvector32Equal(left, right) => (
+        ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right) => (
             anchored(&|state| {
                 synthesize_surface_bitvector(left, parameters, arguments, state, &bound_variables)
             })?,
@@ -1200,6 +1225,16 @@ fn synthesize_surface_bitvector(
             }))
         }
         Bitvector32Term::MemoryLoad(memory, kernel_pointer) => {
+            if let Some(source) = SYNTHESIS_QUALIFIED_SOURCES.with(|slot| {
+                slot.borrow()
+                    .as_ref()?
+                    .storage
+                    .qualified_load_sources
+                    .get(kernel_pointer.as_ref())
+                    .cloned()
+            }) {
+                return Some(source);
+            }
             let old = SYNTHESIS_ENTRY_STATE.with(|slot| {
                 let slot = slot.borrow();
                 let entry = slot.as_ref()?;

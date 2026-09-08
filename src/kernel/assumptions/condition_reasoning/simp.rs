@@ -31,7 +31,13 @@ impl PureFactContext {
                 self.decide_pointer_alignment(pointer, alignment)
             }
             ConditionTerm::Bitvector64Equal(left, right) => {
-                self.decide_uint64_equality_extras(left, right)
+                match (
+                    self.wide_constant_from_equalities(left),
+                    self.wide_constant_from_equalities(right),
+                ) {
+                    (Some(left), Some(right)) => Some(left == right),
+                    _ => self.decide_uint64_equality_extras(left, right),
+                }
             }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {
@@ -44,6 +50,18 @@ impl PureFactContext {
                 }
             }
             ConditionTerm::Bitvector32Equal(left, right) => {
+                let narrowed_constant = |term: &Bitvector32Term| match term {
+                    Bitvector32Term::UInt32From64(wide) => self
+                        .wide_constant_from_equalities(wide)
+                        .map(|bits| bits as u32),
+                    Bitvector32Term::Constant(bits) => Some(*bits),
+                    _ => None,
+                };
+                if let (Some(left), Some(right)) =
+                    (narrowed_constant(left), narrowed_constant(right))
+                {
+                    return Some(left == right);
+                }
                 if bitvector_terms_proven_equal_for_memory_resolution(left, right, self)
                     || self.proves_condition_from_facts_for_simp(condition, true)
                 {

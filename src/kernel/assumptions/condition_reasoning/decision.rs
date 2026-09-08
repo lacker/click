@@ -295,6 +295,36 @@ impl PureFactContext {
     }
 
     fn decide_inner(&self, condition: &ConditionTerm) -> Option<bool> {
+        // Wide comparisons may use a recorded constant equality. Consult only
+        // the queried terms' equality components, never unrelated conditions.
+        let wide_comparison = match condition {
+            ConditionTerm::Bitvector64SignedLessThan(a, b) => Some((a, b, 0)),
+            ConditionTerm::Bitvector64SignedLessEqual(a, b) => Some((a, b, 1)),
+            ConditionTerm::Bitvector64SignedGreaterThan(a, b) => Some((a, b, 2)),
+            ConditionTerm::Bitvector64SignedGreaterEqual(a, b) => Some((a, b, 3)),
+            ConditionTerm::Bitvector64UnsignedLessThan(a, b) => Some((a, b, 4)),
+            ConditionTerm::Bitvector64UnsignedLessEqual(a, b) => Some((a, b, 5)),
+            ConditionTerm::Bitvector64UnsignedGreaterThan(a, b) => Some((a, b, 6)),
+            ConditionTerm::Bitvector64UnsignedGreaterEqual(a, b) => Some((a, b, 7)),
+            _ => None,
+        };
+        if let Some((left, right, operator)) = wide_comparison
+            && let (Some(left), Some(right)) = (
+                self.wide_constant_from_equalities(left),
+                self.wide_constant_from_equalities(right),
+            )
+        {
+            return Some(match operator {
+                0 => (left as i64) < (right as i64),
+                1 => (left as i64) <= (right as i64),
+                2 => (left as i64) > (right as i64),
+                3 => (left as i64) >= (right as i64),
+                4 => left < right,
+                5 => left <= right,
+                6 => left > right,
+                _ => left >= right,
+            });
+        }
         match condition {
             ConditionTerm::AlgebraicEqual(left, right) => {
                 self.decide_algebraic_equality(left, right)
@@ -599,6 +629,60 @@ impl PureFactContext {
             }
         }
         None
+    }
+
+    pub(super) fn wide_constant_from_equalities(&self, term: &Bitvector32Term) -> Option<u64> {
+        fn evaluate(
+            context: &PureFactContext,
+            term: &Bitvector32Term,
+            active: &mut BTreeSet<Bitvector32Term>,
+            memo: &mut BTreeMap<Bitvector32Term, Option<u64>>,
+        ) -> Option<u64> {
+            if let Some(value) = memo.get(term) {
+                return *value;
+            }
+            // Equality cycles and deeply nested arithmetic are search, not
+            // permission to grow the native stack without a bound.
+            if active.len() >= 128 {
+                return None;
+            }
+            if !active.insert(term.clone()) {
+                return None;
+            }
+            crate::instrumentation::record_deterministic_work(1);
+            let mut value = match term {
+                Bitvector32Term::UInt64Constant(value) => Some(*value),
+                Bitvector32Term::Int64Constant(value) => Some(*value as u64),
+                Bitvector32Term::UInt64Add(left, right) => evaluate(context, left, active, memo)
+                    .zip(evaluate(context, right, active, memo))
+                    .map(|(a, b)| a.wrapping_add(b)),
+                Bitvector32Term::UInt64Subtract(left, right) => {
+                    evaluate(context, left, active, memo)
+                        .zip(evaluate(context, right, active, memo))
+                        .map(|(a, b)| a.wrapping_sub(b))
+                }
+                Bitvector32Term::UInt64Multiply(left, right) => {
+                    evaluate(context, left, active, memo)
+                        .zip(evaluate(context, right, active, memo))
+                        .map(|(a, b)| a.wrapping_mul(b))
+                }
+                _ => None,
+            };
+            if value.is_none()
+                && let Some(neighbors) = context.bitvector64_equality_facts.get(term)
+            {
+                for (equal, _) in neighbors.iter() {
+                    value = evaluate(context, equal, active, memo);
+                    if value.is_some() {
+                        break;
+                    }
+                }
+            }
+            active.remove(term);
+            memo.insert(term.clone(), value);
+            value
+        }
+        evaluate(self, term, &mut BTreeSet::new(), &mut BTreeMap::new())
     }
 
     pub(in crate::kernel) fn bitvector_terms_equal_from_facts(
@@ -1153,7 +1237,12 @@ impl PureFactContext {
                 Bitvector32Term::uint64_from_32(self.simplify_bitvector_under_assumptions(value))
             }
             Bitvector32Term::UInt32From64(value) => {
-                Bitvector32Term::uint32_from_64(self.simplify_bitvector_under_assumptions(value))
+                match self.wide_constant_from_equalities(value) {
+                    Some(bits) => Bitvector32Term::Constant(bits as u32),
+                    None => Bitvector32Term::uint32_from_64(
+                        self.simplify_bitvector_under_assumptions(value),
+                    ),
+                }
             }
             Bitvector32Term::UInt64FromInt32(value) => {
                 Bitvector32Term::uint64_from_int32(self.simplify_bitvector_under_assumptions(value))
