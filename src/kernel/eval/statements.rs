@@ -577,6 +577,16 @@ fn execute_c_aggregate_copy_paths(
                 });
                 continue;
             }
+            if aggregate_copy_reads_uninitialized(&state.memory, source_pointer.pointer(), layout) {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::UninitializedRead,
+                    ),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
             let mut state = state.clone();
             state.memory = crate::kernel::functions::copy_aggregate_fields(
                 state.memory,
@@ -636,6 +646,109 @@ fn missing_aggregate_copy_read_resource(
         }
     }
     None
+}
+
+/// Whole-struct assignment copies every member (C11 6.5.16.1p2). The kernel
+/// copy used above skips a carried field with no source cell, so a copy from
+/// a never-written source would leave the destination's own cell in place and
+/// readable. The same assignment between plain structs lowers to member-wise
+/// stores and reports an uninitialized read through the ordinary load path,
+/// so the union-routed kernel copy must report that read here instead of
+/// silently keeping the stale destination value.
+fn aggregate_copy_reads_uninitialized(
+    memory: &CMemory,
+    source: &Pointer,
+    layout: &CAggregateLayout,
+) -> bool {
+    // Mirror the carried-field classification in `copy_aggregate_fields`: a
+    // field type this copy cannot carry drops the destination cells instead
+    // of leaving them readable, so it cannot go stale here.
+    for field in layout.fields() {
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64 => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer => (field.c_type(), 1),
+            _ => continue,
+        };
+        for index in 0..element_count {
+            let element_offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate field offset"),
+                )
+                .expect("validated aggregate field offset");
+            if uninitialized_aggregate_copy_source_cell(
+                memory,
+                &source.offset_by_bytes(element_offset),
+                element_type,
+            ) {
+                return true;
+            }
+        }
+    }
+    for union in layout.unions() {
+        let union_source = source.offset_by_bytes(union.offset_bytes());
+        // A union with any readable member is initialized storage: the copy
+        // carries the active member view and skips the rest, so no member
+        // read is uninitialized. Only a wholly unread union can leave the
+        // destination holding a stale cell.
+        let union_initialized = union.fields().iter().any(|field| {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            // Mirror `copy_aggregate_union_member`: a value stored through
+            // any member is carried.
+            memory
+                .known_union_value(&source_field, field.c_type())
+                .is_some()
+                || memory
+                    .known_value(&source_field)
+                    .is_some_and(|value| field.c_type().accepts(&value))
+        });
+        if union_initialized {
+            continue;
+        }
+        for field in union.fields() {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            if uninitialized_aggregate_copy_source_cell(memory, &source_field, field.c_type()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Mirrors the silent skip in `copy_aggregate_fields`: no source cell and not
+/// a zeroed heap address. Reading such a cell is a read of uninitialized
+/// storage when the address is a live local or an uninitialized heap cell;
+/// anything else (external or symbolic memory) reads back as an unconstrained
+/// symbolic load rather than stale storage.
+fn uninitialized_aggregate_copy_source_cell(
+    memory: &CMemory,
+    source_field: &Pointer,
+    element_type: CType,
+) -> bool {
+    if memory.known_value(source_field).is_some() {
+        return false;
+    }
+    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+        return false;
+    }
+    memory.is_uninitialized_heap_address(source_field, element_type.byte_width())
+        || (source_field.block.starts_with("local:")
+            && memory.access_in_bounds(source_field, element_type.byte_width()))
 }
 
 pub(super) fn execute_c_heap_allocate_paths(
