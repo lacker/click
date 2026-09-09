@@ -279,7 +279,7 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join`, `checked_evidence_premises_hold` | Validates introduced facts, interface facts on both arms, branch obligations, and theorem premises by contextual proof. In particular, an already checked theorem's unavailable premise can still be rediscovered at application time. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
+| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join` | Validates introduced facts, interface facts on both arms, and branch obligations by contextual proof. The separate `checked_evidence_premises_hold` general fallback is now removed, as described below. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
@@ -337,8 +337,8 @@ Completed loop migration:
 
 Recommended remaining migration sequence:
 
-1. Migrate proof-object boundary consumers in separate chunks: theorem-premise
-   application, resource deltas, then branch interfaces. Reject omitted,
+1. The checked-event premise fallback below is removed. Continue with resource
+   deltas and branch interfaces separately. Reject omitted,
    unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
    fact histories so exact validation does not become an ambient scan.
 2. Separate quantified conversion and context-free normalization from implicit
@@ -349,6 +349,81 @@ Completion requires checking these consumers transitively, not just obtaining
 a zero grep count in `contract_certification.rs`. A retained exact rule must
 have named inputs and input/output-sized work; a retained planner must be
 non-authoritative and its selected result checked without rediscovery.
+
+### Checked-event theorem-premise census (2026-09-09)
+
+Measured at `35a3d8cd` across all 26 example projects and 1,079 markdown
+fixtures, including expected failures. The instrumented full gate passed,
+including 2,055 unit/CLI tests; the table does not aggregate the isolated unit
+test processes. Temporary counters distinguished statement/condition callers,
+premise-bundle visits, exact acceptance, general attempts and results. The
+original short-circuit order and proof calls were preserved. Probes and the
+subsequent diagnostic denial switch were removed; this is a documentation-only
+checkpoint, not a fallback deletion.
+
+**Scope:** `checked_evidence_premises_hold` is reached through
+`checked_statement_event` and `checked_condition_event` when
+`check_evidence_events` checks branch-arm event trees for `CheckedExecutionBranch::check`
+and `check_interface` (including nested branches). Initial event recording
+instead calls `check_evidence_state_and_premises` /
+`proof_evidence_unretained_premise`; that separate retained-context, obligation,
+and resource-coverage chain was not dynamically censused here. Neither were
+resource rewrites, observations, or interface-fact authority.
+
+| Corpus / caller | Premise-bundle visits | Premises tested | Exact indexed acceptance | General attempts | General successes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Examples / statement | 4 | 78 | 78 | 0 | 0 |
+| Examples / condition | 4 | 58 | 58 | 0 | 0 |
+| Mdtests / statement | 55 | 157 | 155 | 2 | 2 |
+| Mdtests / condition | 54 | 142 | 142 | 0 | 0 |
+| **Total** | **117** | **435** | **433** | **2** | **2** |
+
+All visited bundles had premises and passed this helper. There were no general
+misses or exact-builtin-only acceptances. `proves_exact` first tries builtin
+rules and then indexed membership; the probe classified its successful result
+as indexed when `contains_assumed_exact` also succeeded. That indexed helper
+can decompose conjunctions and match condition polarity, so this column is not
+a claim that every whole premise is stored as one opaque key. These are visits,
+not unique theorems or unique logical premises; a bundle acceptance alone is
+not proof that all later event/source checks succeed.
+
+Only `owned-vector` and `perpetual-service` among the examples reached this
+helper, and both used indexed facts exclusively. Twenty-two mdtests reached it.
+The entire general-success group is
+`mdtests/c_step_contract_frontier_branch.md`: two statement bundles, one for
+each arm of a C `if`, invoking the same callback with `step(Buffered)`.
+Bounded operand diagnostics confirmed both missing premises are exactly
+`ConditionIs(Bitvector32SignedGreaterEqual(Constant(1), Constant(1)), true)`.
+They require no ambient premise or nontrivial arithmetic derivation. The exact
+builtin path recognizes an already reduced `ConditionTerm::Constant`, but does
+not reduce this literal comparison itself.
+
+The focused positive run passed and reproduced both general successes. A
+temporary switch that rejected only this helper's general fallback made the
+unchanged fixture fail promptly at `invoke.contract` proof step 2:
+`checked C branch join rejected: a branch arm theorem trace does not follow its
+exact C source`. This confirms a dependency in the current corpus, not merely
+an unused successful search attempt. The switch was not retained, and the
+expected-pass fixture, its C, and its proof were not changed.
+
+**Implementation complete:** `checked_evidence_premises_hold` preserves its
+existing exact/builtin path and otherwise checks only a literal int32 comparison
+with `ground_comparison_premise_holds`. The general `proves` fallback is deleted.
+The new rule checks signed `<`, `<=`, `>`, `>=`, and bitvector equality, accepting
+only two literal operands and the correct requested truth polarity. It casts
+the stored bits to signed int32 for ordering; it does not fold expressions,
+inspect ambient facts, or call a derivation builder. It is a fixed local check,
+not a new arithmetic planner or a special case for `1 >= 1`.
+
+Regressions cover both polarities of all five comparisons over minimum/maximum
+signed values, -1, 0, and 1; unsupported compound operands; missing/unrelated
+symbolic premises; exact supplied premises; and rejection of `x >= 0` when only
+`x > 0` is retained (even though the general prover can derive the former).
+The unchanged callback fixture verifies, expands, and independently rechecks.
+No new proof-object payload or user proof bookkeeping is introduced.
+Nontrivial future derived premises must be planned and retained explicitly.
+Initial event recording and other event/resource/interface boundaries remain
+outside this completed slice.
 
 ### Pointer-offset effect-equality census (2026-09-09)
 
