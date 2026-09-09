@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Twelve independent root causes. Every one has a reproduction that verifies
+Eleven independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Five are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other seven are high: the trigger is
+false, with no unusual tactics. The other six are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -798,49 +798,6 @@ int32 for_initializer_scope_rejected() {
 - The C source is rejected with a source-positioned diagnostic naming `i`.
 - A `for` loop whose index is declared before the loop, and read after it,
   still verifies.
-
----
-
-## 16. Identical string literals are proved distinct
-
-**Severity: high.** Whether identical literals share storage is unspecified,
-so neither answer may be proved.
-
-**Violated invariant.** C11 6.4.5p7: it is unspecified whether identical string
-literals are distinct objects. A conforming implementation may merge them, so
-a proof that two identical literals differ is a proof of something no
-implementation is required to make true.
-
-**Mechanism.** Each literal is installed under its own block identity, keyed by
-the literal's generated name (`CMemory::string_literal_pointer` in
-`initialize_c_function_globals`, `src/kernel/functions.rs:3006-3040`).
-Distinct blocks compare unequal, so the comparison decides.
-
-**Regression** (`mdtests/identical_string_literals_undecided.md`):
-
-```c
-int32 identical_string_literals_undecided() {
-    uint8* first = "ok";
-    uint8* second = "ok";
-    if (first == second) {
-        return 1;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 identical_string_literals_undecided() {
-    ensures result == 0;
-}
-```
-
-**Acceptance criteria.**
-- Neither `result == 0` nor `result == 1` is provable; the comparison stays
-  undecided, and a proof needs both paths.
-- A literal compared against itself through one pointer still decides equal.
 
 ---
 

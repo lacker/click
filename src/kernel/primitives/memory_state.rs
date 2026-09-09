@@ -36,6 +36,17 @@ fn write_havoc_string(identity: &mut String, tag: &str, value: &str) {
 fn write_havoc_block(identity: &mut String, block: PointerBlock) {
     match block {
         PointerBlock::Concrete(name) => write_havoc_string(identity, "bc", &name),
+        PointerBlock::StringLiteral {
+            identity: name,
+            bytes,
+        } => {
+            write_havoc_string(identity, "bsl", &name);
+            let _ = write!(identity, "{}:", bytes.len());
+            for byte in bytes {
+                let _ = write!(identity, "{byte:02x}");
+            }
+            identity.push(';');
+        }
         PointerBlock::Function(name) => write_havoc_string(identity, "bf", &name),
         PointerBlock::FunctionSymbolic(variable) => {
             let _ = write!(identity, "bfs{};", variable.0);
@@ -2340,9 +2351,16 @@ impl CMemory {
         }
     }
 
-    pub(in crate::kernel) fn string_literal_pointer(function: &str, name: &str) -> Pointer {
+    pub(in crate::kernel) fn string_literal_pointer(
+        function: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> Pointer {
         Pointer {
-            block: format!("string:{function}:{name}").into(),
+            block: PointerBlock::StringLiteral {
+                identity: format!("{function}:{name}"),
+                bytes: bytes.to_vec(),
+            },
             offset: PointerOffsetTerm::Constant(0),
         }
     }
@@ -2403,16 +2421,15 @@ impl CMemory {
         self.blocks
             .iter()
             .filter_map(|(block, contents)| {
-                (contents.is_read_only() && block.starts_with("string:")).then(|| {
-                    Proposition::CMemoryLoadable {
+                (contents.is_read_only() && matches!(block, PointerBlock::StringLiteral { .. }))
+                    .then(|| Proposition::CMemoryLoadable {
                         memory: self.clone(),
                         base: Pointer {
                             block: block.clone(),
                             offset: PointerOffsetTerm::Constant(0),
                         },
                         bytes: contents.size().clone(),
-                    }
-                })
+                    })
             })
             .collect()
     }
