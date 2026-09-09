@@ -28,6 +28,7 @@ int32 last_element(int32 arr[], int32 n, int32 cap) {
     requires 0 <= n;
     requires n < cap;
     requires 1 <= cap;
+    requires ((uint32)cap) <= 1073741823u32;
     views arr[0..cap];
     ensures result == arr[n];
 } by {
