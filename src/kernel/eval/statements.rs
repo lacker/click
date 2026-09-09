@@ -578,12 +578,22 @@ fn execute_c_aggregate_copy_paths(
                 continue;
             }
             let mut state = state.clone();
-            state.memory = crate::kernel::functions::copy_aggregate_fields(
+            state.memory = match crate::kernel::functions::copy_aggregate_fields_checked(
                 state.memory,
                 source_pointer.pointer(),
                 target_pointer.pointer(),
                 layout,
-            );
+            ) {
+                Ok(memory) => memory,
+                Err(undefined_behavior) => {
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
+            };
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
