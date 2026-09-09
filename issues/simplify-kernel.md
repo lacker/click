@@ -283,7 +283,7 @@ while still violating the search/checking boundary.
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
-| Effect equality: `memory_provenance.rs::c_pointer_offsets_proven_equal_for_effect` | After exact-load normalization and restricted equality fail, calls `proves(PointerOffsetEqual)`. Reached by resource equality and by `api/contract_certification/contract_claims.rs::memories_equal_by_execution_provenance`. | Census the final fallback, then delete it if unused or retain an explicit offset-equality witness. The contract module has no direct general-prover call but still reaches this one. |
+| Effect equality: `memory_provenance.rs::c_pointer_offsets_proven_equal_for_effect` | After exact-load normalization and restricted equality fail, calls `proves(PointerOffsetEqual)`. Reached by resource equality and by `api/contract_certification/contract_claims.rs::memories_equal_by_execution_provenance`. | Census complete: 342 final-fallback attempts, zero successes across the example/mdtest corpus. Delete the final fallback next, preserving the earlier rules; see the census below. The contract module has no direct general-prover call but still reaches this helper. |
 | Calls, refinement, and resources: `functions.rs`, `primitives/resource_algebra.rs`, `primitives/contracts.rs::applicable_verified_loop_rule` | Proves guarded requirements, footprint guards, refinement obligations/conclusions, quantity relations, population transitions, resource facts, and loop-rule prerequisites. Results affect accepted calls, resources, or selected rules. | Split by consumer; retain guard, quantity, and refinement evidence. Do not replace every call with an exact lookup in one large completeness-breaking change. |
 | Lowering/execution: `spec.rs`, `reasoning/path_facts.rs`, and remaining `loops.rs` helpers | Decides spec branches, overflow obligations, invariant paths, segment containment, and whether an obligation or fact can be omitted. Some paths have explicit no-search modes, but they are not universal. | Propagate unresolved obligations and retain branch/containment evidence. Separate proof-relevant discharge from redundant-fact suppression. |
 | Termination: `termination.rs::assume_structural_path`, `ranking_proves`, `ranking_proves_lexicographic_decrease` | Discharges structural-path obligations and ranking conditions before `c_verified_function_termination_rules` issues authority. `ranking_proves` also collects ambient condition facts for an arithmetic fallback; lexicographic checking tries pivots. | Keep the named ranking expression/tuple as input, but move proof and pivot selection to planning and retain their evidence. |
@@ -338,10 +338,10 @@ Completed loop migration:
 
 Recommended remaining migration sequence:
 
-1. Census the residual pointer-offset effect fallback, recording attempts and
-   first successful decisions. Delete or replace it with a named witness;
-   reject a witness for another offset pair or memory state. Keep the existing
-   retained load-equality evidence intact.
+1. Delete the final general-prover fallback in pointer-offset effect equality.
+   The census below found no successful fallback decisions. Preserve exact-load
+   normalization, the restricted equality check, deadline handling, and retained
+   load-equality evidence; verify the deletion against the full gate.
 2. Migrate proof-object boundary consumers in separate chunks: theorem-premise
    application, resource deltas, then branch interfaces. Reject omitted,
    unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
@@ -354,6 +354,47 @@ Completion requires checking these consumers transitively, not just obtaining
 a zero grep count in `contract_certification.rs`. A retained exact rule must
 have named inputs and input/output-sized work; a retained planner must be
 non-authoritative and its selected result checked without rediscovery.
+
+### Pointer-offset effect-equality census (2026-09-09)
+
+Measured at `6f0fdf7a`, after the loop back-edge migration, across all 26 example
+projects and 1,073 markdown fixtures (including expected failures). Temporary
+caller-tagged counters in `c_pointer_offsets_proven_equal_for_effect` distinguished
+entry, interruption, exact normalized equality, restricted equality, and the
+final `assumptions.proves(PointerOffsetEqual)` attempt/result. Each fixture
+reported its counters after its serial verification completed. The probes were
+removed; this census changes no runtime behavior.
+
+| Corpus / immediate consumer | Helper calls | Exact successes | Restricted successes | General fallback attempts | General fallback successes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Examples: Surface effect checking | 147 | 0 | 1 | 146 | 0 |
+| Examples: kernel resource-pointer matching | 7 | 0 | 0 | 7 | 0 |
+| Mdtests: Surface effect checking | 185 | 0 | 0 | 185 | 0 |
+| Mdtests: kernel resource-pointer matching | 4 | 0 | 0 | 4 | 0 |
+| Both corpora: contract store-chain comparison | 0 | 0 | 0 | 0 | 0 |
+| **Total** | **343** | **0** | **1** | **342** | **0** |
+
+All 342 general fallback attempts returned false. No instrumented interruption
+exit occurred. The one restricted success was in `examples/perpetual-service`;
+its other seven calls missed. Resource-pointer fallback attempts came from
+`binary-tree` (2), `owned-segmented-buffer` (2), `ring-buffer` (3), and one each
+from `c_chained_field_access`, `composite_resource_owned_buffer_get`,
+`composite_resource_owned_buffer_set`, and
+`return_population_rejects_unupdated_sibling` mdtests. The direct
+`memories_equal_by_execution_provenance` store-chain caller was not reached.
+Counts describe immediate consumers, not all transitive callers or unique
+logical queries. The instrumented full gate passed, including 2,043 unit/CLI
+tests; those isolated unit processes are not included in the table.
+
+**Next chunk:** delete only the final `assumptions.proves` disjunct. The census
+provides no observed dependency requiring a new witness type, but is not a
+proof that the fallback can never succeed on another input. Preserve the
+earlier exact/restricted rules and deadline behavior. Add focused positive
+coverage for retained equality and negative coverage for unequal or unsupported
+offsets, retain the deadline regression, then run `scripts/check.sh` and relevant
+original/expanded proof checks. No deletion or disabled-fallback experiment was
+performed in this census. This does not classify the internals of the restricted
+checker as fully migrated, nor remove other effect/resource proof discovery.
 
 ## Pointer-distinctness disposition
 
