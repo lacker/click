@@ -469,10 +469,14 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
         for index in std::mem::take(&mut pending) {
             let requirement = &requires[index];
             let result = match requirement.inner() {
-                Requirement::LoadableSegment { .. } => {
-                    loadable_requirement_props(requirement, parameters, arguments, state.memory())
-                        .map(Some)
-                }
+                Requirement::LoadableSegment { .. } => loadable_requirement_props(
+                    requirement,
+                    parameters,
+                    arguments,
+                    state.memory(),
+                    &assumptions,
+                )
+                .map(Some),
                 Requirement::Proposition(proposition) => {
                     requirement_proposition_prop_with_assumptions(
                         parameters,
@@ -485,9 +489,13 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
                     )
                     .map(|proposition| Some(vec![proposition]))
                 }
-                Requirement::Resource(resource) => {
-                    resource_clause_loadable_props_at_state(resource, parameters, arguments, state)
-                }
+                Requirement::Resource(resource) => resource_clause_loadable_props_at_state(
+                    resource,
+                    parameters,
+                    arguments,
+                    state,
+                    &assumptions,
+                ),
                 Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
             };
             let result = match result {
@@ -1179,8 +1187,10 @@ fn loadable_requirement_props(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
+    assumptions: &PureFactContext,
 ) -> Result<Vec<Proposition>, ClickError> {
     let (base, bytes, guards) = loadable_base_and_bytes(requirement, parameters, arguments)?;
+    reject_impossible_range_guards(&guards, assumptions)?;
     let mut propositions = vec![Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base,
@@ -1233,6 +1243,7 @@ pub(in crate::surface) fn resource_clause_loadable_props_at_state(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    assumptions: &PureFactContext,
 ) -> Result<Option<Vec<Proposition>>, ClickError> {
     let Some(ranges) =
         resource_clause_memory_ranges_at_state(resource, parameters, arguments, state)?
@@ -1246,9 +1257,30 @@ pub(in crate::surface) fn resource_clause_loadable_props_at_state(
         .expect("memory resource clause has at least one range");
     let mut propositions = vec![loadable];
     if matches!(resource, ResourceClause::ViewMemory(_)) {
-        propositions.extend(ranges.iter().flat_map(memory_range_loadable_guards));
+        let guards = ranges
+            .iter()
+            .flat_map(memory_range_loadable_guards)
+            .collect::<Vec<_>>();
+        reject_impossible_range_guards(&guards, assumptions)?;
+        propositions.extend(guards);
     }
     Ok(Some(propositions))
+}
+
+fn reject_impossible_range_guards(
+    guards: &[Proposition],
+    assumptions: &PureFactContext,
+) -> Result<(), ClickError> {
+    if guards.iter().any(|guard| match guard {
+        Proposition::ConditionIs(ConditionTerm::Constant(false), true) => true,
+        Proposition::ConditionIs(condition, true) => assumptions.decide(condition) == Some(false),
+        _ => false,
+    }) {
+        return Err(ClickError::new(
+            "memory range requires the verifier to have assumed a condition fact that cannot hold",
+        ));
+    }
+    Ok(())
 }
 
 fn resource_clause_memory_ranges_at_state(
