@@ -52,6 +52,7 @@ Soundness and kernel shape:
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
 - [Keep modified by-value struct copies out of caller postconditions](by-value-struct-postconditions.md)
 - [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
+- [Restore bounded range proofs for the owned-vector example](owned-vector-range-bounds.md)
 - [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
