@@ -283,7 +283,6 @@ while still violating the search/checking boundary.
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
-| Effect equality: `memory_provenance.rs::c_pointer_offsets_proven_equal_for_effect` | After exact-load normalization and restricted equality fail, calls `proves(PointerOffsetEqual)`. Reached by resource equality and by `api/contract_certification/contract_claims.rs::memories_equal_by_execution_provenance`. | Census complete: 342 final-fallback attempts, zero successes across the example/mdtest corpus. Delete the final fallback next, preserving the earlier rules; see the census below. The contract module has no direct general-prover call but still reaches this helper. |
 | Calls, refinement, and resources: `functions.rs`, `primitives/resource_algebra.rs`, `primitives/contracts.rs::applicable_verified_loop_rule` | Proves guarded requirements, footprint guards, refinement obligations/conclusions, quantity relations, population transitions, resource facts, and loop-rule prerequisites. Results affect accepted calls, resources, or selected rules. | Split by consumer; retain guard, quantity, and refinement evidence. Do not replace every call with an exact lookup in one large completeness-breaking change. |
 | Lowering/execution: `spec.rs`, `reasoning/path_facts.rs`, and remaining `loops.rs` helpers | Decides spec branches, overflow obligations, invariant paths, segment containment, and whether an obligation or fact can be omitted. Some paths have explicit no-search modes, but they are not universal. | Propagate unresolved obligations and retain branch/containment evidence. Separate proof-relevant discharge from redundant-fact suppression. |
 | Termination: `termination.rs::assume_structural_path`, `ranking_proves`, `ranking_proves_lexicographic_decrease` | Discharges structural-path obligations and ranking conditions before `c_verified_function_termination_rules` issues authority. `ranking_proves` also collects ambient condition facts for an arithmetic fallback; lexicographic checking tries pivots. | Keep the named ranking expression/tuple as input, but move proof and pivot selection to planning and retain their evidence. |
@@ -338,15 +337,11 @@ Completed loop migration:
 
 Recommended remaining migration sequence:
 
-1. Delete the final general-prover fallback in pointer-offset effect equality.
-   The census below found no successful fallback decisions. Preserve exact-load
-   normalization, the restricted equality check, deadline handling, and retained
-   load-equality evidence; verify the deletion against the full gate.
-2. Migrate proof-object boundary consumers in separate chunks: theorem-premise
+1. Migrate proof-object boundary consumers in separate chunks: theorem-premise
    application, resource deltas, then branch interfaces. Reject omitted,
    unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
    fact histories so exact validation does not become an ambient scan.
-3. Separate quantified conversion and context-free normalization from implicit
+2. Separate quantified conversion and context-free normalization from implicit
    proof construction, then migrate pure-theorem authority, call/refinement
    guards and quantities, and termination by their own evidence types.
 
@@ -386,15 +381,18 @@ Counts describe immediate consumers, not all transitive callers or unique
 logical queries. The instrumented full gate passed, including 2,043 unit/CLI
 tests; those isolated unit processes are not included in the table.
 
-**Next chunk:** delete only the final `assumptions.proves` disjunct. The census
-provides no observed dependency requiring a new witness type, but is not a
-proof that the fallback can never succeed on another input. Preserve the
-earlier exact/restricted rules and deadline behavior. Add focused positive
-coverage for retained equality and negative coverage for unequal or unsupported
-offsets, retain the deadline regression, then run `scripts/check.sh` and relevant
-original/expanded proof checks. No deletion or disabled-fallback experiment was
-performed in this census. This does not classify the internals of the restricted
-checker as fully migrated, nor remove other effect/resource proof discovery.
+**Deletion complete:** only the final `assumptions.proves` disjunct is removed.
+Exact-load normalization, restricted equality, all three deadline checks, and
+retained load-equality evidence are unchanged. Focused regressions cover exact
+stored-load normalization, explicit offset-equality facts, unequal constants,
+missing and unrelated offset facts, and expiry even on identical offsets.
+A distinguishing negative test supplies an inconsistent context: the general
+prover can establish the queried equality, but this helper now rejects it
+without a direct/restricted justification. No new witness type is introduced.
+The earlier census was observational; deletion and these regressions are the
+subsequent implementation. This does not classify the internals of the
+restricted checker as fully migrated, nor remove other effect/resource proof
+discovery.
 
 ## Pointer-distinctness disposition
 

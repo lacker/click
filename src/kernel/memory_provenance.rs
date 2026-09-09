@@ -5402,12 +5402,7 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
     if crate::kernel::assumptions::reasoning_interrupted() {
         return false;
     }
-    left == right
-        || pointer_offsets_proven_equal_for_memory_resolution(&left, &right, assumptions)
-        || assumptions.proves(&Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(Box::new(left), Box::new(right)),
-            true,
-        ))
+    left == right || pointer_offsets_proven_equal_for_memory_resolution(&left, &right, assumptions)
 }
 
 pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
@@ -5956,6 +5951,72 @@ mod exact_load_normalization_tests {
             PointerOffsetTerm::Constant(28)
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn effect_pointer_equality_retains_exact_loads_and_explicit_offset_facts() {
+    let pointer = Pointer {
+        block: "effect-offset".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(7)));
+    let loaded = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::MemoryLoad(
+            intern_c_memory(memory),
+            Box::new(pointer),
+        )),
+        byte_width: 4,
+    };
+    assert!(c_pointer_offsets_proven_equal_for_effect(
+        &loaded,
+        &PointerOffsetTerm::Constant(28),
+        &PureFactContext::new(),
+    ));
+    assert!(!c_pointer_offsets_proven_equal_for_effect(
+        &loaded,
+        &PointerOffsetTerm::Constant(32),
+        &PureFactContext::new(),
+    ));
+
+    let left = PointerOffsetTerm::Variable(Variable(901));
+    let right = PointerOffsetTerm::Variable(Variable(902));
+    let facts = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_offset_equal(left.clone(), right.clone()),
+        true,
+    );
+    assert!(c_pointer_offsets_proven_equal_for_effect(
+        &left, &right, &facts
+    ));
+    assert!(!c_pointer_offsets_proven_equal_for_effect(
+        &left,
+        &right,
+        &PureFactContext::new()
+    ));
+    assert!(!c_pointer_offsets_proven_equal_for_effect(
+        &left,
+        &PointerOffsetTerm::Variable(Variable(903)),
+        &facts,
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn effect_pointer_equality_does_not_use_general_context_inconsistency() {
+    let left = PointerOffsetTerm::Variable(Variable(911));
+    let right = PointerOffsetTerm::Variable(Variable(912));
+    let facts = PureFactContext::new().assume_condition(ConditionTerm::Constant(false), true);
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(left.clone(), right.clone()),
+        true,
+    );
+    assert!(
+        facts.proves(&goal),
+        "the old general fallback could close this query"
+    );
+    assert!(!c_pointer_offsets_proven_equal_for_effect(
+        &left, &right, &facts
+    ));
 }
 
 #[cfg(test)]
