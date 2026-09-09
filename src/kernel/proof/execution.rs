@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
+    static MATCH_SCOPE_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MATCH_FRESHNESS_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CHECKED_CALL_EVENT_LOOKUP_CANDIDATES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
@@ -980,6 +982,7 @@ pub(crate) struct CheckedFunctionEntry {
     assumptions: PureFactContext,
     /// `resource_relation_assumptions(&self.assumptions)`, computed once.
     relation_facts: Option<PureFactContext>,
+    match_reserved_variables: std::sync::OnceLock<std::collections::BTreeSet<Variable>>,
 }
 
 impl CheckedFunctionEntry {
@@ -1001,6 +1004,7 @@ impl CheckedFunctionEntry {
             entry_state,
             assumptions,
             relation_facts: None,
+            match_reserved_variables: Default::default(),
         };
         entry.relation_facts = entry.resource_relation_assumptions(&entry.assumptions);
         Some(Arc::new(entry))
@@ -1083,7 +1087,10 @@ impl CheckedFunctionEntry {
 pub(crate) struct CheckedProofCasePartition {
     identity: Arc<()>,
     root_facts: ProofFacts,
-    case_facts: [Proposition; 2],
+    case_facts: Vec<Proposition>,
+    /// Generative constructor witnesses are introduced only at their unchanged
+    /// entry scope. Complementary propositional splits need no such scope.
+    witness_scope: Option<SharedValue<CState>>,
 }
 
 /// One entry of an outcome-evidence fork plan
@@ -1112,6 +1119,9 @@ pub(crate) struct CheckedProofCaseArm {
 }
 
 impl CheckedProofCasePartition {
+    pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
+        self.case_facts.get(index)
+    }
     pub(crate) fn check(
         root_facts: &ProofFacts,
         then_fact: Proposition,
@@ -1126,7 +1136,8 @@ impl CheckedProofCasePartition {
         Some(Arc::new(Self {
             identity: Arc::new(()),
             root_facts: root_facts.clone(),
-            case_facts: [then_fact, else_fact],
+            case_facts: vec![then_fact, else_fact],
+            witness_scope: None,
         }))
     }
 }
@@ -1140,13 +1151,22 @@ impl CheckedProofCaseArm {
         self.arm_index
     }
 
+    pub(crate) fn width(&self) -> usize {
+        self.partition.case_facts.len()
+    }
+
     pub(crate) fn is_valid(&self) -> bool {
-        self.arm_index < 2
+        self.arm_index < self.width()
             && self
                 .facts
                 .introduced_since(&self.partition.root_facts)
                 .is_some_and(|introduced| {
                     introduced == vec![self.partition.case_facts[self.arm_index].clone()]
+                        || introduced.is_empty()
+                            && self
+                                .partition
+                                .root_facts
+                                .contains(&self.partition.case_facts[self.arm_index])
                 })
     }
 }
@@ -2243,6 +2263,7 @@ pub(crate) struct ProofExecutionContinuation {
 #[derive(Clone)]
 pub(crate) struct ExecutionProofCore {
     pub(crate) state: SharedValue<CState>,
+    initial_match_scope: SharedValue<CState>,
     /// The state the retained evidence has reached on the open trace: the
     /// outcome of the last recorded theorem, observation, rewrite, or
     /// join. `None` until the first is recorded, when the theorem starts
@@ -3213,8 +3234,10 @@ impl ExecutionProofCore {
     }
 
     pub(crate) fn at_entry(state: CState, frontier: ExecutionFrontier) -> Self {
+        let state: SharedValue<CState> = state.into();
         Self {
-            state: state.into(),
+            initial_match_scope: state.clone(),
+            state,
             evidence_state: None,
             evidence_completed: false,
             evidence_source: None,
@@ -3912,6 +3935,11 @@ impl ExecutionProofCore {
         arm_index: usize,
         facts: ProofFacts,
     ) -> bool {
+        if partition.witness_scope.as_ref().is_some_and(|scope| {
+            self.evidence_state.is_some() || !self.state.shares_storage_with(scope)
+        }) {
+            return false;
+        }
         let arm = CheckedProofCaseArm {
             partition,
             arm_index,
@@ -3924,6 +3952,88 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::ProofCase(arm.clone()));
         }
         true
+    }
+
+    /// Constructor elimination at function entry. Reserve the selected
+    /// function/state once, then query the persistent fact index for each
+    /// fresh field; nested matches do not rescan the execution state.
+    pub(crate) fn algebraic_case_partition(
+        &self,
+        facts: &ProofFacts,
+        value: &crate::kernel::AlgebraicTerm,
+        environment: &crate::kernel::CExecutionEnvironment,
+        first_variable: u64,
+        stride: u64,
+    ) -> Option<(
+        Arc<CheckedProofCasePartition>,
+        Vec<Vec<(Variable, crate::kernel::Sort)>>,
+        u64,
+    )> {
+        use crate::kernel::{CFunctionOutcome, Term};
+        if stride == 0
+            || self.evidence_state.is_some()
+            || !self.frontier.is_at_function_entry()
+            || !self.state.shares_storage_with(&self.initial_match_scope)
+        {
+            return None;
+        }
+        let entry = self.function_entry.as_ref()?;
+        let reserved = entry.match_reserved_variables.get_or_init(|| {
+            #[cfg(test)]
+            MATCH_SCOPE_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+            crate::kernel::proposition_variables(&Proposition::CFunctionExecutes {
+                state: entry.caller_state.clone(),
+                function: entry.function.clone(),
+                arguments: entry.arguments.clone(),
+                outcome: CFunctionOutcome::Return {
+                    value: CValue::Void,
+                    state: entry.entry_state.clone(),
+                },
+            })
+        });
+        let environment_variables =
+            crate::kernel::reasoning::execution_environment_variable_index(environment);
+        let value_variables = crate::kernel::proposition_variables(&Proposition::Equal(
+            Term::Algebraic(value.clone()),
+            Term::Algebraic(value.clone()),
+        ));
+        let mut next = first_variable;
+        let mut overflow = false;
+        let equations =
+            crate::kernel::api::algebraic_constructor_case_equations(value, &mut || {
+                loop {
+                    let candidate = Variable(next);
+                    #[cfg(test)]
+                    MATCH_FRESHNESS_PROBES.with(|count| count.set(count.get() + 1));
+                    if let Some(successor) = next.checked_add(stride) {
+                        next = successor;
+                    } else {
+                        overflow = true;
+                        return candidate;
+                    }
+                    if !reserved.contains(&candidate)
+                        && !environment_variables.contains(&candidate)
+                        && !value_variables.contains(&candidate)
+                        && !facts.reserves_variable(candidate)
+                    {
+                        return candidate;
+                    }
+                }
+            })?;
+        if overflow {
+            return None;
+        }
+        let (case_facts, bindings) = equations.into_iter().unzip();
+        Some((
+            Arc::new(CheckedProofCasePartition {
+                identity: Arc::new(()),
+                root_facts: facts.clone(),
+                case_facts,
+                witness_scope: Some(self.state.clone()),
+            }),
+            bindings,
+            next,
+        ))
     }
 
     /// Forks the per-path evidence traces the way a post-execution case
@@ -4613,6 +4723,199 @@ mod tests {
         CResourceAccessMode, CResourceFact, CResourceSpec, CType, CValue, Pointer, PointerBlock,
         PointerOffsetTerm, SpecExpression, c_function, int32,
     };
+
+    fn constructor_partition_fixture(
+        width: usize,
+    ) -> (ExecutionProofCore, crate::kernel::AlgebraicTerm) {
+        use crate::kernel::{
+            AlgebraicSchemas, AlgebraicTerm, AlgebraicTermNode, AlgebraicType, AlgebraicValueType,
+            AlgebraicVariantType,
+        };
+        let variants: Arc<[AlgebraicVariantType]> = (0..width)
+            .map(|index| AlgebraicVariantType {
+                name: format!("C{index}"),
+                fields: vec![AlgebraicValueType::C(CType::Int32)],
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let key = AlgebraicValueType::Algebraic {
+            name: "Cases".into(),
+            arguments: vec![],
+        };
+        let value = AlgebraicTerm {
+            algebraic_type: AlgebraicType {
+                rigid: false,
+                name: "Cases".into(),
+                arguments: vec![],
+                variants: variants.clone(),
+                schemas: Arc::new(AlgebraicSchemas::new(BTreeMap::from([(key, variants)]))),
+            },
+            node: AlgebraicTermNode::Variable(Variable(8)),
+        };
+        let state = CState::new();
+        let function = c_function(
+            CType::Int32,
+            "entry",
+            vec![],
+            CStatement::Return(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(4_000_000)),
+            ))),
+        );
+        let mut core = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        assert!(core.record_checked_function_entry(&function, &[], &state, PureFactContext::new()));
+        (core, value)
+    }
+
+    #[test]
+    fn constructor_partition_checks_complete_coverage_and_exact_scopes() {
+        for width in [1, 2, 4, 16] {
+            let (core, value) = constructor_partition_fixture(width);
+            let root = ProofFacts::default();
+            let (partition, fields, _) = core
+                .algebraic_case_partition(
+                    &root,
+                    &value,
+                    &crate::kernel::CExecutionEnvironment::new(),
+                    4_000_000,
+                    65_536,
+                )
+                .unwrap();
+            assert_eq!(fields.len(), width);
+            let mut traces = Vec::new();
+            for index in 0..width {
+                let mut arm = core.clone();
+                assert!(arm.record_proof_case_arm(
+                    partition.clone(),
+                    index,
+                    root.with_fact(partition.case_fact(index).unwrap().clone())
+                ));
+                traces.push(arm.execution_evidence[0].clone());
+            }
+            assert!(crate::kernel::api::proof_case_partitions_are_exhaustive(
+                &traces
+            ));
+            if width > 1 {
+                assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+                    &traces[1..]
+                ));
+            }
+            let mut wrong = core.clone();
+            assert!(!wrong.record_proof_case_arm(partition.clone(), width, root.clone()));
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, root.clone()));
+            let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
+            let extra = facts.with_fact(Proposition::Predicate {
+                name: "unjustified".into(),
+                arguments: vec![],
+            });
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, extra));
+            wrong.state = CState::new().with_local("changed", int32(1)).into();
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, facts));
+            assert!(
+                wrong
+                    .algebraic_case_partition(
+                        &root,
+                        &value,
+                        &crate::kernel::CExecutionEnvironment::new(),
+                        0,
+                        1
+                    )
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn constructor_partition_witnesses_avoid_source_facts_and_previous_matches() {
+        let (core, value) = constructor_partition_fixture(2);
+        let occupied = Variable(4_065_536);
+        let root = ProofFacts::from_ordered(&[Proposition::Equal(
+            crate::kernel::Term::CValue(CValue::Int32(Bitvector32Term::Variable(occupied))),
+            crate::kernel::Term::CValue(int32(0)),
+        )]);
+        let env = crate::kernel::CExecutionEnvironment::new();
+        let (partition, fields, next) = core
+            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .unwrap();
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 > occupied.0));
+        let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
+        let (_, later, _) = core
+            .algebraic_case_partition(&facts, &value, &env, next, 65_536)
+            .unwrap();
+        assert!(later.iter().flatten().all(|(var, _)| var.0 >= next));
+        assert!(
+            core.algebraic_case_partition(&root, &value, &env, u64::MAX, 1)
+                .is_none()
+        );
+        assert!(
+            core.algebraic_case_partition(&root, &value, &env, 0, 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn constructor_partition_reserves_algebraic_variables_in_opaque_environment_terms() {
+        use crate::kernel::{AlgebraicTermNode, CExecutionEnvironment, PureFunctionArgument};
+        let (core, mut value) = constructor_partition_fixture(2);
+        value.node = AlgebraicTermNode::Variable(Variable(4_065_536));
+        let function = c_function(
+            CType::Int32,
+            "opaque_environment",
+            vec![],
+            CStatement::Return(CExpression::Value(CValue::Int32(
+                Bitvector32Term::ClickFunctionApplication {
+                    name: "opaque".into(),
+                    arguments: vec![PureFunctionArgument::Algebraic(value.clone())],
+                },
+            ))),
+        );
+        let environment = CExecutionEnvironment::new().with_function(function);
+        value.node = AlgebraicTermNode::Variable(Variable(8));
+        let (_, fields, _) = core
+            .algebraic_case_partition(
+                &ProofFacts::default(),
+                &value,
+                &environment,
+                4_000_000,
+                65_536,
+            )
+            .unwrap();
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 > 4_065_536));
+    }
+
+    #[test]
+    fn constructor_partition_freshness_is_indexed_and_output_linear() {
+        for size in [16, 64, 256] {
+            let (core, value) = constructor_partition_fixture(2);
+            let mut facts = ProofFacts::from_ordered(
+                &(0..size)
+                    .map(|index| Proposition::Predicate {
+                        name: format!("ambient{index}"),
+                        arguments: vec![],
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let environment = crate::kernel::CExecutionEnvironment::new();
+            let builds = MATCH_SCOPE_INDEX_BUILDS.with(std::cell::Cell::get);
+            let probes = MATCH_FRESHNESS_PROBES.with(std::cell::Cell::get);
+            let mut next = 4_000_000;
+            for _ in 0..size {
+                let (partition, fields, successor) = core
+                    .algebraic_case_partition(&facts, &value, &environment, next, 65_536)
+                    .unwrap();
+                assert_eq!(fields.iter().map(Vec::len).sum::<usize>(), 2);
+                facts = facts.with_fact(partition.case_fact(0).unwrap().clone());
+                next = successor;
+            }
+            assert_eq!(
+                MATCH_SCOPE_INDEX_BUILDS.with(std::cell::Cell::get) - builds,
+                1
+            );
+            assert_eq!(
+                MATCH_FRESHNESS_PROBES.with(std::cell::Cell::get) - probes,
+                2 * size + 1
+            );
+        }
+    }
 
     #[test]
     fn return_instance_guard_and_body_cannot_use_sibling_assumptions() {

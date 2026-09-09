@@ -3422,6 +3422,57 @@ impl Parser {
                 right_tactics,
             }));
         }
+        if name == "match" {
+            let scrutinee = self.parse_contract_expression()?;
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let type_name = self.expect_ident("match pattern datatype")?;
+                self.expect(Token::ColonColon)?;
+                let variant = self.expect_ident("match pattern variant")?;
+                let mut bindings = Vec::new();
+                let mut binding_names = BTreeSet::new();
+                if self.peek() == Some(&Token::LParen) {
+                    self.position += 1;
+                    while self.peek() != Some(&Token::RParen) {
+                        let binding = self.expect_ident("match pattern binding")?;
+                        if !binding_names.insert(binding.clone()) {
+                            return Err(self.error(format!("duplicate match binding `{binding}`")));
+                        }
+                        bindings.push(binding);
+                        if self.peek() != Some(&Token::Comma) {
+                            break;
+                        }
+                        self.position += 1;
+                    }
+                    self.expect(Token::RParen)?;
+                }
+                self.expect(Token::FatArrow)?;
+                let newly_bound = bindings
+                    .iter()
+                    .filter(|name| self.current_contract_bindings.insert((*name).clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let tactics = self.parse_possibly_empty_tactic_block();
+                for name in newly_bound {
+                    self.current_contract_bindings.remove(&name);
+                }
+                arms.push(ProofInductionArm {
+                    type_name,
+                    variant,
+                    bindings,
+                    tactics: tactics?,
+                });
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                }
+            }
+            self.expect(Token::RBrace)?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Match(Box::new(ProofMatch { scrutinee, arms })));
+        }
         if name == "branch" {
             self.expect(Token::LBrace)?;
             let ensuring = if self.peek_ident() == Some("ensuring") {

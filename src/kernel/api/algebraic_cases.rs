@@ -8,14 +8,45 @@ use super::*;
 /// Rigid type parameters cannot be inspected as enum declarations.
 /// Payloads currently support signed 32/64-bit integers, pointers, and ADTs.
 pub fn algebraic_constructor_cases(value: &AlgebraicTerm) -> Option<Theorem> {
+    let equality = Proposition::Equal(
+        Term::Algebraic(value.clone()),
+        Term::Algebraic(value.clone()),
+    );
+    let mut variables = KernelVariableGenerator::fresh_for(0, proposition_variables(&equality));
+    let cases = algebraic_constructor_case_equations(value, &mut || variables.next())?;
+    let mut alternatives = cases
+        .into_iter()
+        .map(|(mut equation, binders)| {
+            for (variable, sort) in binders.into_iter().rev() {
+                equation = Proposition::Exists {
+                    name: format!("case_field_{}", variable.0),
+                    var: variable,
+                    sort,
+                    body: Box::new(equation),
+                };
+            }
+            equation
+        })
+        .rev();
+    let last = alternatives.next()?;
+    Some(Theorem::new(alternatives.fold(last, |right, left| {
+        Proposition::Or(Box::new(left), Box::new(right))
+    })))
+}
+
+/// Shared constructor schema checking. The caller must bind the returned
+/// variables existentially or establish freshness in its elimination scope;
+/// the equations alone are not theorems.
+pub(in crate::kernel) fn algebraic_constructor_case_equations(
+    value: &AlgebraicTerm,
+    fresh: &mut impl FnMut() -> Variable,
+) -> Option<Vec<(Proposition, Vec<(Variable, Sort)>)>> {
     if value.algebraic_type.rigid || !value.is_well_formed() {
         return None;
     }
     let equality = |constructor| {
         Proposition::Equal(Term::Algebraic(value.clone()), Term::Algebraic(constructor))
     };
-    let mut variables =
-        KernelVariableGenerator::fresh_for(0, proposition_variables(&equality(value.clone())));
     let mut alternatives = Vec::with_capacity(value.algebraic_type.variants.len());
     let mut seen = BTreeSet::new();
     for variant in value.algebraic_type.variants.iter() {
@@ -25,7 +56,7 @@ pub fn algebraic_constructor_cases(value: &AlgebraicTerm) -> Option<Theorem> {
         let mut fields = Vec::with_capacity(variant.fields.len());
         let mut binders = Vec::with_capacity(variant.fields.len());
         for field_type in &variant.fields {
-            let variable = variables.next();
+            let variable = fresh();
             let (sort, field) = match field_type {
                 AlgebraicValueType::C(c_type) => {
                     let sort = match c_type {
@@ -66,23 +97,10 @@ pub fn algebraic_constructor_cases(value: &AlgebraicTerm) -> Option<Theorem> {
         };
         // The fields were constructed directly from this exact variant's
         // schema. Do not search the whole constructor family again per arm.
-        let mut alternative = equality(constructor);
-        for (variable, sort) in binders.into_iter().rev() {
-            alternative = Proposition::Exists {
-                name: format!("case_field_{}", variable.0),
-                var: variable,
-                sort,
-                body: Box::new(alternative),
-            };
-        }
-        alternatives.push(alternative);
+        alternatives.push((equality(constructor), binders));
     }
     // Refuse an empty family rather than manufacturing a theorem of false.
-    let mut alternatives = alternatives.into_iter().rev();
-    let last = alternatives.next()?;
-    Some(Theorem::new(alternatives.fold(last, |right, left| {
-        Proposition::Or(Box::new(left), Box::new(right))
-    })))
+    (!alternatives.is_empty()).then_some(alternatives)
 }
 
 #[cfg(test)]

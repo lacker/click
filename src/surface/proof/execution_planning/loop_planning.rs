@@ -547,6 +547,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::Induct { .. }
         | ProofStep::Both { .. }
         | ProofStep::StructuralInduct { .. }
+        | ProofStep::Match { .. }
         | ProofStep::ApplyInduction { .. }
         | ProofStep::Open { .. }
         | ProofStep::If { .. }

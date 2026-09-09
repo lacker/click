@@ -403,6 +403,10 @@ impl ProofFacts {
         (fresh, body)
     }
 
+    pub(crate) fn reserves_variable(&self, variable: Variable) -> bool {
+        self.reserved_variables.contains(&variable)
+    }
+
     pub(crate) fn freshen_pointer_forall_body(
         &self,
         binder: Variable,

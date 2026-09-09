@@ -39,6 +39,11 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                     names.extend(arm_names);
                 }
             }
+            ProofTactic::Match(proof_match) => {
+                for arm in &proof_match.arms {
+                    collect_applied_theorems(&arm.tactics, names);
+                }
+            }
             ProofTactic::Branch(proof_branch) => {
                 collect_applied_theorems(&proof_branch.then_tactics, names);
                 collect_applied_theorems(&proof_branch.else_tactics, names);

@@ -310,6 +310,19 @@ fn collect_smart_script_sites(
                     nested_source_index += source_tactic_count(&arm.tactics);
                 }
             }
+            ProofTactic::Match(proof_match) => {
+                let arms = &proof_match.arms;
+                let mut nested_source_index = source_index + 1;
+                for arm in arms {
+                    collect_smart_script_sites(
+                        claim_label,
+                        &arm.tactics,
+                        nested_source_index,
+                        sites,
+                    );
+                    nested_source_index += source_tactic_count(&arm.tactics);
+                }
+            }
             ProofTactic::Branch(proof_branch) => {
                 collect_smart_script_sites(
                     claim_label,
@@ -1841,6 +1854,19 @@ fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) 
                     }
                     found
                 }
+                ProofTactic::Match(proof_match) => {
+                    let arms = &proof_match.arms;
+                    let mut nested_source_index = source_index + 1;
+                    let mut found = None;
+                    for arm in arms {
+                        found = find(&arm.tactics, wanted, nested_source_index);
+                        nested_source_index += source_tactic_count(&arm.tactics);
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    found
+                }
                 ProofTactic::Loop(clause) => {
                     let mut nested_source_index = source_index + 1;
                     let mut found = None;
@@ -1948,6 +1974,20 @@ fn collect_tactic_block_spans(
                 )?;
             }
             ProofTactic::StructuralInduct { arms, .. } => {
+                let arm_blocks = find_structural_induction_arm_blocks(tokens, &token_range)?;
+                if arm_blocks.len() != arms.len() {
+                    return Err(ClickError::new(format!(
+                        "source proof match has {} arm(s), but the parsed tactic has {}",
+                        arm_blocks.len(),
+                        arms.len()
+                    )));
+                }
+                for (arm, (arm_open, arm_close)) in arms.iter().zip(arm_blocks) {
+                    collect_tactic_block_spans(tokens, arm_open, arm_close, &arm.tactics, spans)?;
+                }
+            }
+            ProofTactic::Match(proof_match) => {
+                let arms = &proof_match.arms;
                 let arm_blocks = find_structural_induction_arm_blocks(tokens, &token_range)?;
                 if arm_blocks.len() != arms.len() {
                     return Err(ClickError::new(format!(
@@ -2096,6 +2136,7 @@ fn direct_tactic_token_ranges(
                         let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
                         if !matches!(continuation, Some("else" | "by"))
                             && !(tokens[start].text == "both" && continuation == Some("and"))
+                            && !(tokens[start].text == "match" && continuation == Some("{"))
                         {
                             let terminator = if continuation == Some(";") {
                                 cursor + 1
@@ -2205,10 +2246,23 @@ fn find_structural_induction_arm_blocks(
     tokens: &[SourceToken],
     tactic: &Range<usize>,
 ) -> Result<Vec<(usize, usize)>, ClickError> {
-    let outer_open = (tactic.start + 1..tactic.end)
-        .find(|index| tokens[*index].text == "{")
-        .ok_or_else(|| ClickError::new("source structural `induct` tactic has no body"))?;
-    let outer_close = matching_delimiter(tokens, outer_open, "{", "}")?;
+    // The scrutinee may itself contain match/let blocks. The proof arms are
+    // the final block, not necessarily the first opening brace in the tactic.
+    let outer_close = (tactic.start + 1..tactic.end)
+        .rfind(|index| tokens[*index].text == "}")
+        .ok_or_else(|| ClickError::new("source constructor tactic has no body"))?;
+    let mut depth = 1_usize;
+    let outer_open = (tactic.start + 1..outer_close)
+        .rev()
+        .find(|index| {
+            match tokens[*index].text.as_str() {
+                "}" => depth += 1,
+                "{" => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        })
+        .ok_or_else(|| ClickError::new("unbalanced constructor tactic body"))?;
     let mut blocks = Vec::new();
     let mut cursor = outer_open + 1;
     while cursor < outer_close {

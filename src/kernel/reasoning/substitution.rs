@@ -844,7 +844,10 @@ fn collect_c_expression_bound_variables(
     }
 }
 
-fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_statement_bound_variables(
+    statement: &CStatement,
+    variables: &mut BTreeSet<Variable>,
+) {
     match statement {
         CStatement::Skip
         | CStatement::Break
@@ -947,7 +950,10 @@ fn collect_c_memory_segment_bound_variables(
     }
 }
 
-fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_state_bound_variables(
+    state: &CState,
+    variables: &mut BTreeSet<Variable>,
+) {
     for binding in state.locals.bindings.values() {
         if let CLocalBinding::Object { value, .. } = binding {
             collect_c_value_bound_variables(value, variables);
@@ -965,7 +971,7 @@ fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Vari
     }
 }
 
-fn collect_statement_outcome_bound_variables(
+pub(in crate::kernel) fn collect_statement_outcome_bound_variables(
     outcome: &CStatementOutcome,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1044,7 +1050,10 @@ fn collect_c_resource_spec_bound_variables(
     }
 }
 
-fn collect_c_function_bound_variables(function: &CFunction, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_function_bound_variables(
+    function: &CFunction,
+    variables: &mut BTreeSet<Variable>,
+) {
     for resource in function.resource_requires() {
         collect_c_resource_spec_bound_variables(resource, variables);
     }

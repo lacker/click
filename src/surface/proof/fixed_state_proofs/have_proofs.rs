@@ -312,6 +312,40 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    snapshots: &RecordedSnapshots,
+    predicates: &PredicateEnvironment,
+    functions: &ClickFunctionEnvironment,
+) -> Result<crate::kernel::AlgebraicTerm, String> {
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, None);
+    let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
+        expression,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        None,
+        snapshots,
+        assumptions,
+        predicates,
+        functions,
+        BTreeSet::new(),
+    )?;
+    crate::kernel::capture_spec_algebraic_value(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )
+}
+
 /// Fold initializers create values, not new hypotheses: discharge every
 /// evaluation obligation here, including reads in constructor arguments.
 #[allow(clippy::too_many_arguments)]
