@@ -1518,7 +1518,7 @@ impl CheckedExecutionBranch {
         for fact in &introduced {
             let common_arm_fact = arm_facts
                 .iter()
-                .all(|facts| facts.contains(fact) || facts.assumptions().proves(fact));
+                .all(|facts| checked_branch_fact_is_available(facts, fact));
             let interface_fact = interface_specs
                 .iter()
                 .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, fact));
@@ -2240,10 +2240,9 @@ impl CheckedBranchSplit {
                     .facts
                     .iter()
                     .any(|fact| !arm_facts.contains(fact.proposition()))
-                || path
-                    .obligations
-                    .iter()
-                    .any(|obligation| !arm_facts.assumptions().proves(obligation.proposition()))
+                || path.obligations.iter().any(|obligation| {
+                    !checked_branch_fact_is_available(arm_facts, obligation.proposition())
+                })
             {
                 return false;
             }
@@ -2502,6 +2501,19 @@ fn ground_comparison_premise_holds(premise: &Proposition) -> bool {
         _ => unreachable!("comparison shape was checked above"),
     };
     actual == *expected
+}
+
+/// Branch evidence names its exact arm context. Do not derive a missing
+/// prerequisite from other facts at the join. Literal comparisons and
+/// integer reflexivity are context-free rules, not premise search.
+fn checked_branch_fact_is_available(facts: &ProofFacts, fact: &Proposition) -> bool {
+    crate::instrumentation::record_deterministic_work(1);
+    facts.contains(fact)
+        || facts.assumptions().proves_exact(fact)
+        || ground_comparison_premise_holds(fact)
+        || matches!(fact,
+            Proposition::ConditionIs(crate::kernel::ConditionTerm::Bitvector32Equal(left, right), true)
+                if left == right)
 }
 
 fn checked_evidence_premises_hold(theorem: &Theorem, facts: &ProofFacts) -> bool {
@@ -6491,6 +6503,135 @@ mod tests {
             )
             .is_err(),
             "swapped arm evidence must not certify the source partition"
+        );
+    }
+
+    #[test]
+    fn branch_fact_availability_is_exact_and_independent_of_ambient_history() {
+        use crate::kernel::ConditionTerm;
+        let x = Bitvector32Term::Variable(Variable(910_000));
+        let strong = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let weak = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let reflexive = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(x.clone()), Box::new(x)),
+            true,
+        );
+        let mut samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let mut facts = ProofFacts::default().with_fact(strong.clone());
+            for index in 0..size {
+                facts = facts.with_fact(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(920_000 + index)),
+                        Bitvector32Term::Constant(100),
+                    ),
+                    true,
+                ));
+            }
+            assert!(
+                facts.assumptions().proves(&weak),
+                "the old general route could derive this missing fact"
+            );
+            let exact = facts.with_fact(weak.clone());
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(!checked_branch_fact_is_available(&facts, &weak));
+                assert!(checked_branch_fact_is_available(&exact, &weak));
+                assert!(checked_branch_fact_is_available(&facts, &reflexive));
+                assert!(!checked_branch_fact_is_available(
+                    &facts,
+                    &Proposition::Not(Box::new(reflexive.clone()))
+                ));
+            });
+            samples.push(work);
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2),
+            "branch availability scanned unrelated history: {samples:?}"
+        );
+    }
+
+    #[test]
+    fn branch_split_obligations_require_evidence_on_each_named_arm() {
+        use crate::kernel::{ConditionTerm, ProofObligation};
+        let state = CState::new();
+        let condition = CExpression::Value(int32(1));
+        let x = Bitvector32Term::Variable(Variable(930_000));
+        let strong = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let required = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x, Bitvector32Term::Constant(0)),
+            true,
+        );
+        let root = ProofFacts::default().with_fact(strong);
+        let theorems =
+            [true, false].map(|value| match condition_event(&state, &condition, value) {
+                CheckedExecutionEvent::Condition(theorem) => theorem,
+                _ => unreachable!(),
+            });
+        let split = CheckedBranchSplit {
+            state: state.clone(),
+            branch_statement: CStatement::If {
+                condition: condition.clone(),
+                then_branch: Box::new(CStatement::Skip),
+                else_branch: Box::new(CStatement::Skip),
+            },
+            continuation: None,
+            condition: condition.clone(),
+            root_facts: root.clone(),
+            paths: [true, false]
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(value),
+                    facts: Vec::new(),
+                    obligations: vec![ProofObligation::new(required.clone())],
+                    theorem: theorems[index].clone(),
+                })
+                .collect(),
+        };
+        let exact = root.with_fact(required);
+        let validate = |arms| {
+            split.validates_exhaustive_join(
+                &state,
+                &condition,
+                &root,
+                [Some(&theorems[0]), Some(&theorems[1])],
+                arms,
+            )
+        };
+        assert!(
+            !validate([Some(&root), Some(&root)]),
+            "general derivability is not retained evidence"
+        );
+        assert!(
+            !validate([Some(&exact), Some(&root)]),
+            "then evidence cannot discharge the else obligation"
+        );
+        assert!(
+            !validate([Some(&root), Some(&exact)]),
+            "else evidence cannot discharge the then obligation"
+        );
+        assert!(validate([Some(&exact), Some(&exact)]));
+        assert!(
+            !validate([Some(&exact), None]),
+            "an omitted arm is not exhaustive"
+        );
+        let unrelated = ProofFacts::default().with_fact(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        ));
+        assert!(
+            !validate([Some(&exact), Some(&unrelated)]),
+            "evidence must descend from this split root"
         );
     }
 

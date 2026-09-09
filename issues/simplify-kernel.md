@@ -279,7 +279,7 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join` | Validates introduced facts, interface facts on both arms, and branch obligations by contextual proof. The separate `checked_evidence_premises_hold` general fallback is now removed, as described below. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
+| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `interface_spec_is_established` | Still validates resource deltas and lowered interface propositions/facts/obligations by contextual proof. General fallbacks for theorem premises, common successor facts, and `validates_exhaustive_join` split obligations are removed. | Retain selected resource-delta and interface-lowering derivations; the census below identifies the surviving dependencies. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
@@ -337,8 +337,9 @@ Completed loop migration:
 
 Recommended remaining migration sequence:
 
-1. The checked-event premise fallback below is removed. Continue with resource
-   deltas and branch interfaces separately. Reject omitted,
+1. The checked-event premise, common-arm-fact, and split-obligation fallbacks
+   below are removed. Continue with resource deltas and checked interface
+   lowering separately. Reject omitted,
    unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
    fact histories so exact validation does not become an ambient scan.
 2. Separate quantified conversion and context-free normalization from implicit
@@ -424,6 +425,69 @@ No new proof-object payload or user proof bookkeeping is introduced.
 Nontrivial future derived premises must be planned and retained explicitly.
 Initial event recording and other event/resource/interface boundaries remain
 outside this completed slice.
+
+### Resource-delta and branch-interface census (2026-09-09)
+
+Measured at `3a1a376a`, after landing the theorem-premise migration, across
+26 example projects and 1,095 markdown fixtures, including expected failures.
+Both fixture gates passed. Temporary probes counted only the general-prover
+calls at these event boundaries, preserving their original results. They
+classified a successful call by the existing `proves_exact` checker first,
+then literal comparison, then remaining derivation. The probes and denial
+switch were removed before committing.
+
+| Resource pure-delta fallback | Examples | Markdown fixtures | Successful route |
+| --- | ---: | ---: | --- |
+| `CheckedResourceRewrite::check` | 18 | 2 | All 20 require derivation of loadability; none pass `proves_exact`. |
+| `CheckedResourceObservation::check` | 11 | 23 | All 34 pass `proves_exact`; no remaining derivation dependency. |
+
+These are fallback attempts after the explicit allowed-fact and resource-
+composition checks, not counts of all events. The separate resource-instance
+rewrite path is not included: it already checks its selected delta directly.
+The rewrite dependencies are `binary-tree` (4), `owned-string` (4),
+`owned-vector` (10), and `c_chained_field_access.md` (2). Denying only the
+rewrite-derived route makes `binary-tree` fail promptly in
+`tree_rotate_left.contract` at `unfold`, with an unchecked pure-fact delta.
+This is an actual dependency, not merely an observed call.
+
+Next resource chunk: replace observation's general fallback with exact
+availability, and retain selected loadability evidence for rewrite deltas
+before deleting their fallback. Preserve checked load-equality evidence and
+the original C; a zero count for observation does not justify deleting the
+rewrite route.
+
+| Branch general-prover site | Calls | Exact-check successes | Other successes | Rejected queries |
+| --- | ---: | ---: | ---: | ---: |
+| Common successor fact, after direct arm lookup | 27 | 0 | 2 | 25 |
+| Interface proposition | 78 | 73 | 5 | 0 |
+| Interface lowering facts | 6 | 0 | 6 | 0 |
+| Interface lowering obligations | 6 | 0 | 6 | 0 |
+| Split-path obligations | 0 | 0 | 0 | 0 |
+
+The two common-fact successes are reflexive int32 equalities in
+`proof_mark_survives_branch_join.md`; neither needs contextual search.
+Rejected common-fact queries normally fall through to the explicit interface
+or resource export rules and are not fixture failures. The interface-proposition
+dependencies occur in `perpetual-service`, `proof_branch_pointer_local.md`,
+and `step_nested_branches.md`. The lowering-fact and loadability-obligation
+dependencies occur in `perpetual-service` and
+`proof_branch_memory_continuation.md`.
+
+**First branch migration complete:** common successor facts and split-path
+obligations now require evidence available in each named arm, using indexed
+exact checks plus context-free literal comparison and int32 reflexivity.
+Neither site invokes the general prover. Tests reject a merely derivable
+missing obligation, evidence present only on the other arm, omitted arms,
+and unrelated roots. A four-size deterministic regression checks availability
+against growing unrelated fact histories.
+
+**Still open:** `interface_spec_is_established` re-lowers the interface at each
+arm and successor, then proves its proposition, generated facts, and obligations.
+The surface `apply_branch_interface_with_proof_facts` also proves assertions
+and may transport entry loadability. Replacing only the final join check with
+a planner-issued success flag would not migrate this authority. Retain checked
+interface-lowering/proof evidence tied to each concrete arm, reference snapshot,
+selected interface, and abstract successor before removing those calls.
 
 ### Pointer-offset effect-equality census (2026-09-09)
 
