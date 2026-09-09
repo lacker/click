@@ -492,6 +492,15 @@ pub(in crate::surface) fn annotated_function(
             contract_claims,
             opaque_contract_supported,
         );
+    if let Some(parameter) =
+        crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
+            &function,
+        )
+    {
+        return Err(ClickError::new(format!(
+            "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
+        )));
+    }
     Ok(if function_block.effects().is_empty() {
         function.with_resource_derived_mutable_frame()
     } else {
