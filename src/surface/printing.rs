@@ -141,6 +141,30 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("unfold({});", format_resource_call(resource)),
         ),
+        ProofTactic::FoldResource(ResourceClause::Named { binding, resource })
+            if binding.fold_fields.is_some() =>
+        {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "let {} = fold({}, {{ {} }});",
+                    binding.name,
+                    format_resource_target(resource),
+                    binding
+                        .fold_fields
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|(name, value)| format!(
+                            "{name}: {}",
+                            describe_contract_expression(value)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )
+        }
         ProofTactic::FoldResource(resource) => line(
             output,
             &prefix,

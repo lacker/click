@@ -795,6 +795,8 @@ pub struct ResourceInstanceBinding {
     children: Vec<String>,
     schema: Option<crate::kernel::ResourceFieldSchema>,
     fields: Option<crate::kernel::ResourceArguments>,
+    /// Present only on an explicit proof-side resource construction.
+    fold_fields: Option<Vec<(String, ContractExpression)>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -4731,9 +4731,25 @@ mod tests {
             vec![int32(7).into()].into(),
         )
         .unwrap();
-        let definition =
-            CCompositeResourceDefinition::new("cell", vec![], None, false, vec![], vec![])
-                .with_instance_schema(Some(schema));
+        let definition = CCompositeResourceDefinition::new(
+            "cell",
+            vec![],
+            None,
+            false,
+            vec![crate::kernel::CResourceSpec::OwnMemory(
+                crate::kernel::CMemorySegment {
+                    base: CExpression::Value(CValue::pointer(crate::kernel::Pointer::symbolic(
+                        Variable(100),
+                    ))),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(1)),
+                    element_width: 4,
+                    guard: None,
+                },
+            )],
+            vec![],
+        )
+        .with_instance_schema(Some(schema));
         let statement = CStatement::Return(CExpression::Value(int32(7)));
         let function = c_function(CType::Int32, "test", vec![], statement.clone())
             .with_composite_resource_definitions(vec![definition.clone()]);
@@ -4770,7 +4786,7 @@ mod tests {
                 ExecutionProofCore::at_entry(folded.clone(), ExecutionFrontier::default());
             core.execution_evidence = (0..size)
                 .map(|index| {
-                    // A sibling lacks the open handle. Its state cannot be used
+                    // A sibling lacks the body ownership. Its state cannot be used
                     // to satisfy this path's fold, or vice versa.
                     trace(if index == size - 1 {
                         CState::new()

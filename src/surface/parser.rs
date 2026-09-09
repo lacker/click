@@ -1390,7 +1390,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -1647,7 +1647,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -2563,6 +2563,7 @@ impl Parser {
                 children: vec![],
                 schema: None,
                 fields: None,
+                fold_fields: None,
             },
             resource: Box::new(resource),
         };
@@ -3169,6 +3170,74 @@ impl Parser {
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
+            "let" => {
+                let name = self.expect_ident("fold result name")?;
+                self.expect(Token::Equal)?;
+                self.expect_ident_spelling("fold")?;
+                self.expect(Token::LParen)?;
+                let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                let ResourceClause::Declared {
+                    name: resource_name,
+                    ..
+                } = &resource
+                else {
+                    return Err(self.error("fold construction requires a declared resource"));
+                };
+                if self.current_contract_bindings.contains(&name) {
+                    return Err(self.error("fold result conflicts with a C or pure binding"));
+                }
+                let identity =
+                    if let Some((identity, previous)) = self.current_resource_bindings.get(&name) {
+                        if previous != resource_name {
+                            return Err(self.error("fold result changes the named resource family"));
+                        }
+                        *identity
+                    } else {
+                        let identity = Variable(self.next_resource_identity);
+                        self.next_resource_identity += 1;
+                        identity
+                    };
+                self.expect(Token::Comma)?;
+                self.expect(Token::LBrace)?;
+                let mut fields = Vec::new();
+                while self.peek() != Some(&Token::RBrace) {
+                    let field = self.expect_ident("resource field name")?;
+                    self.expect(Token::Colon)?;
+                    let value = self.parse_contract_expression()?;
+                    fields.push((field, value));
+                    if self.peek() != Some(&Token::Comma) {
+                        break;
+                    }
+                    self.position += 1;
+                }
+                self.expect(Token::RBrace)?;
+                self.expect(Token::RParen)?;
+                self.expect(Token::Semicolon)?;
+                let binding = ResourceInstanceBinding {
+                    name: name.clone(),
+                    identity,
+                    children: vec![],
+                    schema: None,
+                    fields: None,
+                    fold_fields: None,
+                };
+                self.current_resource_bindings
+                    .insert(name.clone(), (identity, resource_name.clone()));
+                self.current_resource_targets.insert(
+                    name,
+                    ResourceClause::Named {
+                        binding: binding.clone(),
+                        resource: Box::new(resource.clone()),
+                    },
+                );
+                Ok(ProofTactic::FoldResource(ResourceClause::Named {
+                    binding: ResourceInstanceBinding {
+                        fold_fields: Some(fields),
+                        ..binding
+                    },
+                    resource: Box::new(resource),
+                }))
+            }
             "both" => self.parse_both_proof_tactic(),
             "close_invariants" if self.peek_ident() == Some("by") => {
                 self.position += 1;

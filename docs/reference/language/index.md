@@ -766,10 +766,41 @@ Explicit callback applications such as
 `step(Read(first))` transport ownership with fresh post-call fields constrained
 by the selected contract. `unfold(cell)` exposes an instance's immediate memory
 body and its facts; field names in the body denote that instance's fields.
-`fold(cell)` requires the complete memory body and re-establishes its facts,
-preserving the same identity and fields. The open handle permits field
-projections but does not count as folded ownership for calls or returns.
-This supports nonrecursive, witness-free memory bodies, optionally under the
+For unconditional, witness-free memory bodies, unfolding consumes the named
+instance without retaining an open handle. Current field projections require
+owned instances; entry snapshots such as `old(cell.value)` remain available.
+The legacy `fold(cell)` form uses the instance's entry-state fields as its
+target, and checks the complete body ownership and facts. It does not require
+an earlier unfold.
+
+An explicit fold binds its result and supplies every field by name:
+
+<!-- verified-example: mdtests/resource_cell_construction.md -->
+```click
+void init(int32* p, int32 value) {
+    consumes p[0..1];
+    produces c: cell(p);
+    ensures c.value == value;
+} by {
+    execute();
+    let c = fold(cell(p), { value: value });
+    simp();
+}
+```
+
+Here `cell` is declared in the fixture. The fold consumes its body ownership
+and checks the body facts with the proposed fields. No earlier resource is
+required. Rebinding a contract's resource name also permits changed fields
+after C updates the memory; the name must not currently own another instance.
+Field order is irrelevant, but missing, duplicate, unknown, or ill-typed
+fields are rejected. This slice accepts C-valued fields and C expression
+initializers; ADT fields, pure-function initializers, and ordinary call
+transport of newly constructed resources remain deferred.
+
+Guarded and constructor-matched bodies still use the older open-handle
+protocol pending a separate migration. Such handles permit field projections
+but do not count as folded ownership for calls or returns. Their `fold(cell)`
+restores the same identity and unchanged fields. Guarded bodies support the
 existing single `if` guard with an empty false case. Fold/unfold requires proof
 of the selected guard case. The false case exposes no memory or body facts;
 the exclusive open handle and fields remain available in either case.
