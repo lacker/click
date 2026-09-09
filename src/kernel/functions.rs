@@ -6570,8 +6570,8 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
-/// Plain bodies need no open token. Guarded/matched bodies retain the legacy
-/// open-handle protocol until their separate migration.
+/// Memory-only bodies need no open token, including guarded/matched bodies.
+/// Recursive children retain the legacy handle protocol pending child selection.
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
     instance: &ResourceInstance,
@@ -6601,10 +6601,7 @@ pub(crate) fn rewrite_resource_instance(
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
-    // Plain memory bodies are assertions, not a protocol with an open token.
-    // Matched/guarded bodies retain the legacy handle path until their child
-    // selection interface is migrated separately.
-    let body_only = definition.matched.is_none() && definition.condition.is_none();
+    let body_only = definition.has_memory_only_instance_body();
     let mut folded_instance = instance.clone();
     folded_instance.opened_children = Default::default();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
@@ -7012,6 +7009,13 @@ fn instance_body_evaluation(
     definition: &CCompositeResourceDefinition,
 ) -> Result<CState, &'static str> {
     let mut evaluation = state.clone();
+    if definition.has_memory_only_instance_body() {
+        // A local interpretation of proposed fields, never ownership or a
+        // persistent open handle. Guards may refer to these fields as well.
+        evaluation.open_instances = evaluation
+            .open_instances
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone())));
+    }
     if definition.matched.is_some() {
         // An arm's C names are lexical parameters and constructor bindings,
         // never incidental locals of the function currently opening it.

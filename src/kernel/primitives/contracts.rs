@@ -996,8 +996,10 @@ impl CCompositeResourceDefinition {
         self.instance_schema.as_ref()
     }
 
-    pub(crate) fn has_plain_instance_body(&self) -> bool {
-        self.matched.is_none() && self.condition.is_none()
+    pub(crate) fn has_memory_only_instance_body(&self) -> bool {
+        self.matched
+            .as_ref()
+            .is_none_or(|body| body.arms.iter().all(|arm| arm.children.is_empty()))
     }
 
     pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
