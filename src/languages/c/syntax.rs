@@ -13008,70 +13008,61 @@ impl Parser {
         Ok(expression)
     }
 
-    fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        if self.peek() == Some(&Token::LParen) && self.is_type_start_at(1) {
-            self.position += 1;
-            let parsed_type = self.parse_type()?;
-            self.expect(Token::RParen)?;
-            if parsed_type.c_type.is_pointer()
-                && (parsed_type.pointee_constant
-                    || parsed_type.is_constant
-                    || parsed_type.is_volatile)
+    fn parse_cast_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let cast_position = self.error_context();
+        self.position += 1;
+        let parsed_type = self.parse_type()?;
+        self.expect(Token::RParen)?;
+        if parsed_type.c_type.is_pointer()
+            && (parsed_type.pointee_constant || parsed_type.is_constant || parsed_type.is_volatile)
+        {
+            return Err(self.error_at_previous(
+                "qualified pointer cast destinations are not supported; cast qualification cannot be discarded",
+            ));
+        }
+        let (c_type, struct_name) = match (
+            parsed_type.c_type,
+            parsed_type.struct_name,
+            parsed_type.union_name,
+        ) {
+            (
+                C0Type::Int16
+                | C0Type::Int32
+                | C0Type::Char
+                | C0Type::UInt8
+                | C0Type::UInt16
+                | C0Type::UInt32
+                | C0Type::Int64
+                | C0Type::UInt64,
+                None,
+                None,
+            ) => (parsed_type.c_type, None),
+            (C0Type::Float32 | C0Type::Float64, None, None) => (parsed_type.c_type, None),
+            // An object pointer target: the kernel accepts only a 64-bit
+            // integer whose value carries pointer provenance, or zero.
+            (c_type, struct_name, None)
+                if c_type.is_pointer() && !matches!(c_type, C0Type::FunctionPointer(_)) =>
             {
+                (c_type, struct_name)
+            }
+            _ => {
                 return Err(self.error_at_previous(
-                    "qualified pointer cast destinations are not supported; cast qualification cannot be discarded",
+                    "casts support only modeled scalar integer or floating-point values, or object pointer types",
                 ));
             }
-            let (c_type, struct_name) = match (
-                parsed_type.c_type,
-                parsed_type.struct_name,
-                parsed_type.union_name,
-            ) {
-                (
-                    C0Type::Int16
-                    | C0Type::Int32
-                    | C0Type::Char
-                    | C0Type::UInt8
-                    | C0Type::UInt16
-                    | C0Type::UInt32
-                    | C0Type::Int64
-                    | C0Type::UInt64,
-                    None,
-                    None,
-                ) => (parsed_type.c_type, None),
-                (C0Type::Float32 | C0Type::Float64, None, None) => (parsed_type.c_type, None),
-                // An object pointer target: the kernel accepts only a 64-bit
-                // integer whose value carries pointer provenance, or zero.
-                (c_type, struct_name, None)
-                    if c_type.is_pointer() && !matches!(c_type, C0Type::FunctionPointer(_)) =>
-                {
-                    (c_type, struct_name)
-                }
-                _ => {
-                    return Err(self.error_at_previous(
-                        "casts support only modeled scalar integer or floating-point values, or object pointer types",
-                    ));
-                }
-            };
-            let expression = self.parse_unary()?;
-            let byte_pointer_cast = matches!(
-                (c_type, self.source_expression_type(&expression)),
-                (
-                    C0Type::CharPointer,
-                    Some(C0Type::UInt8Pointer | C0Type::UInt8Array(_))
-                ) | (
-                    C0Type::UInt8Pointer,
-                    Some(C0Type::CharPointer | C0Type::CharArray(_))
-                )
-            );
-            if !byte_pointer_cast {
-                self.validate_char_pointer_assignment(c_type, &expression)?;
-            }
-            return Ok(C0Expression::Cast {
-                expression: Box::new(expression),
-                c_type,
-                struct_name,
-            });
+        };
+        let expression = self.parse_unary()?;
+        self.validate_pointer_cast(c_type, struct_name.as_deref(), &expression, &cast_position)?;
+        return Ok(C0Expression::Cast {
+            expression: Box::new(expression),
+            c_type,
+            struct_name,
+        });
+    }
+
+    fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek() == Some(&Token::LParen) && self.is_type_start_at(1) {
+            return self.parse_cast_expression();
         }
 
         if self.peek() == Some(&Token::Plus) {
@@ -13826,6 +13817,60 @@ impl Parser {
         {
             return Err(self.error_here(format!(
                 "incompatible C pointer types: expected {expected:?}, got {actual:?}; plain char and unsigned char are distinct types"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_pointer_cast(
+        &self,
+        expected: C0Type,
+        expected_struct_name: Option<&str>,
+        expression: &C0Expression,
+        cast_position: &ErrorContext,
+    ) -> Result<(), C0SyntaxError> {
+        let Some(actual) = self.source_expression_type(expression) else {
+            return Ok(());
+        };
+        let decay = |ty: C0Type| {
+            if ty.is_pointer() {
+                ty
+            } else {
+                ty.pointee_type()
+                    .and_then(C0Type::pointer_type)
+                    .unwrap_or(ty)
+            }
+        };
+        let actual = decay(actual);
+        let expected = decay(expected);
+        if !actual.is_pointer() || !expected.is_pointer() {
+            return Ok(());
+        }
+
+        if !actual.is_object_pointer() || !expected.is_object_pointer() {
+            return Err(cast_position.error(format!(
+                "incompatible C pointer types: retyping object-pointer casts are unsupported; expected {expected:?}, got {actual:?}"
+            )));
+        }
+
+        // An opaque void pointer is the supported way to carry an object
+        // pointer through a type-erased interface. The one-level byte-pointer
+        // conversion is also an intentional C0 extension used by string and
+        // byte-oriented code. Neither case retypes an ordinary typed object
+        // pointer in the memory model.
+        let byte_pointer_cast = matches!(
+            (expected, actual),
+            (C0Type::CharPointer, C0Type::UInt8Pointer)
+                | (C0Type::UInt8Pointer, C0Type::CharPointer)
+        );
+        if expected == C0Type::VoidPointer || actual == C0Type::VoidPointer || byte_pointer_cast {
+            return Ok(());
+        }
+
+        let actual_struct_name = self.struct_pointer_name(expression);
+        if actual != expected || actual_struct_name.as_deref() != expected_struct_name {
+            return Err(cast_position.error(format!(
+                "incompatible C pointer types: retyping object-pointer casts are unsupported; expected {expected:?}, got {actual:?}"
             )));
         }
         Ok(())

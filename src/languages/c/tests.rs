@@ -3534,6 +3534,28 @@ fn c0_syntax_rejects_non_scalar_casts() {
 }
 
 #[test]
+fn c0_syntax_rejects_retyped_object_pointer_casts() {
+    for source in [
+        "uint8 *as_bytes(int32 *value) { return (uint8 *)value; }",
+        "int32 *as_words(uint8 *value) { return (int32 *)value; }",
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("retyping an object pointer must be rejected");
+        assert!(
+            error
+                .message()
+                .contains("retyping object-pointer casts are unsupported"),
+            "{source}: {}",
+            error.message()
+        );
+        assert!(
+            error.position().is_some(),
+            "{source}: missing cast position"
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_parses_object_pointer_casts_with_struct_tags() {
     let function = syntax::parse_function(
         r#"

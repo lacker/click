@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Ten independent root causes. Every one has a reproduction that verifies
+Six independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
-Five are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other five are high: the trigger is
+Two are critical: an ordinary contract over ordinary C is certified while
+false, with no unusual tactics. The other four are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -141,111 +141,6 @@ int32 twice() {
   change with the added preconditions spelled out.
 - Decide and document where initializer values may still be assumed. A
   designated program entry point is the natural place; nothing else is.
-
----
-
-## 4. Memory cells carry no width; retyping casts are accepted
-
-**Severity: critical.** Eight findings share this root cause. Overlapping
-accesses of different widths never invalidate each other, so a store leaves
-readable stale values behind, and the frame checker measures a store by the
-wrong number of bytes.
-
-**Violated invariant.** A store must invalidate every cell whose byte range it
-overlaps, and effect checking must measure a store by the width of the value
-stored. Separately: the C0 reference says pointer casts other than
-`void *` identity conversions are unsupported, and unsupported constructs are
-rejected rather than approximated.
-
-**Mechanism.** Cells in `src/kernel/primitives/memory_state.rs` are keyed by
-`(block, offset)` with no width, so a 1-byte store at offset 1 does not touch
-the 4-byte cell at offset 0, and a 4-byte store does not touch the byte cells
-it covers. `src/surface/checking/effects.rs` compares a changed cell against
-the declared range using the range's element width or the store's start
-pointer. Upstream of both, `(uint8*)&x` and `(int64*)(void*)p` lower as
-retyping in `src/languages/c/syntax.rs` instead of being rejected.
-
-**Regression A**, stale word after a byte store
-(`mdtests/byte_store_leaves_word_stale_rejected.md`):
-
-```c
-int32 byte_store_alias() {
-    int32 x = 16909060;
-    uint8* b = (uint8*)&x;
-    b[1] = 0;
-    return x;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 byte_store_alias() {
-    ensures result == 16909060;
-}
-```
-
-`x` is `0x01020304`; `b[1] = 0` clears one of its bytes, so the function
-returns `0x01020004` = 16908804 on any little-endian LP64 target.
-
-**Regression B**, a wide store escaping a narrow footprint
-(`mdtests/wide_store_escapes_footprint_rejected.md`):
-
-```c
-int32 wide_store(uint8* b) {
-    int32* w;
-    w = (int32*) b;
-    w[1] = 7;
-    return 0;
-}
-
-uint8 caller(uint8* b) {
-    int32 ignored;
-    ignored = wide_store(b);
-    return b[7];
-}
-```
-
-```click
-verifying "t.c";
-
-int32 wide_store(uint8* b) {
-    owns b[0..8];
-    mutable b[0..5];
-    ensures result == 0;
-} by {
-    execute();
-    frame();
-    simp();
-}
-
-uint8 caller(uint8* b) {
-    owns b[0..8];
-    mutable b[0..5];
-    ensures result == old(b[7]);
-} by {
-    execute();
-    frame();
-    simp();
-}
-```
-
-`w[1] = 7` writes bytes 4 through 7, so `mutable b[0..5]` is false and `b[7]`
-changes; both claims verify today.
-
-**Acceptance criteria.**
-- Decide the boundary first. If retyping casts stay unsupported, both
-  regressions must fail at the cast with a source-positioned diagnostic, and
-  that is a complete fix for the reachable cases.
-- If retyping is to be supported instead, cells must become width-aware: a
-  store invalidates every overlapping cell, and effect checking uses the
-  stored width. Then both regressions fail on the memory or footprint check,
-  and a positive mdtest shows a byte view of an `int32` reading the stored
-  bytes correctly.
-- Related findings to close with this one: an 8-byte store into an
-  `int32`-indexed range needing only one owned element; a narrower store
-  leaving the wider cell stale; the frame check measuring changed cells by the
-  range's element width.
 
 ---
 
