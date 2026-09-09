@@ -227,6 +227,7 @@ fn expand_declared_composite_resource_body(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
+        children: composite_body.children,
         fields: composite_body.fields,
         matched: composite_body
             .matched

@@ -2,6 +2,22 @@
 
 ## Violated invariant
 
+### Integration regression: sorting proof stack overflow
+
+Integrating the recursive-child resource checkpoint `2acf588d` with
+`d25256e6` produced merge commit `6f97dbfa`. Its full `scripts/check.sh`
+gate aborted in
+`surface::tests::loop_tests::sorting_rewritten_invariant_body_checks_and_expands`
+with a stack overflow after about 20 seconds. The recursive-child checkpoint
+passed the full gate before this merge; the failure's cause has not yet been
+isolated. The integration was not moved into the primary checkout.
+
+Reproduce that named test on the merge commit with normal stack and tactic
+limits, reduce the overflowing proof path, and require bounded verification,
+expansion, and independent rechecking. The full gate must pass before the
+combined changes are integrated. Do not weaken the unchanged sorting C or
+raise stack limits to accept the proof.
+
 Automatic loop preservation must emit a complete checked proof of its exact
 back-edge value and safety obligations. Expanded simple proofs must not
 invoke the legacy invariant discovery ladder.

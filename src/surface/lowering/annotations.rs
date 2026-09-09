@@ -1880,7 +1880,7 @@ impl AnnotationLowerer<'_> {
         snapshot
             .map(|state| {
                 state
-                    .resource_instance_fields(access.identity)
+                    .resource_instance_at_path(access.identity, &access.children)
                     .and_then(|instance| instance.fields().get(access.field_index))
                     .cloned()
                     .ok_or_else(|| {
@@ -1912,6 +1912,7 @@ impl AnnotationLowerer<'_> {
                 Ok(SpecExpression::ResourceField {
                     projection: crate::kernel::ResourceFieldProjection {
                         identity: access.identity,
+                        children: access.children.clone(),
                         field_index: access.field_index,
                         at_entry: environment.at_function_entry,
                     },
@@ -2304,6 +2305,7 @@ impl AnnotationLowerer<'_> {
                     SpecAlgebraicExpressionNode::ResourceField(
                         crate::kernel::ResourceFieldProjection {
                             identity: access.identity,
+                            children: access.children.clone(),
                             field_index: access.field_index,
                             at_entry: environment.at_function_entry,
                         },

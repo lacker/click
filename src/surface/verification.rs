@@ -3341,6 +3341,24 @@ pub(in crate::surface) fn composite_resource_definitions(
                     .fields
                     .clone();
                 arms.push(crate::kernel::CResourceMatchArm {
+                    children: arm
+                        .composite_body()
+                        .unwrap()
+                        .children
+                        .iter()
+                        .map(|child| {
+                            Ok(crate::kernel::CResourceChildSpec {
+                                name: child.name.clone(),
+                                binding: child.identity,
+                                arguments: child
+                                    .arguments
+                                    .iter()
+                                    .map(resource_argument_to_c_expression)
+                                    .collect::<Result<_, _>>()?,
+                                field_bindings: child.field_bindings.clone(),
+                            })
+                        })
+                        .collect::<Result<_, ClickError>>()?,
                     variant,
                     bindings: bindings.into_iter().map(|(name, _)| name).collect(),
                     binding_types,
