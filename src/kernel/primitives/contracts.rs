@@ -682,6 +682,7 @@ impl CFunction {
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
             contract_effect_claim_required: false,
+            resource_derived_mutable_frame: false,
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
@@ -793,6 +794,7 @@ impl CFunction {
         self.contract_ensures = ensures;
         self.contract_mutable = mutable;
         self.contract_effect_claim_required = !self.contract_mutable.is_empty();
+        self.resource_derived_mutable_frame = false;
         self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
         self
@@ -805,6 +807,7 @@ impl CFunction {
     /// default requirement that a nonempty frame have an Effect claim.
     pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
         self.contract_effect_claim_required = false;
+        self.resource_derived_mutable_frame = true;
         self
     }
 
@@ -953,6 +956,10 @@ impl CFunction {
 
     pub(crate) fn contract_effect_claim_required(&self) -> bool {
         self.contract_effect_claim_required
+    }
+
+    pub(crate) fn resource_derived_mutable_frame(&self) -> bool {
+        self.resource_derived_mutable_frame
     }
 
     pub fn contract_claims(&self) -> &[CFunctionContractClaim] {

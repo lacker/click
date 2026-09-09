@@ -2867,6 +2867,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             })
             .collect(),
         contract_effect_claim_required: function.contract_effect_claim_required,
+        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
         composite_resource_definitions: function
@@ -5699,6 +5700,7 @@ fn substitute_pointer_variable_in_c_function(
             })
             .collect(),
         contract_effect_claim_required: function.contract_effect_claim_required,
+        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
         composite_resource_definitions: function

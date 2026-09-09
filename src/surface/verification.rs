@@ -1187,6 +1187,56 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &resource_environment,
             !has_frontier_loop_rules,
         )?;
+        // An omitted function-level effect clause is an empty footprint. The
+        // Check the same write-footprint obligation here so a violation is
+        // reported at the write that crossed the boundary, like an explicit
+        // `immutable` clause. Resource-derived frames are checked by their
+        // resource transition and intentionally do not enter this path.
+        if function_block.effects().is_empty()
+            && contract_function.contract_mutable().is_empty()
+            && !contract_function.resource_derived_mutable_frame()
+        {
+            if function_verified.is_empty() {
+                return Err(ClickError::new(format!(
+                    "could not check implicit empty effect for `{}`: no checked execution",
+                    function_block.signature.name()
+                )));
+            }
+            for verified in &function_verified {
+                for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
+                    let Proposition::CFunctionVerifies { outcome, .. } =
+                        implication_body(path.theorem().proposition())
+                    else {
+                        return Err(ClickError::new(format!(
+                            "could not check implicit empty effect for `{}`: checked path has no function outcome",
+                            function_block.signature.name()
+                        )));
+                    };
+                    // A path that does not return has no caller-visible
+                    // post-state to frame. Preserve the existing
+                    // partial-correctness treatment for divergent paths;
+                    // returning paths still have to prove the omitted
+                    // footprint is empty.
+                    if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+                        continue;
+                    }
+                    let mut available_pure_facts = certification_facts.clone();
+                    available_pure_facts
+                        .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                    prove_effect_clause_exact(
+                        &format!("{}.implicit_effect", function_block.signature.name()),
+                        path_index,
+                        path.effect_facts(),
+                        &available_pure_facts,
+                        &Effect::Immutable,
+                        parsed_function.parameters(),
+                        &certification_arguments,
+                        &certification_state,
+                        outcome,
+                    )?;
+                }
+            }
+        }
         if contract_function.opaque_contract_supported() {
             let contract_execution_mode = if function_verified
                 .iter()
@@ -3197,6 +3247,11 @@ pub(in crate::surface) fn build_function_environment(
                     click_function_environment,
                     resource_environment,
                 )?;
+                let resource_derived_mutable_frame = function_block.effects().is_empty()
+                    && (!contract_mutable.is_empty()
+                        || function_block.requires().iter().any(|requirement| {
+                            matches!(requirement.inner(), Requirement::Resource(_))
+                        }));
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
@@ -3214,7 +3269,7 @@ pub(in crate::surface) fn build_function_environment(
                         contract_claims,
                         opaque_supported,
                     );
-                if function_block.effects().is_empty() {
+                if resource_derived_mutable_frame {
                     function.with_resource_derived_mutable_frame()
                 } else {
                     function

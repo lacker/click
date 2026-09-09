@@ -33,8 +33,8 @@ int32 run() {
 ```
 
 ```click
-verifying "alpha.c";
-verifying "beta.c";
+verifying "alpha.c" as alpha_file;
+verifying "beta.c" as beta_file;
 verifying "runner.c";
 
 int32 alpha() {
@@ -48,6 +48,8 @@ int32 beta() {
 }
 
 int32 run() {
+    owns alpha_file::values[0..2];
+    owns beta_file::values[0..2];
     ensures result == 35 by auto;
 }
 ```

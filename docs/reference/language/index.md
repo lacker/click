@@ -1606,5 +1606,12 @@ after `owner->len` changes. Footprint matching uses proven pointer equalities,
 including unchanged field loads across a finite chain of certified memory
 effects.
 
+If a function omits an effect clause, its externally visible write footprint
+is empty: the function must not write memory that was live at entry. This is
+checked when the function contract is certified, so callers may preserve
+memory across a read-only callee without a synthesized `immutable` clause.
+Memory frames derived from transferred owned resources are checked by the
+resource transition instead.
+
 Loop-level and step-level effects are described in [proof-workflow.md](../../concepts/proof-workflow.md)
 and [memory-model.md](../../concepts/memory-model.md).

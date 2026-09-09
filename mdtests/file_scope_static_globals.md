@@ -44,8 +44,8 @@ int32 run() {
 ```
 
 ```click
-verifying "alpha.c";
-verifying "beta.c";
+verifying "alpha.c" as alpha_file;
+verifying "beta.c" as beta_file;
 verifying "runner.c";
 
 int32 increment_alpha() {
@@ -67,6 +67,8 @@ int32 increment_beta() {
 }
 
 int32 run() {
+    owns &alpha_file::counter[0..1];
+    owns &beta_file::counter[0..1];
     ensures result == 16 by auto;
 }
 ```

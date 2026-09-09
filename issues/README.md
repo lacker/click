@@ -50,6 +50,7 @@ them. A gap that only a different program would hit is P2.
 Soundness and kernel shape:
 
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
+- [Reject writes from contracts without an effect clause](call-without-effect-clause.md)
 - [Keep modified by-value struct copies out of caller postconditions](by-value-struct-postconditions.md)
 - [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
 - [Restore bounded range proofs for the owned-vector example](owned-vector-range-bounds.md)

@@ -88,6 +88,8 @@ int32 increment_file_private() {
 }
 
 int32 run() {
+    owns shared.value[0..1];
+    owns shared.ready[0..1];
     ensures result == 5 by auto;
 }
 ```

@@ -1,6 +1,6 @@
 verifying "driver.c";
-verifying "beta.c";
-verifying "alpha.c";
+verifying "beta.c" as beta_file;
+verifying "alpha.c" as alpha_file;
 verifying "data.c";
 
 int32 record_alpha() {
@@ -31,6 +31,10 @@ int32 beta_calls() {
 }
 
 int32 registry_run() {
+    owns counters[0].value[0..1];
+    owns counters[1].value[0..1];
+    owns &alpha_file::calls[0..1];
+    owns &beta_file::calls[0..1];
     ensures result == 214 by {
         step();
         step();
