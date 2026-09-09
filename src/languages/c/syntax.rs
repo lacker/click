@@ -8022,6 +8022,10 @@ impl Parser {
                         .size_bytes;
                     self.variable_array_shapes
                         .insert(kernel_name.clone(), vec![1]);
+                    // The declarator's bound is not part of the function's
+                    // pointer type. Keep the placeholder shape for ABI
+                    // lowering, but do not treat its `1` as a runtime bound.
+                    self.incomplete_array_names.insert(kernel_name.clone());
                     parameters.push(C0Parameter {
                         c_type,
                         name: kernel_name,
@@ -13289,7 +13293,9 @@ impl Parser {
                     }
                     let incomplete_array = match &expression {
                         C0Expression::Variable(name)
-                            if self.incomplete_array_names.contains(name) =>
+                            if self.incomplete_array_names.contains(name)
+                                && (self.global_arrays.contains_key(name)
+                                    || self.global_aggregate_arrays.contains_key(name)) =>
                         {
                             Some(name.clone())
                         }
@@ -13335,10 +13341,11 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let unbounded_outer = self
-                            .global_arrays
-                            .get(name)
-                            .is_some_and(C0GlobalArray::is_incomplete);
+                        let unbounded_outer = self.incomplete_array_names.contains(name)
+                            || self
+                                .global_arrays
+                                .get(name)
+                                .is_some_and(C0GlobalArray::is_incomplete);
                         let offset = flatten_array_indices(indexes, &shape, unbounded_outer);
                         let struct_array = self.variable_structs.contains_key(name);
                         let offset = if struct_array {
