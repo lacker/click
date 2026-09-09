@@ -487,6 +487,9 @@ pub(super) fn record_post_execution_surface_tactic(
 }
 
 pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: ProofStep) {
+    if matches!(steps.last(), Some(ProofStep::Contradiction(_))) {
+        return;
+    }
     if let Some(ProofStep::Match { scrutinee, arms }) = steps.last_mut() {
         // The terminal join retains a binary path selector for deferred
         // operations. Serialize those operations inside the original lexical
@@ -579,6 +582,9 @@ pub(super) fn append_surface_tactics_by_leaf(
         path_steps: &[Vec<ProofStep>],
         next_path: &mut usize,
     ) {
+        if matches!(steps.last(), Some(ProofStep::Contradiction(_))) {
+            return;
+        }
         if let Some(ProofStep::Match { arms, .. }) = steps.last_mut() {
             for arm in arms {
                 append(&mut arm.proof.steps, path_steps, next_path);

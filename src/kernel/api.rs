@@ -320,7 +320,7 @@ fn c_loop_preservation_contexts_with_mode(
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {
                 state: top_state.clone(),
-                loop_entry_state: top_state.clone(),
+                loop_entry_state: loop_entry_state.clone(),
                 pure_facts,
                 whole_loop_effect_facts: whole_loop_effect_summaries.clone(),
             });
@@ -1260,7 +1260,7 @@ pub fn c_function_entry_state(
     let mut entry = bind_c_function_arguments(caller_state, function, &values)?;
     // This API rebinds a proof frontier, including an explicitly unfolded
     // entry representation. It is not the modular call ownership transfer.
-    entry.open_instances = caller_state.open_instances.clone();
+    entry.instance_field_scope = caller_state.instance_field_scope.clone();
     Some(entry)
 }
 
@@ -2656,8 +2656,9 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
 }
 
 /// Every proof-case arm in the traces must be valid, a path may pass
-/// through one partition once, and every partition must have both of its
-/// arms represented among the traces. The arms' own facts are what the
+/// through one partition once, and every constructor must be represented
+/// by a retained trace or a kernel-checked contradiction in its partition.
+/// The arms' own facts are what the
 /// proof object assumes on each path; no restatement of the cases from outside
 /// the traces is consulted.
 pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
@@ -2680,7 +2681,7 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
                     }
                     covered
                         .entry(arm.identity())
-                        .or_insert_with(|| vec![false; arm.width()])[arm.arm_index()] = true;
+                        .or_insert_with(|| arm.excluded_cases())[arm.arm_index()] = true;
                 }
                 CheckedExecutionEvent::Branch(branch) => {
                     for arm_index in 0..2 {

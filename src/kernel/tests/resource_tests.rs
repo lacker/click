@@ -371,7 +371,7 @@ fn independent_children_kernel_consumes_names_and_accepts_replacements() {
             )
         };
     let (open, _) = rewrite(&state, &instance, true, &children).unwrap();
-    assert!(open.open_instances.is_empty());
+    assert!(open.instance_field_scope.is_empty());
     assert!(open.resource_instance_fields(instance.identity()).is_none());
     assert!(
         open.resource_instance_at_path(instance.identity(), &["left".into()])
@@ -390,7 +390,7 @@ fn independent_children_kernel_consumes_names_and_accepts_replacements() {
     ];
     let (closed, _) = rewrite(&replaced, &instance, false, &selected).unwrap();
     assert_eq!(closed.resources(), state.resources());
-    assert!(closed.open_instances.is_empty());
+    assert!(closed.instance_field_scope.is_empty());
     for bad in [
         vec![],
         vec![("left".into(), Variable(501))],
@@ -436,7 +436,7 @@ fn independent_children_kernel_work_ignores_unrelated_instances() {
                 Some(&children),
             )
             .unwrap();
-            assert!(open.open_instances.is_empty());
+            assert!(open.instance_field_scope.is_empty());
             crate::kernel::rewrite_resource_instance_selecting_children(
                 &open,
                 &instance,
@@ -456,122 +456,48 @@ fn independent_children_kernel_work_ignores_unrelated_instances() {
 }
 
 #[test]
-fn recursive_child_kernel_requires_exact_folded_children() {
+fn recursive_child_kernel_rejects_implicit_parent_handles() {
     let (instance, definition, state) = recursive_child_fixture();
     let assumptions = PureFactContext::new();
+    assert_eq!(
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap_err(),
+        "recursive children require explicit independent child selections"
+    );
+    let children = [
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let (opened, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+        &state,
+        &instance,
+        &definition,
+        &assumptions,
+        true,
+        Some(&children),
+    )
+    .unwrap();
     assert!(
-        state
-            .resource_instance_at_path(instance.identity(), &["left".into()])
+        opened
+            .resource_instance_fields(instance.identity())
             .is_none()
     );
-    let (open, _) =
-        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
-    let parent = open
-        .resource_instance_fields(instance.identity())
-        .unwrap()
-        .clone();
-    let left = open
-        .resource_instance_at_path(instance.identity(), &["left".into()])
-        .unwrap()
-        .clone();
-    let right = open
-        .resource_instance_at_path(instance.identity(), &["right".into()])
-        .unwrap()
-        .clone();
-    assert_ne!(left.identity(), right.identity());
-    assert_eq!(left.fields(), right.fields());
+    assert!(opened.instance_field_scope.is_empty());
     assert!(
-        ResourceContext::new()
-            .try_compose_with_fact(
-                CResourceFact::own(CResource::Instance(parent.clone())),
-                &assumptions
-            )
-            .is_err(),
-        "open handle must not become folded ownership"
+        rewrite_resource_instance(&opened, &instance, &definition, &assumptions, false).is_err()
     );
-    let (left_open, _) =
-        rewrite_resource_instance(&open, &left, &definition, &assumptions, true).unwrap();
-    assert!(
-        rewrite_resource_instance(&left_open, &parent, &definition, &assumptions, false).is_err()
-    );
-    let (children_closed, _) =
-        rewrite_resource_instance(&left_open, &left, &definition, &assumptions, false).unwrap();
-    let (closed, _) =
-        rewrite_resource_instance(&children_closed, &parent, &definition, &assumptions, false)
-            .unwrap();
-    assert_eq!(closed.resources(), state.resources());
-    assert!(closed.open_instances.is_empty());
-    assert!(
-        closed
-            .resource_instance_at_path(instance.identity(), &["left".into()])
-            .is_none()
-    );
-    let (reopened, _) =
-        rewrite_resource_instance(&closed, &instance, &definition, &assumptions, true).unwrap();
-    assert_ne!(
-        reopened
-            .resource_instance_at_path(instance.identity(), &["left".into()])
-            .unwrap()
-            .identity(),
-        left.identity()
-    );
-    let mut missing = open.clone();
-    missing.resources = missing
-        .resources
-        .without_exact_representation(&CResourceFact::own(CResource::Instance(right.clone())))
-        .unwrap();
-    assert!(
-        rewrite_resource_instance(&missing, &parent, &definition, &assumptions, false).is_err()
-    );
-    let mut wrong = missing;
-    let mut altered = right;
-    altered.fields = instance.fields.clone();
-    wrong.resources = wrong
-        .resources
-        .unchecked_with_fact(CResourceFact::own(CResource::Instance(altered)));
-    assert!(rewrite_resource_instance(&wrong, &parent, &definition, &assumptions, false).is_err());
     let mut invalid = definition.clone();
     invalid.matched.as_mut().unwrap().arms[1].children[0].field_bindings = vec![0];
-    assert!(rewrite_resource_instance(&state, &instance, &invalid, &assumptions, true).is_err());
-}
-
-#[test]
-fn recursive_child_kernel_work_ignores_unrelated_handles() {
-    let (instance, definition, initial) = recursive_child_fixture();
-    let assumptions = PureFactContext::new();
-    let mut samples = Vec::new();
-    for size in [16, 32, 64, 128] {
-        let mut state = initial.clone();
-        for identity in 2..=size {
-            let mut unrelated = instance.clone();
-            unrelated.identity = Variable(identity);
-            state.open_instances = state
-                .open_instances
-                .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
-        }
-        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-            let (open, _) =
-                rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
-                    .unwrap();
-            assert!(
-                open.resource_instance_at_path(instance.identity(), &["left".into()])
-                    .is_some()
-            );
-            rewrite_resource_instance(
-                &open,
-                open.resource_instance_fields(instance.identity()).unwrap(),
-                &definition,
-                &assumptions,
-                false,
-            )
-            .unwrap()
-        });
-        assert!(work > 0);
-        samples.push(work);
-    }
-    for pair in samples.windows(2) {
-        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
-    }
+    assert!(
+        crate::kernel::rewrite_resource_instance_selecting_children(
+            &state,
+            &instance,
+            &invalid,
+            &assumptions,
+            true,
+            Some(&children),
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -598,19 +524,29 @@ fn recursive_child_kernel_keeps_unknown_submodels_folded() {
             .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
     );
     let assumptions = PureFactContext::new();
-    let (open, _) =
-        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
-    let child = open
-        .resource_instance_at_path(instance.identity(), &["left".into()])
-        .unwrap();
+    let children = [
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let (open, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+        &state,
+        &instance,
+        &definition,
+        &assumptions,
+        true,
+        Some(&children),
+    )
+    .unwrap();
+    let child = open.owned_resource_instance(Variable(501)).unwrap();
     assert_eq!(child.fields(), &[AlgebraicValue::Algebraic(unknown)]);
     assert!(rewrite_resource_instance(&open, child, &definition, &assumptions, true).is_err());
-    let (closed, _) = rewrite_resource_instance(
+    let (closed, _) = crate::kernel::rewrite_resource_instance_selecting_children(
         &open,
-        open.resource_instance_fields(instance.identity()).unwrap(),
+        &instance,
         &definition,
         &assumptions,
         false,
+        Some(&children),
     )
     .unwrap();
     assert_eq!(closed.resources(), state.resources());
@@ -636,7 +572,7 @@ fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
             rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
         assert_eq!(open.resources().is_empty(), is_null);
         assert!(open.resource_instance_fields(instance.identity()).is_none());
-        assert!(open.open_instances.is_empty());
+        assert!(open.instance_field_scope.is_empty());
         assert_eq!(
             facts
                 .iter()
@@ -652,7 +588,7 @@ fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
         fresh.identity = Variable(999);
         let (constructed, _) =
             rewrite_resource_instance(&raw, &fresh, &definition, &assumptions, false).unwrap();
-        assert!(constructed.open_instances.is_empty());
+        assert!(constructed.instance_field_scope.is_empty());
         assert_eq!(
             constructed.owned_resource_instance(fresh.identity()),
             Some(&fresh)
@@ -781,7 +717,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
     let (empty, facts) =
         rewrite_resource_instance(&state, &instance, &definition, &clear, true).unwrap();
     assert!(empty.resources().is_empty());
-    assert!(empty.open_instances.is_empty());
+    assert!(empty.instance_field_scope.is_empty());
     assert!(
         !facts
             .iter()
@@ -790,7 +726,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
     assert!(rewrite_resource_instance(&empty, &instance, &definition, &set, false).is_err());
     let (open, _) = rewrite_resource_instance(&state, &instance, &definition, &set, true).unwrap();
     assert!(!open.resources().is_empty());
-    assert!(open.open_instances.is_empty());
+    assert!(open.instance_field_scope.is_empty());
     let mut fresh = instance.clone();
     fresh.identity = Variable(999);
     fresh.fields = vec![AlgebraicValue::Algebraic(constructor("Set"))].into();
@@ -801,7 +737,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
         constructed.owned_resource_instance(fresh.identity()),
         Some(&fresh)
     );
-    assert!(constructed.open_instances.is_empty());
+    assert!(constructed.instance_field_scope.is_empty());
     assert!(
         rewrite_resource_instance(&CState::new(), &fresh, &definition, &unknown, false).is_err()
     );
@@ -854,7 +790,7 @@ fn instance_memory_fold_requires_body_ownership_not_an_open_handle() {
             .resource_instance_fields(instance.identity())
             .is_none()
     );
-    assert!(opened.open_instances.is_empty());
+    assert!(opened.instance_field_scope.is_empty());
     assert_eq!(
         rewrite_resource_instance(&opened, &instance, &definition, &assumptions, false)
             .unwrap()
@@ -885,7 +821,7 @@ fn instance_memory_fold_requires_body_ownership_not_an_open_handle() {
         folded.owned_resource_instance(Variable(2)),
         Some(&constructed)
     );
-    assert!(folded.open_instances.is_empty());
+    assert!(folded.instance_field_scope.is_empty());
 }
 
 #[test]
@@ -898,8 +834,8 @@ fn instance_memory_fold_work_is_local_to_the_selected_instance() {
         for identity in 2..=size {
             let mut unrelated = instance.clone();
             unrelated.identity = Variable(identity);
-            state.open_instances = state
-                .open_instances
+            state.resources = state
+                .resources
                 .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
         }
         let (_, work) = crate::instrumentation::measure_deterministic_work(|| {

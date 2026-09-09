@@ -11,9 +11,17 @@ pub(in crate::surface::proof) struct ExecutionMatchPlan {
     bindings: Vec<PersistentMap<String, ContractExpression>>,
     parent_locals: ProofLocals,
     deferred_base: PersistentSequence<DeferredPostExecutionTactic>,
+    excluded: Vec<Option<ProofCertificate>>,
+    entry_cases: PersistentSequence<CaseAssumption>,
 }
 
 impl ExecutionMatchPlan {
+    pub(in crate::surface::proof) fn excluded_certificate(
+        &self,
+        index: usize,
+    ) -> Option<&ProofCertificate> {
+        self.excluded[index].as_ref()
+    }
     pub(in crate::surface::proof) fn condition(
         &self,
         left: std::ops::Range<usize>,
@@ -203,14 +211,34 @@ impl<'a> Proof<'a> {
         }
         let mut parent_locals = self.state.locals().clone();
         parent_locals.next_choice_variable = next;
-        Ok(ExecutionMatchPlan {
+        let mut plan = ExecutionMatchPlan {
             partition,
             source: source.clone(),
             case_indices,
             bindings,
             parent_locals,
             deferred_base: execution.presentation.post_execution_tactics.clone(),
-        })
+            excluded: vec![None; source.arms.len()],
+            entry_cases: execution.presentation.case_assumptions.clone(),
+        };
+        for (index, arm) in source.arms.iter().enumerate() {
+            if let [ProofTactic::Contradiction(surface)] = arm.tactics.as_slice() {
+                let scoped = self.enter_execution_match_arm(&plan, index)?;
+                let fact =
+                    scoped.lower_surface_proposition(surface, "constructor-arm contradiction")?;
+                plan.partition = plan.partition.excluding_constructor_case(plan.case_indices[index], fact)
+                    .ok_or_else(|| self.step_error("constructor-arm `contradiction` requires an exact fact and its negation in that arm"))?;
+                plan.excluded[index] = Some(ProofCertificate::from_steps(vec![
+                    ProofStep::Contradiction(surface.clone()),
+                ]));
+            }
+        }
+        if plan.excluded.iter().all(Option::is_some) {
+            return Err(
+                self.step_error("proof match with every constructor excluded is not yet supported")
+            );
+        }
+        Ok(plan)
     }
 
     pub(in crate::surface::proof) fn enter_execution_match_arm(
@@ -304,6 +332,19 @@ impl<'a> Proof<'a> {
         locals.next_choice_variable = locals
             .next_choice_variable
             .max(self.state.locals().next_choice_variable);
+        let proof = if plan.excluded.iter().any(Option::is_some) {
+            // Unlike a two-live-arm join, this path never passed through
+            // merge_terminal_execution_join. Restore the same outer routing
+            // scope here: case evidence is retained in the trace, not added
+            // to the whole function's contract requirements.
+            proof
+                .edit_execution_presentation(|presentation| {
+                    presentation.case_assumptions = plan.entry_cases.clone();
+                })?
+                .0
+        } else {
+            proof
+        };
         Ok(proof.with_kernel_state(proof.state.with_locals(locals)))
     }
 

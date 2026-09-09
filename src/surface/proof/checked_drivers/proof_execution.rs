@@ -2068,6 +2068,10 @@ fn advance_execution_match_group<'a>(
         return decline();
     }
     if range.len() == 1 {
+        if let Some(certificate) = plan.excluded_certificate(range.start) {
+            certificates.push(certificate.clone());
+            return Ok(Some(proof));
+        }
         let proof = proof.enter_execution_match_arm(plan, range.start)?;
         let marker = proof.checkpoint();
         let Some(proof) = advance_focused_execution_region(
@@ -2091,6 +2095,31 @@ fn advance_execution_match_group<'a>(
         return Ok(Some(proof.leave_execution_match_arm(plan)?));
     }
     let middle = range.start + range.len() / 2;
+    if range
+        .clone()
+        .any(|index| plan.excluded_certificate(index).is_some())
+    {
+        // A checked contradiction covers the dead constructor without a C outcome.
+        let mut proof = proof;
+        for index in range {
+            let Some(next) = advance_execution_match_group(
+                proof,
+                plan,
+                arms,
+                index..index + 1,
+                certificates,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+                depth + 1,
+            )?
+            else {
+                return decline();
+            };
+            proof = next;
+        }
+        return Ok(Some(proof));
+    }
     let (mut proof, record) =
         proof.split_execution_match_group(plan.condition(range.start..middle))?;
     for (left, child_range) in [(true, range.start..middle), (false, middle..range.end)] {

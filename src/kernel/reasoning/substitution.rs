@@ -1125,9 +1125,6 @@ fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeS
             for value in instance.arguments.iter().chain(instance.fields.iter()) {
                 collect_algebraic_value_bound_variables(value, variables);
             }
-            for (_, child) in instance.opened_children.iter() {
-                collect_resource_bound_variables(&CResource::Instance(child.clone()), variables);
-            }
         }
         CResource::Memory(range) => {
             collect_pointer_bound_variables(&range.base, variables);
@@ -2685,10 +2682,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             slots: state.locals.slots.clone(),
         },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
-        next_resource_child: state.next_resource_child,
         resource_bindings: state.resource_bindings.clone(),
-        open_instances: substitute_bitvector_variable_in_resource_context(
-            &state.open_instances,
+        instance_field_scope: substitute_bitvector_variable_in_resource_context(
+            &state.instance_field_scope,
             from,
             to,
         ),
@@ -2768,20 +2764,6 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
                 .fields
                 .iter()
                 .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
-                .collect();
-            result.opened_children = instance
-                .opened_children
-                .iter()
-                .map(|(name, child)| {
-                    let CResource::Instance(child) = substitute_bitvector_variable_in_c_resource(
-                        &CResource::Instance(child.clone()),
-                        from,
-                        to,
-                    ) else {
-                        unreachable!()
-                    };
-                    (name.clone(), child)
-                })
                 .collect();
             CResource::Instance(result)
         }
@@ -2867,6 +2849,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             })
             .collect(),
         contract_effect_claim_required: function.contract_effect_claim_required,
+        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
         composite_resource_definitions: function
@@ -4857,10 +4840,9 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
     CState {
         locals: CLocalEnvironment { bindings, slots },
         memory: substitute_pointer_variable_in_memory(&state.memory, from, to),
-        next_resource_child: state.next_resource_child,
         resource_bindings: state.resource_bindings.clone(),
-        open_instances: substitute_pointer_variable_in_resource_context(
-            &state.open_instances,
+        instance_field_scope: substitute_pointer_variable_in_resource_context(
+            &state.instance_field_scope,
             from,
             to,
         ),
@@ -4933,20 +4915,6 @@ fn substitute_pointer_variable_in_c_resource(
                 .fields
                 .iter()
                 .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
-                .collect();
-            result.opened_children = instance
-                .opened_children
-                .iter()
-                .map(|(name, child)| {
-                    let CResource::Instance(child) = substitute_pointer_variable_in_c_resource(
-                        &CResource::Instance(child.clone()),
-                        from,
-                        to,
-                    ) else {
-                        unreachable!()
-                    };
-                    (name.clone(), child)
-                })
                 .collect();
             CResource::Instance(result)
         }
@@ -5699,6 +5667,7 @@ fn substitute_pointer_variable_in_c_function(
             })
             .collect(),
         contract_effect_claim_required: function.contract_effect_claim_required,
+        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
         composite_resource_definitions: function

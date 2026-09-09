@@ -457,74 +457,16 @@ The function returns 9.
 
 ---
 
-## 10. A reloaded pointer to a local is treated as a distinct block
-
-**Severity: high.** After a call, a pointer loaded back out of caller-visible
-memory no longer aliases the local it points to, and the resulting state is
-contradictory.
-
-**Violated invariant.** A pointer value loaded from memory that may hold the
-address of a local must be able to alias that local. A state in which
-`q == &x` holds and a store through `q` does not affect `x` is unsound
-regardless of what is then proved from it.
-
-**Mechanism.** The reload after a `CallHavoc` edge produces a symbolic pointer
-in a fresh block rather than one that may alias existing blocks
-(`src/kernel/functions.rs` call application together with the transport rules
-in `src/kernel/memory_provenance.rs`).
-
-**Regression** (`mdtests/reloaded_local_pointer_rejected.md`):
-
-```c
-void keep(int32** pp) {
-}
-
-int32 reloaded_store_hits_local(int32** pp) {
-    int32 x = 1;
-    int32* q;
-    *pp = &x;
-    keep(pp);
-    q = *pp;
-    if (q == &x) {
-        *q = 2;
-    }
-    return x;
-}
-```
-
-```click
-verifying "t.c";
-
-void keep(int32** pp) {
-    requires loadable(pp[0..1]);
-    consumes pp[0..1];
-    mutable pp[0..1];
-    ensures pp[0] == old(pp[0]);
-    produces pp[0..1];
-}
-
-int32 reloaded_store_hits_local(int32** pp) {
-    requires loadable(pp[0..1]);
-    consumes pp[0..1];
-    mutable pp[0..1];
-    ensures result == 1;
-    produces pp[0..1];
-}
-```
-
-The branch is taken and `*q = 2` writes `x`, so the function returns 2. That
-`ensures result == 7` also verifies is the tell: the post-call state is
-inconsistent.
-
-**Acceptance criteria.**
-- The sidecar is rejected, and the state after the call proves no numeric value
-  for `result` other than through the real aliasing.
-- Add an inconsistency probe to the regression: a claim like `result == 7`,
-  which no execution satisfies, must never verify.
-
 ---
 
-## 13. Range byte counts wrap modulo 2^32
+## 13. ~~Range byte counts wrap modulo 2^32~~ — fixed
+
+**Status: fixed.** Range lowering now uses one canonical 32-bit byte-count
+helper. Direct loadability requirements and public spec loadability carry
+forward-range and no-overflow conditions; spec claims record them as proof
+obligations while the atomic loadability fact stays separate. Internal
+composite-resource summaries remain symbolic until their owning resource is
+used, preserving the existing resource-expansion contract.
 
 **Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
@@ -583,76 +525,6 @@ int32 symn(int32 p[], int32 n) {
   arithmetic without a side condition appears wherever a range is measured.
 
 ---
-
-## 14. Intra-object array overflow is modeled as a flat access
-
-**Severity: high.** The flat-access model is documented, which is why the
-fix has to change the documentation with it; it still certifies a value for a
-program whose behaviour C leaves undefined.
-
-**Violated invariant.** An array subscript outside its own dimension is
-undefined behaviour (C11 6.5.6p8) even when the containing allocation has more
-bytes. Bounds are currently enforced only at allocation-block granularity.
-
-**Mechanism.** Row-major flattening (`flatten_array_indices`,
-`src/languages/c/syntax.rs:12888`) and inline array fields lower an inner index
-into a flat offset, and only the block bound is checked. The flat-access rule
-is documented in `docs/reference/language/c0.md`, so the documentation changes
-with the fix.
-
-**Regression A** (`mdtests/flat_array_inner_overflow_rejected.md`):
-
-```c
-int32 c() {
-    int32 m[2][3];
-    m[1][2] = 1;
-    m[0][5] = 9;
-    return m[1][2];
-}
-```
-
-```click
-verifying "t.c";
-
-int32 c() {
-    ensures result == 9;
-}
-```
-
-**Regression B**, the more practical shape — an overflow of an inline array
-field into the next field (`mdtests/inline_array_field_overflow_rejected.md`):
-
-```c
-struct rec {
-    int32 buf[2];
-    int32 next;
-};
-
-int32 spill(struct rec* r) {
-    r->buf[2] = 7;
-    return r->next;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 spill(struct rec* r) {
-    owns object(r);
-    ensures result == 7;
-}
-```
-
-A genuine buffer overflow into the neighbouring field is certified as defined
-behaviour with a predictable result.
-
-**Acceptance criteria.**
-- Both regressions are rejected with an out-of-bounds diagnostic naming the
-  subobject.
-- Emit per-subobject bounds obligations for inner dimensions and inline array
-  fields; the containing block bound is not sufficient.
-- Update the flat-access wording in `docs/reference/language/c0.md`, and keep
-  the existing multidimensional and inline-array positive tests passing.
 
 ---
 

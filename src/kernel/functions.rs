@@ -7975,7 +7975,7 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
 /// Memory-only bodies need no open token, including guarded/matched bodies.
-/// This compatibility entry point retains the legacy recursive-child handles.
+/// Recursive children require explicit independent child selections.
 #[cfg(test)]
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
@@ -8024,34 +8024,14 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
-    let body_only = selected_children.is_some() || definition.has_memory_only_instance_body();
-    let mut folded_instance = instance.clone();
-    folded_instance.opened_children = Default::default();
+    let folded_instance = instance.clone();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
     if unfold {
-        if state
-            .open_instances
-            .owned_instance(instance.identity)
-            .is_some()
-            || state.resources.owned_instance(instance.identity) != Some(instance)
-        {
+        if state.resources.owned_instance(instance.identity) != Some(instance) {
             return Err("instance is not exclusively owned in folded form");
         }
-    } else if (!body_only
-        && state.open_instances.owned_instance(instance.identity) != Some(instance))
-        || state.resources.owned_instance(instance.identity).is_some()
-        || (body_only
-            && (state
-                .open_instances
-                .owned_instance(instance.identity)
-                .is_some()
-                || !instance.opened_children.is_empty()))
-    {
-        return Err(if body_only {
-            "fold result identity is already in use or carries open-child metadata"
-        } else {
-            "instance has no matching open handle"
-        });
+    } else if state.resources.owned_instance(instance.identity).is_some() {
+        return Err("fold result identity is already in use");
     }
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
@@ -8091,6 +8071,9 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .map(|(name, identity)| (name.as_str(), *identity))
             .collect::<BTreeMap<_, _>>()
     });
+    if explicit_children.is_none() && selected.is_some_and(|arm| !arm.children.is_empty()) {
+        return Err("recursive children require explicit independent child selections");
+    }
     if let Some(children) = &explicit_children {
         let supplied = selected_children.unwrap();
         let expected = selected.map_or(&[][..], |arm| arm.children.as_slice());
@@ -8137,15 +8120,9 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut child_evaluation = evaluation.clone();
     child_evaluation.resources = body.clone();
     let child_assumptions = assumptions.clone().require_owned_expression_loads();
-    let mut children = Vec::new();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
         crate::instrumentation::record_deterministic_work(1);
-        let recorded = instance
-            .opened_children
-            .binary_search_by(|(name, _)| name.cmp(&child.name))
-            .ok()
-            .map(|index| &instance.opened_children[index].1);
         let arguments = child
             .arguments
             .iter()
@@ -8190,38 +8167,11 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                     .ok_or("invalid child field binding")
             })
             .collect::<Result<ResourceArguments, _>>()?;
-        let identity = if let Some(explicit) = &explicit_children {
-            let identity = explicit[child.name.as_str()];
-            if unfold
-                && (state.resources.owned_instance(identity).is_some()
-                    || state.open_instances.owned_instance(identity).is_some())
-            {
-                return Err("unfold child result identity is already in use");
-            }
-            identity
-        } else if unfold {
-            loop {
-                let identity = Variable(
-                    u64::MAX
-                        .checked_sub(next.next_resource_child)
-                        .and_then(|value| value.checked_sub(1))
-                        .ok_or("child identity supply exhausted")?,
-                );
-                next.next_resource_child = next
-                    .next_resource_child
-                    .checked_add(1)
-                    .ok_or("child identity supply exhausted")?;
-                if state.resources.owned_instance(identity).is_none()
-                    && state.open_instances.owned_instance(identity).is_none()
-                {
-                    break identity;
-                }
-            }
-        } else {
-            recorded
-                .ok_or("parent has no recorded child handle")?
-                .identity
-        };
+        let identity =
+            explicit_children.as_ref().expect("checked child selection")[child.name.as_str()];
+        if unfold && state.resources.owned_instance(identity).is_some() {
+            return Err("unfold child result identity is already in use");
+        }
         let mut child_instance = ResourceInstance::new(
             identity,
             instance.name.clone(),
@@ -8240,11 +8190,10 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                         .as_c_value()
                         .is_none_or(|value| value.c_type() != parameter.c_type())
                 })
-            || (!unfold && explicit_children.is_none() && recorded != Some(&child_instance))
         {
-            return Err("recursive child does not match the parent's recorded body");
+            return Err("recursive child arguments have invalid types");
         }
-        if !unfold && explicit_children.is_some() {
+        if !unfold {
             let actual = state
                 .resources
                 .owned_instance(identity)
@@ -8253,7 +8202,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 || actual.schema != child_instance.schema
                 || actual.arguments.len() != child_instance.arguments.len()
                 || actual.fields.len() != child_instance.fields.len()
-                || !actual.opened_children.is_empty()
                 || !actual
                     .arguments
                     .iter()
@@ -8274,10 +8222,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 assumptions,
             )
             .map_err(|_| "child ownership is duplicated")?;
-        children.push((child.name.clone(), child_instance));
-    }
-    if !unfold && explicit_children.is_none() && children.len() != instance.opened_children.len() {
-        return Err("fold would discard a recorded child");
     }
     if unfold {
         next.resources = next
@@ -8289,14 +8233,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 assumptions,
             )
             .map_err(|_| "instance body overlaps existing ownership")?;
-        if !body_only {
-            let mut handle = folded_instance.clone();
-            children.sort_by(|(left, _), (right, _)| left.cmp(right));
-            handle.opened_children = children.into();
-            next.open_instances = next
-                .open_instances
-                .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
-        }
     } else {
         // Immediate memory was consumed before evaluating child arguments.
         for fact in body
@@ -8313,33 +8249,13 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .resources
             .try_compose_into_valid_context_delaying_normalization([folded.clone()], assumptions)
             .map_err(|_| "fold would duplicate instance ownership")?;
-        if !body_only {
-            next.open_instances = next
-                .open_instances
-                .without_exact_representation(&CResourceFact::own(CResource::Instance(
-                    instance.clone(),
-                )))
-                .ok_or("open handle is missing")?;
-        }
     }
     evaluation.resources = if unfold {
         next.resources.clone()
     } else {
         state.resources.clone()
     };
-    evaluation.open_instances = if unfold {
-        next.open_instances.clone()
-    } else {
-        state.open_instances.clone()
-    };
     evaluation.resource_bindings = Some(std::sync::Arc::new(resource_bindings));
-    if body_only {
-        // Local field interpretation only. This scratch view never escapes
-        // into proof state and supplies no additional memory ownership.
-        evaluation.open_instances = evaluation
-            .open_instances
-            .unchecked_with_fact(CResourceFact::own(CResource::Instance(folded_instance)));
-    }
     let mut facts = body.observable_facts_assuming_valid(assumptions);
     for fact in body.facts() {
         let Some(range) = fact.memory_range() else {
@@ -8522,11 +8438,11 @@ fn instance_body_evaluation(
     definition: &CCompositeResourceDefinition,
 ) -> Result<CState, &'static str> {
     let mut evaluation = state.clone();
-    if definition.has_memory_only_instance_body() {
+    {
         // A local interpretation of proposed fields, never ownership or a
         // persistent open handle. Guards may refer to these fields as well.
-        evaluation.open_instances = evaluation
-            .open_instances
+        evaluation.instance_field_scope = evaluation
+            .instance_field_scope
             .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone())));
     }
     if definition.matched.is_some() {
@@ -9242,7 +9158,11 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     .clone()
                     .allow_symbolic_contract_loads()
                     .prefer_symbolic_external_loads();
-                let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                // Resource-definition loadability facts are symbolic summaries;
+                // their owning range supplies the concrete validity check when
+                // the resource is used. Do not turn an unconstrained summary
+                // endpoint into a failed definition during population setup.
+                let Ok(paths) = lower_spec_proposition_at_state_without_range_guards(
                     &population_state,
                     population_fact,
                     None,
@@ -9526,7 +9446,11 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
                 .clone()
                 .allow_symbolic_contract_loads()
                 .prefer_symbolic_external_loads();
-            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+            // Resource-definition loadability facts are symbolic summaries;
+            // their owning range supplies the concrete validity check when
+            // the resource is used. Do not turn an unconstrained summary
+            // endpoint into a failed definition during population setup.
+            let Ok(paths) = lower_spec_proposition_at_state_without_range_guards(
                 &state,
                 fact,
                 None,
@@ -10756,8 +10680,17 @@ pub(super) fn function_outcome_from_body(
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
+            if function.has_inline_body() {
+                // Inline bodies execute with a parameter-only local
+                // environment, so pointer stores into caller locals cannot
+                // synchronize their named bindings during body execution.
+                // Reconcile those bindings from the shared caller memory
+                // before the caller resumes evaluating its next statement.
+                let memory = caller_state.memory.clone();
+                caller_state.sync_scalar_locals_from_memory(&memory);
+            }
             if return_resources.is_none() {
-                caller_state.open_instances = state.open_instances;
+                caller_state.instance_field_scope = state.instance_field_scope;
             }
             caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
             caller_state.counted_populations = state.counted_populations;

@@ -682,6 +682,7 @@ impl CFunction {
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
             contract_effect_claim_required: false,
+            resource_derived_mutable_frame: false,
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
@@ -793,6 +794,7 @@ impl CFunction {
         self.contract_ensures = ensures;
         self.contract_mutable = mutable;
         self.contract_effect_claim_required = !self.contract_mutable.is_empty();
+        self.resource_derived_mutable_frame = false;
         self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
         self
@@ -805,6 +807,7 @@ impl CFunction {
     /// default requirement that a nonempty frame have an Effect claim.
     pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
         self.contract_effect_claim_required = false;
+        self.resource_derived_mutable_frame = true;
         self
     }
 
@@ -953,6 +956,10 @@ impl CFunction {
 
     pub(crate) fn contract_effect_claim_required(&self) -> bool {
         self.contract_effect_claim_required
+    }
+
+    pub(crate) fn resource_derived_mutable_frame(&self) -> bool {
+        self.resource_derived_mutable_frame
     }
 
     pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
@@ -1253,11 +1260,10 @@ impl CMemoryRange {
     /// representation. The returned pointer is the first byte of the range;
     /// the second value is its byte length.
     pub(crate) fn byte_footprint(&self) -> (Pointer, Bitvector32Term) {
-        let element_count = Bitvector32Term::subtract(self.end.clone(), self.start.clone());
         (
             self.base
                 .offset_by_elements(self.start.clone(), self.element_width),
-            Bitvector32Term::multiply(element_count, Bitvector32Term::Constant(self.element_width)),
+            memory_range_byte_count(self.start.clone(), self.end.clone(), self.element_width),
         )
     }
 
@@ -1287,6 +1293,83 @@ impl CMemoryRange {
     pub fn end(&self) -> &Bitvector32Term {
         &self.end
     }
+}
+
+/// Convert a logical element range to a physical byte count in the kernel's
+/// 32-bit memory model. Callers must carry
+/// [`memory_range_byte_count_guards`] whenever the range is supplied by a
+/// contract or resource clause, since the arithmetic itself is modular.
+pub(crate) fn memory_range_byte_count(
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    element_width: u32,
+) -> Bitvector32Term {
+    assert!(element_width > 0, "memory element width must be positive");
+    let element_count = canonical_subtract(end, start);
+    canonical_multiply(element_count, Bitvector32Term::Constant(element_width))
+}
+
+fn canonical_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_sub(*right))
+        }
+        (_, Bitvector32Term::Constant(0)) => left,
+        _ if left == right => Bitvector32Term::Constant(0),
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_base => {
+            canonical_subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
+        }
+        _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
+    }
+}
+
+fn canonical_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_mul(*right))
+        }
+        (_, Bitvector32Term::Constant(1)) => left,
+        (Bitvector32Term::Constant(1), _) => right,
+        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
+            Bitvector32Term::Constant(0)
+        }
+        _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
+    }
+}
+
+/// The side conditions needed before a logical element range can be used as
+/// a 32-bit physical byte extent. Ranges must be forward and fit in `u32`
+/// bytes after scaling by their element width.
+pub(crate) fn memory_range_byte_count_guards(
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    element_width: u32,
+) -> Vec<Proposition> {
+    assert!(element_width > 0, "memory element width must be positive");
+    if let (Some(start), Some(end)) = (start.as_const(), end.as_const()) {
+        let valid = (end as i32) >= (start as i32)
+            && u64::from(end - start) <= u64::from(u32::MAX / element_width);
+        if valid {
+            return Vec::new();
+        }
+        return vec![Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        )];
+    }
+    let forward = ConditionTerm::signed_less_equal(start.clone(), end.clone());
+    let element_count = canonical_subtract(end, start);
+    let fits = ConditionTerm::unsigned_less_equal(
+        element_count,
+        Bitvector32Term::Constant(u32::MAX / element_width),
+    );
+    vec![
+        Proposition::ConditionIs(forward, true),
+        Proposition::ConditionIs(fits, true),
+    ]
 }
 
 impl CFunctionSpecification {

@@ -460,7 +460,7 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
     // source order preserves the contract-to-kernel mapping.
     let mut lowered = (0..requires.len())
         .map(|_| None)
-        .collect::<Vec<Option<Proposition>>>();
+        .collect::<Vec<Option<Vec<Proposition>>>>();
     let mut errors = (0..requires.len())
         .map(|_| None)
         .collect::<Vec<Option<ClickError>>>();
@@ -480,10 +480,14 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
         for index in std::mem::take(&mut pending) {
             let requirement = &requires[index];
             let result = match requirement.inner() {
-                Requirement::LoadableSegment { .. } => {
-                    loadable_requirement_prop(requirement, parameters, arguments, state.memory())
-                        .map(Some)
-                }
+                Requirement::LoadableSegment { .. } => loadable_requirement_props(
+                    requirement,
+                    parameters,
+                    arguments,
+                    state.memory(),
+                    &assumptions,
+                )
+                .map(Some),
                 Requirement::Proposition(proposition) => {
                     requirement_proposition_prop_with_assumptions(
                         parameters,
@@ -494,22 +498,28 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
                         click_function_environment,
                         &assumptions,
                     )
-                    .map(Some)
+                    .map(|proposition| Some(vec![proposition]))
                 }
-                Requirement::Resource(resource) => {
-                    resource_clause_loadable_prop_at_state(resource, parameters, arguments, state)
-                }
+                Requirement::Resource(resource) => resource_clause_loadable_props_at_state(
+                    resource,
+                    parameters,
+                    arguments,
+                    state,
+                    &assumptions,
+                ),
                 Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
             };
             let result = match result {
-                Ok(Some(proposition)) => Ok(proposition),
+                Ok(Some(propositions)) => Ok(propositions),
                 Ok(None) => continue,
                 Err(error) => Err(error),
             };
             match result {
-                Ok(proposition) => {
-                    assumptions = assumptions.assume_proposition(proposition.clone());
-                    lowered[index] = Some(proposition);
+                Ok(propositions) => {
+                    for proposition in &propositions {
+                        assumptions = assumptions.assume_proposition(proposition.clone());
+                    }
+                    lowered[index] = Some(propositions);
                     made_progress = true;
                 }
                 Err(error) => {
@@ -534,7 +544,17 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
             .expect("pending requirement always has a lowering error"));
     }
 
-    Ok(lowered.into_iter().flatten().collect())
+    let mut facts = Vec::new();
+    let mut guards = Vec::new();
+    for propositions in lowered.into_iter().flatten() {
+        let mut propositions = propositions.into_iter();
+        if let Some(fact) = propositions.next() {
+            facts.push(fact);
+        }
+        guards.extend(propositions);
+    }
+    facts.extend(guards);
+    Ok(facts)
 }
 
 /// Checked definedness facts implicit in accepting arithmetic requirements.
@@ -1173,18 +1193,22 @@ fn lower_resource_segment_with_values(
     ))
 }
 
-pub(in crate::surface) fn loadable_requirement_prop(
+fn loadable_requirement_props(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
-) -> Result<Proposition, ClickError> {
-    let (base, bytes) = loadable_base_and_bytes(requirement, parameters, arguments)?;
-    Ok(Proposition::CMemoryLoadable {
+    assumptions: &PureFactContext,
+) -> Result<Vec<Proposition>, ClickError> {
+    let (base, bytes, guards) = loadable_base_and_bytes(requirement, parameters, arguments)?;
+    reject_impossible_range_guards(&guards, assumptions)?;
+    let mut propositions = vec![Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base,
         bytes,
-    })
+    }];
+    propositions.extend(guards);
+    Ok(propositions)
 }
 
 pub(in crate::surface) fn resource_clause_loadable_prop(
@@ -1207,6 +1231,75 @@ pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
     arguments: &[CExpression],
     state: &CState,
 ) -> Result<Option<Proposition>, ClickError> {
+    let Some(ranges) =
+        resource_clause_memory_ranges_at_state(resource, parameters, arguments, state)?
+    else {
+        return Ok(None);
+    };
+    let mut propositions = ranges
+        .iter()
+        .map(|range| memory_range_loadable_atom_prop(state.memory(), range))
+        .collect::<Vec<_>>();
+    let first = propositions
+        .drain(..1)
+        .next()
+        .expect("memory resource clause has at least one range");
+    Ok(Some(propositions.into_iter().fold(first, |left, right| {
+        Proposition::And(Box::new(left), Box::new(right))
+    })))
+}
+
+pub(in crate::surface) fn resource_clause_loadable_props_at_state(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Result<Option<Vec<Proposition>>, ClickError> {
+    let Some(ranges) =
+        resource_clause_memory_ranges_at_state(resource, parameters, arguments, state)?
+    else {
+        return Ok(None);
+    };
+    let loadable = ranges
+        .iter()
+        .map(|range| memory_range_loadable_atom_prop(state.memory(), range))
+        .reduce(|left, right| Proposition::And(Box::new(left), Box::new(right)))
+        .expect("memory resource clause has at least one range");
+    let mut propositions = vec![loadable];
+    if matches!(resource, ResourceClause::ViewMemory(_)) {
+        let guards = ranges
+            .iter()
+            .flat_map(memory_range_loadable_guards)
+            .collect::<Vec<_>>();
+        reject_impossible_range_guards(&guards, assumptions)?;
+        propositions.extend(guards);
+    }
+    Ok(Some(propositions))
+}
+
+fn reject_impossible_range_guards(
+    guards: &[Proposition],
+    assumptions: &PureFactContext,
+) -> Result<(), ClickError> {
+    if guards.iter().any(|guard| match guard {
+        Proposition::ConditionIs(ConditionTerm::Constant(false), true) => true,
+        Proposition::ConditionIs(condition, true) => assumptions.decide(condition) == Some(false),
+        _ => false,
+    }) {
+        return Err(ClickError::new(
+            "memory range requires the verifier to have assumed a condition fact that cannot hold",
+        ));
+    }
+    Ok(())
+}
+
+fn resource_clause_memory_ranges_at_state(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<Option<Vec<CMemoryRange>>, ClickError> {
     let ranges = match resource {
         ResourceClause::Named { .. } => return Ok(None),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
@@ -1233,20 +1326,17 @@ pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
         }
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
-    let mut propositions = ranges
-        .iter()
-        .map(|range| memory_range_loadable_prop(state.memory(), range))
-        .collect::<Vec<_>>();
-    let first = propositions
-        .drain(..1)
-        .next()
-        .expect("memory resource clause has at least one range");
-    Ok(Some(propositions.into_iter().fold(first, |left, right| {
-        Proposition::And(Box::new(left), Box::new(right))
-    })))
+    Ok(Some(ranges))
 }
 
 pub(in crate::surface) fn memory_range_loadable_prop(
+    memory: &CMemory,
+    range: &CMemoryRange,
+) -> Proposition {
+    memory_range_loadable_atom_prop(memory, range)
+}
+
+pub(in crate::surface) fn memory_range_loadable_atom_prop(
     memory: &CMemory,
     range: &CMemoryRange,
 ) -> Proposition {
@@ -1256,6 +1346,14 @@ pub(in crate::surface) fn memory_range_loadable_prop(
         base,
         bytes,
     }
+}
+
+pub(in crate::surface) fn memory_range_loadable_guards(range: &CMemoryRange) -> Vec<Proposition> {
+    crate::kernel::memory_range_byte_count_guards(
+        range.start().clone(),
+        range.end().clone(),
+        range.element_width(),
+    )
 }
 
 pub(in crate::surface) fn concrete_loadable_block(
@@ -1382,7 +1480,7 @@ pub(in crate::surface) fn loadable_base_and_bytes(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Result<(Pointer, Bitvector32Term), ClickError> {
+) -> Result<(Pointer, Bitvector32Term, Vec<Proposition>), ClickError> {
     match requirement.inner() {
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
@@ -1398,13 +1496,20 @@ pub(in crate::surface) fn loadable_base_and_bytes(
                     "`loadable` segment has an end before its start: {start}..{end}"
                 )));
             }
-            let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
             let element_width = contract_segment_element_width(parameters, &segment.source);
-            let bytes =
-                bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
+            let bytes = crate::kernel::memory_range_byte_count(
+                segment.start.clone(),
+                segment.end.clone(),
+                element_width,
+            );
             Ok((
-                offset_pointer_by_elements(segment.base, segment.start, element_width),
+                offset_pointer_by_elements(segment.base, segment.start.clone(), element_width),
                 bytes,
+                crate::kernel::memory_range_byte_count_guards(
+                    segment.start,
+                    segment.end,
+                    element_width,
+                ),
             ))
         }
         Requirement::Labeled { .. } | Requirement::Proposition(_) | Requirement::Resource(_) => {

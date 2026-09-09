@@ -901,9 +901,10 @@ unfolded, or mismatched children are rejected. A leaf omits the empty child map.
 The new parent need not have existed before; `consumes l: tree(left);` names
 an input child without promising to return it separately.
 
-The older `unfold(root); unfold(root.left); fold(root.left); fold(root);`
-form remains available for compatibility. Only that form retains a legacy
-parent handle and requires the recorded children back unchanged.
+Parent-qualified resource handles such as `root.left` are not supported.
+Unfolding a recursive body requires `as { ... }` to name its selected children;
+refolding requires the explicit child map. Unfold consumes the parent, so it
+cannot be projected or unfolded again unless a new owned parent is constructed.
 
 Each child currently uses the parent's resource definition. Equations for all
 child fields must bind them to immediate constructor fields of the matching
@@ -1306,9 +1307,9 @@ function parameter names retain their ordinary contract meaning.
 `at(loop_label.entry, expression)` is currently supported inside invariants for
 that same labeled loop code region. It evaluates `expression` at the visit just
 before the loop region starts, then reuses that snapshot for invariant entry and
-preservation checks. Inside an explicit `preserve` proof, the same spelling is
-scoped to the fresh arbitrary loop-head visit whose body iteration is being
-proved.
+preservation checks. Inside an explicit `preserve` proof, the same spelling
+continues to denote that pre-loop snapshot; the current arbitrary loop-head
+visit is available through the ordinary unwrapped expression.
 
 The expression and proposition forms of `at(statement(N).entry, ...)` and
 `at(statement(N).exit, ...)` are currently supported in explicit proof-script
@@ -1605,6 +1606,13 @@ function entry, so a shifted segment such as
 after `owner->len` changes. Footprint matching uses proven pointer equalities,
 including unchanged field loads across a finite chain of certified memory
 effects.
+
+If a function omits an effect clause, its externally visible write footprint
+is empty: the function must not write memory that was live at entry. This is
+checked when the function contract is certified, so callers may preserve
+memory across a read-only callee without a synthesized `immutable` clause.
+Memory frames derived from transferred owned resources are checked by the
+resource transition instead.
 
 Loop-level and step-level effects are described in [proof-workflow.md](../../concepts/proof-workflow.md)
 and [memory-model.md](../../concepts/memory-model.md).

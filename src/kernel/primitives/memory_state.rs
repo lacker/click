@@ -1269,6 +1269,10 @@ impl CLocalEnvironment {
         self.binding(name).map(CLocalBinding::slot)
     }
 
+    pub(in crate::kernel) fn slots(&self) -> impl Iterator<Item = &Pointer> {
+        self.slots.keys()
+    }
+
     pub(in crate::kernel) fn name_for_slot(&self, pointer: &Pointer) -> Option<&str> {
         self.slots.get(pointer).map(String::as_str)
     }
@@ -2383,6 +2387,15 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
+    pub(in crate::kernel) fn has_call_memory_havoc(&self) -> bool {
+        // Call-havoc markers are concrete blocks with this prefix. Bound the
+        // B-tree query to that lexical interval so a load does not scan
+        // unrelated memory blocks on the evaluator hot path.
+        let first = PointerBlock::Concrete("call-havoc:".to_string());
+        let end = PointerBlock::Concrete("call-havoc;".to_string());
+        self.blocks.range(first..end).next().is_some()
+    }
+
     pub(in crate::kernel) fn is_read_only_block(&self, block: &PointerBlock) -> bool {
         self.blocks.get(block).is_some_and(CBlock::is_read_only)
     }
@@ -2553,21 +2566,10 @@ impl CState {
         identity: Variable,
         children: &[String],
     ) -> Option<&ResourceInstance> {
-        let mut instance = self.resource_instance_fields(identity)?;
-        for name in children {
-            crate::instrumentation::record_deterministic_work(1);
-            let parent = self.open_instances.owned_instance(instance.identity)?;
-            let index = parent
-                .opened_children
-                .binary_search_by(|(slot, _)| slot.cmp(name))
-                .ok()?;
-            let (_, child) = &parent.opened_children[index];
-            instance = self
-                .resources
-                .owned_instance(child.identity)
-                .or_else(|| self.open_instances.owned_instance(child.identity))?;
+        if !children.is_empty() {
+            return None;
         }
-        Some(instance)
+        self.resource_instance_fields(identity)
     }
     pub(crate) fn resource_instance_fields(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
@@ -2576,7 +2578,7 @@ impl CState {
         };
         self.resources
             .owned_instance(actual)
-            .or_else(|| self.open_instances.owned_instance(actual))
+            .or_else(|| self.instance_field_scope.owned_instance(actual))
     }
     pub(crate) fn owned_resource_instance(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
@@ -2664,6 +2666,77 @@ impl CState {
             }
             self.locals.name_for_slot(pointer).map(|name| (name, value))
         })
+    }
+
+    /// Refresh caller scalar bindings after call-site code has modified their
+    /// address-backed cells. Ordinary function frames keep their own local
+    /// environment, but inline bodies execute with a separate parameter
+    /// environment while retaining the caller's memory.
+    pub(in crate::kernel) fn sync_scalar_locals_from_memory(&mut self, memory: &CMemory) {
+        let updates = self
+            .locals
+            .bindings
+            .iter()
+            .filter_map(|(name, binding)| {
+                let (c_type, slot, volatile, pointee_volatile, constant, pointee_constant) =
+                    match binding {
+                        CLocalBinding::Object {
+                            c_type,
+                            slot,
+                            volatile,
+                            pointee_volatile,
+                            constant,
+                            pointee_constant,
+                            ..
+                        }
+                        | CLocalBinding::UninitializedObject {
+                            c_type,
+                            slot,
+                            volatile,
+                            pointee_volatile,
+                            constant,
+                            pointee_constant,
+                            ..
+                        } => (
+                            *c_type,
+                            slot.clone(),
+                            *volatile,
+                            *pointee_volatile,
+                            *constant,
+                            *pointee_constant,
+                        ),
+                        CLocalBinding::GlobalObject { .. }
+                        | CLocalBinding::ArrayObject { .. }
+                        | CLocalBinding::AggregateObject { .. } => return None,
+                    };
+                memory.known_value(&slot).map(|value| {
+                    (
+                        name.clone(),
+                        value,
+                        c_type,
+                        slot,
+                        volatile,
+                        pointee_volatile,
+                        constant,
+                        pointee_constant,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for (name, value, c_type, slot, volatile, pointee_volatile, constant, pointee_constant) in
+            updates
+        {
+            self.locals.set_typed_qualified_with_all_qualifiers(
+                name,
+                value,
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            );
+        }
     }
 
     pub fn resources(&self) -> &ResourceContext {
