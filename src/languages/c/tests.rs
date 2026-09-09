@@ -7,6 +7,10 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
         r#"
         static long low = -9223372036854775807L - 1;
         static unsigned long high = 18446744073709551615UL;
+        static unsigned long wrapped = -1;
+        static unsigned int mixed = -1 + 1U;
+        static unsigned int conditional = (1 ? -1 : 1U);
+        static unsigned int shifted = 0xffffffffU << 1;
         static unsigned long zero;
         static long promoted = 4294967295U;
     "#,
@@ -21,6 +25,19 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
         (
             "high",
             CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+        ),
+        (
+            "wrapped",
+            CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+        ),
+        ("mixed", CValue::UInt32(Bitvector32Term::Constant(0))),
+        (
+            "conditional",
+            CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+        ),
+        (
+            "shifted",
+            CValue::UInt32(Bitvector32Term::Constant(u32::MAX - 1)),
         ),
         ("zero", CValue::UInt64(Bitvector32Term::UInt64Constant(0))),
         (
@@ -3517,6 +3534,28 @@ fn c0_syntax_rejects_non_scalar_casts() {
 }
 
 #[test]
+fn c0_syntax_rejects_retyped_object_pointer_casts() {
+    for source in [
+        "uint8 *as_bytes(int32 *value) { return (uint8 *)value; }",
+        "int32 *as_words(uint8 *value) { return (int32 *)value; }",
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("retyping an object pointer must be rejected");
+        assert!(
+            error
+                .message()
+                .contains("retyping object-pointer casts are unsupported"),
+            "{source}: {}",
+            error.message()
+        );
+        assert!(
+            error.position().is_some(),
+            "{source}: missing cast position"
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_parses_object_pointer_casts_with_struct_tags() {
     let function = syntax::parse_function(
         r#"
@@ -3674,7 +3713,11 @@ fn c0_syntax_parses_negative_literals_and_unary_minus() {
     .expect("the minimum int32 literal should parse");
     assert!(matches!(
         minimum.body(),
-        syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(0x8000_0000))
+        syntax::C0Statement::Return(syntax::C0Expression::Cast {
+            expression,
+            c_type: syntax::C0Type::Int32,
+            ..
+        }) if matches!(expression.as_ref(), syntax::C0Expression::Int64Literal(-2147483648))
     ));
 
     let negation = syntax::parse_function(
@@ -3715,6 +3758,19 @@ fn c0_syntax_parses_c_integer_literal_radices_and_suffixes() {
                 && matches!(right.as_ref(), syntax::C0Expression::UInt32Literal(8))
     ));
 
+    let octal = syntax::parse_function(
+        r#"
+        int64 octal() {
+            return 037777777777;
+        }
+        "#,
+    )
+    .expect("large octal literals should consider unsigned int before long");
+    assert!(matches!(
+        octal.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::UInt32Literal(0xffff_ffff))
+    ));
+
     let minimum = syntax::parse_function(
         r#"
         int32 minimum() {
@@ -3725,7 +3781,41 @@ fn c0_syntax_parses_c_integer_literal_radices_and_suffixes() {
     .expect("negative hexadecimal literals should preserve int32 minimum");
     assert!(matches!(
         minimum.body(),
-        syntax::C0Statement::Return(syntax::C0Expression::Int64Literal(-0x8000_0000))
+        syntax::C0Statement::Return(syntax::C0Expression::Cast {
+            expression,
+            c_type: syntax::C0Type::Int32,
+            ..
+        }) if matches!(expression.as_ref(), syntax::C0Expression::Int64Literal(-0x8000_0000))
+    ));
+
+    let conditional = syntax::parse_function(
+        r#"
+        int32 conditional() {
+            return (1 ? -1 : 1u) < 0;
+        }
+        "#,
+    )
+    .expect("conditional operands should use their common C type");
+    assert!(matches!(
+        conditional.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::LessThan(left, right))
+            if matches!(right.as_ref(), syntax::C0Expression::Int32Literal(0))
+                && matches!(
+                    left.as_ref(),
+                    syntax::C0Expression::Conditional { then_branch, else_branch, .. }
+                        if matches!(
+                            then_branch.as_ref(),
+                            syntax::C0Expression::Cast {
+                                expression,
+                                c_type: syntax::C0Type::UInt32,
+                                ..
+                            } if matches!(expression.as_ref(), syntax::C0Expression::Int32Literal(0xffff_ffff))
+                        )
+                        && matches!(
+                            else_branch.as_ref(),
+                            syntax::C0Expression::UInt32Literal(1)
+                        )
+                )
     ));
 }
 
@@ -3744,6 +3834,24 @@ fn c0_syntax_rejects_invalid_octal_literals() {
         "{}",
         error.message()
     );
+}
+
+#[test]
+fn c0_syntax_rejects_incompatible_conditional_types() {
+    let error = syntax::parse_function(
+        r#"
+        int32 bad(int32* left, uint8* right) {
+            return 1 ? left : right;
+        }
+        "#,
+    )
+    .expect_err("incompatible conditional pointer types must be rejected");
+    assert!(
+        error
+            .message()
+            .contains("conditional operator branches have incompatible types")
+    );
+    assert!(error.position().is_some());
 }
 
 #[test]
@@ -4719,15 +4827,18 @@ fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
     let kernel_expression = expression.to_kernel_expression();
     assert_eq!(
         kernel_expression,
-        crate::kernel::c_add(
+        crate::kernel::c_cast(
             crate::kernel::c_add(
                 crate::kernel::c_add(
-                    crate::kernel::c_int32_literal(4),
-                    crate::kernel::c_int32_literal(1),
+                    crate::kernel::c_add(
+                        crate::kernel::c_uint64_literal(4),
+                        crate::kernel::c_uint64_literal(1),
+                    ),
+                    crate::kernel::c_uint64_literal(8),
                 ),
-                crate::kernel::c_int32_literal(8),
+                crate::kernel::c_uint64_literal(8),
             ),
-            crate::kernel::c_int32_literal(8),
+            crate::kernel::CType::Int32,
         )
     );
 }

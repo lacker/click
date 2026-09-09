@@ -77,6 +77,9 @@ int32 vector_copy(
     requires length <= src_capacity;
     requires 1 <= dst_capacity;
     requires 1 <= src_capacity;
+    requires ((uint32)length) <= 1073741823u32;
+    requires ((uint32)dst_capacity) <= 1073741823u32;
+    requires ((uint32)src_capacity) <= 1073741823u32;
     owns dst[0..dst_capacity];
     views src[0..src_capacity];
     requires separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
@@ -243,6 +246,51 @@ int32 vector_grow(struct vector* owner) {
     }
     have new_capacity <= 536870911 by {
         assumption();
+    }
+    have 0 <= new_capacity by {
+        apply(int32_positive_is_nonnegative(new_capacity)) using {
+            1 <= new_capacity;
+        }
+        assumption();
+    }
+    have 0 <= old_capacity by {
+        have old_capacity == owner->cap by {
+            normalize();
+        }
+        rewrite(old_capacity == owner->cap);
+        apply(int32_positive_is_nonnegative(owner->cap)) using {
+            1 <= owner->cap;
+        }
+        assumption();
+    }
+    have ((uint32)new_capacity) <= 1073741823u32 by {
+        arithmetic() using {
+            0 <= new_capacity;
+            new_capacity <= 536870911;
+        }
+    }
+    have ((uint32)old_capacity) <= 1073741823u32 by {
+        have old_capacity == owner->cap by {
+            normalize();
+        }
+        rewrite(old_capacity == owner->cap);
+        arithmetic() using {
+            1 <= owner->cap;
+            owner->cap <= 536870910;
+        }
+    }
+    have owner->len <= 536870910 by {
+        apply(int32_le_transitive(owner->len, owner->cap, 536870910)) using {
+            owner->len <= owner->cap;
+            owner->cap <= 536870910;
+        }
+        assumption();
+    }
+    have ((uint32)owner->len) <= 1073741823u32 by {
+        arithmetic() using {
+            0 <= owner->len;
+            owner->len <= 536870910;
+        }
     }
     have loadable(old_data[0..old_capacity]) by {
         transport(loadable(old(owner->data[0..owner->cap])), loadable(old_data[0..old_capacity])) using {

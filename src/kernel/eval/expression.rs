@@ -1973,6 +1973,22 @@ pub(in crate::kernel) fn is_external_memory_pointer(pointer: &Pointer) -> bool {
         && !pointer.block.starts_with("havoc:")
 }
 
+pub(in crate::kernel) fn resolve_local_pointer_alias(
+    state: &CState,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Pointer {
+    state
+        .locals
+        .slots()
+        .find(|slot| {
+            **slot == *pointer
+                || pointers_proven_equal_for_memory_resolution(pointer, slot, assumptions)
+        })
+        .cloned()
+        .unwrap_or_else(|| pointer.clone())
+}
+
 pub(in crate::kernel) fn c_expression_pointee_type(
     state: &CState,
     expression: &CExpression,

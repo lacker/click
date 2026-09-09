@@ -1297,6 +1297,26 @@ pub(super) fn c_function_contract_certification_assumptions(
     .ok()
     .and_then(Result::ok);
     let required_resources = required_resources?;
+    for fact in required_resources.facts() {
+        let Some(range) = fact.memory_view_range() else {
+            continue;
+        };
+        for guard in crate::kernel::memory_range_byte_count_guards(
+            range.start().clone(),
+            range.end().clone(),
+            range.element_width(),
+        ) {
+            let guard_is_false = match &guard {
+                Proposition::ConditionIs(condition, true) => {
+                    assumptions.decide(condition) == Some(false)
+                }
+                _ => false,
+            };
+            if !guard_is_false {
+                assumptions = assumptions.assume_proposition(guard);
+            }
+        }
+    }
     let expanded = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
         function.composite_resource_definitions(),
