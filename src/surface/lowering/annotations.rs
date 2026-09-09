@@ -3443,7 +3443,14 @@ impl AnnotationLowerer<'_> {
         loop_index: usize,
         body: &syntax::C0Statement,
     ) -> Result<Vec<CLoopEffectCheck>, ClickError> {
-        let modified_locals = c0_loop_modified_locals(body);
+        // Static-storage objects are stable across loop iterations, even
+        // though their values are loop-modified. A whole-loop effect may
+        // therefore name one; only automatic locals make a whole-loop range
+        // iteration-dependent.
+        let modified_locals = c0_loop_modified_locals(body)
+            .into_iter()
+            .filter(|name| self.entry_state.global_object_type(name).is_none())
+            .collect();
         let mut checks = self
             .structural_clauses
             .iter()

@@ -253,6 +253,13 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
     let initial_state = execution.core.frontier.execution_start_state(state).clone();
+    // A frontier-local whole-loop effect already supplies the loop's range;
+    // inheriting the function effect as well duplicates the frame path. Loops
+    // without one still need the function summary for static-storage writes.
+    let inherit_function_effects_into_loops = !loop_template
+        .items()
+        .iter()
+        .any(|item| item.kind() == StructuralItemKind::Effect);
     let annotated = annotated_function(
         &bound_function_block,
         parsed_function,
@@ -261,7 +268,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        false,
+        inherit_function_effects_into_loops,
     )?;
     if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
