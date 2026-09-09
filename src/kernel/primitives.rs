@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
+pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
 mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{

@@ -101,6 +101,49 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     )
 }
 
+pub(in crate::kernel) fn lower_spec_proposition_at_state_without_range_guards(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    // Composite-resource population setup uses loadability as an opaque
+    // symbolic summary. Public contract requirements and ensures use the
+    // ordinary lowering path below, which attaches the range validity
+    // obligations before the resulting bytes term can be consumed.
+    let SpecProposition::MemoryLoadable {
+        memory,
+        base,
+        start,
+        end,
+        element_width,
+    } = proposition
+    else {
+        return lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            proposition,
+            loop_entry_state,
+            assumptions,
+            &BTreeMap::new(),
+            budget,
+        );
+    };
+    lower_spec_memory_loadable_at_state(
+        state,
+        memory,
+        base,
+        start,
+        end,
+        *element_width,
+        loop_entry_state,
+        assumptions,
+        &BTreeMap::new(),
+        budget,
+        false,
+    )
+}
+
 pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings(
     state: &CState,
     proposition: &SpecProposition,
@@ -522,6 +565,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             assumptions,
             algebraic_bindings,
             budget,
+            true,
         ),
         SpecProposition::Defined(expression) => {
             let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
@@ -2413,6 +2457,7 @@ fn lower_spec_memory_loadable_at_state(
     assumptions: &PureFactContext,
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
+    enforce_range_guards: bool,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let memory = match memory {
         SpecMemory::Current => state.memory(),
@@ -2439,7 +2484,8 @@ fn lower_spec_memory_loadable_at_state(
         ] => {
             // Terms are canonical at creation: the same segment lowered
             // anywhere is one proposition.
-            let elements = canonical_subtract(end.clone(), start.clone());
+            let range_start = start.clone();
+            let range_end = end.clone();
             let mut discarded_facts = Vec::new();
             let start =
                 crate::kernel::canonicalized_offset_index_term(start.clone(), &mut discarded_facts);
@@ -2450,53 +2496,33 @@ fn lower_spec_memory_loadable_at_state(
                     canonical_scaled_offset(start, i64::from(element_width)),
                 ),
             };
+            let mut obligations = path.obligations;
+            if enforce_range_guards {
+                for guard in crate::kernel::memory_range_byte_count_guards(
+                    range_start.clone(),
+                    range_end.clone(),
+                    element_width,
+                ) {
+                    add_proof_obligation(&mut obligations, assumptions, guard)?;
+                }
+            }
             Some(SpecPropositionPath {
                 proposition: Proposition::CMemoryLoadable {
                     memory: memory.clone(),
                     base,
-                    bytes: canonical_multiply(elements, Bitvector32Term::Constant(element_width)),
+                    bytes: crate::kernel::memory_range_byte_count(
+                        range_start,
+                        range_end,
+                        element_width,
+                    ),
                 },
                 facts: path.facts,
-                obligations: path.obligations,
+                obligations,
             })
         }
         _ => None,
     })
     .collect())
-}
-
-/// `left - right` with constants folded, a zero subtrahend dropped, equal
-/// terms cancelled, and shared addends of two sums cancelled.
-fn canonical_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    match (&left, &right) {
-        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
-            Bitvector32Term::Constant(left.wrapping_sub(*right))
-        }
-        (_, Bitvector32Term::Constant(0)) => left,
-        _ if left == right => Bitvector32Term::Constant(0),
-        (
-            Bitvector32Term::Add(left_base, left_addend),
-            Bitvector32Term::Add(right_base, right_addend),
-        ) if left_base == right_base => {
-            canonical_subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
-        }
-        _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
-    }
-}
-
-/// `left * right` with constants folded and unit and zero factors applied.
-fn canonical_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    match (&left, &right) {
-        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
-            Bitvector32Term::Constant(left.wrapping_mul(*right))
-        }
-        (_, Bitvector32Term::Constant(1)) => left,
-        (Bitvector32Term::Constant(1), _) => right,
-        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
-            Bitvector32Term::Constant(0)
-        }
-        _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
-    }
 }
 
 /// An element index scaled to bytes, folded when the index is a constant.

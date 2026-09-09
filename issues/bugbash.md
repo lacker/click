@@ -894,7 +894,14 @@ int32 subnormal_divide() {
 
 ---
 
-## 13. Range byte counts wrap modulo 2^32
+## 13. ~~Range byte counts wrap modulo 2^32~~ — fixed
+
+**Status: fixed.** Range lowering now uses one canonical 32-bit byte-count
+helper. Direct loadability requirements and public spec loadability carry
+forward-range and no-overflow conditions; spec claims record them as proof
+obligations while the atomic loadability fact stays separate. Internal
+composite-resource summaries remain symbolic until their owning resource is
+used, preserving the existing resource-expansion contract.
 
 **Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
@@ -912,16 +919,15 @@ regression takes. It already rejects a constant reversed range, but the count
 here is the symbolic `n`, so the wrap happens later, when the kernel folds
 `n * 4` against the path's `n == 1073741825`.
 
-Measured signature, with `loadable(p[0..1])` required: `n = 2^30` (byte count
+Before the fix, the measured signature with `loadable(p[0..1])` required was:
+`n = 2^30` (byte count
 folds to 0) and `n = 2^30 + 1` (folds to 4) both certify, while `n = 2^30 + 2`
 (folds to 8) is correctly rejected. `n = -1` also certifies, which is
-defensible: an empty range is vacuously loadable.
+incorrect for a loadable view because the range is reversed.
 
-A fix needs a decision rather than a local patch: either carry byte extents in
-64 bits, or emit a no-overflow obligation where an element range becomes a
-byte count. The
-memory model documents a 32-bit block extent, so the second is the smaller
-change but needs an obligation channel at both sites.
+The memory model documents a 32-bit block extent, so the fix emits the
+no-overflow obligation at both range-to-byte lowering sites and keeps the
+existing 32-bit representation.
 
 **Regression** (`mdtests/range_byte_count_wraps_rejected.md`):
 
@@ -947,8 +953,7 @@ int32 symn(int32 p[], int32 n) {
 
 **Acceptance criteria.**
 - Both the wrapping and the negative case are rejected.
-- Compute footprints in 64-bit, or emit a no-overflow obligation on range
-  lowering; either way empty and reversed ranges stay empty.
+- Emit a no-overflow and forward-range obligation on range lowering.
 - Audit the other range operations for the same gap: element-to-byte
   arithmetic without a side condition appears wherever a range is measured.
 
