@@ -187,10 +187,11 @@ impl<'a> Proof<'a> {
         let (state, scope) = self
             .state
             .open_invariant_body(loop_entry, checks, |goal| PropositionPresentation {
-                surface: synthesize_surface_proposition(
+                surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_and_post(
                     goal,
                     context.parsed_function.parameters(),
                     context.arguments,
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state),
                     &execution.core.state,
                 )
                 .map(Arc::new),

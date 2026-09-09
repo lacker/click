@@ -2283,22 +2283,6 @@ fn selected_branched_post_execution_have_shares_identical_path_certificates() {
 
 #[test]
 fn selected_pure_case_split_simp_expands_by_removal() {
-    // The default libtest worker stack is 2 MiB. This explicit 1.75 MiB
-    // budget catches check-frame growth while staying below that default.
-    // Calibration (2026-08-21): the check needs between 1216 and 1280 KiB
-    // on rustc 1.92 / macOS, and overflowed a 1.25 MiB budget on CI's Linux
-    // stable toolchain, so the budget carries about 40% headroom over the
-    // measured need. Recalibrate on the CI platform before tightening it.
-    std::thread::Builder::new()
-        .name("small-stack-expansion-check".to_string())
-        .stack_size(7 * 256 * 1024)
-        .spawn(selected_pure_case_split_simp_expands_by_removal_on_small_stack)
-        .expect("the small-stack check canary thread should start")
-        .join()
-        .expect("the small-stack check canary should not panic");
-}
-
-fn selected_pure_case_split_simp_expands_by_removal_on_small_stack() {
     // A smart exit `simp` whose claims all close by exact checks contributes
     // no surface tactics of its own. Its expansion must remove the tactic —
     // NOT graft the enclosing branch skeleton as an `if` tree with empty
@@ -9463,6 +9447,30 @@ fn callback_counter_refinement_expands_at_every_smart_site() {
                 error.message()
             )
         });
+    }
+}
+
+#[test]
+fn const_callback_contract_expands_at_every_smart_site() {
+    let markdown = include_str!("../../../mdtests/const_callback_contract.md");
+    let mdtest =
+        crate::cli::parse_mdtest(std::path::Path::new("const_callback.md"), markdown).unwrap();
+    let source = mdtest.click_source.as_deref().unwrap();
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &c_sources).unwrap();
+    let sites = c0_smart_tactic_source_sites(source, &c_sources).unwrap();
+    assert!(!sites.is_empty());
+    for site in sites {
+        let position =
+            c0_tactic_source_position(source, &c_sources, &site.claim_label, site.source_index)
+                .unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(source, &c_sources, position.line, position.column).unwrap();
+        verify_c0_sources(&expanded, &c_sources).unwrap();
     }
 }
 

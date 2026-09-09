@@ -1743,8 +1743,7 @@ impl AnnotationLowerer<'_> {
         snapshot
             .map(|state| {
                 state
-                    .resources()
-                    .owned_instance(access.identity)
+                    .resource_instance_fields(access.identity)
                     .and_then(|instance| instance.fields().get(access.field_index))
                     .cloned()
                     .ok_or_else(|| {

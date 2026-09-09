@@ -399,6 +399,52 @@ impl CheckedResourceRewrite {
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
         let assumptions = before_facts.assumptions();
+        if let CResource::Instance(instance) = selected.resource() {
+            let definition = function
+                .composite_resource_definition(instance.name())
+                .ok_or("instance definition is not registered on the function")?;
+            let unfold = before_state
+                .resources()
+                .owned_instance(instance.identity())
+                .is_some();
+            let (expected, allowed) = crate::kernel::rewrite_resource_instance(
+                before_state,
+                instance,
+                definition,
+                assumptions,
+                unfold,
+            )?;
+            let mut unchanged = after_state.clone();
+            unchanged.resources = before_state.resources.clone();
+            unchanged.open_instances = before_state.open_instances.clone();
+            if unchanged != *before_state
+                || !expected
+                    .resources
+                    .same_exchange_from(&after_state.resources, &before_state.resources)
+                || !expected
+                    .open_instances
+                    .same_exchange_from(&after_state.open_instances, &before_state.open_instances)
+            {
+                return Err("instance rewrite changed an unchecked part of the state");
+            }
+            let introduced = after_facts
+                .introduced_since(before_facts)
+                .ok_or("instance rewrite facts do not descend from their input")?;
+            let allowed = allowed
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            if introduced.iter().any(|fact| !allowed.contains(fact)) {
+                return Err("instance rewrite introduced an unchecked fact");
+            }
+            return Ok(Self {
+                before_state: before_state.clone(),
+                after_state: after_state.clone(),
+                before_facts: before_facts.clone(),
+                after_facts: after_facts.clone(),
+                definition: definition.clone(),
+                load_equalities: load_equality_capture.finish(),
+            });
+        }
         if before_state
             .resources()
             .directly_supporting_fact(selected, assumptions)
@@ -2677,6 +2723,16 @@ fn check_evidence_events_with_call_events(
     let mut completed = None;
     let mut current_facts = facts.clone();
     for event in events {
+        if let Some(CStatementOutcome::Return {
+            state: returned, ..
+        }) = &mut completed
+        {
+            if let CheckedExecutionEvent::ResourceRewrite(rewrite) = event {
+                current_facts = rewrite.advance_checked(returned, &current_facts, &call_events)?;
+                *returned = rewrite.after_state.clone();
+                continue;
+            }
+        }
         if completed.is_some() {
             return None;
         }
@@ -2863,9 +2919,20 @@ fn trace_completion(
                     }
                 }
             }
-            CheckedExecutionEvent::Condition(_)
-            | CheckedExecutionEvent::ResourceObservation(_)
-            | CheckedExecutionEvent::ResourceRewrite(_) => {
+            CheckedExecutionEvent::ResourceRewrite(rewrite) => {
+                fallthrough = None;
+                if let Some((outcome, executed_under)) = &mut completed {
+                    let CStatementOutcome::Return { state, .. } = outcome else {
+                        return Err("resource rewriting requires a returned state");
+                    };
+                    if *state != rewrite.before_state {
+                        return Err("post-return resource rewrite has a different input state");
+                    }
+                    *state = rewrite.after_state.clone();
+                    *executed_under = rewrite.after_facts.assumptions().clone();
+                }
+            }
+            CheckedExecutionEvent::Condition(_) | CheckedExecutionEvent::ResourceObservation(_) => {
                 fallthrough = None;
                 if completed.is_some() {
                     return Err("a trace continues past its completing theorem");
@@ -3896,6 +3963,52 @@ impl ExecutionProofCore {
         Ok(())
     }
 
+    /// A logical resource exchange after the returning C statement. This
+    /// cannot execute C, change the result, or bypass the checked body rule.
+    pub(crate) fn record_return_resource_rewrite(
+        &mut self,
+        function: &CFunction,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_facts: &ProofFacts,
+    ) -> Result<(), &'static str> {
+        if self.execution_evidence.len() != 1 {
+            return Err("return instance folding currently requires one retained execution trace");
+        }
+        if !self.evidence_completed {
+            return Err("return resource rewrite requires completed execution");
+        }
+        let CResource::Instance(instance) = selected.resource() else {
+            return Err("return rewrite requires a named instance");
+        };
+        let definition = function
+            .composite_resource_definition(instance.name())
+            .ok_or("instance definition is not registered on the function")?;
+        // Compute the exchange in the retained C-body state, not the
+        // caller-side projection used by postcondition expressions.
+        let (after_state, _) = crate::kernel::rewrite_resource_instance(
+            self.reached_state(),
+            instance,
+            definition,
+            before_facts.assumptions(),
+            false,
+        )?;
+        let rewrite = CheckedResourceRewrite::check(
+            function,
+            self.reached_state(),
+            before_facts,
+            selected,
+            &after_state,
+            after_facts,
+            &self.checked_call_events,
+        )?;
+        self.evidence_state = Some(after_state.clone());
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::ResourceRewrite(rewrite.clone()));
+        }
+        Ok(())
+    }
+
     /// Records a branch node only after [`CheckedExecutionBranch::check`]
     /// has validated exact source coverage, both persistent arm suffixes,
     /// the common continuation, and the joined state.
@@ -4063,18 +4176,39 @@ impl ExecutionProofCore {
         }
         let mut paths = Vec::with_capacity(candidates.paths().len());
         for (candidate, trace) in candidates.paths().iter().zip(&self.execution_evidence) {
+            let events = trace.to_vec();
             let (completed, statement_assumptions, interface_execution_facts) = trace_completion(
                 function,
-                &trace.to_vec(),
+                &events,
                 &assumptions,
                 function.return_type() == crate::kernel::CType::Void
                     && self.evidence_source.is_none()
                     && self.frontier.region == ExecutionRegionKind::Function,
             )?;
+            // Publication precedes post-return logical folds. Check its
+            // original C outcome against the trace before those exchanges;
+            // the final exit rule below still checks the folded ownership.
+            let publication_end = events
+                .iter()
+                .rposition(|event| !matches!(event, CheckedExecutionEvent::ResourceRewrite(_)))
+                .map_or(0, |index| index + 1);
+            let publication_completed = if publication_end < events.len() {
+                trace_completion(
+                    function,
+                    &events[..publication_end],
+                    &assumptions,
+                    function.return_type() == crate::kernel::CType::Void
+                        && self.evidence_source.is_none()
+                        && self.frontier.region == ExecutionRegionKind::Function,
+                )?
+                .0
+            } else {
+                completed.clone()
+            };
             let (outcome, obligations) = crate::kernel::c_function_outcome_from_statement_outcome(
                 candidates.state(),
                 function,
-                completed.clone(),
+                publication_completed,
                 candidate.obligations().to_vec(),
                 &statement_assumptions,
             );
@@ -4087,7 +4221,14 @@ impl ExecutionProofCore {
             // execution applies at return. A contract the body violates at
             // exit ends the path in that runtime error.
             let (outcome, obligations) = match crate::kernel::functions::contract_exit_outcome(
-                candidates.state(),
+                if has_checked_entry {
+                    self.function_entry
+                        .as_ref()
+                        .expect("checked entry exists")
+                        .caller_state()
+                } else {
+                    candidates.state()
+                },
                 function,
                 candidates.arguments(),
                 completed,
@@ -4218,6 +4359,154 @@ mod tests {
         CResourceAccessMode, CResourceFact, CResourceSpec, CType, CValue, Pointer, PointerBlock,
         PointerOffsetTerm, SpecExpression, c_function, int32,
     };
+
+    #[test]
+    fn instance_rewrite_certificate_rejects_unrelated_state_and_fact_changes() {
+        use crate::kernel::{ResourceFieldSchema, ResourceFieldType, ResourceInstance, Variable};
+        let schema =
+            ResourceFieldSchema::new(vec![("value".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap();
+        let instance = ResourceInstance::new(
+            Variable(1),
+            "cell".into(),
+            vec![].into(),
+            schema.clone(),
+            vec![int32(7).into()].into(),
+        )
+        .unwrap();
+        let definition =
+            CCompositeResourceDefinition::new("cell", vec![], None, false, vec![], vec![])
+                .with_instance_schema(Some(schema));
+        let function = c_function(
+            CType::Void,
+            "test",
+            vec![],
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        )
+        .with_composite_resource_definitions(vec![definition.clone()]);
+        let selected = CResourceFact::own(CResource::Instance(instance.clone()));
+        let before = CState::new()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(selected.clone()));
+        let facts = ProofFacts::default();
+        let (opened, _) = crate::kernel::rewrite_resource_instance(
+            &before,
+            &instance,
+            &definition,
+            facts.assumptions(),
+            true,
+        )
+        .unwrap();
+        let calls = CheckedCallEvents::default();
+        CheckedResourceRewrite::check(
+            &function, &before, &facts, &selected, &opened, &facts, &calls,
+        )
+        .unwrap();
+        let forged = opened.clone().with_resource_context(
+            opened
+                .resources()
+                .clone()
+                .unchecked_with_fact(CResourceFact::own_token("forged".into(), vec![])),
+        );
+        assert!(
+            CheckedResourceRewrite::check(
+                &function, &before, &facts, &selected, &forged, &facts, &calls
+            )
+            .is_err()
+        );
+        let forged = opened
+            .clone()
+            .with_memory(CMemory::new().with_block("invented", 4));
+        assert!(
+            CheckedResourceRewrite::check(
+                &function, &before, &facts, &selected, &forged, &facts, &calls
+            )
+            .is_err()
+        );
+        let forged_facts = facts.with_fact(Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::Constant(false),
+            true,
+        ));
+        assert!(
+            CheckedResourceRewrite::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &opened,
+                &forged_facts,
+                &calls
+            )
+            .is_err()
+        );
+        let (closed, _) = crate::kernel::rewrite_resource_instance(
+            &opened,
+            &instance,
+            &definition,
+            facts.assumptions(),
+            false,
+        )
+        .unwrap();
+        CheckedResourceRewrite::check(
+            &function, &opened, &facts, &selected, &closed, &facts, &calls,
+        )
+        .unwrap();
+        let mut samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let mut state = before.clone();
+            for identity in 2..=size {
+                let mut unrelated = instance.clone();
+                unrelated.identity = Variable(identity);
+                state.open_instances = state
+                    .open_instances
+                    .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let (open, _) = crate::kernel::rewrite_resource_instance(
+                    &state,
+                    &instance,
+                    &definition,
+                    facts.assumptions(),
+                    true,
+                )
+                .unwrap();
+                CheckedResourceRewrite::check(
+                    &function, &state, &facts, &selected, &open, &facts, &calls,
+                )
+                .unwrap();
+                let (closed, _) = crate::kernel::rewrite_resource_instance(
+                    &open,
+                    &instance,
+                    &definition,
+                    facts.assumptions(),
+                    false,
+                )
+                .unwrap();
+                CheckedResourceRewrite::check(
+                    &function, &open, &facts, &selected, &closed, &facts, &calls,
+                )
+                .unwrap();
+            });
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0] + 256,
+                "certificate must inspect only its exchange: {samples:?}"
+            );
+        }
+        assert!(
+            CheckedResourceRewrite::check(
+                &function,
+                &CState::new(),
+                &facts,
+                &selected,
+                &before,
+                &facts,
+                &calls
+            )
+            .is_err()
+        );
+    }
 
     fn condition_event(
         state: &CState,

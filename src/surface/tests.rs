@@ -3,6 +3,83 @@ use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
 #[test]
+fn named_instance_memory_body_round_trip_preserves_fields() {
+    let source = r#"verifying "read.c";
+        spec enum Mark { Clear, Set }
+        resource cell(p: int32*) {
+            field value: int32;
+            field mark: Mark;
+            owns p[0..1];
+            fact p[0] == value;
+        }
+        int32 read(int32* p) {
+            owns c: cell(p);
+            ensures result == c.value;
+            ensures c.value == old(c.value);
+            ensures c.mark == old(c.mark);
+        } by { unfold(c); execute(); fold(c); simp(); }
+    "#;
+    let c = [("read.c", "int32 read(int32* p) { return *p; }")];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(
+        &source.replace("by { unfold(c); execute(); fold(c); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn named_instance_memory_body_rejects_invalid_folds() {
+    let source = r#"verifying "read.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            owns p[0..1];
+            fact p[0] == value;
+        }
+        int32 read(int32* p) {
+            owns c: cell(p);
+            ensures result == c.value;
+        } by { BODY }
+    "#;
+    for (body, c) in [
+        (
+            "fold(c); execute(); simp();",
+            "int32 read(int32* p) { return *p; }",
+        ),
+        (
+            "unfold(c); unfold(c); execute(); fold(c); simp();",
+            "int32 read(int32* p) { return *p; }",
+        ),
+        (
+            "unfold(c); execute(); fold(c); fold(c); simp();",
+            "int32 read(int32* p) { return *p; }",
+        ),
+        ("execute(); simp();", "int32 read(int32* p) { return *p; }"),
+        (
+            "unfold(c); execute(); simp();",
+            "int32 read(int32* p) { return *p; }",
+        ),
+        (
+            "unfold(c); execute(); fold(c); simp();",
+            "int32 read(int32* p) { *p = 0; return *p; }",
+        ),
+    ] {
+        let error = verify_c0_sources(&source.replace("BODY", body), &[("read.c", c)])
+            .err()
+            .unwrap_or_else(|| panic!("invalid instance proof accepted: {body}, {c}"));
+        if c.contains("*p = 0") {
+            assert!(
+                error
+                    .message
+                    .contains("fold requires the unchanged instance body facts"),
+                "{error:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn checked_original_claim_can_close_after_rewrite_but_unrelated_have_cannot() {
     let source = r#"verifying "identity.c";
         int32 identity(int32 x) {
@@ -513,8 +590,16 @@ fn resource_fields_preserve_checked_types_and_do_not_lower_to_legacy_resources()
         &ClickFunctionEnvironment::new(&[]),
     )
     .unwrap();
-    assert!(
-        lowered.is_empty(),
+    assert_eq!(lowered.len(), 1);
+    assert_eq!(
+        lowered[0],
+        lowered[0]
+            .clone()
+            .with_instance_schema(Some(schema.clone()))
+    );
+    assert_ne!(
+        lowered[0],
+        lowered[0].clone().with_instance_schema(None),
         "field metadata must never be erased into a legacy composite"
     );
 }
@@ -620,7 +705,6 @@ fn resource_fields_reject_invalid_declarations() {
             "if p != 0 { field x: int32; }",
             "resource fields must be declared before body clauses",
         ),
-        ("field x: int32; fact x == 0;", "x"),
     ] {
         let source = format!("resource cell(p: int32*) {{ {body} }}");
         let error = parser::parse(&source).unwrap_err();

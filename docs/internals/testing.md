@@ -127,6 +127,13 @@ it is not a way to make one difficult proof pass.
 
 ### Scaling regressions
 
+The built-in standard library is parsed and resource-expanded once per process.
+Only immutable surface declarations are shared; each verification constructs
+its own environments and kernel session. The initialization-count regression
+checks 1, 2, 4, and 8 fixture threads, including successful and failing programs
+with conflicting declaration names. Keep this reuse across fresh mdtest threads;
+a thread-local cache would repeat setup for every fixture.
+
 An optimization that changes a hot-path representation or algorithm should
 include a generated deterministic-work regression at four or more input sizes.
 Test independent dimensions rather than one realistic example: functions,

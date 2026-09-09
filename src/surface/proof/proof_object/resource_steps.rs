@@ -3,6 +3,96 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    fn apply_instance_rewrite(
+        &self,
+        binding: &ResourceInstanceBinding,
+        unfold: bool,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("instance fold/unfold requires a C execution proof"));
+        };
+        let branch = self
+            .focused_branch()
+            .ok_or_else(|| self.step_error("instance rewrite requires an open goal"))?;
+        let mut execution = branch
+            .state
+            .execution
+            .as_deref()
+            .cloned()
+            .ok_or_else(|| self.step_error("instance rewrite has no execution snapshot"))?;
+        let outcome = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => Some(goal),
+            _ => {
+                self.require_execution_frontier("instance fold/unfold")?;
+                None
+            }
+        };
+        let before: &CState = outcome.map_or(&*execution.core.state, |goal| &*goal.data.core.state);
+        let instance = before
+            .resource_instance_fields(binding.identity)
+            .ok_or_else(|| self.step_error("resource instance has no owned or open handle"))?;
+        let definition = context
+            .function
+            .composite_resource_definition(instance.name())
+            .ok_or_else(|| self.step_error("resource instance has no registered body"))?;
+        let selected = CResourceFact::own(CResource::Instance(instance.clone()));
+        let (after, added) = crate::kernel::rewrite_resource_instance(
+            before,
+            instance,
+            definition,
+            self.facts().assumptions(),
+            unfold,
+        )
+        .map_err(|message| self.step_error(message))?;
+        let mut facts = self.facts().clone();
+        for fact in &added {
+            facts = facts.with_kernel_checked_fact(fact.clone());
+        }
+        let updated_branch = if let Some(goal) = outcome {
+            execution
+                .core
+                .record_return_resource_rewrite(context.function, self.facts(), &selected, &facts)
+                .map_err(|message| self.step_error(message))?;
+            execution.core.state = after.clone().into();
+            let mut updated = goal.clone();
+            let mut data = (*goal.data).clone();
+            data.core.state = after.into();
+            updated.data = Arc::new(data);
+            OpenBranch::function_outcome(
+                updated,
+                BranchState {
+                    facts,
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: Some(Arc::new(execution)),
+                },
+            )
+        } else {
+            execution
+                .core
+                .record_resource_rewrite(
+                    context.function,
+                    context.arguments,
+                    self.facts(),
+                    &selected,
+                    &after,
+                    &facts,
+                )
+                .map_err(|message| self.step_error(message))?;
+            execution.core.state = after.into();
+            branch.with_state(BranchState {
+                facts,
+                unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                execution: Some(Arc::new(execution)),
+            })
+        };
+        Ok(CheckedFocusedTransition {
+            locals: self.state().locals().clone(),
+            branch: Some(updated_branch),
+            added_facts: added.clone(),
+            checked_facts: added,
+        })
+    }
+
     pub(super) fn apply_function_unfold(
         &self,
         application: &ClickFunctionApplication,
@@ -627,6 +717,9 @@ impl<'a> Proof<'a> {
         &self,
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if let ResourceClause::Named { binding, .. } = resource {
+            return self.apply_instance_rewrite(binding, true);
+        }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `unfold` requires an execution-frontier proof"));
         };
@@ -691,6 +784,9 @@ impl<'a> Proof<'a> {
         &self,
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if let ResourceClause::Named { binding, .. } = resource {
+            return self.apply_instance_rewrite(binding, false);
+        }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
         };
@@ -824,6 +920,9 @@ impl<'a> Proof<'a> {
         &self,
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if let ResourceClause::Named { binding, .. } = resource {
+            return self.apply_instance_rewrite(binding, false);
+        }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("outcome resource `fold` requires an execution proof"));
         };

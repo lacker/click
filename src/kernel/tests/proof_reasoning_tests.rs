@@ -366,7 +366,7 @@ fn function_contract_lookup_ignores_unrelated_pointer_facts() {
                 Term::CState(CState::new()),
                 Term::CValue(CValue::typed_pointer(
                     pointer,
-                    CType::FunctionPointer(90_000),
+                    CType::FunctionPointer(CallbackSignature::from_encoded(90_000)),
                 )),
             ],
         }

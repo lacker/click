@@ -4062,13 +4062,19 @@ impl ContractDefinition {
             .signature()
             .parameters()
             .iter()
-            .map(|parameter| parameter.c_type().to_kernel_type())
+            .map(|parameter| {
+                (
+                    parameter.c_type().to_kernel_type(),
+                    parameter.pointee_is_constant(),
+                )
+            })
             .collect::<Vec<_>>();
-        C0Type::FunctionPointer(crate::kernel::CType::function_pointer_signature(
+        C0Type::FunctionPointer(crate::kernel::CType::qualified_function_pointer_signature(
             self.function_block
                 .signature()
                 .return_type()
                 .to_kernel_type(),
+            self.function_block.signature().return_pointee_is_constant(),
             &parameter_types,
         ))
     }

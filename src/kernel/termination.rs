@@ -1117,6 +1117,62 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
     }
 }
 
+/// Collects the names this body declares, so a call through one of them is
+/// not mistaken for a call to a like-named function.
+fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Declare { name, .. }
+        | CStatement::DeclareAggregate { name, .. }
+        | CStatement::CallAssign { target: name, .. }
+        | CStatement::HeapAllocate { target: name, .. } => {
+            names.insert(name.clone());
+        }
+        CStatement::Seq(first, second) => {
+            statement_declared_variables(first, names);
+            statement_declared_variables(second, names);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_declared_variables(then_branch, names);
+            statement_declared_variables(else_branch, names);
+        }
+        CStatement::While { body, .. } => statement_declared_variables(body, names),
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                statement_declared_variables(&case.body, names);
+            }
+        }
+        CStatement::ContinueWithStep { step } => statement_declared_variables(step, names),
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Assign { .. }
+        | CStatement::Update { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. } => {}
+    }
+}
+
+/// The names `function` binds as objects: its parameters and everything its
+/// body declares.
+fn function_object_names(function: &CFunction) -> BTreeSet<String> {
+    let mut names = function
+        .parameters()
+        .iter()
+        .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    statement_declared_variables(&function.source_body, &mut names);
+    names
+}
+
 fn recursion_paths(
     statement: &CStatement,
     measure: &str,
@@ -1300,6 +1356,7 @@ fn loop_paths(
     statement: &CStatement,
     measure_variables: &BTreeSet<String>,
     paths: Vec<LoopRankingPath>,
+    nested_loops: &mut u32,
 ) -> Result<Vec<LoopRankingPath>, CTerminationError> {
     match statement {
         CStatement::Skip
@@ -1311,7 +1368,9 @@ fn loop_paths(
         | CStatement::TypedStore { .. }
         | CStatement::CopyAggregate { .. }
         | CStatement::Call { .. } => Ok(paths),
-        CStatement::ContinueWithStep { step } => loop_paths(step, measure_variables, paths),
+        CStatement::ContinueWithStep { step } => {
+            loop_paths(step, measure_variables, paths, nested_loops)
+        }
         CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
@@ -1381,11 +1440,10 @@ fn loop_paths(
                 })
                 .collect())
         }
-        CStatement::Seq(first, second) => loop_paths(
-            second,
-            measure_variables,
-            loop_paths(first, measure_variables, paths)?,
-        ),
+        CStatement::Seq(first, second) => {
+            let first = loop_paths(first, measure_variables, paths, nested_loops)?;
+            loop_paths(second, measure_variables, first, nested_loops)
+        }
         CStatement::If {
             condition,
             then_branch,
@@ -1402,8 +1460,13 @@ fn loop_paths(
                 else_path.conditions.push((condition, false));
                 else_paths.push(else_path);
             }
-            let mut paths = loop_paths(then_branch, measure_variables, then_paths)?;
-            paths.extend(loop_paths(else_branch, measure_variables, else_paths)?);
+            let mut paths = loop_paths(then_branch, measure_variables, then_paths, nested_loops)?;
+            paths.extend(loop_paths(
+                else_branch,
+                measure_variables,
+                else_paths,
+                nested_loops,
+            )?);
             Ok(paths)
         }
         CStatement::While { body, .. } => {
@@ -1413,17 +1476,28 @@ fn loop_paths(
                 .intersection(measure_variables)
                 .cloned()
                 .collect::<BTreeSet<_>>();
+            // An independently ranked inner loop is a terminating phase of the
+            // enclosing iteration, but its exact final values are not known
+            // here. A variable the inner loop assigns therefore becomes a
+            // fresh unconstrained value on the way out. Dropping the alias
+            // instead would silently restore the enclosing loop-head value,
+            // which is how a nested loop that raises the enclosing measure was
+            // ranked as if it had left the measure alone.
+            *nested_loops = nested_loops.saturating_add(1);
+            let renamings = changed_measure_variables
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        CExpression::Variable(format!("{name}#nested{nested_loops}")),
+                    )
+                })
+                .collect::<Vec<_>>();
             Ok(paths
                 .into_iter()
                 .map(|mut path| {
-                    // An independently ranked inner loop is a terminating,
-                    // invariant-preserving phase of the enclosing iteration.
-                    // Its exact final values are intentionally not guessed:
-                    // forget only aliases for variables that can affect the
-                    // enclosing ranking, leaving the outer invariants to
-                    // establish their post-loop well-foundedness.
-                    for name in &changed_measure_variables {
-                        path.aliases.remove(name);
+                    for (name, value) in &renamings {
+                        path.aliases.insert(name.clone(), value.clone());
                     }
                     path
                 })
@@ -1433,7 +1507,12 @@ fn loop_paths(
             let incoming = paths;
             let mut paths = Vec::new();
             for case in cases {
-                paths.extend(loop_paths(&case.body, measure_variables, incoming.clone())?);
+                paths.extend(loop_paths(
+                    &case.body,
+                    measure_variables,
+                    incoming.clone(),
+                    nested_loops,
+                )?);
             }
             Ok(paths)
         }
@@ -2229,6 +2308,7 @@ fn check_loops(
             for measure in measures {
                 collect_c_expression_variables(measure, &mut measure_variables);
             }
+            let mut nested_loops = 0;
             let paths = loop_paths(
                 body,
                 &measure_variables,
@@ -2236,6 +2316,7 @@ fn check_loops(
                     aliases: BTreeMap::new(),
                     conditions: Vec::new(),
                 }],
+                &mut nested_loops,
             )?;
             if paths.is_empty() {
                 return Ok(nested_terminate);
@@ -2253,6 +2334,25 @@ fn check_loops(
                     for invariant in loop_invariants {
                         collect_c_expression_variables(invariant, &mut names);
                     }
+                }
+                // The verified loop rule certifies the invariant bundle at the
+                // back edge, so each invariant also holds of this path's
+                // post-state values. That is what bounds a variable a nested
+                // loop left unconstrained; without it the ranking check would
+                // have to guess the inner loop's final state.
+                let post_invariants = invariants
+                    .get(&index)
+                    .map(|loop_invariants| {
+                        loop_invariants
+                            .iter()
+                            .map(|invariant| {
+                                resolve_loop_c_expression_aliases(invariant, &path.aliases)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                for post_invariant in &post_invariants {
+                    collect_c_expression_variables(post_invariant, &mut names);
                 }
                 collect_c_expression_variables(condition, &mut names);
                 for post_measure in &post_measures {
@@ -2282,6 +2382,9 @@ fn check_loops(
                     for invariant in loop_invariants {
                         context = assume_ranking_condition(context, invariant, true, &variables)?;
                     }
+                }
+                for post_invariant in &post_invariants {
+                    context = assume_ranking_condition(context, post_invariant, true, &variables)?;
                 }
                 context = assume_ranking_condition(context, condition, true, &variables)?;
                 for (path_condition, value) in &path.conditions {
@@ -2425,6 +2528,23 @@ pub fn c_verified_function_termination_rules(
         .map(|(name, function)| {
             let mut found = BTreeSet::new();
             statement_calls(&function.source_body, &mut found);
+            // A callee spelled like an object this function binds is a call
+            // through that object: C11 6.2.1p4 hides a file-scope function of
+            // the same name behind the parameter or local. Resolving it to the
+            // function would hand the call that function's ranking proof, so
+            // record it under a spelling no function can have and leave it
+            // unranked, which is the treatment every indirect call gets.
+            let objects = function_object_names(function);
+            let found = found
+                .into_iter()
+                .map(|callee| {
+                    if objects.contains(&callee) {
+                        format!("{callee}#indirect")
+                    } else {
+                        callee
+                    }
+                })
+                .collect::<BTreeSet<_>>();
             (name.clone(), found)
         })
         .collect::<BTreeMap<_, _>>();

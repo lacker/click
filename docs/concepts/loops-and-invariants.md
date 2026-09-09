@@ -44,9 +44,12 @@ checked as C int32 arithmetic, so its arithmetic must also be defined under
 those assumptions. This produces separate termination evidence; it does not
 change what an invariant or a postcondition means. Loops without `decreases`
 remain valid partial-correctness proofs. A separately ranked nested loop is
-treated as a terminating phase when checking its enclosing loop; aliases for
-outer ranking variables written by that phase are forgotten, and the outer
-invariants must establish the resulting ranking components are nonnegative.
+treated as a terminating phase when checking its enclosing loop; an outer
+ranking variable that phase writes takes an unknown value on the way out,
+because the inner loop's final state is not reconstructed here. The enclosing
+loop's invariants, which its rule certifies at the back edge as well as at the
+head, are what must bound the resulting ranking components and establish the
+decrease.
 When a loop contains a numeric recursive call, the loop and the recursive edge
 need separate evidence: the loop must have its own ranking, and the
 function-level `decreases` measure must strictly decrease at every recursive

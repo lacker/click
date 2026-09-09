@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Eighteen independent root causes. Every one has a reproduction that verifies
+Seventeen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other twelve are high: the trigger is
+false, with no unusual tactics. The other eleven are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -891,138 +891,7 @@ inconsistent.
 
 ---
 
-## 11. Termination resolves calls by name and drops nested-loop writes
-
-**Severity: high.** Two independent holes in the same judgment; both certify
-`decreases` for a program that does not terminate.
-
-**Violated invariant.** Termination evidence covers the calls the program
-actually makes, under the scoping C gives them, and a measure variable written
-anywhere in the loop body is not assumed unchanged.
-
-**Mechanism.** `src/kernel/termination.rs` resolves an indirect call by the
-callee's name, so a parameter that shadows a file-scope function of the same
-name resolves to the file-scope function. Separately, when a nested loop writes
-a variable named by the enclosing measure, the checker removes the alias
-instead of making the value fresh.
-
-**Regression A**, shadowed callback
-(`mdtests/termination_shadowed_callback_rejected.md`):
-
-```c
-int32 helper(int32 x) {
-    return 1;
-}
-
-int32 spin(int32 x) {
-    if (x > 0) {
-        return spin(x);
-    }
-    return 1;
-}
-
-int32 f(int32 (*helper)(int32), int32 n) {
-    if (n > 0) {
-        return f(helper, n - 1);
-    }
-    return helper(1);
-}
-
-int32 caller(int32 n) {
-    if (n > 0) {
-        return caller(n - 1);
-    }
-    return f(&spin, 0);
-}
-```
-
-```click
-verifying "t.c";
-
-contract int32 One(int32 x) {
-    ensures result == 1;
-}
-
-int32 helper(int32 x) {
-    ensures result == 1;
-}
-
-int32 spin(int32 x) {
-    ensures result == 1;
-}
-
-int32 f(int32 (*helper)(int32), int32 n) {
-    decreases n;
-    requires One(helper);
-    ensures result == 1;
-}
-
-int32 caller(int32 n) {
-    decreases n;
-    ensures result == 1;
-}
-```
-
-C11 6.2.1p4: the parameter hides the file-scope `helper`, so `helper(1)` calls
-`spin`, which recurses on the same argument forever. `caller(0)` never returns,
-yet its `decreases n` is certified. Note that frame checking resolves the same
-shadowing correctly, so this is specific to termination.
-
-**Regression B**, nested loop writing the measure
-(`mdtests/nested_loop_measure_rejected.md`):
-
-```c
-int32 nest(int32 n) {
-    while (n > 0) {
-        while (n < 10) {
-            n = n + 1;
-        }
-        n = n - 1;
-    }
-    return n;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 nest(int32 n) {
-    requires n >= 0 and n <= 100;
-    ensures result == 0;
-} by {
-    loop {
-        decreases n;
-        invariant n >= 0 and n <= 100;
-        preserve by {
-            loop {
-                decreases 10 - n;
-                invariant n >= 0 and n <= 100;
-            }
-            step();
-            close_invariants();
-        }
-    }
-    step();
-    simp();
-}
-```
-
-For any `0 < n <= 100` the inner loop raises `n` to 10 and the outer body
-lowers it to 9, forever. Replacing the trailing `n = n - 1` with `n = n + 1` is
-correctly rejected, which shows the checker runs and this case slips past it.
-
-**Acceptance criteria.**
-- Both `decreases` clauses are rejected.
-- Resolve indirect calls through the scoped binding (parameter before
-  file-scope), matching what the partial-correctness path already does.
-- Make a variable written by a nested loop fresh at the enclosing back edge
-  rather than dropping its alias.
-- `mdtests/c_decreases_loop.md`, `c_decreases_lexicographic_loop.md`, and the
-  structural-measure tests still pass.
-
----
-
-## 12. An aggregate copy from an uninitialized source keeps the old value
+## 11. An aggregate copy from an uninitialized source keeps the old value
 
 **Severity: high.** A whole-struct assignment whose source was never written
 leaves the destination reading as its own previous value, so a contract can
@@ -1085,7 +954,7 @@ copy and 7 is the value the assignment was supposed to overwrite.
 
 ---
 
-## 13. Subnormal float division is mis-rounded
+## 12. Subnormal float division is mis-rounded
 
 **Severity: high.** The integer-space IEEE evaluator mis-rounds a division
 whose result is subnormal and whose dividend is subnormal: the sticky bit
@@ -1134,7 +1003,7 @@ int32 subnormal_divide() {
 
 ---
 
-## 14. Range byte counts wrap modulo 2^32
+## 13. Range byte counts wrap modulo 2^32
 
 **Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
@@ -1194,7 +1063,7 @@ int32 symn(int32 p[], int32 n) {
 
 ---
 
-## 15. Intra-object array overflow is modeled as a flat access
+## 14. Intra-object array overflow is modeled as a flat access
 
 **Severity: high.** The flat-access model is documented, which is why the
 fix has to change the documentation with it; it still certifies a value for a
@@ -1266,7 +1135,7 @@ behaviour with a predictable result.
 
 ---
 
-## 16. A `for` initializer's variable stays readable after the loop
+## 15. A `for` initializer's variable stays readable after the loop
 
 **Severity: high.** C0 accepts a program C rejects, and proves a value for the
 out-of-scope read.
@@ -1306,7 +1175,7 @@ int32 for_initializer_scope_rejected() {
 
 ---
 
-## 17. Identical string literals are proved distinct
+## 16. Identical string literals are proved distinct
 
 **Severity: high.** Whether identical literals share storage is unspecified,
 so neither answer may be proved.
@@ -1349,7 +1218,7 @@ int32 identical_string_literals_undecided() {
 
 ---
 
-## 18. A postcondition may read the storage of a returned local
+## 17. A postcondition may read the storage of a returned local
 
 **Severity: high.** A contract states a value in storage whose lifetime ended
 when the function returned, and the caller may rely on it.
@@ -1451,8 +1320,7 @@ was correctly rejected, and the corresponding true claims verified.
 - Frames: writing a global through a pointer under `immutable`, storing a fresh
   allocation's address into a global under `immutable`, a callee mutating a
   global with the caller claiming it unchanged, and a callback parameter
-  shadowing a file-scope function (frame checking resolves the shadowing
-  correctly — only termination does not; see section 11).
+  shadowing a file-scope function.
 - Resources: two `owns` clauses over aliasing arguments are rejected as
   overlapping; `views` and `owns` over the same cell are not assumed separate.
 - Floating point with symbolic operands: NaN keeps the third path in

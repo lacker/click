@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DeclaredResourceInfo {
     fields: std::sync::Arc<BTreeMap<String, (usize, ClickType)>>,
@@ -8,61 +11,48 @@ struct DeclaredResourceInfo {
     has_fields: bool,
 }
 
-type StandardLibraryDefinitions = (
-    Vec<PredicateDefinition>,
-    Vec<ClickFunctionDefinition>,
-    Vec<ResourceDefinition>,
-    Vec<TheoremDefinition>,
-);
+// Only immutable surface syntax is shared. Lowered environments, authorities,
+// and certificates must still be constructed in each verification session.
+static STANDARD_LIBRARY: std::sync::OnceLock<Result<ClickFile, ClickError>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+static STANDARD_LIBRARY_PARSES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn standard_library() -> Result<&'static ClickFile, ClickError> {
+    STANDARD_LIBRARY
+        .get_or_init(|| {
+            #[cfg(test)]
+            STANDARD_LIBRARY_PARSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let file = expand_declared_resource_clauses(parser::parse_file_items(
+                CLICK_STANDARD_LIBRARY,
+            )?)?;
+            if !file.verifying_sources().is_empty()
+                || file.function_blocks().iter().any(|function| !function.is_external())
+            {
+                return Err(ClickError::new(
+                    "internal Click standard library must not contain verifying sources or body-bearing C function specs",
+                ));
+            }
+            Ok(file)
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
 
 pub(in crate::surface) fn combined_algebraic_type_definitions(
     file: &ClickFile,
 ) -> Result<Vec<AlgebraicTypeDefinition>, ClickError> {
-    let library = parser::parse_file_items(CLICK_STANDARD_LIBRARY)?;
-    let mut definitions = library.algebraic_type_definitions;
+    let mut definitions = standard_library()?.algebraic_type_definitions.clone();
     definitions.extend(file.algebraic_type_definitions().iter().cloned());
     Ok(definitions)
-}
-
-fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickError> {
-    let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
-    if !file.verifying_sources().is_empty()
-        || file
-            .function_blocks()
-            .iter()
-            .any(|function| !function.is_external())
-    {
-        return Err(ClickError::new(
-            "internal Click standard library must not contain verifying sources or body-bearing C function specs",
-        ));
-    }
-    Ok((
-        file.predicate_definitions().to_vec(),
-        file.click_function_definitions().to_vec(),
-        file.resource_definitions().to_vec(),
-        file.theorem_definitions().to_vec(),
-    ))
-}
-
-fn standard_library_external_function_blocks() -> Result<Vec<FunctionBlock>, ClickError> {
-    let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
-    if !file.verifying_sources().is_empty()
-        || file
-            .function_blocks()
-            .iter()
-            .any(|function| !function.is_external())
-    {
-        return Err(ClickError::new(
-            "internal Click standard library must contain only body-less external C function specs",
-        ));
-    }
-    Ok(file.function_blocks().to_vec())
 }
 
 pub(in crate::surface) fn combined_external_function_blocks(
     file: &ClickFile,
 ) -> Result<Vec<FunctionBlock>, ClickError> {
-    let mut function_blocks = standard_library_external_function_blocks()?;
+    let mut function_blocks = standard_library()?.function_blocks().to_vec();
     function_blocks.extend(file.function_blocks().iter().cloned());
     Ok(function_blocks)
 }
@@ -1088,7 +1078,7 @@ fn reject_counted_field_resource(
 pub(in crate::surface) fn combined_predicate_definitions(
     file: &ClickFile,
 ) -> Result<Vec<PredicateDefinition>, ClickError> {
-    let (mut definitions, _, _, _) = standard_library_definitions()?;
+    let mut definitions = standard_library()?.predicate_definitions().to_vec();
     definitions.extend(file.predicate_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -1096,7 +1086,7 @@ pub(in crate::surface) fn combined_predicate_definitions(
 pub(in crate::surface) fn combined_click_function_definitions(
     file: &ClickFile,
 ) -> Result<Vec<ClickFunctionDefinition>, ClickError> {
-    let (_, mut definitions, _, _) = standard_library_definitions()?;
+    let mut definitions = standard_library()?.click_function_definitions().to_vec();
     definitions.extend(file.click_function_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -1104,7 +1094,7 @@ pub(in crate::surface) fn combined_click_function_definitions(
 pub(in crate::surface) fn combined_resource_definitions(
     file: &ClickFile,
 ) -> Result<Vec<ResourceDefinition>, ClickError> {
-    let (_, _, mut definitions, _) = standard_library_definitions()?;
+    let mut definitions = standard_library()?.resource_definitions().to_vec();
     definitions.extend(file.resource_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -1112,7 +1102,7 @@ pub(in crate::surface) fn combined_resource_definitions(
 pub(in crate::surface) fn combined_theorem_definitions(
     file: &ClickFile,
 ) -> Result<Vec<TheoremDefinition>, ClickError> {
-    let (_, _, _, mut definitions) = standard_library_definitions()?;
+    let mut definitions = standard_library()?.theorem_definitions().to_vec();
     definitions.extend(file.theorem_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -1120,7 +1110,7 @@ pub(in crate::surface) fn combined_theorem_definitions(
 pub(in crate::surface) fn combined_theorem_definitions_with_stdlib_ensure_count(
     file: &ClickFile,
 ) -> Result<(Vec<TheoremDefinition>, usize), ClickError> {
-    let (_, _, _, mut definitions) = standard_library_definitions()?;
+    let mut definitions = standard_library()?.theorem_definitions().to_vec();
     let stdlib_ensure_count = definitions
         .iter()
         .map(|definition| definition.ensures().len())

@@ -51,7 +51,7 @@ Soundness and kernel shape:
 
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
-- [Plan quantified invariant bodies without legacy discovery](quantified-invariant-body-planning.md)
+- [Finish explicit invariant-body planning](quantified-invariant-body-planning.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
@@ -96,7 +96,6 @@ C language coverage:
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Model signed eight-bit integers](signed-byte-integers.md)
-- [Preserve const-qualified callback returns](const-qualified-callback-returns.md)
 
 Semantics and reasoning:
 

@@ -3211,12 +3211,8 @@ pub(in crate::surface) fn composite_resource_definitions(
 ) -> Result<Vec<CCompositeResourceDefinition>, ClickError> {
     let mut definitions = Vec::new();
     for definition in resource_environment.definitions.values() {
-        // Field-bearing declarations are checked schemas, not legacy counted
-        // composites. Named instances remain opaque until checked instance
-        // body fold/unfold rules land; do not erase their identity or fields.
-        if !definition.is_countable() {
-            continue;
-        }
+        // Field-bearing definitions retain their schema; only checked
+        // instance exchanges may expose their bodies without erasing identity.
         let Some(body) = definition.composite_body() else {
             continue;
         };
@@ -3303,7 +3299,8 @@ pub(in crate::surface) fn composite_resource_definitions(
                     facts,
                 )
             }
-            .with_witnesses(witnesses),
+            .with_witnesses(witnesses)
+            .with_instance_schema(definition.field_schema().cloned()),
         );
     }
     Ok(definitions)

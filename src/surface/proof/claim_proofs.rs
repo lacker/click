@@ -1490,7 +1490,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     })
             },
         )?;
-        let certified_outcomes = completed_execution
+        let _certified_outcomes = completed_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1551,7 +1551,6 @@ pub(super) fn finish_ordered_proof<'a>(
                         // an exact contradictory path fact; it owns no goal.
                         continue 'execution_path;
                     };
-                    let certified_path = &completed_execution.paths()[certified_path_index];
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
@@ -1838,6 +1837,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     // source operations; syntax is recorded only for surface
                     // attribution, never reapplied as a candidate certificate.
                     let mut existence_proof = None;
+                    let mut has_return_instance_rewrite = false;
                     // Contract resource/population effects are applied once
                     // at the frame that certifies them. A grouped proof sees
                     // the effect goals directly; an isolated ensure proof
@@ -1958,6 +1958,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     ProofStep::FoldResource(resource.clone())
                                 };
                                 let folded = evolving.apply_step(step)?;
+                                has_return_instance_rewrite |=
+                                    matches!(resource, ResourceClause::Named { .. });
                                 outcome = folded.focused_outcome_snapshot()?;
                                 let surface_tactics =
                                     folded.certificate_since(&before)?.to_proof_tactics();
@@ -4401,7 +4403,52 @@ pub(super) fn finish_ordered_proof<'a>(
                     // snapshot differs from it only in ghost resource
                     // representation; a claim completed at that snapshot is
                     // bound to the certified path by result, memory, and locals.
-                    let specification_outcome = certified_outcomes[certified_path_index].clone();
+                    // Explicit instance folds are checked resource events,
+                    // including after C returns. Certify their retained trace
+                    // before accepting the resulting ownership representation.
+                    let rewritten_execution;
+                    let final_execution = if has_return_instance_rewrite {
+                        let core = &outcome_proof
+                            .as_ref()
+                            .and_then(Proof::execution)
+                            .ok_or_else(|| {
+                                ClickError::new("return instance fold lost its checked execution")
+                            })?
+                            .core;
+                        rewritten_execution = core
+                            .checked_function_execution(
+                                execution,
+                                function,
+                                assumptions_from_propositions(&base_certification_facts),
+                                function_environment.clone(),
+                                execution_semantics,
+                                execution_mode,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "could not certify return instance fold: {message}"
+                                ))
+                            })?;
+                        &rewritten_execution
+                    } else {
+                        &completed_execution
+                    };
+                    let certified_path = final_execution
+                        .paths()
+                        .get(certified_path_index)
+                        .ok_or_else(|| {
+                            ClickError::new("return instance fold changed execution path coverage")
+                        })?;
+                    let Proposition::CFunctionVerifies {
+                        outcome: specification_outcome,
+                        ..
+                    } = implication_body(certified_path.theorem().proposition())
+                    else {
+                        return Err(ClickError::new(
+                            "return instance fold has no checked function outcome",
+                        ));
+                    };
+                    let specification_outcome = specification_outcome.clone();
                     let specification_requirements = certified_path.assumptions().pure_facts();
                     let specification = c_function_specification(
                         pre_state.clone(),
@@ -4456,7 +4503,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: completed_execution.clone(),
+                            checked_execution: final_execution.clone(),
                             checked_proposition,
                         });
                     }
