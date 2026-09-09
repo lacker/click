@@ -1725,6 +1725,107 @@ impl C0Type {
     }
 }
 
+fn is_integer_type(c_type: C0Type) -> bool {
+    matches!(
+        c_type,
+        C0Type::Int16
+            | C0Type::Int32
+            | C0Type::UInt8
+            | C0Type::UInt16
+            | C0Type::UInt32
+            | C0Type::Int64
+            | C0Type::UInt64
+            | C0Type::Char
+    )
+}
+
+fn is_arithmetic_type(c_type: C0Type) -> bool {
+    is_integer_type(c_type) || matches!(c_type, C0Type::Float32 | C0Type::Float64)
+}
+
+fn integer_promotion_type(c_type: C0Type) -> Option<C0Type> {
+    match c_type {
+        C0Type::Int16 | C0Type::Char | C0Type::UInt8 | C0Type::UInt16 => Some(C0Type::Int32),
+        C0Type::Int32 | C0Type::UInt32 | C0Type::Int64 | C0Type::UInt64 => Some(c_type),
+        _ => None,
+    }
+}
+
+/// Returns the type selected by C11's usual arithmetic conversions for the
+/// modeled LP64 scalar types. Integer promotions happen before rank and
+/// signedness are compared, so all of the small integer types become int32.
+fn usual_arithmetic_conversion_type(left: C0Type, right: C0Type) -> Option<C0Type> {
+    if !is_arithmetic_type(left) || !is_arithmetic_type(right) {
+        return None;
+    }
+    if left == C0Type::Float64 || right == C0Type::Float64 {
+        return Some(C0Type::Float64);
+    }
+    if left == C0Type::Float32 || right == C0Type::Float32 {
+        return Some(C0Type::Float32);
+    }
+
+    let left = integer_promotion_type(left)?;
+    let right = integer_promotion_type(right)?;
+    let left_unsigned = matches!(left, C0Type::UInt32 | C0Type::UInt64);
+    let right_unsigned = matches!(right, C0Type::UInt32 | C0Type::UInt64);
+    if left_unsigned == right_unsigned {
+        return Some(match (left, right) {
+            (C0Type::Int64, _) | (_, C0Type::Int64) if !left_unsigned => C0Type::Int64,
+            (C0Type::UInt64, _) | (_, C0Type::UInt64) => C0Type::UInt64,
+            (C0Type::UInt32, _) | (_, C0Type::UInt32) => C0Type::UInt32,
+            _ => C0Type::Int32,
+        });
+    }
+
+    let (signed, unsigned) = if left_unsigned {
+        (right, left)
+    } else {
+        (left, right)
+    };
+    let signed_bits = integer_type_bits(signed)?;
+    let unsigned_bits = integer_type_bits(unsigned)?;
+    if signed_bits > unsigned_bits {
+        Some(signed)
+    } else {
+        Some(unsigned)
+    }
+}
+
+fn integer_type_bits(c_type: C0Type) -> Option<u32> {
+    match c_type {
+        C0Type::Int32 | C0Type::UInt32 => Some(32),
+        C0Type::Int64 | C0Type::UInt64 => Some(64),
+        _ => None,
+    }
+}
+
+fn is_null_pointer_constant(expression: &C0Expression) -> bool {
+    matches!(expression, C0Expression::Int32Literal(0))
+}
+
+fn conditional_expression_type(
+    then_type: Option<C0Type>,
+    else_type: Option<C0Type>,
+    then_branch: &C0Expression,
+    else_branch: &C0Expression,
+) -> Option<C0Type> {
+    let (Some(then_type), Some(else_type)) = (then_type, else_type) else {
+        return None;
+    };
+    usual_arithmetic_conversion_type(then_type, else_type).or_else(|| {
+        if then_type == else_type {
+            Some(then_type)
+        } else if then_type.is_object_pointer() && is_null_pointer_constant(else_branch) {
+            Some(then_type)
+        } else if else_type.is_object_pointer() && is_null_pointer_constant(then_branch) {
+            Some(else_type)
+        } else {
+            None
+        }
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0SwitchCase {
     value: Option<u32>,
@@ -3225,9 +3326,9 @@ impl C0Expression {
             Self::Float32Literal(bits) => crate::kernel::c_float32_literal(*bits),
             Self::Float64Literal(bits) => crate::kernel::c_float64_literal(*bits),
             Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
-                crate::kernel::c_int32_literal(*bytes)
+                crate::kernel::c_uint64_literal(u64::from(*bytes))
             }
-            Self::SizeOfUnion { bytes, .. } => crate::kernel::c_int32_literal(*bytes),
+            Self::SizeOfUnion { bytes, .. } => crate::kernel::c_uint64_literal(u64::from(*bytes)),
             Self::LessThan(left, right) => crate::kernel::c_less_than(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -3664,8 +3765,14 @@ fn convert_static_integer(
             checked_static_unsigned(value, bits)
         }
         (StaticIntegerKind::Unsigned, StaticIntegerValue::Signed { value, .. }) => {
-            let value =
-                u128::try_from(value).map_err(|_| StaticIntegerEvaluationError::Overflow)?;
+            let value = if value < 0 {
+                let modulus = 1i128
+                    .checked_shl(bits)
+                    .ok_or(StaticIntegerEvaluationError::Overflow)?;
+                value.rem_euclid(modulus) as u128
+            } else {
+                u128::try_from(value).map_err(|_| StaticIntegerEvaluationError::Overflow)?
+            };
             checked_static_unsigned(value, bits)
         }
     }
@@ -3694,7 +3801,8 @@ fn evaluate_static_integer_binary(
             StaticIntegerValue::Unsigned { value: left, .. },
             StaticIntegerValue::Unsigned { value: right, .. },
         ) => checked_static_unsigned(
-            unsigned_operation(left, right).ok_or(StaticIntegerEvaluationError::Overflow)?,
+            unsigned_operation(left, right).ok_or(StaticIntegerEvaluationError::Overflow)?
+                & unsigned_max(bits).expect("static unsigned operations use a valid width"),
             bits,
         ),
         _ => unreachable!("static integer conversion preserves the common kind"),
@@ -3778,7 +3886,7 @@ fn evaluate_static_integer_expression(
         C0Expression::UInt64Literal(value) => checked_static_unsigned(u128::from(*value), 64),
         C0Expression::SizeOfStruct { bytes, .. }
         | C0Expression::SizeOfUnion { bytes, .. }
-        | C0Expression::SizeOfType { bytes, .. } => checked_static_signed(i128::from(*bytes), 32),
+        | C0Expression::SizeOfType { bytes, .. } => checked_static_unsigned(u128::from(*bytes), 64),
         C0Expression::Not(expression) => {
             let value = evaluate_static_integer_expression(expression)?;
             static_integer_boolean(!static_integer_is_true(value))
@@ -3796,19 +3904,19 @@ fn evaluate_static_integer_expression(
             evaluate_static_integer_expression(left)?,
             evaluate_static_integer_expression(right)?,
             i128::checked_add,
-            u128::checked_add,
+            |left, right| Some(left.wrapping_add(right)),
         ),
         C0Expression::Subtract(left, right) => evaluate_static_integer_binary(
             evaluate_static_integer_expression(left)?,
             evaluate_static_integer_expression(right)?,
             i128::checked_sub,
-            u128::checked_sub,
+            |left, right| Some(left.wrapping_sub(right)),
         ),
         C0Expression::Multiply(left, right) => evaluate_static_integer_binary(
             evaluate_static_integer_expression(left)?,
             evaluate_static_integer_expression(right)?,
             i128::checked_mul,
-            u128::checked_mul,
+            |left, right| Some(left.wrapping_mul(right)),
         ),
         C0Expression::Divide(left, right) => {
             let left = evaluate_static_integer_expression(left)?;
@@ -3859,7 +3967,8 @@ fn evaluate_static_integer_expression(
                 StaticIntegerValue::Unsigned { value, .. } => checked_static_unsigned(
                     value
                         .checked_shl(shift)
-                        .ok_or(StaticIntegerEvaluationError::Overflow)?,
+                        .ok_or(StaticIntegerEvaluationError::Overflow)?
+                        & unsigned_max(bits).expect("static unsigned shifts use a valid width"),
                     bits,
                 ),
             }
@@ -3997,6 +4106,27 @@ fn static_integer_literal_for_type(
     c_type: C0Type,
     value: StaticIntegerValue,
 ) -> Result<C0Expression, StaticIntegerEvaluationError> {
+    if matches!(
+        c_type,
+        C0Type::Char | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32 | C0Type::UInt64
+    ) {
+        if let StaticIntegerValue::Signed { value, .. } = value
+            && value < 0
+        {
+            let bits = static_integer_type_info(c_type)
+                .expect("unsigned static integer type has type information")
+                .1;
+            let modulus = 1i128
+                .checked_shl(bits)
+                .ok_or(StaticIntegerEvaluationError::Overflow)?;
+            let value = value.rem_euclid(modulus) as u128;
+            return if c_type == C0Type::UInt64 {
+                Ok(C0Expression::UInt64Literal(value as u64))
+            } else {
+                Ok(C0Expression::UInt32Literal(value as u32))
+            };
+        }
+    }
     let (minimum, maximum) = match c_type {
         C0Type::Int16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
         C0Type::Int32 => (i128::from(i32::MIN), i128::from(i32::MAX)),
@@ -12421,11 +12551,54 @@ impl Parser {
                 self.error_here("conditional aggregate branches must have the same struct type")
             );
         }
+        let common_type = conditional_expression_type(
+            self.source_expression_type(&then_branch),
+            self.source_expression_type(&else_branch),
+            &then_branch,
+            &else_branch,
+        );
+        if common_type.is_none()
+            && self.source_expression_type(&then_branch).is_some()
+            && self.source_expression_type(&else_branch).is_some()
+        {
+            return Err(self.error_here("conditional operator branches have incompatible types"));
+        }
+        let then_branch = if let Some(common_type) = common_type {
+            self.coerce_conditional_branch(then_branch, common_type)
+        } else {
+            then_branch
+        };
+        let else_branch = if let Some(common_type) = common_type {
+            self.coerce_conditional_branch(else_branch, common_type)
+        } else {
+            else_branch
+        };
         Ok(C0Expression::Conditional {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch: Box::new(else_branch),
         })
+    }
+
+    fn coerce_conditional_branch(
+        &self,
+        expression: C0Expression,
+        common_type: C0Type,
+    ) -> C0Expression {
+        let Some(expression_type) = self.source_expression_type(&expression) else {
+            return expression;
+        };
+        if expression_type == common_type
+            || !is_arithmetic_type(expression_type)
+            || !is_arithmetic_type(common_type)
+        {
+            return expression;
+        }
+        C0Expression::Cast {
+            expression: Box::new(expression),
+            c_type: common_type,
+            struct_name: None,
+        }
     }
 
     fn parse_call_arguments(
@@ -12920,34 +13093,10 @@ impl Parser {
                     });
                 }
                 self.position += 1;
-                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                let expression = parse_integer_literal_expression(&number).map_err(|reason| {
                     self.error_here(format!("invalid integer literal `{number}`: {reason}"))
                 })?;
-                let unsigned_suffix = integer_literal_has_unsigned_suffix(&number);
-                let long_suffix = integer_literal_has_long_suffix(&number);
-                if unsigned_suffix {
-                    if long_suffix || magnitude > u32::MAX as u64 {
-                        return Ok(C0Expression::UInt64Literal(0u64.wrapping_sub(magnitude)));
-                    }
-                    return Ok(C0Expression::UInt32Literal(
-                        0u32.wrapping_sub(magnitude as u32),
-                    ));
-                }
-                if magnitude > (i64::MAX as u64) + 1 {
-                    return Err(self.error_here(format!(
-                        "negative integer literal `-{number}` is out of range"
-                    )));
-                }
-                if !long_suffix && magnitude <= (i32::MAX as u64) + 1 {
-                    let value = (-(magnitude as i64) as i32) as u32;
-                    return Ok(C0Expression::Int32Literal(value));
-                }
-                let value = if magnitude == (i64::MAX as u64) + 1 {
-                    i64::MIN
-                } else {
-                    -(magnitude as i64)
-                };
-                return Ok(C0Expression::Int64Literal(value));
+                return Ok(negate_integer_literal_expression(expression));
             }
             let expression = self.parse_unary()?;
             if let Some(expression) = negate_float_literal(expression.clone()) {
@@ -13542,6 +13691,11 @@ impl Parser {
                 }
                 Some(c_type)
             }
+            C0Expression::FunctionAddress(name) => {
+                self.function_declaration_for_call(name).map(|header| {
+                    function_pointer_type(&function_pointer_signature_from_header(header))
+                })
+            }
             C0Expression::Cast { c_type, .. } => Some(*c_type),
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => Some(*field_type),
@@ -13552,27 +13706,81 @@ impl Parser {
             C0Expression::PointerOffsetBytes { pointer, .. } => {
                 self.source_expression_type(pointer)
             }
+            C0Expression::FloatNegate(value) => self.source_expression_type(value),
+            C0Expression::FloatClassification { .. }
+            | C0Expression::LessThan(_, _)
+            | C0Expression::LessEqual(_, _)
+            | C0Expression::GreaterThan(_, _)
+            | C0Expression::GreaterEqual(_, _)
+            | C0Expression::Equal(_, _)
+            | C0Expression::NotEqual(_, _)
+            | C0Expression::Not(_)
+            | C0Expression::And(_, _)
+            | C0Expression::Or(_, _) => Some(C0Type::Int32),
+            C0Expression::BitwiseNot(value) => {
+                integer_promotion_type(self.source_expression_type(value)?)
+            }
+            C0Expression::ShiftLeft(left, _) | C0Expression::ShiftRight(left, _) => {
+                integer_promotion_type(self.source_expression_type(left)?)
+            }
             C0Expression::Add(left, right) => {
-                let left = self.source_expression_type(left);
-                if left.is_some_and(|ty| ty.is_pointer() || ty.pointee_type().is_some()) {
-                    left
+                let left_type = self.source_expression_type(left)?;
+                let right_type = self.source_expression_type(right)?;
+                if left_type.is_object_pointer() && is_integer_type(right_type) {
+                    Some(left_type)
+                } else if right_type.is_object_pointer() && is_integer_type(left_type) {
+                    Some(right_type)
                 } else {
-                    self.source_expression_type(right)
+                    usual_arithmetic_conversion_type(left_type, right_type)
                 }
             }
-            C0Expression::Subtract(left, _) => self.source_expression_type(left),
+            C0Expression::Subtract(left, right) => {
+                let left_type = self.source_expression_type(left)?;
+                let right_type = self.source_expression_type(right)?;
+                if left_type.is_object_pointer() && is_integer_type(right_type) {
+                    Some(left_type)
+                } else if left_type.is_object_pointer() && right_type.is_object_pointer() {
+                    Some(C0Type::Int64)
+                } else {
+                    usual_arithmetic_conversion_type(left_type, right_type)
+                }
+            }
+            C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right)
+            | C0Expression::Remainder(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right) => usual_arithmetic_conversion_type(
+                self.source_expression_type(left)?,
+                self.source_expression_type(right)?,
+            ),
             C0Expression::Conditional {
+                condition: _,
                 then_branch,
                 else_branch,
-                ..
-            } => self
-                .source_expression_type(then_branch)
-                .or_else(|| self.source_expression_type(else_branch)),
+            } => conditional_expression_type(
+                self.source_expression_type(then_branch),
+                self.source_expression_type(else_branch),
+                then_branch,
+                else_branch,
+            ),
             C0Expression::Call { function_name, .. } => self
                 .function_declaration_for_call(function_name)
                 .map(|header| header.return_type),
             C0Expression::IndirectCall { signature, .. } => Some(signature.return_type),
-            _ => None,
+            C0Expression::Int32Literal(_) => Some(C0Type::Int32),
+            C0Expression::UInt8Literal(_) => Some(C0Type::UInt8),
+            C0Expression::UInt32Literal(_) => Some(C0Type::UInt32),
+            C0Expression::Int64Literal(_) => Some(C0Type::Int64),
+            C0Expression::UInt64Literal(_) => Some(C0Type::UInt64),
+            C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. } => Some(C0Type::UInt64),
+            C0Expression::Float32Literal(_) => Some(C0Type::Float32),
+            C0Expression::Float64Literal(_) => Some(C0Type::Float64),
+            C0Expression::Void
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. } => None,
         }
     }
 
@@ -14184,6 +14392,7 @@ fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'sta
     let (digits, suffix) = integer_literal_parts(literal);
     let suffix = suffix.to_ascii_lowercase();
     let is_hex = digits.starts_with("0x") || digits.starts_with("0X");
+    let is_non_decimal = is_hex || digits.starts_with('0') && digits.len() > 1;
     let has_long = matches!(suffix.as_str(), "l" | "ll" | "ul" | "lu" | "ull" | "llu");
     let has_unsigned = matches!(suffix.as_str(), "u" | "ul" | "lu" | "ull" | "llu");
 
@@ -14197,7 +14406,7 @@ fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'sta
         }
         return if magnitude <= i64::MAX as u64 {
             Ok(C0Expression::Int64Literal(magnitude as i64))
-        } else if is_hex && magnitude <= u64::MAX {
+        } else if is_non_decimal && magnitude <= u64::MAX {
             Ok(C0Expression::UInt64Literal(magnitude))
         } else {
             Err("the value is too large for a signed integer literal")
@@ -14214,17 +14423,27 @@ fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'sta
         };
     }
 
-    if is_hex && magnitude > i32::MAX as u64 && magnitude <= u32::MAX as u64 {
+    if is_non_decimal && magnitude > i32::MAX as u64 && magnitude <= u32::MAX as u64 {
         return Ok(C0Expression::UInt32Literal(magnitude as u32));
     }
     if magnitude <= i32::MAX as u64 {
         Ok(C0Expression::Int32Literal(magnitude as u32))
     } else if magnitude <= i64::MAX as u64 {
         Ok(C0Expression::Int64Literal(magnitude as i64))
-    } else if is_hex && magnitude <= u64::MAX {
+    } else if is_non_decimal && magnitude <= u64::MAX {
         Ok(C0Expression::UInt64Literal(magnitude))
     } else {
         Err("the value is too large for a signed integer literal")
+    }
+}
+
+fn negate_integer_literal_expression(expression: C0Expression) -> C0Expression {
+    match expression {
+        C0Expression::Int32Literal(value) => C0Expression::Int32Literal(0u32.wrapping_sub(value)),
+        C0Expression::UInt32Literal(value) => C0Expression::UInt32Literal(0u32.wrapping_sub(value)),
+        C0Expression::Int64Literal(value) => C0Expression::Int64Literal(-value),
+        C0Expression::UInt64Literal(value) => C0Expression::UInt64Literal(0u64.wrapping_sub(value)),
+        _ => unreachable!("integer literal parser returned a non-integer expression"),
     }
 }
 
@@ -14336,20 +14555,6 @@ fn classify_float_bits(
         "isnan" => all_ones && fraction != 0,
         _ => unreachable!("classification was validated by the caller"),
     }
-}
-
-fn integer_literal_has_unsigned_suffix(literal: &str) -> bool {
-    let (_, suffix) = integer_literal_parts(literal);
-    suffix
-        .chars()
-        .any(|character| character.eq_ignore_ascii_case(&'u'))
-}
-
-fn integer_literal_has_long_suffix(literal: &str) -> bool {
-    let (_, suffix) = integer_literal_parts(literal);
-    suffix
-        .chars()
-        .any(|character| character.eq_ignore_ascii_case(&'l'))
 }
 
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {

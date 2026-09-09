@@ -249,8 +249,6 @@ changes; both claims verify today.
 
 ---
 
----
-
 ## 6. `at(L.entry, ...)` denotes two different states in one loop proof
 
 **Severity: critical.** Inside a `preserve` proof the spelling means the fresh
@@ -318,98 +316,6 @@ The second invariant is not inductive: `x` reaches `n >= 5` while
   relates the current state to loop entry.
 
 ---
-
-## 7. Literal and operator typing: `sizeof`, negated literals, `?:`
-
-**Severity: high.** Thirteen findings share this cause. Each makes a mixed
-signed/unsigned expression evaluate differently from C.
-
-**Violated invariant.** The C0 frontend implements C's integer constant typing
-(C11 6.4.4.1p5), `sizeof`'s type (`size_t`, i.e. `uint64` under LP64), and the
-usual arithmetic conversions (6.3.1.8), or rejects the construct.
-
-**Mechanism.**
-- `src/languages/c/syntax.rs:11891-11921`: the unary-minus fast path folds
-  `-<digits>` into an `Int32Literal` whenever the magnitude fits `2^31`, so
-  `-2147483648` is `int32` INT_MIN where C has `long`. The positive literal
-  path (`parse_integer_literal_expression`, `:13001-13048`) is correct, which
-  is why `-(2147483648)` behaves and `-2147483648` does not.
-- `sizeof` lowers to an `int32` literal, so `sizeof(int32) - 5` is signed where
-  C computes it in `size_t` and wraps.
-- The conditional operator keeps the selected arm's type instead of the common
-  type of both arms.
-
-**Regression A** (`mdtests/c_negated_literal_typing_rejected.md`):
-
-```c
-int32 t() {
-    return -2147483648 < 0u;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 t() {
-    ensures result == 0;
-}
-```
-
-In C the literal is `long`, `0u` converts to `long`, and the comparison is
-true: the function returns 1.
-
-**Regression B** (`mdtests/sizeof_typed_int32_rejected.md`):
-
-```c
-int32 sizeof_cmp() {
-    return sizeof(int32) - 5 < 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 sizeof_cmp() {
-    ensures result == 1;
-}
-```
-
-`sizeof(int32) - 5` is `size_t` arithmetic: `4 - 5` wraps to a huge unsigned
-value, so the comparison is false and the function returns 0.
-
-**Regression C** (`mdtests/conditional_operator_type_rejected.md`):
-
-```c
-int32 cond_type_cmp() {
-    return (1 ? -1 : 1u) < 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 cond_type_cmp() {
-    ensures result == 1;
-}
-```
-
-The conditional's type is `unsigned int`, so `-1` converts to `UINT_MAX` and
-the comparison is false: the function returns 0.
-
-**Acceptance criteria.**
-- All three regressions are rejected and the true claims verify.
-- Implement the constant typing table by magnitude and base (decimal versus
-  hex/octal differ in whether unsigned types are considered), type `sizeof` as
-  `uint64`, and apply the usual arithmetic conversions to conditional arms.
-- Where a combination is out of the modeled slice, reject it with a
-  source-positioned diagnostic rather than approximating.
-- Related findings closed by this one: negated hex literals losing
-  unsignedness; unsigned wraparound in global constant initializers being
-  reported as overflow; `-2147483648 / -1` reported as undefined behaviour when
-  in C it is well-defined `long` division.
-
----
-
 
 ## 9. A store through `&local` in an inline header helper is dropped
 

@@ -685,23 +685,7 @@ pub(super) fn execute_c_heap_allocate_paths(
         .expect("heap allocation target has a pointee type")
         .byte_width();
 
-    let element_count_expression = if element_width != CType::UInt8.byte_width() {
-        match bytes_expression {
-            CExpression::Multiply(left, right)
-                if right.as_ref() == &CExpression::Value(int32(element_width)) =>
-            {
-                Some(left.as_ref())
-            }
-            CExpression::Multiply(left, right)
-                if left.as_ref() == &CExpression::Value(int32(element_width)) =>
-            {
-                Some(right.as_ref())
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
+    let element_count_expression = heap_element_count_expression(bytes_expression, element_width);
     let evaluated_size_expression = element_count_expression.unwrap_or(bytes_expression);
     let mut paths = Vec::new();
     for size_path in
@@ -893,6 +877,25 @@ fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option
     }
 }
 
+fn heap_element_count_expression(
+    bytes_expression: &CExpression,
+    element_width: u32,
+) -> Option<&CExpression> {
+    let is_element_width_expression = |expression: &CExpression| {
+        expression == &CExpression::Value(int32(element_width))
+            || expression == &crate::kernel::c_uint64_literal(u64::from(element_width))
+    };
+    match bytes_expression {
+        CExpression::Multiply(left, right) if is_element_width_expression(right) => {
+            Some(left.as_ref())
+        }
+        CExpression::Multiply(left, right) if is_element_width_expression(left) => {
+            Some(right.as_ref())
+        }
+        _ => None,
+    }
+}
+
 fn exact_signed_size_value(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<i64> {
     if let Some(value) = term.int64_as_const() {
         return Some(value);
@@ -1012,6 +1015,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
         .pointee_type()
         .expect("realloc target has a pointee type")
         .byte_width();
+    let element_count_expression = heap_element_count_expression(size_expression, element_width);
 
     let mut paths = Vec::new();
     for old_path in evaluate_c_expression_paths(state, old_expression, assumptions, budget)? {
@@ -1099,9 +1103,12 @@ pub(crate) fn execute_c_realloc_assign_paths(
             continue;
         };
         let (old_count, old_range_width) = heap_range_element_count(&old_bytes, element_width);
-        for new_size_path in
-            evaluate_c_expression_paths(state, size_expression, &effective_assumptions, budget)?
-        {
+        for new_size_path in evaluate_c_expression_paths(
+            state,
+            element_count_expression.unwrap_or(size_expression),
+            &effective_assumptions,
+            budget,
+        )? {
             let CExpressionPath {
                 outcome: new_size_outcome,
                 facts: size_facts,
@@ -1142,13 +1149,35 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 &size_facts,
                 &size_obligations,
             );
-            let Some(new_bytes) = allocation_size_value(new_size_value, &size_assumptions) else {
+            let Some(size) = allocation_size_value(new_size_value, &size_assumptions) else {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: size_facts,
                     obligations: size_obligations,
                 });
                 continue;
+            };
+            let new_bytes = if element_count_expression.is_some() {
+                let positive = allocation_size_is_positive(&size, &size_assumptions);
+                let fits =
+                    allocation_size_fits_element_width(&size, element_width, &size_assumptions);
+                if !positive || !fits {
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: size_facts,
+                        obligations: size_obligations,
+                    });
+                    continue;
+                }
+                AllocationSize {
+                    term: Bitvector32Term::multiply(
+                        size.term.clone(),
+                        Bitvector32Term::Constant(element_width),
+                    ),
+                    unsigned: size.unsigned,
+                }
+            } else {
+                size
             };
             let all_facts = merge_facts(&facts, &size_facts, assumptions);
             let Some(all_facts) = all_facts else {
