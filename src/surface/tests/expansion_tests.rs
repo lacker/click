@@ -12322,6 +12322,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 int32 length
             ) {
                 requires 0 <= length;
+                requires ((uint32)length) <= 1073741823u32;
                 requires separate(memory(owner[0..4]), memory(data[0..length]));
                 consumes owner[0..4];
                 views data[0..length];
@@ -12344,6 +12345,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 int32 length
             ) {
                 requires 1 <= length;
+                requires ((uint32)length) <= 1073741823u32;
                 requires separate(memory(left[0..4]), memory(data[0..length]));
                 requires separate(memory(right[0..4]), memory(data[0..length]));
                 consumes left[0..4];
