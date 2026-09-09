@@ -21,7 +21,7 @@ int32 call_twice() {
 ```
 
 ```click
-verifying "static_local_arrays.c";
+verifying "static_local_arrays.c" as static_local;
 
 int32 increment_twice() {
     mutable values[0..3] by auto;
@@ -32,6 +32,7 @@ int32 increment_twice() {
 }
 
 int32 call_twice() {
+    owns static_local::increment_twice::values[0..3];
     ensures result == 16 by auto;
 }
 ```

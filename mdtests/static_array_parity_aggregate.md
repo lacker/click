@@ -74,6 +74,7 @@ int32 increment_private() {
 }
 
 int32 run() {
+    owns shared_table[1].value[0..1];
     ensures result == 5 by auto;
 }
 ```

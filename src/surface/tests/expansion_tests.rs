@@ -12835,20 +12835,22 @@ int main() { ensures result == 0; } by { execute(); simp(); }
 }
 
 #[test]
-fn qualified_static_direct_assignment_matches_existing_implicit_global_access() {
+fn qualified_static_direct_assignment_requires_effect_or_ownership() {
     let sources = [(
         "left.c",
         "static int count = 7; void clear(void) { count = 0; }",
     )];
     let unqualified = r#"verifying "left.c";
 void clear() { ensures count == 0; } by { execute(); simp(); }"#;
-    verify_c0_sources(unqualified, &sources)
-        .expect("existing direct global access needs no explicit resource contract");
+    let error = verify_c0_sources(unqualified, &sources)
+        .expect_err("a direct static write needs an effect or owned resource");
+    assert!(error.message().contains("outside the mutable footprint"));
     let qualified = unqualified
         .replace("\"left.c\";", "\"left.c\" as left;")
         .replace("ensures count", "ensures left::count");
-    verify_c0_sources(&qualified, &sources)
-        .expect("qualification must not change the existing direct-access policy");
+    let error = verify_c0_sources(&qualified, &sources)
+        .expect_err("qualification must not grant an implicit effect");
+    assert!(error.message().contains("outside the mutable footprint"));
 }
 
 #[test]

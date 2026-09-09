@@ -1976,6 +1976,9 @@ pub struct CFunction {
     /// Resource-backed frames are inferred from consumed ownership and are
     /// covered by the resource transition instead.
     pub(super) contract_effect_claim_required: bool,
+    /// Whether the frame was inferred from owned resource transfer rather
+    /// than written as a function-level effect clause.
+    pub(super) resource_derived_mutable_frame: bool,
     pub(super) contract_claims: Vec<CFunctionContractClaim>,
     pub(super) opaque_contract_supported: bool,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
