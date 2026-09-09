@@ -6705,7 +6705,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             return Err("child selection must name every selected arm child exactly once");
         }
     }
-    let mut body = evaluate_function_resource_context(
+    let mut body = evaluate_function_resource_context_with_normalization(
         &evaluation,
         if active {
             selected.map_or(&definition.contains, |arm| &arm.contains)
@@ -6714,10 +6714,25 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         },
         assumptions,
         &mut budget,
+        false,
     )
     .map_err(|_| "instance body evaluation exceeded its budget")?
     .map_err(|_| "could not evaluate instance memory body")?;
+    // Only the immediate declared memory justifies child-argument loads, not
+    // the ambient frame or a child that has not been constructed. On fold,
+    // check and consume that memory before allowing it in this scratch view.
     let mut next = state.clone();
+    if !unfold {
+        for fact in body.facts() {
+            next.resources = next
+                .resources
+                .without_fact_incrementally(fact, assumptions)
+                .ok_or("fold requires ownership of the complete instance body")?;
+        }
+    }
+    let mut child_evaluation = evaluation.clone();
+    child_evaluation.resources = body.clone();
+    let child_assumptions = assumptions.clone().require_owned_expression_loads();
     let mut children = Vec::new();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
@@ -6732,8 +6747,27 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .iter()
             .zip(&definition.parameters)
             .map(|(argument, parameter)| {
-                match evaluate_c_expression(&evaluation, argument, assumptions, &mut budget) {
-                    Some(CExpressionOutcome::Value(value)) => {
+                let paths = evaluate_c_expression_paths(
+                    &child_evaluation,
+                    argument,
+                    &child_assumptions,
+                    &mut budget,
+                )
+                .map_err(|_| "recursive child argument evaluation exceeded its budget")?;
+                if paths.len() != 1
+                    || paths[0]
+                        .facts
+                        .iter()
+                        .any(|fact| !child_assumptions.proves(fact.proposition()))
+                    || paths[0]
+                        .obligations
+                        .iter()
+                        .any(|goal| !child_assumptions.proves(goal.proposition()))
+                {
+                    return Err("recursive child argument requires a proved, readable expression");
+                }
+                match &paths[0].outcome {
+                    CExpressionOutcome::Value(value) => {
                         coerce_c_function_argument_without_obligations(&value, parameter)
                             .map(AlgebraicValue::C)
                             .ok_or("recursive child argument type mismatch")
@@ -6860,10 +6894,15 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
         }
     } else {
-        for fact in body.facts() {
+        // Immediate memory was consumed before evaluating child arguments.
+        for fact in body
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_none())
+        {
             next.resources = next
                 .resources
-                .without_fact_delaying_normalization(fact, assumptions)
+                .without_fact_incrementally(fact, assumptions)
                 .ok_or("fold requires ownership of the complete instance body")?;
         }
         next.resources = next
@@ -7028,9 +7067,6 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                 || child.binding == Variable(u64::MAX)
                 || !child_bindings.insert(child.binding)
                 || child.arguments.len() != definition.parameters.len()
-                || child.arguments.iter().any(|argument| {
-                    !matches!(argument, CExpression::Variable(_) | CExpression::Value(_))
-                })
                 || child.field_bindings.len() != instance.schema.fields().len()
             {
                 return Err("invalid recursive child schema");
@@ -8364,6 +8400,22 @@ pub(super) fn evaluate_function_resource_context(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    evaluate_function_resource_context_with_normalization(
+        state,
+        resources,
+        assumptions,
+        budget,
+        true,
+    )
+}
+
+fn evaluate_function_resource_context_with_normalization(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
     for resource in resources {
         let evaluation_state = state.clone().with_resource_context(
@@ -8381,7 +8433,14 @@ pub(super) fn evaluate_function_resource_context(
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };
-        context = match context.try_compose_with_fact(resource, assumptions) {
+        // Instance rewrites retain the declared memory pieces so folding does
+        // not need to normalize an ambient block just to consume those pieces.
+        let composed = if normalize {
+            context.try_compose_with_fact(resource, assumptions)
+        } else {
+            context.try_compose_into_valid_context_delaying_normalization([resource], assumptions)
+        };
+        context = match composed {
             Ok(context) => context,
             Err(error) => return Ok(Err(resource_context_runtime_error(error))),
         };

@@ -908,7 +908,12 @@ parent handle and requires the recorded children back unchanged.
 Each child currently uses the parent's resource definition. Equations for all
 child fields must bind them to immediate constructor fields of the matching
 types. In particular, the matched model strictly descends to a proper submodel.
-Child arguments accept C bindings or literals, not loads/computed expressions.
+Child arguments may be read-only C expressions, including stored pointer
+fields such as `p->left`. Loads must be readable from the immediate body's
+owned memory, not from a still-folded child or unrelated ambient ownership.
+Fold checks this memory before interpreting the child arguments. Expression
+safety and path premises must be proved; argument evaluation does not split
+the proof into cases. See `mdtests/resource_tree_node_init.md`.
 Mixed resource families, witnesses, nested resource matches/guards, arbitrary
 match scrutinees, and passing child paths as contract arguments remain
 unsupported. No operation automatically unfolds an entire recursive structure.

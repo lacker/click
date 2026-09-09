@@ -1411,6 +1411,7 @@ impl PureFactContext {
             && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
             && self.force_symbolic_external_loads == other.force_symbolic_external_loads
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+            && self.require_owned_expression_loads == other.require_owned_expression_loads
             && self.transport_memory_load_condition_facts
                 == other.transport_memory_load_condition_facts
             && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
@@ -1448,6 +1449,9 @@ impl PureFactContext {
         }
         if self.allow_symbolic_contract_loads {
             fingerprint ^= 1 << 60;
+        }
+        if self.require_owned_expression_loads {
+            fingerprint ^= 1 << 63;
         }
         if self.keep_spec_loads_symbolic {
             fingerprint ^= 1 << 62;
@@ -2342,6 +2346,22 @@ impl PureFactContext {
 
     pub(crate) fn should_allow_symbolic_contract_loads(&self) -> bool {
         self.allow_symbolic_contract_loads
+    }
+
+    pub(crate) fn require_owned_expression_loads(mut self) -> Self {
+        if self.allow_symbolic_contract_loads {
+            self.allow_symbolic_contract_loads = false;
+            self.content_fingerprint ^= 1 << 60;
+        }
+        if !self.require_owned_expression_loads {
+            self.require_owned_expression_loads = true;
+            self.content_fingerprint ^= 1 << 63;
+        }
+        self
+    }
+
+    pub(in crate::kernel) fn should_require_owned_expression_loads(&self) -> bool {
+        self.require_owned_expression_loads
     }
 
     pub(crate) fn transport_memory_load_condition_facts(mut self) -> Self {

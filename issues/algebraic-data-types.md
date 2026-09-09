@@ -108,6 +108,7 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
 - [resource_conditional_construction.md](../mdtests/resource_conditional_construction.md)
 - [resource_independent_children.md](../mdtests/resource_independent_children.md)
+- [resource_tree_node_init.md](../mdtests/resource_tree_node_init.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
@@ -118,8 +119,11 @@ expansion/rechecking, and deterministic multi-size scaling:
 ## Remaining work toward the C tree
 
 1. **Broader child bodies.** Direct, structurally descending same-resource
-   children are implemented. Child arguments currently accept C bindings or
-   literals, not heap loads/computed expressions. Child field equations accept
+   children are implemented. Child arguments accept read-only C expressions,
+   including stored struct links. Loads require the immediate body's memory
+   ownership; fold checks that ownership before interpreting the arguments.
+   Expression safety and path premises must be proved, with no implicit case
+   splitting. Child field equations accept
    immediate constructor bindings, not arbitrary expressions or existential
    fields. Mixed resource families, mutually recursive resource groups,
    witnesses, nested resource guards/matches, arbitrary scrutinees, and general
@@ -138,22 +142,19 @@ expansion/rechecking, and deterministic multi-size scaling:
    contract arguments. Resource-body witnesses currently admit only C pointers, not
    existential child models. Contract `let ... where` witnesses are separate
    per clause; they must not silently become shared instance bindings.
-4. **Tree heap relation.** Add an example-local resource with a tree-model field
-   to the modeled-binary-tree sidecar. The empty case requires a null root;
-   the node case owns the node fields, relates the payload to memory, and owns
-   disjoint modeled children. Preserve node identities as well as values.
-   A pointer occurring in a model grants no ownership.
-5. **First C proof.** Verify unchanged `tree_node_init`: a separately owned,
-   nonnull parent and two modeled children become a correctly modeled parent
-   tree. Reject wrong values, swapped children, duplicated nonempty subtrees,
-   and parent/child overlap. Then continue rotations and traversals under
+4. **Tree algorithms.** Continue rotations and traversals under
    [recursive-structure-models.md](recursive-structure-models.md); iterative
    termination is tracked by
    [structural-loop-termination.md](structural-loop-termination.md).
 
-The modeled-binary-tree sidecar does not yet contain a verified C function
-contract. Pure tree proofs and kernel identity tests are not verification of
-the C tree.
+The modeled-binary-tree sidecar now verifies the unchanged `tree_node_init`.
+Its `tree_at` resource has a `HeapTree` model preserving node identities and
+payloads, a null empty case, owned struct fields, and disjoint children reached
+through the stored links. The initializer consumes separate parent memory and
+two arbitrary modeled children to construct the modeled parent. The focused
+fixture and kernel/surface tests cover expansion, invalid models and links,
+missing/duplicated ownership, overlap, and unrelated-resource scaling.
+No C traversal or rotation is verified yet.
 
 ## Other ADT gaps
 
@@ -191,7 +192,7 @@ model values themselves carry neither runtime storage nor memory authority.
 
 - Preserve the implemented pure ADT and resource capabilities while closing
   the gaps above, with checked positive and negative regressions.
-- Establish the tree heap relation and verify the unchanged initializer.
+- Preserve the tree heap relation and verified unchanged initializer.
   Track later algorithm obligations in the related recursive-structure issue.
 - Keep simple checking output-sensitive in the selected source, terms, and
   certificate, without scanning or cloning unrelated state. Representation

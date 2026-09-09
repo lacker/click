@@ -1,5 +1,47 @@
 verifying "modeled_binary_tree.c";
 
+spec enum HeapTree {
+    Empty,
+    Node(struct tree_node*, int, HeapTree, HeapTree),
+}
+
+resource tree_at(p: struct tree_node*) {
+    field model: HeapTree;
+    match model {
+        HeapTree::Empty => { fact p == 0; },
+        HeapTree::Node(identity, value, left_model, right_model) => {
+            owns p->value;
+            owns p->left;
+            owns p->right;
+            owns left: tree_at(p->left);
+            owns right: tree_at(p->right);
+            fact p != 0;
+            fact p == identity;
+            fact p->value == value;
+            fact left.model == left_model;
+            fact right.model == right_model;
+        },
+    }
+}
+
+void tree_node_init(struct tree_node* node, int value,
+                    struct tree_node* left, struct tree_node* right) {
+    consumes node->value;
+    consumes node->left;
+    consumes node->right;
+    consumes l: tree_at(left);
+    consumes r: tree_at(right);
+    requires node != 0;
+    produces root: tree_at(node);
+    ensures root.model == HeapTree::Node(node, value, old(l.model), old(r.model));
+} by {
+    execute();
+    let root = fold(tree_at(node), {
+        model: HeapTree::Node(node, value, l.model, r.model)
+    }, { left: l, right: r });
+    simp();
+}
+
 spec enum Tree<T> {
     Empty,
     Node(Tree<T>, T, Tree<T>),

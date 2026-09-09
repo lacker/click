@@ -213,6 +213,82 @@ int32 read(int32* p, int32 expected) {
 } by { unfold(c); execute(); fold(c); simp(); }
 "#;
 
+fn tree_node_init_fixture() -> (&'static str, Vec<(&'static str, &'static str)>) {
+    let fixture = include_str!("../../mdtests/resource_tree_node_init.md");
+    let source = fixture
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let c = fixture
+        .split("```c filename=resource_tree_node_init.c\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    (source, vec![("resource_tree_node_init.c", c)])
+}
+
+#[test]
+fn tree_node_init_and_stored_child_links_expand() {
+    let (source, c) = tree_node_init_fixture();
+    verify_c0_sources(source, &c).unwrap();
+    for function in ["tree_node_init", "read_value", "empty"] {
+        let expanded = expand_c0_claim_source(source, &c, function, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &c).unwrap();
+    }
+}
+
+#[test]
+fn tree_node_init_rejects_invalid_models_and_ownership() {
+    let (source, c) = tree_node_init_fixture();
+    for (from, to) in [
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, 0, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(left, value, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, value, r.model, l.model)",
+        ),
+        ("{ left: l, right: r });", "{ left: r, right: l });"),
+        ("{ left: l, right: r });", "{ left: l, right: l });"),
+        ("consumes node->left;", ""),
+        ("consumes r: tree_at(right);", ""),
+        ("requires p == 0;", ""),
+        // A child address may not be read from an unowned stored link.
+        ("owns p->left;", ""),
+        ("owns p->right;", ""),
+        // Child ownership has been consumed into root, so it cannot be reused.
+        (
+            "}, { left: l, right: r });\n    simp();",
+            "}, { left: l, right: r });\n    unfold(l);\n    simp();",
+        ),
+    ] {
+        assert!(source.contains(from));
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &c).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    // Retain the real stores in the positive fixture; these intentionally
+    // broken programs ensure the contract catches wrong/missing links.
+    for broken in [
+        c[0].1.replace("node->left = left;", "node->left = right;"),
+        c[0].1.replace("node->right = right;", ""),
+        c[0].1.replace("node->value = value;", "node->value = 0;"),
+    ] {
+        assert!(verify_c0_sources(source, &[(c[0].0, broken.as_str())]).is_err());
+    }
+}
+
 fn independent_children_source() -> &'static str {
     include_str!("../../mdtests/resource_independent_children.md")
         .split("```click\n")
@@ -1653,8 +1729,10 @@ fn adt_resource_parameters_report_unsupported_types_without_panicking() {
 
 #[test]
 fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
-    let source = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click")
-        .replace("verifying \"modeled_binary_tree.c\";", "");
+    let example = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click");
+    // This regression is about the generic laws, independent of the C heap
+    // resource and initializer contract that now precede them in the example.
+    let source = &example[example.find("spec enum Tree<T>").unwrap()..];
     verify_c0_sources(&source, &[]).expect("generic tree laws should verify");
     for (from, to) in [("right", "left"), ("left", "right")] {
         let wrong_mirror = source.replacen(

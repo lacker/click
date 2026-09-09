@@ -3893,6 +3893,7 @@ pub struct PureFactContext {
     pub(super) prefer_symbolic_external_loads: bool,
     pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
+    pub(super) require_owned_expression_loads: bool,
     pub(super) transport_memory_load_condition_facts: bool,
     /// Proof-side specification lowering keeps an unresolved load as one
     /// symbolic term. Executable invariant checking leaves this false so it

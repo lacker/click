@@ -159,6 +159,199 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
 }
 
 #[test]
+fn stored_child_arguments_require_owned_memory() {
+    let (instance, mut definition, state) = recursive_child_fixture();
+    let arm = &mut definition.matched.as_mut().unwrap().arms[1];
+    let CResourceSpec::OwnMemory(segment) = &mut arm.contains[0] else {
+        unreachable!()
+    };
+    segment.end = c_int32_literal(2); // one LP64 pointer
+    arm.children[0].arguments = vec![CExpression::TypedLoad {
+        pointer: Box::new(c_variable("p")),
+        value_type: CType::Int32Pointer,
+    }];
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let assumptions = PureFactContext::new();
+    let rewrite = |state: &CState,
+                   definition: &CCompositeResourceDefinition,
+                   assumptions: &PureFactContext,
+                   unfold| {
+        crate::kernel::rewrite_resource_instance_selecting_children(
+            state,
+            &instance,
+            definition,
+            assumptions,
+            unfold,
+            Some(&children),
+        )
+    };
+    let (open, _) = rewrite(&state, &definition, &assumptions, true).unwrap();
+    rewrite(&open, &definition, &assumptions, false).unwrap();
+    let mut unreadable = definition.clone();
+    unreadable.matched.as_mut().unwrap().arms[1]
+        .contains
+        .clear();
+    // Even a caller using permissive specification lowering cannot grant
+    // child construction an unchecked read outside the owned body.
+    assert!(
+        rewrite(
+            &state,
+            &unreadable,
+            &assumptions.clone().allow_symbolic_contract_loads(),
+            true
+        )
+        .is_err()
+    );
+    let mut missing = open.clone();
+    missing.resources = ResourceContext::new().unchecked_with_facts(
+        open.resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_none())
+            .cloned(),
+    );
+    assert!(rewrite(&missing, &definition, &assumptions, false).is_err());
+    assert!(rewrite(&open, &unreadable, &assumptions, false).is_err());
+    let concrete = Pointer {
+        block: "unowned-link".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let concrete_state = state.clone().with_memory(
+        CMemory::new()
+            .with_block("unowned-link", 8)
+            .store(concrete.clone(), CValue::pointer(Pointer::null())),
+    );
+    let mut concrete_definition = definition.clone();
+    concrete_definition.matched.as_mut().unwrap().arms[1].children[0].arguments =
+        vec![CExpression::TypedLoad {
+            pointer: Box::new(c_pointer_value(concrete.clone())),
+            value_type: CType::Int32Pointer,
+        }];
+    // A materialized C block is not authority to read a link outside the
+    // resource body, even though ordinary C execution can access that block.
+    assert!(rewrite(&concrete_state, &concrete_definition, &assumptions, true).is_err());
+    concrete_definition.matched.as_mut().unwrap().arms[1]
+        .contains
+        .push(CResourceSpec::OwnMemory(CMemorySegment {
+            base: c_pointer_value(concrete),
+            start: c_int32_literal(0),
+            end: c_int32_literal(2),
+            element_width: 4,
+            guard: None,
+        }));
+    rewrite(&concrete_state, &concrete_definition, &assumptions, true).unwrap();
+    // The parent's concrete memory may not also be owned by the surrounding
+    // frame: unfolding must reject overlapping ownership.
+    let mut overlap = state.clone();
+    overlap.resources = overlap.resources.unchecked_with_facts(
+        open.resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_some())
+            .cloned(),
+    );
+    assert!(rewrite(&overlap, &definition, &assumptions, true).is_err());
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut framed = open.clone();
+        for i in 0..size {
+            let other = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(1000 + i)),
+                    4,
+                ),
+            };
+            framed.resources = framed
+                .resources
+                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    other,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )));
+        }
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            rewrite(&framed, &definition, &assumptions, false)
+        });
+        result.unwrap();
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn instance_fold_preserves_memory_pieces_without_scanning_unrelated_resources() {
+    let (instance, mut definition, _) = instance_memory_fixture();
+    definition.contains = (0..3)
+        .map(|i| {
+            CResourceSpec::OwnMemory(CMemorySegment {
+                base: c_variable("p"),
+                start: c_int32_literal(i),
+                end: c_int32_literal(i + 1),
+                element_width: 4,
+                guard: None,
+            })
+        })
+        .collect();
+    let CValue::Pointer(value) = instance.arguments()[0].as_c_value().unwrap() else {
+        unreachable!()
+    };
+    let pointer = value.pointer().clone();
+    let pieces = (0..3)
+        .map(|i| {
+            CResourceFact::own_memory(CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(i),
+                Bitvector32Term::Constant(i + 1),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let assumptions = PureFactContext::new();
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut resources = ResourceContext::new().unchecked_with_facts(pieces.iter().cloned());
+        for i in 0..size {
+            let other = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(1000 + i)),
+                    4,
+                ),
+            };
+            resources =
+                resources.unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    other,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )));
+        }
+        let state = CState::new().with_resource_context(resources);
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                &state,
+                &instance,
+                &definition,
+                &assumptions,
+                false,
+                Some(&[]),
+            )
+        });
+        result.unwrap();
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
 fn independent_children_kernel_consumes_names_and_accepts_replacements() {
     let (instance, definition, state) = recursive_child_fixture();
     let assumptions = PureFactContext::new();
