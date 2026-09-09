@@ -22,7 +22,7 @@ int32 call_twice() {
 ```
 
 ```click
-verifying "static_scalar_locals.c" as source;
+verifying "static_scalar_locals.c" as static_local;
 
 int32 increment_twice() {
     owns &calls[0..1];
@@ -33,8 +33,8 @@ int32 increment_twice() {
 }
 
 int32 call_twice() {
-    owns &source::increment_twice::calls[0..1];
-    requires source::increment_twice::calls == 5;
+    owns &static_local::increment_twice::calls[0..1];
+    requires static_local::increment_twice::calls == 5;
     ensures result == 9 by auto;
 }
 ```

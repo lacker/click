@@ -21,7 +21,7 @@ int32 call_twice() {
 ```
 
 ```click
-verifying "static_local_arrays.c" as source;
+verifying "static_local_arrays.c" as static_local;
 
 int32 increment_twice() {
     owns values[0..3];
@@ -34,8 +34,8 @@ int32 increment_twice() {
 }
 
 int32 call_twice() {
-    owns source::increment_twice::values[0..3];
-    requires source::increment_twice::values[0][0] == 5 and source::increment_twice::values[0][1] == 7 and source::increment_twice::values[0][2] == 0;
+    owns static_local::increment_twice::values[0..3];
+    requires static_local::increment_twice::values[0][0] == 5 and static_local::increment_twice::values[0][1] == 7 and static_local::increment_twice::values[0][2] == 0;
     ensures result == 16 by auto;
 }
 ```

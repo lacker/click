@@ -15,6 +15,7 @@ int32 read_value() {
 verifying "call_without_effect_clause_read_only.c";
 
 int32 read_value() {
+    requires value == 7;
     ensures result == 7;
 }
 ```
