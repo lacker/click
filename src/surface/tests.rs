@@ -16,6 +16,142 @@ int32 read(int32* p) {
 
 const GUARDED_CELL_C: &str = "int32 read(int32* p) { if (p == 0) return 0; return *p; }";
 
+const MATCH_CELL_SOURCE: &str = r#"verifying "read.c";
+spec enum Maybe<T> { None, Some(T) }
+resource cell(p: int32*) {
+    field model: Maybe<int32>;
+    match model {
+        Maybe::None => { fact p == 0; },
+        Maybe::Some(value) => { owns p[0..1]; fact p[0] == value; },
+    }
+}
+int32 read(int32* p, int32 expected) {
+    owns c: cell(p);
+    requires c.model == Maybe<int32>::Some(expected);
+    ensures result == expected;
+    ensures c.model == old(c.model);
+} by { unfold(c); execute(); fold(c); simp(); }
+"#;
+
+#[test]
+fn resource_match_expands_and_rechecks() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    let verified = verify_c0_sources(MATCH_CELL_SOURCE, &c).unwrap();
+    verify_c0_sources(
+        &MATCH_CELL_SOURCE.replace(
+            "by { unfold(c); execute(); fold(c); simp(); }",
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn resource_match_rejects_unknown_cases_missing_memory_and_invalid_folds() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    for (from, to) in [
+        ("requires c.model == Maybe<int32>::Some(expected);", ""),
+        (
+            "requires c.model == Maybe<int32>::Some(expected);",
+            "requires c.model == Maybe<int32>::None;",
+        ),
+        ("unfold(c);", ""),
+        ("fold(c); simp();", "simp();"),
+        ("fold(c); simp();", "fold(c); fold(c); simp();"),
+        ("result == expected", "result == 42"),
+    ] {
+        assert!(
+            verify_c0_sources(&MATCH_CELL_SOURCE.replace(from, to), &c).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    let changed = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { *p = 0; return *p; }",
+    )];
+    assert!(verify_c0_sources(MATCH_CELL_SOURCE, &changed).is_err());
+}
+
+#[test]
+fn resource_match_checks_exhaustiveness_and_binding_scope() {
+    for (from, to) in [
+        ("Maybe::None => { fact p == 0; },", ""),
+        (
+            "Maybe::None => { fact p == 0; },",
+            "Maybe::Some(other) => {},",
+        ),
+        ("Maybe::Some(value)", "Maybe::Missing(value)"),
+        ("Maybe::Some(value)", "Other::Some(value)"),
+        ("Maybe::Some(value)", "Maybe::Some(value, extra)"),
+        ("Maybe::Some(value)", "Maybe::Some(p)"),
+        ("Maybe::Some(value)", "Maybe::Some(model)"),
+        ("fact p == 0;", "fact value == 0;"),
+        (
+            "owns p[0..1];",
+            "match model { Maybe::None => {}, Maybe::Some(x) => {} }",
+        ),
+        ("owns p[0..1];", "field extra: int32;"),
+    ] {
+        assert!(
+            parser::parse(&MATCH_CELL_SOURCE.replace(from, to)).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn resource_match_binds_pointer_and_nested_algebraic_payloads() {
+    let source = r#"verifying "read.c";
+        spec enum Boxed<T> { Box(T) }
+        resource cell(p: int32*) {
+            field model: Boxed<int32*>;
+            field nested: Boxed<int32>;
+            match model {
+                Boxed::Box(address) => { owns address[0..1]; fact address == p; }
+            }
+        }
+        int32 read(int32* p, int32 expected) {
+            owns c: cell(p);
+            requires c.model == Boxed<int32*>::Box(p);
+            ensures c.model == old(c.model);
+        } by { unfold(c); execute(); fold(c); simp(); }
+    "#;
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    verify_c0_sources(source, &c).unwrap();
+    let nested = source
+        .replace(
+            "field model: Boxed<int32*>;",
+            "field model: Boxed<Boxed<int32>>;",
+        )
+        .replace(
+            "Boxed::Box(address) => { owns address[0..1]; fact address == p; }",
+            "Boxed::Box(inner) => { owns p[0..1]; fact inner == nested; }",
+        )
+        .replace(
+            "requires c.model == Boxed<int32*>::Box(p);",
+            "requires c.model == Boxed<Boxed<int32>>::Box(c.nested);",
+        );
+    let verified = verify_c0_sources(&nested, &c).unwrap();
+    verify_c0_sources(
+        &nested.replace(
+            "by { unfold(c); execute(); fold(c); simp(); }",
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+}
+
 #[test]
 fn instance_return_folds_follow_distinct_c_results_without_proof_branching() {
     let source = r#"verifying "read.c";

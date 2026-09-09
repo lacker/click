@@ -2957,6 +2957,26 @@ fn trace_completion(
                         }
                     }
                     if let Some(instance) = &rewrite.instance {
+                        if rewrite.definition.matched.is_some() {
+                            let path_case = crate::kernel::functions::selected_instance_match_arm(
+                                instance,
+                                &rewrite.definition,
+                                executed_under,
+                            )
+                            .map(|(arm, _)| &arm.variant);
+                            let selected_case =
+                                crate::kernel::functions::selected_instance_match_arm(
+                                    instance,
+                                    &rewrite.definition,
+                                    rewrite.before_facts.assumptions(),
+                                )
+                                .map(|(arm, _)| &arm.variant);
+                            if path_case.is_err() || path_case != selected_case {
+                                return Err(
+                                    "return fold constructor is not justified on this execution path",
+                                );
+                            }
+                        }
                         let (checked_state, _) = crate::kernel::rewrite_resource_instance(
                             state,
                             instance,
@@ -4521,17 +4541,52 @@ mod tests {
     #[test]
     fn return_instance_guard_and_body_cannot_use_sibling_assumptions() {
         use crate::kernel::{
-            ConditionTerm, ResourceFieldSchema, ResourceFieldType, ResourceInstance, Variable,
+            AlgebraicSchemas, AlgebraicTerm, AlgebraicTermNode, AlgebraicType, AlgebraicValue,
+            AlgebraicValueType, AlgebraicVariantType, CResourceMatchArm, CResourceMatchBody,
+            ConditionTerm, ResourceFieldSchema, ResourceFieldType, ResourceInstance, Term,
+            Variable,
         };
-        let schema =
-            ResourceFieldSchema::new(vec![("value".into(), ResourceFieldType::C(CType::Int32))])
-                .unwrap();
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+            AlgebraicVariantType {
+                name: "Left".into(),
+                fields: vec![],
+            },
+            AlgebraicVariantType {
+                name: "Right".into(),
+                fields: vec![],
+            },
+        ]
+        .into();
+        let ty = AlgebraicType {
+            name: "Case".into(),
+            arguments: vec![],
+            rigid: false,
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(std::collections::BTreeMap::from(
+                [(
+                    AlgebraicValueType::Algebraic {
+                        name: "Case".into(),
+                        arguments: vec![],
+                    },
+                    variants,
+                )],
+            ))),
+        };
+        let model = AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Variable(Variable(43)),
+        };
+        let schema = ResourceFieldSchema::new(vec![
+            ("value".into(), ResourceFieldType::C(CType::Int32)),
+            ("model".into(), ResourceFieldType::Algebraic(ty.clone())),
+        ])
+        .unwrap();
         let instance = ResourceInstance::new(
             Variable(1),
             "cell".into(),
             vec![].into(),
             schema.clone(),
-            vec![int32(7).into()].into(),
+            vec![int32(7).into(), AlgebraicValue::Algebraic(model.clone())].into(),
         )
         .unwrap();
         let word = Bitvector32Term::Variable(Variable(42));
@@ -4541,28 +4596,64 @@ mod tests {
             operator: CComparisonOperator::Equal,
             right: SpecExpression::Value(int32(0)),
         };
-        for guarded in [true, false] {
+        for mode in 0..3 {
+            let guarded = mode == 0;
+            let matched = mode == 2;
             let definition = CCompositeResourceDefinition::new(
                 "cell",
                 vec![],
                 guarded.then(|| condition.clone()),
                 false,
                 vec![],
-                if guarded {
+                if guarded || matched {
                     vec![]
                 } else {
                     vec![condition.clone()]
                 },
             )
-            .with_instance_schema(Some(schema.clone()));
+            .with_instance_schema(Some(schema.clone()))
+            .with_resource_match_body(matched.then(|| {
+                CResourceMatchBody {
+                    field_index: 1,
+                    algebraic_type: ty.clone(),
+                    arms: ["Left", "Right"]
+                        .into_iter()
+                        .map(|variant| CResourceMatchArm {
+                            variant: variant.into(),
+                            bindings: vec![],
+                            binding_types: vec![],
+                            contains: vec![],
+                            facts: vec![],
+                        })
+                        .collect(),
+                }
+            }));
             let selected = CResourceFact::own(CResource::Instance(instance.clone()));
             let before = CState::new().with_resource_context(
                 ResourceContext::new().unchecked_with_fact(selected.clone()),
             );
-            let left =
-                ProofFacts::default().with_fact(Proposition::ConditionIs(guard.clone(), true));
-            let right =
-                ProofFacts::default().with_fact(Proposition::ConditionIs(guard.clone(), false));
+            let case_fact = |variant: &str| {
+                Proposition::Equal(
+                    Term::Algebraic(model.clone()),
+                    Term::Algebraic(AlgebraicTerm {
+                        algebraic_type: ty.clone(),
+                        node: AlgebraicTermNode::Constructor {
+                            variant: variant.into(),
+                            fields: vec![],
+                        },
+                    }),
+                )
+            };
+            let left = ProofFacts::default().with_fact(if matched {
+                case_fact("Left")
+            } else {
+                Proposition::ConditionIs(guard.clone(), true)
+            });
+            let right = ProofFacts::default().with_fact(if matched {
+                case_fact("Right")
+            } else {
+                Proposition::ConditionIs(guard.clone(), false)
+            });
             let (open, _) = crate::kernel::rewrite_resource_instance(
                 &before,
                 &instance,
@@ -4607,7 +4698,9 @@ mod tests {
             )
             .unwrap();
             let events = core.return_resource_rewrites.get(&0).unwrap().to_vec();
-            let expected = if guarded {
+            let expected = if matched {
+                "return fold constructor is not justified on this execution path"
+            } else if guarded {
                 "return fold guard is not justified on this execution path"
             } else {
                 "return fold body is not justified on this execution path"

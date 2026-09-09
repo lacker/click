@@ -1,6 +1,147 @@
 use super::*;
 use crate::surface::parser::algebraic_field_c_type_supported;
 
+pub(in crate::surface) fn resource_match_arm_scopes<'a>(
+    definition: &ResourceDefinition,
+    lookup: impl Fn(&str) -> Option<&'a AlgebraicTypeDefinition>,
+) -> Result<Vec<(String, Vec<(String, ClickType)>, ResourceDefinition)>, ClickError> {
+    let Some(matched) = definition
+        .composite_body()
+        .and_then(|body| body.matched.as_ref())
+    else {
+        return Ok(vec![]);
+    };
+    let Some(ClickType::Algebraic(application)) = definition
+        .fields()
+        .iter()
+        .find(|field| field.name() == matched.field)
+        .map(ResourceFieldDefinition::click_type)
+    else {
+        return Err(ClickError::new(
+            "resource match requires an algebraic resource field",
+        ));
+    };
+    let datatype = lookup(&application.name)
+        .ok_or_else(|| ClickError::new("unknown resource match datatype"))?;
+    let reserved = definition
+        .parameters()
+        .iter()
+        .map(|p| p.name())
+        .chain(definition.fields().iter().map(|f| f.name()))
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    let variants = datatype
+        .variants()
+        .iter()
+        .map(|variant| (variant.name(), variant))
+        .collect::<BTreeMap<_, _>>();
+    for arm in &matched.arms {
+        if arm.type_name != datatype.name() {
+            return Err(ClickError::new(
+                "resource match pattern names the wrong datatype",
+            ));
+        }
+        if !seen.insert(arm.variant.as_str()) {
+            return Err(ClickError::new("resource match repeats a constructor arm"));
+        }
+        let variant = variants
+            .get(arm.variant.as_str())
+            .ok_or_else(|| ClickError::new("unknown resource match constructor"))?;
+        if arm.bindings.len() != variant.fields().len() {
+            return Err(ClickError::new(
+                "resource match constructor has the wrong number of bindings",
+            ));
+        }
+        let mut parameters = definition.parameters.clone();
+        let mut bindings = Vec::new();
+        let mut substitution = BTreeMap::new();
+        let mut names = BTreeSet::new();
+        for (index, (name, field)) in arm.bindings.iter().zip(variant.fields()).enumerate() {
+            if reserved.contains(name.as_str()) || !names.insert(name.as_str()) {
+                return Err(ClickError::new(
+                    "resource match binding duplicates or shadows a resource name",
+                ));
+            }
+            let ty = instantiate_field_type(datatype, application, field)?;
+            match &ty {
+                ClickType::C(_) => parameters.push(FunctionParameter {
+                    name: name.clone(),
+                    click_type: ty.clone(),
+                    struct_name: None,
+                    function_pointer_signature: None,
+                    constant: false,
+                    pointee_constant: false,
+                }),
+                ClickType::Algebraic(application) => {
+                    substitution.insert(
+                        name.clone(),
+                        ContractExpression::AlgebraicVariable {
+                            name: name.clone(),
+                            algebraic_type: application.clone(),
+                            binder_index: index,
+                        },
+                    );
+                }
+                ClickType::Parameter(_) => {
+                    return Err(ClickError::new("unresolved resource match binding type"));
+                }
+            }
+            bindings.push((name.clone(), ty));
+        }
+        if arm
+            .body
+            .contains
+            .iter()
+            .any(|resource| !matches!(resource, ResourceClause::OwnMemory(_)))
+        {
+            return Err(ClickError::new(
+                "resource match currently supports owned memory bodies, not child resources",
+            ));
+        }
+        let mut referenced = BTreeSet::new();
+        for fact in &arm.body.facts {
+            collect_click_proposition_referenced_names(fact, &mut referenced);
+        }
+        for resource in &arm.body.contains {
+            if let ResourceClause::OwnMemory(segment) = resource {
+                referenced.extend(contract_segment_referenced_names(segment));
+            }
+        }
+        if let Some(name) = referenced
+            .iter()
+            .find(|name| !reserved.contains(name.as_str()) && !names.contains(name.as_str()))
+        {
+            return Err(ClickError::new(format!(
+                "unbound name `{name}` in resource match arm"
+            )));
+        }
+        let mut body = arm.body.clone();
+        body.fields = definition.fields().to_vec();
+        body.facts = body
+            .facts
+            .iter()
+            .map(|fact| substitute_click_proposition(fact, &substitution).map_err(ClickError::new))
+            .collect::<Result<_, _>>()?;
+        result.push((
+            arm.variant.clone(),
+            bindings,
+            ResourceDefinition {
+                name: definition.name.clone(),
+                parameters,
+                composite_body: Some(body),
+                field_schema: definition.field_schema.clone(),
+            },
+        ));
+    }
+    if seen.len() != datatype.variants().len() {
+        return Err(ClickError::new(
+            "resource match must cover every constructor",
+        ));
+    }
+    Ok(result)
+}
+
 pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(), ClickError> {
     let algebraic_definitions = combined_algebraic_type_definitions(file)?;
     let mut names = BTreeSet::new();
@@ -533,35 +674,42 @@ pub(super) fn validate_algebraic_type_uses(
         let Some(body) = definition.composite_body() else {
             continue;
         };
-        let variables = definition
-            .parameters()
-            .iter()
-            .filter_map(|parameter| {
-                parameter
-                    .click_type()
-                    .c_type()
-                    .map(|c_type| (parameter.name().to_string(), c_type))
-            })
-            .collect();
-        if let Some(condition) = body.condition() {
-            validate_algebraic_proposition(
-                condition,
-                &variables,
-                click_functions,
-                &predicate_types,
-                &definitions,
-                &format!("resource `{}` condition", definition.name()),
-            )?;
-        }
-        for fact in body.facts() {
-            validate_algebraic_proposition(
-                fact,
-                &variables,
-                click_functions,
-                &predicate_types,
-                &definitions,
-                &format!("resource `{}` fact", definition.name()),
-            )?;
+        let arm_scopes =
+            resource_match_arm_scopes(definition, |name| definitions.get(name).copied())?;
+        for definition in std::iter::once(definition)
+            .chain(arm_scopes.iter().map(|(_, _, definition)| definition))
+        {
+            let body = definition.composite_body().unwrap_or(body);
+            let variables = definition
+                .parameters()
+                .iter()
+                .filter_map(|parameter| {
+                    parameter
+                        .click_type()
+                        .c_type()
+                        .map(|c_type| (parameter.name().to_string(), c_type))
+                })
+                .collect();
+            if let Some(condition) = body.condition() {
+                validate_algebraic_proposition(
+                    condition,
+                    &variables,
+                    click_functions,
+                    &predicate_types,
+                    &definitions,
+                    &format!("resource `{}` condition", definition.name()),
+                )?;
+            }
+            for fact in body.facts() {
+                validate_algebraic_proposition(
+                    fact,
+                    &variables,
+                    click_functions,
+                    &predicate_types,
+                    &definitions,
+                    &format!("resource `{}` fact", definition.name()),
+                )?;
+            }
         }
     }
     for function in file.function_blocks() {

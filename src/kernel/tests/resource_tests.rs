@@ -118,6 +118,160 @@ fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
 }
 
 #[test]
+fn resource_match_constructor_index_tracks_evidence_and_scales_locally() {
+    let ty = resource_index_type("Mark", vec![]);
+    let model = resource_index_variable(&ty, 7);
+    let constructor = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![],
+        },
+    };
+    let equality = Proposition::Equal(
+        Term::Algebraic(model.clone()),
+        Term::Algebraic(constructor.clone()),
+    );
+    let reversed = Proposition::Equal(
+        Term::Algebraic(constructor.clone()),
+        Term::Algebraic(model.clone()),
+    );
+    for fact in [equality.clone(), reversed] {
+        let mut assumptions = PureFactContext::new().assume_proposition(fact.clone());
+        assert_eq!(
+            assumptions.known_algebraic_constructor(&model),
+            Some(constructor.clone())
+        );
+        assumptions.remove_proposition_fact(&fact);
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+        assumptions.insert_proposition_fact(fact.clone());
+        assumptions.retain_proposition_facts(|entry| entry != &fact);
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+        assumptions.insert_proposition_fact(fact);
+        assumptions.clear_proposition_facts();
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+    }
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut assumptions = PureFactContext::new().assume_proposition(equality.clone());
+        for index in 100..100 + size {
+            assumptions.insert_proposition_fact(Proposition::Equal(
+                Term::Algebraic(resource_index_variable(&ty, index)),
+                Term::Algebraic(constructor.clone()),
+            ));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                assumptions.known_algebraic_constructor(&model),
+                Some(constructor.clone())
+            );
+        });
+        assert!(work > 0, "constructor lookup must count candidate visits");
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 32, "{samples:?}");
+    }
+}
+
+#[test]
+fn resource_match_kernel_checks_schema_case_and_ownership() {
+    let (mut instance, mut definition, _) = instance_memory_fixture();
+    let ty = resource_index_type("Mark", vec![]);
+    let model = resource_index_variable(&ty, 7);
+    let constructor = |variant: &str| AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: variant.into(),
+            fields: vec![],
+        },
+    };
+    instance.schema = ResourceFieldSchema::new(vec![(
+        "model".into(),
+        ResourceFieldType::Algebraic(ty.clone()),
+    )])
+    .unwrap();
+    instance.fields = vec![AlgebraicValue::Algebraic(model.clone())].into();
+    definition.instance_schema = Some(instance.schema.clone());
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                contains: vec![],
+                facts: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                contains: std::mem::take(&mut definition.contains),
+                facts: vec![],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let unknown = PureFactContext::new();
+    let set = unknown.clone().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model.clone()),
+        Term::Algebraic(constructor("Set")),
+    ));
+    let clear = unknown.clone().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model),
+        Term::Algebraic(constructor("Clear")),
+    ));
+    assert!(rewrite_resource_instance(&state, &instance, &definition, &unknown, true).is_err());
+    let (empty, facts) =
+        rewrite_resource_instance(&state, &instance, &definition, &clear, true).unwrap();
+    assert!(empty.resources().is_empty());
+    assert!(
+        !facts
+            .iter()
+            .any(|fact| matches!(fact, Proposition::CMemoryLoadable { .. }))
+    );
+    assert!(rewrite_resource_instance(&empty, &instance, &definition, &set, false).is_err());
+    let (open, _) = rewrite_resource_instance(&state, &instance, &definition, &set, true).unwrap();
+    assert!(!open.resources().is_empty());
+    assert_eq!(
+        rewrite_resource_instance(&open, &instance, &definition, &set, false)
+            .unwrap()
+            .0,
+        state
+    );
+    assert!(rewrite_resource_instance(&open, &instance, &definition, &unknown, false).is_err());
+    for mutation in 0..5 {
+        let mut invalid = definition.clone();
+        let body = invalid.matched.as_mut().unwrap();
+        match mutation {
+            0 => {
+                body.arms.pop();
+            }
+            1 => {
+                body.arms[0].variant = "Set".into();
+            }
+            2 => {
+                body.arms[1].bindings.push("p".into());
+            }
+            3 => {
+                body.field_index = 1;
+            }
+            _ => {
+                body.arms[1]
+                    .binding_types
+                    .push(AlgebraicValueType::C(CType::Int32));
+            }
+        }
+        assert!(rewrite_resource_instance(&state, &instance, &invalid, &set, true).is_err());
+    }
+}
+
+#[test]
 fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
     let (instance, definition, state) = instance_memory_fixture();
     let assumptions = PureFactContext::new();

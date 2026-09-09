@@ -240,6 +240,14 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access)
+            if matches!(access.click_type, Some(ClickType::Algebraic(_))) =>
+        {
+            let Some(ClickType::Algebraic(application)) = &access.click_type else {
+                unreachable!()
+            };
+            Ok(SpecValueType::Algebraic(application.clone()))
+        }
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             Ok(SpecValueType::Algebraic(algebraic_type.clone()))
         }

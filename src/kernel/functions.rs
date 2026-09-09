@@ -6603,6 +6603,27 @@ pub(crate) fn rewrite_resource_instance(
     }
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
+    let mut algebraic_bindings = BTreeMap::new();
+    let selected = if definition.matched.is_some() {
+        let (arm, constructor) = selected_instance_match_arm(instance, definition, assumptions)?;
+        let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
+            unreachable!()
+        };
+        for (name, value) in arm.bindings.iter().zip(fields) {
+            match value {
+                AlgebraicValue::C(value) => {
+                    let ty = value.c_type();
+                    evaluation.locals.set_typed(name.clone(), value, ty);
+                }
+                AlgebraicValue::Algebraic(value) => {
+                    algebraic_bindings.insert(name.clone(), value);
+                }
+            }
+        }
+        Some(arm)
+    } else {
+        None
+    };
     let active = evaluate_composite_resource_body_condition(
         definition,
         &evaluation,
@@ -6612,7 +6633,11 @@ pub(crate) fn rewrite_resource_instance(
     .ok_or("instance fold/unfold requires a proved body guard case")?;
     let body = evaluate_function_resource_context(
         &evaluation,
-        if active { &definition.contains } else { &[] },
+        if active {
+            selected.map_or(&definition.contains, |arm| &arm.contains)
+        } else {
+            &[]
+        },
         assumptions,
         &mut budget,
     )
@@ -6681,12 +6706,17 @@ pub(crate) fn rewrite_resource_instance(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
-    for fact in definition.facts.iter().filter(|_| active) {
-        let paths = lower_spec_proposition_at_state_with_loop_entry(
+    for fact in selected
+        .map_or(&definition.facts, |arm| &arm.facts)
+        .iter()
+        .filter(|_| active)
+    {
+        let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
             &evaluation,
             fact,
             None,
             &body_assumptions,
+            &algebraic_bindings,
             &mut budget,
         )
         .map_err(|_| "could not evaluate instance body fact")?;
@@ -6711,12 +6741,96 @@ pub(crate) fn rewrite_resource_instance(
     Ok((next, if unfold { facts } else { vec![] }))
 }
 
+pub(in crate::kernel) fn selected_instance_match_arm<'a>(
+    instance: &ResourceInstance,
+    definition: &'a CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+) -> Result<(&'a CResourceMatchArm, AlgebraicTerm), &'static str> {
+    let body = definition
+        .matched
+        .as_ref()
+        .ok_or("missing resource match body")?;
+    if definition.condition.is_some()
+        || !definition.contains.is_empty()
+        || !definition.facts.is_empty()
+        || !body.algebraic_type.has_consistent_root_schema()
+        || body.algebraic_type.rigid
+        || instance
+            .schema()
+            .fields()
+            .get(body.field_index)
+            .map(|(_, ty)| ty)
+            != Some(&ResourceFieldType::Algebraic(body.algebraic_type.clone()))
+        || body.arms.len() != body.algebraic_type.variants.len()
+    {
+        return Err("invalid resource match schema");
+    }
+    let mut variants = BTreeSet::new();
+    let schema_variants = body
+        .algebraic_type
+        .variants
+        .iter()
+        .map(|variant| (variant.name.as_str(), &variant.fields))
+        .collect::<BTreeMap<_, _>>();
+    let reserved = definition
+        .parameters
+        .iter()
+        .map(|parameter| parameter.name())
+        .chain(
+            instance
+                .schema()
+                .fields()
+                .iter()
+                .map(|(name, _)| name.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    for arm in &body.arms {
+        let mut names = BTreeSet::new();
+        if !variants.insert(&arm.variant)
+            || schema_variants
+                .get(arm.variant.as_str())
+                .is_none_or(|fields| {
+                    **fields != arm.binding_types || fields.len() != arm.bindings.len()
+                })
+            || arm.bindings.iter().any(|name| {
+                name.is_empty() || !names.insert(name) || reserved.contains(name.as_str())
+            })
+            || arm
+                .contains
+                .iter()
+                .any(|resource| !matches!(resource, CResourceSpec::OwnMemory(_)))
+        {
+            return Err("invalid resource match arm");
+        }
+    }
+    let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
+        return Err("resource match field is not algebraic");
+    };
+    let constructor = assumptions
+        .known_algebraic_constructor(model)
+        .ok_or("resource match requires constructor evidence for the instance field")?;
+    let AlgebraicTermNode::Constructor { variant, .. } = &constructor.node else {
+        unreachable!()
+    };
+    let arm = body
+        .arms
+        .iter()
+        .find(|arm| &arm.variant == variant)
+        .ok_or("unknown resource match constructor")?;
+    Ok((arm, constructor))
+}
+
 fn instance_body_evaluation(
     state: &CState,
     instance: &ResourceInstance,
     definition: &CCompositeResourceDefinition,
 ) -> Result<CState, &'static str> {
     let mut evaluation = state.clone();
+    if definition.matched.is_some() {
+        // An arm's C names are lexical parameters and constructor bindings,
+        // never incidental locals of the function currently opening it.
+        evaluation.locals = CLocalEnvironment::default();
+    }
     evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
         Variable(u64::MAX),
         instance.identity,
@@ -6782,7 +6896,7 @@ pub(super) fn expand_composite_resource_fact_with_children(
     let definition = definitions
         .iter()
         .find(|definition| definition.name() == name)?;
-    if definition.instance_schema.is_some() {
+    if definition.instance_schema.is_some() || definition.matched.is_some() {
         return None;
     }
     if definition.parameters().len() != arguments.len() {

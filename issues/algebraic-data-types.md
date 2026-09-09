@@ -51,6 +51,13 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   body denote the instance's fields.
   An exclusive open handle retains the identity and fields, but grants no
   folded ownership for calls or returns.
+- A resource body may instead `match` one ADT field with exhaustive
+  `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
+  arm without implicit proof-by-cases. Bindings have the constructor's
+  instantiated types, including pointers and nested ADTs. Only that arm's
+  immediate owned memory and facts are exposed. Arm bindings cannot escape
+  or capture incidental C locals. Return folds recheck constructor evidence
+  on their retained execution path.
 - `fold(cell)` requires the matching open handle, complete body ownership, and
   established body facts at the current memory. It restores the same identity
   and unchanged fields. A declaration or field value alone grants no memory
@@ -76,18 +83,19 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
+- [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
 - [contract_resource_call_transport.md](../mdtests/contract_resource_call_transport.md)
 - [contract_resource_call_no_implicit_preservation.md](../mdtests/contract_resource_call_no_implicit_preservation.md)
 
 ## Remaining work toward the C tree
 
-1. **Resource `match` and child ownership.** Resource bodies currently lack
-   `else` and constructor `match`. Check exhaustive constructor arms and
-   scoped typed fields, exposing only the selected arm's immediate resources
-   and facts. Support nested named child resources and a checked finite,
-   well-founded interpretation of recursive definitions. No operation should
-   eagerly traverse an unknown model.
+1. **Child ownership and recursive bodies.** Constructor matches currently
+   support immediate owned memory and facts, not child resources, witnesses,
+   nested guards/matches, or arbitrary scrutinee expressions. Support nested
+   named child resources and a checked finite, well-founded interpretation of
+   recursive definitions. No operation should eagerly traverse an unknown
+   model. General resource `if/else` remains unsupported.
 2. **Field establishment and updates.** Define how body proofs initially
    establish fields and justify changed fields. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the

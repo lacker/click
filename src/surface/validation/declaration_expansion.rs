@@ -228,6 +228,29 @@ fn expand_declared_composite_resource_body(
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
         fields: composite_body.fields,
+        matched: composite_body
+            .matched
+            .map(|matched| {
+                Ok(ResourceMatchBody {
+                    field: matched.field,
+                    arms: matched
+                        .arms
+                        .into_iter()
+                        .map(|arm| {
+                            Ok(ResourceMatchArm {
+                                type_name: arm.type_name,
+                                variant: arm.variant,
+                                bindings: arm.bindings,
+                                body: expand_declared_composite_resource_body(
+                                    arm.body,
+                                    resource_definitions,
+                                )?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, ClickError>>()?,
+                })
+            })
+            .transpose()?,
         witnesses: composite_body.witnesses.clone(),
         condition: composite_body
             .condition

@@ -1213,7 +1213,7 @@ impl AlgebraicType {
         })
     }
 
-    fn has_consistent_root_schema(&self) -> bool {
+    pub(in crate::kernel) fn has_consistent_root_schema(&self) -> bool {
         if self.rigid {
             return self.arguments.is_empty() && self.variants.is_empty();
         }
@@ -1944,6 +1944,7 @@ pub struct CPredicateUnfolding {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
     pub(super) instance_schema: Option<ResourceFieldSchema>,
+    pub(super) matched: Option<CResourceMatchBody>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     /// Existential witnesses bound inside the body (`let next: T where P`).
@@ -1956,6 +1957,22 @@ pub struct CCompositeResourceDefinition {
     pub(super) counted_population: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceMatchBody {
+    pub field_index: usize,
+    pub algebraic_type: AlgebraicType,
+    pub arms: Vec<CResourceMatchArm>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub binding_types: Vec<AlgebraicValueType>,
+    pub contains: Vec<CResourceSpec>,
+    pub facts: Vec<SpecProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -3818,6 +3835,11 @@ pub struct PureFactContext {
     /// Exact equalities between distinct checked constructors. Any such fact
     /// makes the context inconsistent by constructor disjointness.
     pub(super) algebraic_constructor_conflicts: crate::persistent::PersistentMap<Proposition, ()>,
+    /// Direct constructor evidence indexed by the symbolic value it describes.
+    pub(super) algebraic_variable_constructors: crate::persistent::PersistentMap<
+        Variable,
+        crate::persistent::PersistentMap<Proposition, AlgebraicTerm>,
+    >,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every
     /// unrelated proposition in the context.

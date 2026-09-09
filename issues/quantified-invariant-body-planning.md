@@ -123,6 +123,13 @@ not a stack overflow. The failing proof is not expanded. The full quantified
 planner task remains open; the successful reduced C is not substituted for
 the original fixture.
 
+The aggregate regression also crosses nextest's 10-second slow-test threshold:
+an isolated run on `8ccc9bd6` took 11.5 seconds, and a resource-match worktree
+run took 11.9 seconds. This is existing test-level slowness, not a resource-match
+regression. Keep the unchanged-C budget-exhaustion reproduction, but reduce
+or separate its setup/verification work so the regression itself is prompt;
+do not raise the tactic or test limits or expand the failing proof.
+
 ## Acceptance criteria
 
 - Original copy3, bubble-pass, and sorting fixtures verify and expand to
@@ -131,5 +138,7 @@ the original fixture.
   premises, and incomplete path evidence reject.
 - Planning stays within existing limits. Simple checking remains
   output-sensitive, with deterministic scaling coverage.
+- The explicit sorting transport regression stays below the slow-test
+  threshold while retaining its local failure and stack-safety checks.
 - `scripts/check.sh` passes. Delete this issue and its index line together
   with the completed migration and updated documentation.
