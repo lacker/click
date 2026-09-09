@@ -269,9 +269,15 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
+        // Retain the selected premises for the anchored fallbacks. The proof
+        // is unchanged by a declined candidate, so repeating derivation
+        // discovery here would perform the same search a second time.
+        let mut anchored_pairs = Vec::new();
         let atomic = (|| {
             let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) = self
                 .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)?;
+            anchored_pairs = premise_pairs;
+            let premise_pairs = &anchored_pairs;
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
@@ -295,10 +301,6 @@ impl<'a> Proof<'a> {
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
         }
-        let anchored_pairs = self
-            .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)
-            .map(|(_, _, pairs, _)| pairs)
-            .unwrap_or_default();
         if let Some(anchored) = self
             .try_outcome_anchored_order_transitivity(&anchored_pairs)
             .or_else(|| self.try_outcome_anchored_increment_order(&anchored_pairs))
@@ -1090,6 +1092,8 @@ impl<'a> Proof<'a> {
     /// Refines the Proof-owned Surface goal through audited scopes and steps.
     /// The caller cannot supply a second description of the judgment: this
     /// syntax is the view paired with the kernel goal in `PropositionObligation`.
+    /// Keep branch-local proof/syntax temporaries out of this recursive frame.
+    #[inline(never)]
     fn try_structural_simp_closure_with_surfaces(
         &self,
         surface_goal: &ClickProposition,
@@ -1100,35 +1104,13 @@ impl<'a> Proof<'a> {
         };
         match (surface_goal, goal) {
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
-                if let Some(enumerated) = self.try_finite_forall_enumeration(surface_goal)? {
-                    return Ok(Some(enumerated));
-                }
-                match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
-                    Some(introduced) => {
-                        introduced.try_simp_closure_with_surfaces(introduced_surfaces)
-                    }
-                    None => Ok(None),
-                }
+                self.try_structural_forall_simp_closure(surface_goal, introduced_surfaces)
             }
             (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
                 self.try_implication_simp_closure(surface_antecedent, introduced_surfaces)
             }
             (ClickProposition::And(_, _), Proposition::And(_, _)) => {
-                let (split_proof, split, ids) = self.split_focused_both()?;
-                let marker = split_proof.checkpoint();
-                let Some(left) = split_proof
-                    .focus_branch(ids[0])?
-                    .try_simp_closure_with_surfaces(introduced_surfaces)?
-                else {
-                    return Ok(None);
-                };
-                let Some(right) = left
-                    .focus_branch(ids[1])?
-                    .try_simp_closure_with_surfaces(introduced_surfaces)?
-                else {
-                    return Ok(None);
-                };
-                attempt::candidate_outcome(right.join_focused_both(&marker, split, ids))
+                self.try_structural_and_simp_closure(introduced_surfaces)
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat
@@ -1137,42 +1119,96 @@ impl<'a> Proof<'a> {
             (ClickProposition::PredicateCall { name, .. }, _)
                 if !self.focused_branch_unfolds().contains(name) =>
             {
-                match attempt::candidate_outcome(
-                    self.apply_step(ProofStep::UnfoldPredicate(name.clone())),
-                )? {
-                    Some(unfolded) => unfolded.try_simp_closure_with_surfaces(introduced_surfaces),
-                    None => Ok(None),
-                }
+                self.try_structural_predicate_simp_closure(name, introduced_surfaces)
             }
-            (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => {
-                for (surface, closer) in [
-                    (surface_left.as_ref(), ProofStep::Left),
-                    (surface_right.as_ref(), ProofStep::Right),
-                ] {
-                    let selected = (|| {
-                        let Some(scope) =
-                            attempt::candidate_outcome(self.begin_have(surface.clone()))?
-                        else {
-                            return Ok(None);
-                        };
-                        let Some(scope) =
-                            scope.try_simp_closure_with_surfaces(introduced_surfaces)?
-                        else {
-                            return Ok(None);
-                        };
-                        let Some(joined) = attempt::candidate_outcome(scope.join())? else {
-                            return Ok(None);
-                        };
-                        attempt::candidate_outcome(joined.apply_step(closer.clone()))
-                    })();
-                    if let Some(selected) = selected? {
-                        return Ok(Some(selected));
-                    }
-                }
-                Ok(None)
-            }
+            (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => self
+                .try_structural_or_simp_closure(surface_left, surface_right, introduced_surfaces),
             _ => Ok(None),
         }
+    }
+
+    // These helpers preserve the dispatcher's search order and checked steps;
+    // their stack storage is needed only for the selected connective.
+    #[inline(never)]
+    fn try_structural_forall_simp_closure(
+        &self,
+        surface_goal: &ClickProposition,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        if let Some(enumerated) = self.try_finite_forall_enumeration(surface_goal)? {
+            return Ok(Some(enumerated));
+        }
+        match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
+            Some(introduced) => introduced.try_simp_closure_with_surfaces(introduced_surfaces),
+            None => Ok(None),
+        }
+    }
+
+    #[inline(never)]
+    fn try_structural_and_simp_closure(
+        &self,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let (split_proof, split, ids) = self.split_focused_both()?;
+        let marker = split_proof.checkpoint();
+        let Some(left) = split_proof
+            .focus_branch(ids[0])?
+            .try_simp_closure_with_surfaces(introduced_surfaces)?
+        else {
+            return Ok(None);
+        };
+        let Some(right) = left
+            .focus_branch(ids[1])?
+            .try_simp_closure_with_surfaces(introduced_surfaces)?
+        else {
+            return Ok(None);
+        };
+        attempt::candidate_outcome(right.join_focused_both(&marker, split, ids))
+    }
+
+    #[inline(never)]
+    fn try_structural_predicate_simp_closure(
+        &self,
+        name: &str,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        match attempt::candidate_outcome(
+            self.apply_step(ProofStep::UnfoldPredicate(name.to_string())),
+        )? {
+            Some(unfolded) => unfolded.try_simp_closure_with_surfaces(introduced_surfaces),
+            None => Ok(None),
+        }
+    }
+
+    #[inline(never)]
+    fn try_structural_or_simp_closure(
+        &self,
+        surface_left: &ClickProposition,
+        surface_right: &ClickProposition,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        for (surface, closer) in [
+            (surface_left, ProofStep::Left),
+            (surface_right, ProofStep::Right),
+        ] {
+            let selected = (|| {
+                let Some(scope) = attempt::candidate_outcome(self.begin_have(surface.clone()))?
+                else {
+                    return Ok(None);
+                };
+                let Some(scope) = scope.try_simp_closure_with_surfaces(introduced_surfaces)? else {
+                    return Ok(None);
+                };
+                let Some(joined) = attempt::candidate_outcome(scope.join())? else {
+                    return Ok(None);
+                };
+                attempt::candidate_outcome(joined.apply_step(closer.clone()))
+            })();
+            if let Some(selected) = selected? {
+                return Ok(Some(selected));
+            }
+        }
+        Ok(None)
     }
 
     /// Proves the kernel's deterministic constant-bounded universal table as
@@ -3532,6 +3568,14 @@ impl<'a> Proof<'a> {
                 }
                 return Ok(None);
             }
+            // The theorem can close the goal before a written rewrite suffix.
+            // Retain that completed application as a checked have, keeping the
+            // outer goal open so the suffix is checked rather than discarded.
+            let retain_application = matches!(tactic, ProofTactic::ApplyTheoremUsing { .. })
+                && tactics
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(next, ProofTactic::Rewrite(_)));
+            let before_application = retain_application.then(|| proof.clone());
             match tactic {
                 ProofTactic::ApplyTheorem(application) => {
                     if authoritative {
@@ -3655,6 +3699,18 @@ impl<'a> Proof<'a> {
                         .expect("the linear script was recognized before execution");
                     proof = proof.apply_step(step)?;
                 }
+            }
+            if let Some(before) = before_application
+                && proof.focused_discharged()
+            {
+                let Some(proposition) = before.surface_goal().cloned() else {
+                    return Ok(None);
+                };
+                let body = proof.certificate_since(&before.checkpoint())?;
+                proof = before.apply_step(ProofStep::Have {
+                    proposition,
+                    proof: Box::new(body),
+                })?;
             }
         }
 

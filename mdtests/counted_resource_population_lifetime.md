@@ -38,25 +38,21 @@ verifying "counted_resource_finish.c";
 struct object* object_init(struct object* obj) {
     consumes allocation(obj, sizeof(struct object));
     consumes object(obj);
-    mutable obj->refs;
     produces object_ref(obj);
 
     ensures result == obj;
 } by {
     execute();
     fold(object_ref(obj));
-    frame();
     simp();
 }
 
 void object_finish(struct object* obj) {
     requires count(object_ref(obj)) == 1;
     consumes object_ref(obj);
-    mutable obj->refs;
 } by {
     unfold(object_ref(obj));
     execute();
-    frame();
     simp();
 }
 ```

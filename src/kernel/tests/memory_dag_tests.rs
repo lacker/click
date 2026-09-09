@@ -1,5 +1,123 @@
 use super::*;
 
+#[test]
+fn rewritten_load_store_witness_binds_value_address_and_snapshot() {
+    let index = Bitvector32Term::Variable(Variable(971));
+    let value = Bitvector32Term::Variable(Variable(972));
+    let write = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(index.clone(), 4),
+    };
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(index, Bitvector32Term::Constant(1)),
+        true,
+    );
+    let memory = CMemory::new()
+        .with_block("arg-memory", 32)
+        .store(write, CValue::Int32(value.clone()));
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(arc_pointer(4)),
+    );
+    let capture = CheckedLoadEqualityCapture::start();
+    assert!(checked_stored_origin_equality(&value, &load, &assumptions));
+    let witnesses = capture.finish();
+    assert_eq!(witnesses.len(), 1);
+    let witness = &witnesses[0];
+    assert!(witness.checks(&assumptions));
+    assert!(!witness.checks(&PureFactContext::new()));
+    let events = crate::kernel::proof::CheckedCallEvents::default();
+    assert!(!witness.checks_retargeted_for_test(
+        Bitvector32Term::Constant(7),
+        load.clone(),
+        &assumptions,
+        &events
+    ));
+    let wrong_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(arc_pointer(8)),
+    );
+    assert!(!witness.checks_retargeted_for_test(value.clone(), wrong_load, &assumptions, &events));
+    let overwritten = memory.store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(8)));
+    let overwritten_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&overwritten),
+        Box::new(arc_pointer(4)),
+    );
+    assert!(!witness.checks_retargeted_for_test(value, overwritten_load, &assumptions, &events));
+}
+
+#[test]
+fn rewritten_goal_comparison_visits_only_the_selected_proposition() {
+    let facts = crate::kernel::proof::ProofFacts::default();
+    for size in [4, 8, 16, 32] {
+        let leaf = Proposition::ConditionIs(
+            ConditionTerm::equal(Bitvector32Term::Constant(0), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let mut goal = leaf.clone();
+        for _ in 0..size {
+            goal = Proposition::And(Box::new(leaf.clone()), Box::new(goal));
+        }
+        let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
+            facts.with_checked_rewritten_loads(&goal, &goal)
+        });
+        assert!(checked.is_some());
+        assert_eq!(work, 2 * size + 1);
+    }
+}
+
+#[test]
+fn rewritten_goal_does_not_reuse_an_ambient_equality_for_a_bound_variable() {
+    let variable = Variable(981);
+    let term = Bitvector32Term::Variable(variable);
+    let one = Bitvector32Term::Constant(1);
+    let premise = Proposition::ConditionIs(ConditionTerm::equal(term.clone(), one.clone()), true);
+    let facts = crate::kernel::proof::ProofFacts::from_ordered(&[premise]);
+    let goal = |value| Proposition::ForAll {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(value, Bitvector32Term::Constant(2)),
+            true,
+        )),
+    };
+    assert!(
+        facts
+            .with_checked_rewritten_loads(&goal(term), &goal(one))
+            .is_none()
+    );
+}
+
+#[test]
+fn rewritten_store_witness_work_scales_with_selected_memory_path() {
+    for size in [1, 2, 4, 8] {
+        let value = Bitvector32Term::Constant(17);
+        let mut memory = CMemory::new()
+            .with_block("arg-memory", 128)
+            .store(arc_pointer(4), CValue::Int32(value.clone()));
+        for index in 0..size {
+            memory = memory.with_block(format!("unrelated-{size}-{index}"), 4);
+        }
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(arc_pointer(4)),
+        );
+        let assumptions = PureFactContext::new();
+        let capture = CheckedLoadEqualityCapture::start();
+        let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
+            checked_stored_origin_equality(&value, &load, &assumptions)
+        });
+        assert!(equal);
+        assert!(
+            work >= size && work <= 40 * (size + 1),
+            "size {size}: {work}"
+        );
+        let witnesses = capture.finish();
+        assert_eq!(witnesses.len(), 1);
+        assert!(witnesses[0].checks(&assumptions));
+    }
+}
+
 fn retained_memory_dag_path(cell: &MemoryDagCell) -> &[MemoryDagHop] {
     match cell {
         MemoryDagCell::Stored { path, .. } | MemoryDagCell::Unwritten { path, .. } => path,

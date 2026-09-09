@@ -1220,15 +1220,52 @@ fn divide_decoded_floats(
     else {
         unreachable!();
     };
-    let numerator = u128::from(left_significand) << (fraction_bits + FLOAT_ROUND_EXTRA_BITS);
-    let mut quotient = numerator / u128::from(right_significand);
-    if numerator % u128::from(right_significand) != 0 {
-        quotient |= 1;
-    }
+    let working_shift = fraction_bits + FLOAT_ROUND_EXTRA_BITS;
+    let target_bits = working_shift + 1;
+    let numerator = u128::from(left_significand) << working_shift;
+    let divisor = u128::from(right_significand);
+    // The working quotient is at least 2^3: the dividend significand is at
+    // least 1 while the divisor is narrower than the working shift by more
+    // than three bits, so the bit length below always measures a real bit.
+    let magnitude_bits = 128 - (numerator / divisor).leading_zeros();
+    // Normalize the quotient so its leading bit sits exactly at
+    // `working_shift`, mirroring `multiply_decoded_floats`. That shape keeps
+    // every rounding shift inside `round_float_result` at least two bits
+    // wide, so the sticky bit in bit 0 can never collide with the rounding
+    // bit. Jamming the remainder into a variable-width quotient instead
+    // mis-rounds: a one-bit subnormal shift lands the sticky exactly on the
+    // rounding bit (bugbash §13), and fewer quotient bits than the format
+    // precision treats the jammed value as exact, drifting by many ulps.
+    //
+    // A positive adjustment widens the numerator and divides again; a
+    // negative one divides by a widened divisor. Either way the single
+    // division's remainder becomes the sticky bit, so the normalized
+    // quotient is within one unit of the exact value, and bit 0 being clear
+    // means the division was exact. Both widenings fit u128: the numerator
+    // shift is bounded by the measured magnitude against the divisor width,
+    // and the divisor shift by the quotient's own bit length.
+    let adjust = target_bits as i32 - magnitude_bits as i32;
+    let (quotient, exponent) = if adjust >= 0 {
+        let numerator = u128::from(left_significand) << (working_shift + adjust as u32);
+        let quotient = numerator / divisor;
+        let sticky = u128::from(numerator % divisor != 0);
+        (
+            quotient | sticky,
+            left_exponent - right_exponent - working_shift as i32 - adjust,
+        )
+    } else {
+        let divisor = divisor << (-adjust as u32);
+        let quotient = numerator / divisor;
+        let sticky = u128::from(numerator % divisor != 0);
+        (
+            quotient | sticky,
+            left_exponent - right_exponent - working_shift as i32 - adjust,
+        )
+    };
     round_float_result(
         negative,
         quotient,
-        left_exponent - right_exponent - (fraction_bits + FLOAT_ROUND_EXTRA_BITS) as i32,
+        exponent,
         exponent_bits,
         fraction_bits,
         bias,
@@ -2873,6 +2910,405 @@ impl Pointer {
                     None
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod float_evaluator_differential_tests {
+    use super::*;
+
+    struct FloatCase {
+        name: &'static str,
+        a: u64,
+        b: u64,
+        operator: CFloatBinaryOperator,
+        exponent_bits: u32,
+        fraction_bits: u32,
+        expected: u64,
+    }
+
+    /// Differential guard for the integer-space IEEE-754 evaluator
+    /// (bugbash §13). A fixed vector of operand bit patterns spanning signed
+    /// zeros, subnormals, infinities, NaNs, cancellation pairs, and
+    /// normal/subnormal boundary results, checked against correctly rounded
+    /// results. Expected values were computed with exact rational arithmetic
+    /// and confirmed against a C compiler on this profile. NaN cases expect
+    /// the evaluator's canonical NaN; payloads are not compared.
+    #[test]
+    fn float_binary_matches_reference() {
+        use CFloatBinaryOperator::{Add, Divide, Multiply, Subtract};
+        let cases = [
+            // Division: the path bugbash §13 fixed. The first case is the
+            // §13 regression itself: the sticky bit collided with the
+            // rounding bit and folded one ulp high (0x18, not 0x17).
+            FloatCase {
+                name: "s13 subnormal dividend",
+                a: 0x00000003,
+                b: 0x3e02b932,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000017,
+            },
+            FloatCase {
+                name: "div subnormal quotient drift",
+                a: 0x00004d7f,
+                b: 0x006b25e4,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3b3927b4,
+            },
+            FloatCase {
+                name: "div subnormal dividend near tie",
+                a: 0x000dae8f,
+                b: 0x004f725d,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3e3058f7,
+            },
+            FloatCase {
+                name: "div 1/3",
+                a: 0x3f800000,
+                b: 0x40400000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3eaaaaab,
+            },
+            FloatCase {
+                name: "div 2/3",
+                a: 0x40000000,
+                b: 0x40400000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3f2aaaab,
+            },
+            FloatCase {
+                name: "div 1/0",
+                a: 0x3f800000,
+                b: 0x00000000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7f800000,
+            },
+            FloatCase {
+                name: "div -1/0",
+                a: 0xbf800000,
+                b: 0x00000000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0xff800000,
+            },
+            FloatCase {
+                name: "div 0/0",
+                a: 0x00000000,
+                b: 0x00000000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7fc00000,
+            },
+            FloatCase {
+                name: "div inf/inf",
+                a: 0x7f800000,
+                b: 0x7f800000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7fc00000,
+            },
+            FloatCase {
+                name: "div 5/inf",
+                a: 0x40a00000,
+                b: 0x7f800000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000000,
+            },
+            FloatCase {
+                name: "div -0/5",
+                a: 0x80000000,
+                b: 0x40a00000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x80000000,
+            },
+            FloatCase {
+                name: "div max/0.5 overflows",
+                a: 0x7f7fffff,
+                b: 0x3f000000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7f800000,
+            },
+            FloatCase {
+                name: "div 1/4 exact",
+                a: 0x3f800000,
+                b: 0x40800000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3e800000,
+            },
+            FloatCase {
+                name: "div min-subnormal/2 underflows",
+                a: 0x00000001,
+                b: 0x40000000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000000,
+            },
+            FloatCase {
+                name: "div tiny-normal/16 subnormal",
+                a: 0x00800000,
+                b: 0x41800000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00080000,
+            },
+            FloatCase {
+                name: "div max-subnormal/1",
+                a: 0x007fffff,
+                b: 0x3f800000,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x007fffff,
+            },
+            FloatCase {
+                name: "div subnormal/subnormal",
+                a: 0x00000002,
+                b: 0x00000001,
+                operator: Divide,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x40000000,
+            },
+            FloatCase {
+                name: "div f64 1/3",
+                a: 0x3ff0000000000000,
+                b: 0x4008000000000000,
+                operator: Divide,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x3fd5555555555555,
+            },
+            FloatCase {
+                name: "div f64 min-subnormal/2 underflows",
+                a: 0x0000000000000001,
+                b: 0x4000000000000000,
+                operator: Divide,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x0000000000000000,
+            },
+            FloatCase {
+                name: "div f64 tiny-normal/2^24 subnormal",
+                a: 0x0010000000000000,
+                b: 0x4160000000000000,
+                operator: Divide,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x0000000020000000,
+            },
+            FloatCase {
+                name: "div f64 0/0",
+                a: 0x0000000000000000,
+                b: 0x0000000000000000,
+                operator: Divide,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x7ff8000000000000,
+            },
+            FloatCase {
+                name: "div f64 1/0",
+                a: 0x3ff0000000000000,
+                b: 0x0000000000000000,
+                operator: Divide,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x7ff0000000000000,
+            },
+            // Addition/subtraction: cancellation, signed zeros, infinities.
+            FloatCase {
+                name: "sub cancellation",
+                a: 0x3f800000,
+                b: 0x3f780000,
+                operator: Subtract,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3d000000,
+            },
+            FloatCase {
+                name: "add 1+(-1)",
+                a: 0x3f800000,
+                b: 0xbf800000,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000000,
+            },
+            FloatCase {
+                name: "add -0+-0",
+                a: 0x80000000,
+                b: 0x80000000,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x80000000,
+            },
+            FloatCase {
+                name: "add inf+-inf",
+                a: 0x7f800000,
+                b: 0xff800000,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7fc00000,
+            },
+            FloatCase {
+                name: "add max+max overflows",
+                a: 0x7f7fffff,
+                b: 0x7f7fffff,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7f800000,
+            },
+            FloatCase {
+                name: "add min-subnormal+min-subnormal",
+                a: 0x00000001,
+                b: 0x00000001,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000002,
+            },
+            FloatCase {
+                name: "add 0.1f+0.2f",
+                a: 0x3dcccccd,
+                b: 0x3e4ccccd,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3e99999a,
+            },
+            FloatCase {
+                name: "add 1+2^-24 ties to even",
+                a: 0x3f800000,
+                b: 0x33800000,
+                operator: Add,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x3f800000,
+            },
+            FloatCase {
+                name: "sub 5-3",
+                a: 0x40a00000,
+                b: 0x40400000,
+                operator: Subtract,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x40000000,
+            },
+            // Multiplication: zeros, infinities, subnormal boundaries.
+            FloatCase {
+                name: "mul 1.5*2.5",
+                a: 0x3fc00000,
+                b: 0x40200000,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x40700000,
+            },
+            FloatCase {
+                name: "mul min-subnormal*2",
+                a: 0x00000001,
+                b: 0x40000000,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000002,
+            },
+            FloatCase {
+                name: "mul max*2 overflows",
+                a: 0x7f7fffff,
+                b: 0x40000000,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7f800000,
+            },
+            FloatCase {
+                name: "mul 0*inf",
+                a: 0x00000000,
+                b: 0x7f800000,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x7fc00000,
+            },
+            FloatCase {
+                name: "mul subnormal*subnormal underflows",
+                a: 0x00000001,
+                b: 0x00000001,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x00000000,
+            },
+            FloatCase {
+                name: "mul -0*5",
+                a: 0x80000000,
+                b: 0x40a00000,
+                operator: Multiply,
+                exponent_bits: 8,
+                fraction_bits: 23,
+                expected: 0x80000000,
+            },
+            FloatCase {
+                name: "add f64 1+(-1)",
+                a: 0x3ff0000000000000,
+                b: 0xbff0000000000000,
+                operator: Add,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x0000000000000000,
+            },
+            FloatCase {
+                name: "mul f64 1.5*2.5",
+                a: 0x3ff8000000000000,
+                b: 0x4004000000000000,
+                operator: Multiply,
+                exponent_bits: 11,
+                fraction_bits: 52,
+                expected: 0x400e000000000000,
+            },
+        ];
+        for case in cases {
+            let got = float_binary_bits(
+                case.a,
+                case.b,
+                case.exponent_bits,
+                case.fraction_bits,
+                case.operator,
+            );
+            assert_eq!(
+                got, case.expected,
+                "float evaluator mismatch for {}: {:#x} op {:#x} gave {:#x}, expected {:#x}",
+                case.name, case.a, case.b, got, case.expected,
+            );
         }
     }
 }

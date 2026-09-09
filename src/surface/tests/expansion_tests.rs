@@ -1,6 +1,83 @@
 use super::*;
 
 #[test]
+fn return_population_proofs_expand_without_effect_clauses() {
+    for (fixture_name, functions) in [
+        (
+            "counted_resource_refcount_transitions.md",
+            vec!["object_retain", "object_release_nonfinal"],
+        ),
+        (
+            "counted_resource_population_lifetime.md",
+            vec!["object_init", "object_finish"],
+        ),
+        (
+            "consumed_population_count_in_ensured_predicate.md",
+            vec!["consume_population"],
+        ),
+        (
+            "resource_count_predicate_snapshot.md",
+            vec!["object_retain"],
+        ),
+        (
+            "resource_pattern_counts_cross_contracts.md",
+            vec!["pool_checkout", "pool_return", "pool_roundtrip"],
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(fixture_name);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &sources)
+            .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
+        for function in functions {
+            let expanded =
+                expand_c0_claim_source(source, &sources, function, CProofClaim::Grouped).unwrap();
+            verify_c0_sources(&expanded, &sources)
+                .unwrap_or_else(|error| panic!("{fixture_name}: {}\n{expanded}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn return_population_count_is_not_an_assumed_invariant() {
+    let c_source =
+        "struct object { int32 refs; }; struct object* retain(struct object* obj) { return obj; }";
+    for proof in [
+        "execute(); simp();",
+        "unfold(reference(obj)); execute(); simp();",
+        "open(reference(obj)) { execute(); } simp();",
+    ] {
+        let source = format!(
+            r#"
+resource reference(obj: struct object*) {{
+    owns obj->refs;
+    fact obj->refs == count(reference(obj));
+}}
+verifying "retain.c";
+struct object* retain(struct object* obj) {{
+    requires count(reference(obj)) < 2147483647;
+    owns reference(obj);
+    produces reference(obj);
+    ensures obj->refs == count(reference(obj));
+    ensures result == obj;
+}} by {{ {proof} }}
+"#
+        );
+        assert!(
+            verify_c0_sources(&source, &[("retain.c", c_source)]).is_err(),
+            "accepted an unchanged stored count with {proof}"
+        );
+    }
+}
+
+#[test]
 fn signed_antisymmetry_simp_expands_to_checked_arithmetic() {
     let source = "theorem bounded_equal(i: int32) { requires 0 <= i; requires i <= 0; ensures i == 0 by { simp(); } }";
     verify_c0_sources(source, &[]).unwrap();
@@ -12604,6 +12681,92 @@ fn qualified_static_ownership_verifies_and_expands() {
     }
     let wrong = source.replace("result == 12", "result == 7");
     assert!(verify_c0_sources(&wrong, &sources).is_err());
+}
+
+#[test]
+fn qualified_function_statics_verify_and_expand() {
+    for (fixture_name, functions) in [
+        (
+            "qualified_function_static_ownership.md",
+            vec!["increment", "other", "twice", "main"],
+        ),
+        ("qualified_function_static_shapes.md", vec!["clear", "main"]),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(fixture_name);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &sources).unwrap();
+        for function in functions {
+            let expanded =
+                expand_c0_claim_source(source, &sources, function, CProofClaim::Grouped).unwrap();
+            verify_c0_sources(&expanded, &sources)
+                .unwrap_or_else(|error| panic!("{fixture_name}: {}\n{expanded}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn qualified_function_statics_reject_invalid_declarations() {
+    let c_source =
+        "void f(int parameter) { static int stored; int automatic = 0; stored = automatic; }";
+    for name in [
+        "f::parameter",
+        "f::automatic",
+        "f::missing",
+        "missing::stored",
+        "f",
+        "f::stored::extra",
+    ] {
+        let source = format!(
+            "verifying \"storage.c\" as storage; void f(int parameter) {{ owns &storage::{name}[0..1]; }}"
+        );
+        assert!(
+            verify_c0_sources(&source, &[("storage.c", c_source)]).is_err(),
+            "accepted {name}"
+        );
+    }
+}
+
+#[test]
+fn qualified_function_statics_do_not_grant_ownership() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/qualified_function_static_ownership.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let original = "uint32 twice() {\n    owns &counter_file::increment::calls[0..1];";
+    assert!(source.contains(original));
+    for replacement in [
+        "uint32 twice() {",
+        "uint32 twice() { views &counter_file::increment::calls[0..1];",
+        "uint32 twice() { owns &counter_file::other::calls[0..1];",
+        "uint32 twice() { owns &counter_file::calls[0..1];",
+    ] {
+        let invalid = source.replace(original, replacement);
+        let error = verify_c0_sources(&invalid, &sources)
+            .expect_err("caller must transfer the exact owned object");
+        assert!(
+            error.message().contains("missing resource"),
+            "{}",
+            error.message()
+        );
+    }
+    let invalid = source.replace("increment::calls == 7u32", "increment::calls == 6u32");
+    assert!(
+        verify_c0_sources(&invalid, &sources).is_err(),
+        "a repeated call must not reset the static initializer"
+    );
 }
 
 #[test]

@@ -1825,15 +1825,16 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let is_external = is_external_memory_pointer(pointer);
-                let has_external_read_resource = is_external
-                    && (assumptions.should_allow_symbolic_contract_loads()
+                let require_owned = assumptions.should_require_owned_expression_loads();
+                let has_read_resource = (is_external || require_owned)
+                    && ((!require_owned && assumptions.should_allow_symbolic_contract_loads())
                         || resource_context_has_read(
                             state.resources(),
                             pointer,
                             lvalue.value_type.byte_width(),
                             &effective_assumptions,
                         ));
-                if is_external && !has_external_read_resource {
+                if (is_external || require_owned) && !has_read_resource {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
                             resource: CResourceFact::view_memory(CMemoryRange::new(
@@ -1853,7 +1854,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     facts,
                     obligations,
                     assumptions,
-                    has_external_read_resource,
+                    is_external && has_read_resource,
                     next_kernel_variable,
                 );
                 if !lvalue.is_volatile() {

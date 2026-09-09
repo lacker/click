@@ -327,62 +327,13 @@ impl<'a> Proof<'a> {
         .map_err(|message| self.step_error(format!("loop state join: {message}")))
     }
 
-    /// Reports whether the legacy invariant checker can already discharge a
-    /// prefix without Surface planning. Region `simp` uses this only to avoid
-    /// reproving successful invariants; a miss selects the next named
-    /// invariant for an explicit checked `have`.
-    pub(in crate::surface::proof) fn legacy_loop_invariant_prefix_holds(
-        &self,
-        loop_entry_state: &CState,
-        invariant_checks: &[CLoopInvariantCheck],
-    ) -> Result<bool, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
-            return Err(self.step_error("loop invariant preflight requires an execution proof"));
-        }
-        self.require_execution_frontier("loop invariant preflight")?;
-        let execution = self
-            .execution()
-            .ok_or_else(|| self.step_error("loop invariant preflight lost its execution state"))?;
-        let mut closer_facts = self.facts().to_vec();
-        closer_facts.extend(
-            execution
-                .core
-                .effect_facts
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        closer_facts.extend(crate::kernel::certified_store_equations(
-            &execution.core.effect_facts,
-        ));
-        match c_loop_invariants_hold_at_back_edge_using(
-            &execution.core.state,
-            loop_entry_state,
-            invariant_checks,
-            &assumptions_from_propositions(&closer_facts),
-        ) {
-            Ok(()) => Ok(true),
-            Err(_) => {
-                if let Some(context) = crate::instrumentation::exceeded_verification_limit_context()
-                {
-                    Err(self.step_error(format!(
-                        "verification limit expired during loop invariant preflight inside {context}"
-                    )))
-                } else {
-                    Ok(false)
-                }
-            }
-        }
-    }
-
     /// Prepare complete back-edge lowering evidence for the loop planner.
     /// `None` denotes a checked do-while exit with no continuing back edge.
     ///
-    /// The legacy source driver may arrive with the surface closer already
-    /// reflected in cursor metadata. That metadata is not authority for the
-    /// invariant judgment. An exact completed closure body supplies the value
-    /// and safety evidence; existing evidence is validated without discovery.
-    /// Bare requests still use legacy preparation. Ordinary value facts alone
-    /// do not replace the lowering's safety evidence.
+    /// An exact completed closure body supplies both value and safety
+    /// evidence. Automatic preservation plans that body through checked
+    /// Surface operations; existing evidence is validated without discovery.
+    /// Ordinary value facts alone do not replace the lowering's safety evidence.
     pub(in crate::surface::proof) fn prepare_loop_invariant_bundle(
         &self,
         loop_entry_state: &CState,
@@ -438,22 +389,31 @@ impl<'a> Proof<'a> {
                 "explicit invariant evidence does not align with the invariant bundle",
             ));
         }
-        let state = self
-            .state
-            .retain_checked_invariant_lowerings(loop_entry_state, invariant_checks)
-            .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
-        let proof = self.with_kernel_state(state);
+        let proof = if execution.core.checked_invariant_lowerings.is_some() {
+            self.clone()
+        } else {
+            self.apply_close_invariants_body(&[ProofTactic::Simp])?
+        };
+        proof.validate_loop_invariant_bundle(invariant_checks)?;
         Ok(Some(proof))
     }
 
     /// Consume the complete prepared bundle without lowering or proof search.
+    pub(in crate::surface::proof) fn validate_loop_invariant_bundle(
+        &self,
+        invariant_checks: &[CLoopInvariantCheck],
+    ) -> Result<(), ClickError> {
+        self.state
+            .validate_checked_invariant_lowerings(invariant_checks)
+            .map_err(|message| self.step_error(message))
+    }
+
+    /// Record closure only after validating the exact retained evidence.
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
     ) -> Result<Self, ClickError> {
-        self.state
-            .validate_checked_invariant_lowerings(invariant_checks)
-            .map_err(|message| self.step_error(message))?;
+        self.validate_loop_invariant_bundle(invariant_checks)?;
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
@@ -1036,10 +996,7 @@ impl<'a> Proof<'a> {
         if capture_this_tactic {
             // The tactic's expansion is the law's own surface certificate.
             let expansion = ProofCertificateBuilder {
-                steps: smart_certificate
-                    .as_ref()
-                    .map(|certificate| certificate.steps().to_vec())
-                    .unwrap_or_default(),
+                steps: smart_certificate.steps().to_vec(),
                 ..ProofCertificateBuilder::default()
             };
             finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &expansion, false);
@@ -1052,32 +1009,13 @@ impl<'a> Proof<'a> {
         // Retain the checked `have` as provenance: a smart body keeps the
         // law's selected surface operations; an explicit body keeps its own
         // script. Expansion serializes this node, never the aftermath.
-        let have_step = match (smart_certificate, &have.proof) {
+        let have_step = match smart_certificate.steps() {
             // The law's surface certificate is already the complete checked
             // form, including the `have` wrapper when it selected one.
-            (Some(certificate), _) => match certificate.steps() {
-                [step @ ProofStep::Have { .. }] => step.clone(),
-                _ => ProofStep::Have {
-                    proposition: have.proposition.clone(),
-                    proof: Box::new(certificate),
-                },
-            },
-            (None, SourceProof::Script(tactics)) => ProofStep::Have {
+            [step @ ProofStep::Have { .. }] => step.clone(),
+            _ => ProofStep::Have {
                 proposition: have.proposition.clone(),
-                proof: Box::new(ProofCertificate::from_proof_tactics(tactics).map_err(
-                    |error| {
-                        self.step_error(format!(
-                            "`have` body is not surface-expressible: {error:?}"
-                        ))
-                    },
-                )?),
-            },
-            (None, _) => ProofStep::Have {
-                proposition: have.proposition.clone(),
-                proof: Box::new(
-                    ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
-                        .expect("assumption is a simple proof"),
-                ),
+                proof: Box::new(smart_certificate),
             },
         };
         let state = self

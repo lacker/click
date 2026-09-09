@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Thirteen independent root causes. Every one has a reproduction that verifies
+Eleven independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
-Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other seven are high: the trigger is
+Five are critical: an ordinary contract over ordinary C is certified while
+false, with no unusual tactics. The other six are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -236,70 +236,6 @@ path rather than a synthesized surface clause.
 
 ---
 
-## 3. Globals assigned inside a loop are not havoced at the loop head
-
-**Severity: critical.** The pre-loop value of a global survives the abstract
-iteration, so a loop that increments a global is certified to leave it alone.
-
-**Violated invariant.** The abstract loop head must forget every object the
-body can modify. A by-name assignment to an object with static storage
-duration is such a modification.
-
-**Mechanism.** `havoc_loop_modified_locals` (`src/kernel/loops.rs:2340`)
-refreshes only bindings that match `CLocalBinding::Object`; a global binding
-falls through the `let ... else { continue }`. The memory havoc that would
-otherwise cover the cell is gated on `statement_may_write_memory`
-(`src/kernel/loops.rs:2441`), which does not count a by-name global assignment
-as a memory write.
-
-**Regression** (`mdtests/loop_global_not_havoced_rejected.md`):
-
-```c
-int32 g = 0;
-
-int32 bump(int32 n) {
-    int32 i = 0;
-    g = 0;
-    while (i < n) {
-        g = g + 1;
-        i = i + 1;
-    }
-    return g;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 bump(int32 n) {
-    requires n >= 0 and n <= 100;
-    mutable &g[0..1];
-    ensures result == 0;
-} by {
-    step();
-    step();
-    step();
-    loop {
-        invariant i >= 0 and i <= n;
-    }
-    step();
-    frame();
-    simp();
-}
-```
-
-`bump(5)` returns 5. The same hole applies to a function-local `static`.
-
-**Acceptance criteria.**
-- The sidecar is rejected; the invariant is too weak to conclude anything
-  about `g` at the exit.
-- Adding `invariant g == i;` lets the true postcondition `result == n` verify.
-- Fix both halves: include global and static bindings in the modified-name
-  havoc, and count by-name assignment to a static-storage object as a memory
-  write for the havoc gate. A regression for each half.
-
----
-
 ## 4. Memory cells carry no width; retyping casts are accepted
 
 **Severity: critical.** Eight findings share this root cause. Overlapping
@@ -404,95 +340,6 @@ changes; both claims verify today.
   range's element width.
 
 ---
-
-## 5. By-value struct postconditions land on the caller's object
-
-**Severity: critical.** The callee is certified against its own copy, and the
-resulting fact is applied to the caller's object, producing a contradictory
-state in which anything verifies.
-
-**Violated invariant.** A by-value parameter is a callee-local object. Its
-post-state is not observable by the caller, so no `ensures` about it may be
-instantiated on the caller's argument.
-
-**Mechanism.** Aggregate parameter binding copies the argument into a fresh
-block for the callee, but ensures instantiation maps the parameter back to the
-caller's object (`src/kernel/functions.rs`, aggregate binding and the ensures
-substitution that follows).
-
-**Regression** (`mdtests/by_value_struct_param_ensures_rejected.md`):
-
-```c
-struct pair {
-    int32 first;
-    int32 second;
-};
-
-int32 bump(struct pair value) {
-    value.first = 5;
-    return value.first;
-}
-
-int32 call_bump() {
-    struct pair original;
-    int32 r;
-    original.first = 4;
-    original.second = 0;
-    r = bump(original);
-    return original.first;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 bump(struct pair value) {
-    ensures value.first == 5;
-}
-
-int32 call_bump() {
-    ensures result == 999;
-}
-```
-
-`call_bump` returns 4. The absurd `result == 999` verifies because the caller's
-state has both `original.first == 4` and `original.first == 5`.
-
-**Acceptance criteria.**
-- `call_bump`'s claim is rejected, and so is any other value: after the call
-  the only provable fact about `original.first` is that it is still 4.
-- `mdtests/struct_by_value_scalar_copy.md` and the rest of the by-value family
-  still pass.
-
-**Do not bind the parameter to a fresh, empty post-state block.** Binding it to
-a fresh, empty block in the call's post-contract state
-(`with_contract_argument_views` keeps the caller's object; the two ensures
-lowerings at `src/kernel/functions.rs:1193` and `:1245` would rebind) fixes
-the regression below and leaves the caller's state consistent, but is too
-destructive as it stands:
-
-- `mdtests/struct_conditional_value.md` fails. `choose_packet` states
-  `ensures result.tag == right.tag` over by-value parameters it never
-  modifies, and the caller needs that to chain into `sum_packet`'s
-  precondition. With an unconstrained post-state parameter the chain is lost.
-- `old(value.field)` breaks with it, so the migration those contracts would
-  need is not available: `old` resolves the parameter's address in the *post*
-  state and then reads it in entry memory, so an empty fresh block reads as
-  nothing. A fresh block would have to carry the argument's entry image for
-  `old` to keep working, while staying unconstrained in the post state.
-
-**Suggested direction.** The existing reading of a
-by-value parameter in `ensures` is sound exactly when the callee does not
-modify its copy, which is the case for every by-value contract in the tree
-today (`choose_packet`, `sum_packet`, `struct_by_value_pointer_copy.md`).
-Only a callee that writes to its copy, as `bump` does here, can state
-something the caller must not believe. So certification can keep the current
-call-site behaviour and instead reject an `ensures` that mentions a by-value
-aggregate parameter outside `old(...)` when the body writes to that
-parameter's storage. That preserves every contract in the tree and rejects
-this regression, and it needs no surface migration. The check belongs where
-the callee's body is certified, comparing the parameter's copy block between
-entry and exit, or by walking `source_body` for stores into it.
 
 ---
 
@@ -953,42 +800,6 @@ int32 for_initializer_scope_rejected() {
   still verifies.
 
 ---
-
-## 17. A postcondition may read the storage of a returned local
-
-**Severity: high.** A contract states a value in storage whose lifetime ended
-when the function returned, and the caller may rely on it.
-
-**Violated invariant.** An automatic object's lifetime ends when its block is
-left (C11 6.2.4p6); a pointer to it becomes indeterminate, so a postcondition
-may not read through it.
-
-**Mechanism.** Not localized. The returned pointer keeps its `local:` block,
-and the postcondition is lowered against the exit state where that block's
-cells are still present.
-
-**Regression** (`mdtests/returned_local_postcondition_rejected.md`):
-
-```c
-int32* returned_local_postcondition_rejected() {
-    int32 value = 5;
-    return &value;
-}
-```
-
-```click
-verifying "t.c";
-
-int32* returned_local_postcondition_rejected() {
-    ensures result[0] == 5;
-}
-```
-
-**Acceptance criteria.**
-- The postcondition is rejected: the frame's storage is gone at the exit
-  state, so the load has nothing to read.
-- A postcondition over storage that outlives the call, a heap allocation the
-  function returns or a caller object it was given, still verifies.
 
 ---
 

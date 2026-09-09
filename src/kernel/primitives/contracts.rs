@@ -991,6 +991,21 @@ impl CCompositeResourceDefinition {
         self.instance_schema = schema;
         self
     }
+
+    pub(crate) fn instance_field_schema(&self) -> Option<&ResourceFieldSchema> {
+        self.instance_schema.as_ref()
+    }
+
+    pub(crate) fn has_memory_only_instance_body(&self) -> bool {
+        self.matched
+            .as_ref()
+            .is_none_or(|body| body.arms.iter().all(|arm| arm.children.is_empty()))
+    }
+
+    pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
+        self.matched = body;
+        self
+    }
     pub fn new(
         name: impl Into<String>,
         parameters: Vec<CParameter>,
@@ -1001,6 +1016,7 @@ impl CCompositeResourceDefinition {
     ) -> Self {
         Self {
             instance_schema: None,
+            matched: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),
@@ -1030,6 +1046,7 @@ impl CCompositeResourceDefinition {
     ) -> Self {
         Self {
             instance_schema: None,
+            matched: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),

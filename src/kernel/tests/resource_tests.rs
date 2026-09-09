@@ -75,8 +75,771 @@ fn instance_memory_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
     (instance, definition, state)
 }
 
+fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition, CState) {
+    let (mut instance, mut definition, _) = instance_memory_fixture();
+    let tree = AlgebraicValueType::Algebraic {
+        name: "Tree".into(),
+        arguments: vec![],
+    };
+    let ty = resource_index_type(
+        "Tree",
+        vec![
+            AlgebraicValueType::C(CType::Int32Pointer),
+            tree.clone(),
+            AlgebraicValueType::C(CType::Int32Pointer),
+            tree,
+        ],
+    );
+    let empty = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Clear".into(),
+            fields: vec![],
+        },
+    };
+    instance.schema = ResourceFieldSchema::new(vec![(
+        "model".into(),
+        ResourceFieldType::Algebraic(ty.clone()),
+    )])
+    .unwrap();
+    instance.fields = vec![AlgebraicValue::Algebraic(AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![
+                CValue::pointer(Pointer::null()).into(),
+                AlgebraicValue::Algebraic(empty.clone()),
+                CValue::pointer(Pointer::null()).into(),
+                AlgebraicValue::Algebraic(empty),
+            ],
+        },
+    })]
+    .into();
+    definition.instance_schema = Some(instance.schema.clone());
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                contains: vec![],
+                facts: vec![],
+                children: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                bindings: vec!["lp".into(), "lm".into(), "rp".into(), "rm".into()],
+                binding_types: ty.variants[1].fields.clone(),
+                contains: std::mem::take(&mut definition.contains),
+                facts: vec![],
+                children: vec![
+                    CResourceChildSpec {
+                        name: "left".into(),
+                        binding: Variable(90),
+                        arguments: vec![c_variable("lp")],
+                        field_bindings: vec![1],
+                    },
+                    CResourceChildSpec {
+                        name: "right".into(),
+                        binding: Variable(91),
+                        arguments: vec![c_variable("rp")],
+                        field_bindings: vec![3],
+                    },
+                ],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    (instance, definition, state)
+}
+
 #[test]
-fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
+fn stored_child_arguments_require_owned_memory() {
+    let (instance, mut definition, state) = recursive_child_fixture();
+    let arm = &mut definition.matched.as_mut().unwrap().arms[1];
+    let CResourceSpec::OwnMemory(segment) = &mut arm.contains[0] else {
+        unreachable!()
+    };
+    segment.end = c_int32_literal(2); // one LP64 pointer
+    arm.children[0].arguments = vec![CExpression::TypedLoad {
+        pointer: Box::new(c_variable("p")),
+        value_type: CType::Int32Pointer,
+    }];
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let assumptions = PureFactContext::new();
+    let rewrite = |state: &CState,
+                   definition: &CCompositeResourceDefinition,
+                   assumptions: &PureFactContext,
+                   unfold| {
+        crate::kernel::rewrite_resource_instance_selecting_children(
+            state,
+            &instance,
+            definition,
+            assumptions,
+            unfold,
+            Some(&children),
+        )
+    };
+    let (open, _) = rewrite(&state, &definition, &assumptions, true).unwrap();
+    rewrite(&open, &definition, &assumptions, false).unwrap();
+    let mut unreadable = definition.clone();
+    unreadable.matched.as_mut().unwrap().arms[1]
+        .contains
+        .clear();
+    // Even a caller using permissive specification lowering cannot grant
+    // child construction an unchecked read outside the owned body.
+    assert!(
+        rewrite(
+            &state,
+            &unreadable,
+            &assumptions.clone().allow_symbolic_contract_loads(),
+            true
+        )
+        .is_err()
+    );
+    let mut missing = open.clone();
+    missing.resources = ResourceContext::new().unchecked_with_facts(
+        open.resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_none())
+            .cloned(),
+    );
+    assert!(rewrite(&missing, &definition, &assumptions, false).is_err());
+    assert!(rewrite(&open, &unreadable, &assumptions, false).is_err());
+    let concrete = Pointer {
+        block: "unowned-link".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let concrete_state = state.clone().with_memory(
+        CMemory::new()
+            .with_block("unowned-link", 8)
+            .store(concrete.clone(), CValue::pointer(Pointer::null())),
+    );
+    let mut concrete_definition = definition.clone();
+    concrete_definition.matched.as_mut().unwrap().arms[1].children[0].arguments =
+        vec![CExpression::TypedLoad {
+            pointer: Box::new(c_pointer_value(concrete.clone())),
+            value_type: CType::Int32Pointer,
+        }];
+    // A materialized C block is not authority to read a link outside the
+    // resource body, even though ordinary C execution can access that block.
+    assert!(rewrite(&concrete_state, &concrete_definition, &assumptions, true).is_err());
+    concrete_definition.matched.as_mut().unwrap().arms[1]
+        .contains
+        .push(CResourceSpec::OwnMemory(CMemorySegment {
+            base: c_pointer_value(concrete),
+            start: c_int32_literal(0),
+            end: c_int32_literal(2),
+            element_width: 4,
+            guard: None,
+        }));
+    rewrite(&concrete_state, &concrete_definition, &assumptions, true).unwrap();
+    // The parent's concrete memory may not also be owned by the surrounding
+    // frame: unfolding must reject overlapping ownership.
+    let mut overlap = state.clone();
+    overlap.resources = overlap.resources.unchecked_with_facts(
+        open.resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_some())
+            .cloned(),
+    );
+    assert!(rewrite(&overlap, &definition, &assumptions, true).is_err());
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut framed = open.clone();
+        for i in 0..size {
+            let other = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(1000 + i)),
+                    4,
+                ),
+            };
+            framed.resources = framed
+                .resources
+                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    other,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )));
+        }
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            rewrite(&framed, &definition, &assumptions, false)
+        });
+        result.unwrap();
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn instance_fold_preserves_memory_pieces_without_scanning_unrelated_resources() {
+    let (instance, mut definition, _) = instance_memory_fixture();
+    definition.contains = (0..3)
+        .map(|i| {
+            CResourceSpec::OwnMemory(CMemorySegment {
+                base: c_variable("p"),
+                start: c_int32_literal(i),
+                end: c_int32_literal(i + 1),
+                element_width: 4,
+                guard: None,
+            })
+        })
+        .collect();
+    let CValue::Pointer(value) = instance.arguments()[0].as_c_value().unwrap() else {
+        unreachable!()
+    };
+    let pointer = value.pointer().clone();
+    let pieces = (0..3)
+        .map(|i| {
+            CResourceFact::own_memory(CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(i),
+                Bitvector32Term::Constant(i + 1),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let assumptions = PureFactContext::new();
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut resources = ResourceContext::new().unchecked_with_facts(pieces.iter().cloned());
+        for i in 0..size {
+            let other = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(1000 + i)),
+                    4,
+                ),
+            };
+            resources =
+                resources.unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    other,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )));
+        }
+        let state = CState::new().with_resource_context(resources);
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                &state,
+                &instance,
+                &definition,
+                &assumptions,
+                false,
+                Some(&[]),
+            )
+        });
+        result.unwrap();
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn independent_children_kernel_consumes_names_and_accepts_replacements() {
+    let (instance, definition, state) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let rewrite =
+        |state: &CState, instance: &ResourceInstance, unfold, children: &[(String, Variable)]| {
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                state,
+                instance,
+                &definition,
+                &assumptions,
+                unfold,
+                Some(children),
+            )
+        };
+    let (open, _) = rewrite(&state, &instance, true, &children).unwrap();
+    assert!(open.open_instances.is_empty());
+    assert!(open.resource_instance_fields(instance.identity()).is_none());
+    assert!(
+        open.resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let left = open.owned_resource_instance(Variable(501)).unwrap().clone();
+    let (raw, _) = rewrite(&open, &left, true, &[]).unwrap();
+    assert!(raw.owned_resource_instance(left.identity()).is_none());
+    assert!(rewrite(&raw, &instance, false, &children).is_err());
+    let mut replacement = left.clone();
+    replacement.identity = Variable(503);
+    let (replaced, _) = rewrite(&raw, &replacement, false, &[]).unwrap();
+    let selected = vec![
+        ("left".into(), Variable(503)),
+        ("right".into(), Variable(502)),
+    ];
+    let (closed, _) = rewrite(&replaced, &instance, false, &selected).unwrap();
+    assert_eq!(closed.resources(), state.resources());
+    assert!(closed.open_instances.is_empty());
+    for bad in [
+        vec![],
+        vec![("left".into(), Variable(501))],
+        vec![
+            ("left".into(), Variable(501)),
+            ("right".into(), Variable(501)),
+        ],
+        vec![
+            ("left".into(), instance.identity()),
+            ("right".into(), Variable(502)),
+        ],
+    ] {
+        assert!(rewrite(&state, &instance, true, &bad).is_err());
+    }
+    assert!(rewrite(&open, &instance, false, &selected).is_err());
+}
+
+#[test]
+fn independent_children_kernel_work_ignores_unrelated_instances() {
+    let (instance, definition, initial) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut state = initial.clone();
+        for identity in 2..=size {
+            let mut unrelated = instance.clone();
+            unrelated.identity = Variable(identity);
+            state.resources = state
+                .resources
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (open, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+                &state,
+                &instance,
+                &definition,
+                &assumptions,
+                true,
+                Some(&children),
+            )
+            .unwrap();
+            assert!(open.open_instances.is_empty());
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                &open,
+                &instance,
+                &definition,
+                &assumptions,
+                false,
+                Some(&children),
+            )
+            .unwrap()
+        });
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn recursive_child_kernel_requires_exact_folded_children() {
+    let (instance, definition, state) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    assert!(
+        state
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let (open, _) =
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+    let parent = open
+        .resource_instance_fields(instance.identity())
+        .unwrap()
+        .clone();
+    let left = open
+        .resource_instance_at_path(instance.identity(), &["left".into()])
+        .unwrap()
+        .clone();
+    let right = open
+        .resource_instance_at_path(instance.identity(), &["right".into()])
+        .unwrap()
+        .clone();
+    assert_ne!(left.identity(), right.identity());
+    assert_eq!(left.fields(), right.fields());
+    assert!(
+        ResourceContext::new()
+            .try_compose_with_fact(
+                CResourceFact::own(CResource::Instance(parent.clone())),
+                &assumptions
+            )
+            .is_err(),
+        "open handle must not become folded ownership"
+    );
+    let (left_open, _) =
+        rewrite_resource_instance(&open, &left, &definition, &assumptions, true).unwrap();
+    assert!(
+        rewrite_resource_instance(&left_open, &parent, &definition, &assumptions, false).is_err()
+    );
+    let (children_closed, _) =
+        rewrite_resource_instance(&left_open, &left, &definition, &assumptions, false).unwrap();
+    let (closed, _) =
+        rewrite_resource_instance(&children_closed, &parent, &definition, &assumptions, false)
+            .unwrap();
+    assert_eq!(closed.resources(), state.resources());
+    assert!(closed.open_instances.is_empty());
+    assert!(
+        closed
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let (reopened, _) =
+        rewrite_resource_instance(&closed, &instance, &definition, &assumptions, true).unwrap();
+    assert_ne!(
+        reopened
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .unwrap()
+            .identity(),
+        left.identity()
+    );
+    let mut missing = open.clone();
+    missing.resources = missing
+        .resources
+        .without_exact_representation(&CResourceFact::own(CResource::Instance(right.clone())))
+        .unwrap();
+    assert!(
+        rewrite_resource_instance(&missing, &parent, &definition, &assumptions, false).is_err()
+    );
+    let mut wrong = missing;
+    let mut altered = right;
+    altered.fields = instance.fields.clone();
+    wrong.resources = wrong
+        .resources
+        .unchecked_with_fact(CResourceFact::own(CResource::Instance(altered)));
+    assert!(rewrite_resource_instance(&wrong, &parent, &definition, &assumptions, false).is_err());
+    let mut invalid = definition.clone();
+    invalid.matched.as_mut().unwrap().arms[1].children[0].field_bindings = vec![0];
+    assert!(rewrite_resource_instance(&state, &instance, &invalid, &assumptions, true).is_err());
+}
+
+#[test]
+fn recursive_child_kernel_work_ignores_unrelated_handles() {
+    let (instance, definition, initial) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut state = initial.clone();
+        for identity in 2..=size {
+            let mut unrelated = instance.clone();
+            unrelated.identity = Variable(identity);
+            state.open_instances = state
+                .open_instances
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (open, _) =
+                rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
+                    .unwrap();
+            assert!(
+                open.resource_instance_at_path(instance.identity(), &["left".into()])
+                    .is_some()
+            );
+            rewrite_resource_instance(
+                &open,
+                open.resource_instance_fields(instance.identity()).unwrap(),
+                &definition,
+                &assumptions,
+                false,
+            )
+            .unwrap()
+        });
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn recursive_child_kernel_keeps_unknown_submodels_folded() {
+    let (mut instance, definition, _) = recursive_child_fixture();
+    let mut fields = instance.fields.to_vec();
+    let AlgebraicValue::Algebraic(model) = &mut fields[0] else {
+        unreachable!()
+    };
+    let unknown = AlgebraicTerm {
+        algebraic_type: model.algebraic_type.clone(),
+        node: AlgebraicTermNode::Variable(Variable(555)),
+    };
+    let AlgebraicTermNode::Constructor { fields, .. } = &mut model.node else {
+        unreachable!()
+    };
+    fields[0] = CValue::pointer(Pointer::symbolic(Variable(556))).into();
+    fields[1] = AlgebraicValue::Algebraic(unknown.clone());
+    // Rebuild the outer argument list after updating only its immediate fields.
+    let model = model.clone();
+    instance.fields = vec![AlgebraicValue::Algebraic(model)].into();
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let assumptions = PureFactContext::new();
+    let (open, _) =
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+    let child = open
+        .resource_instance_at_path(instance.identity(), &["left".into()])
+        .unwrap();
+    assert_eq!(child.fields(), &[AlgebraicValue::Algebraic(unknown)]);
+    assert!(rewrite_resource_instance(&open, child, &definition, &assumptions, true).is_err());
+    let (closed, _) = rewrite_resource_instance(
+        &open,
+        open.resource_instance_fields(instance.identity()).unwrap(),
+        &definition,
+        &assumptions,
+        false,
+    )
+    .unwrap();
+    assert_eq!(closed.resources(), state.resources());
+}
+
+#[test]
+fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
+    let (instance, mut definition, state) = instance_memory_fixture();
+    definition.condition = Some(SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("p")),
+        operator: CComparisonOperator::NotEqual,
+        right: SpecExpression::CExpression(c_int32_literal(0)),
+    });
+    let CValue::Pointer(pointer) = instance.arguments()[0].as_c_value().unwrap() else {
+        panic!("fixture pointer");
+    };
+    let guard = ConditionTerm::pointer_equal(pointer.pointer().clone(), Pointer::null());
+    let unknown = PureFactContext::new();
+    assert!(rewrite_resource_instance(&state, &instance, &definition, &unknown, true).is_err());
+    for is_null in [false, true] {
+        let assumptions = unknown.clone().assume_condition(guard.clone(), is_null);
+        let (open, facts) =
+            rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+        assert_eq!(open.resources().is_empty(), is_null);
+        assert!(open.resource_instance_fields(instance.identity()).is_none());
+        assert!(open.open_instances.is_empty());
+        assert_eq!(
+            facts
+                .iter()
+                .any(|fact| matches!(fact, Proposition::CMemoryLoadable { .. })),
+            !is_null
+        );
+        assert!(rewrite_resource_instance(&open, &instance, &definition, &unknown, false).is_err());
+        let (closed, _) =
+            rewrite_resource_instance(&open, &instance, &definition, &assumptions, false).unwrap();
+        assert_eq!(closed, state);
+        let raw = CState::new().with_resource_context(open.resources().clone());
+        let mut fresh = instance.clone();
+        fresh.identity = Variable(999);
+        let (constructed, _) =
+            rewrite_resource_instance(&raw, &fresh, &definition, &assumptions, false).unwrap();
+        assert!(constructed.open_instances.is_empty());
+        assert_eq!(
+            constructed.owned_resource_instance(fresh.identity()),
+            Some(&fresh)
+        );
+        if is_null {
+            let nonnull = unknown.clone().assume_condition(guard.clone(), false);
+            assert!(
+                rewrite_resource_instance(&open, &instance, &definition, &nonnull, false).is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn resource_match_constructor_index_tracks_evidence_and_scales_locally() {
+    let ty = resource_index_type("Mark", vec![]);
+    let model = resource_index_variable(&ty, 7);
+    let constructor = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![],
+        },
+    };
+    let equality = Proposition::Equal(
+        Term::Algebraic(model.clone()),
+        Term::Algebraic(constructor.clone()),
+    );
+    let reversed = Proposition::Equal(
+        Term::Algebraic(constructor.clone()),
+        Term::Algebraic(model.clone()),
+    );
+    for fact in [equality.clone(), reversed] {
+        let mut assumptions = PureFactContext::new().assume_proposition(fact.clone());
+        assert_eq!(
+            assumptions.known_algebraic_constructor(&model),
+            Some(constructor.clone())
+        );
+        assumptions.remove_proposition_fact(&fact);
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+        assumptions.insert_proposition_fact(fact.clone());
+        assumptions.retain_proposition_facts(|entry| entry != &fact);
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+        assumptions.insert_proposition_fact(fact);
+        assumptions.clear_proposition_facts();
+        assert!(assumptions.known_algebraic_constructor(&model).is_none());
+    }
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut assumptions = PureFactContext::new().assume_proposition(equality.clone());
+        for index in 100..100 + size {
+            assumptions.insert_proposition_fact(Proposition::Equal(
+                Term::Algebraic(resource_index_variable(&ty, index)),
+                Term::Algebraic(constructor.clone()),
+            ));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                assumptions.known_algebraic_constructor(&model),
+                Some(constructor.clone())
+            );
+        });
+        assert!(work > 0, "constructor lookup must count candidate visits");
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 32, "{samples:?}");
+    }
+}
+
+#[test]
+fn resource_match_kernel_checks_schema_case_and_ownership() {
+    let (mut instance, mut definition, _) = instance_memory_fixture();
+    let ty = resource_index_type("Mark", vec![]);
+    let model = resource_index_variable(&ty, 7);
+    let constructor = |variant: &str| AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: variant.into(),
+            fields: vec![],
+        },
+    };
+    instance.schema = ResourceFieldSchema::new(vec![(
+        "model".into(),
+        ResourceFieldType::Algebraic(ty.clone()),
+    )])
+    .unwrap();
+    instance.fields = vec![AlgebraicValue::Algebraic(model.clone())].into();
+    definition.instance_schema = Some(instance.schema.clone());
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                children: vec![],
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                contains: vec![],
+                facts: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                children: vec![],
+                bindings: vec![],
+                binding_types: vec![],
+                contains: std::mem::take(&mut definition.contains),
+                facts: vec![],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let unknown = PureFactContext::new();
+    let set = unknown.clone().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model.clone()),
+        Term::Algebraic(constructor("Set")),
+    ));
+    let clear = unknown.clone().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model),
+        Term::Algebraic(constructor("Clear")),
+    ));
+    assert!(rewrite_resource_instance(&state, &instance, &definition, &unknown, true).is_err());
+    let (empty, facts) =
+        rewrite_resource_instance(&state, &instance, &definition, &clear, true).unwrap();
+    assert!(empty.resources().is_empty());
+    assert!(empty.open_instances.is_empty());
+    assert!(
+        !facts
+            .iter()
+            .any(|fact| matches!(fact, Proposition::CMemoryLoadable { .. }))
+    );
+    assert!(rewrite_resource_instance(&empty, &instance, &definition, &set, false).is_err());
+    let (open, _) = rewrite_resource_instance(&state, &instance, &definition, &set, true).unwrap();
+    assert!(!open.resources().is_empty());
+    assert!(open.open_instances.is_empty());
+    let mut fresh = instance.clone();
+    fresh.identity = Variable(999);
+    fresh.fields = vec![AlgebraicValue::Algebraic(constructor("Set"))].into();
+    let raw = CState::new().with_resource_context(open.resources().clone());
+    let (constructed, _) =
+        rewrite_resource_instance(&raw, &fresh, &definition, &unknown, false).unwrap();
+    assert_eq!(
+        constructed.owned_resource_instance(fresh.identity()),
+        Some(&fresh)
+    );
+    assert!(constructed.open_instances.is_empty());
+    assert!(
+        rewrite_resource_instance(&CState::new(), &fresh, &definition, &unknown, false).is_err()
+    );
+    assert_eq!(
+        rewrite_resource_instance(&open, &instance, &definition, &set, false)
+            .unwrap()
+            .0,
+        state
+    );
+    assert!(rewrite_resource_instance(&open, &instance, &definition, &unknown, false).is_err());
+    for mutation in 0..5 {
+        let mut invalid = definition.clone();
+        let body = invalid.matched.as_mut().unwrap();
+        match mutation {
+            0 => {
+                body.arms.pop();
+            }
+            1 => {
+                body.arms[0].variant = "Set".into();
+            }
+            2 => {
+                body.arms[1].bindings.push("p".into());
+            }
+            3 => {
+                body.field_index = 1;
+            }
+            _ => {
+                body.arms[1]
+                    .binding_types
+                    .push(AlgebraicValueType::C(CType::Int32));
+            }
+        }
+        assert!(rewrite_resource_instance(&state, &instance, &invalid, &set, true).is_err());
+    }
+}
+
+#[test]
+fn instance_memory_fold_requires_body_ownership_not_an_open_handle() {
     let (instance, definition, state) = instance_memory_fixture();
     let assumptions = PureFactContext::new();
     let (opened, _) =
@@ -86,10 +849,12 @@ fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
             .owned_resource_instance(instance.identity())
             .is_none()
     );
-    assert_eq!(
-        opened.resource_instance_fields(instance.identity()),
-        Some(&instance)
+    assert!(
+        opened
+            .resource_instance_fields(instance.identity())
+            .is_none()
     );
+    assert!(opened.open_instances.is_empty());
     assert_eq!(
         rewrite_resource_instance(&opened, &instance, &definition, &assumptions, false)
             .unwrap()
@@ -108,24 +873,19 @@ fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
         rewrite_resource_instance(&missing_body, &instance, &definition, &assumptions, false)
             .is_err()
     );
-    let mut missing_handle = opened.clone();
-    missing_handle.open_instances = ResourceContext::new();
-    assert!(
-        rewrite_resource_instance(&missing_handle, &instance, &definition, &assumptions, false)
-            .is_err()
+    let raw = CState::new().with_resource_context(opened.resources.clone());
+    let mut constructed = instance.clone();
+    constructed.identity = Variable(2);
+    // This fixture's field is unconstrained by its body. Any well-typed value
+    // is legitimate; neither its identity nor field must match an old package.
+    constructed.fields = vec![int32(8).into()].into();
+    let (folded, _) =
+        rewrite_resource_instance(&raw, &constructed, &definition, &assumptions, false).unwrap();
+    assert_eq!(
+        folded.owned_resource_instance(Variable(2)),
+        Some(&constructed)
     );
-    let mut wrong_identity = instance.clone();
-    wrong_identity.identity = Variable(2);
-    assert!(
-        rewrite_resource_instance(&opened, &wrong_identity, &definition, &assumptions, false)
-            .is_err()
-    );
-    let mut wrong_fields = instance.clone();
-    wrong_fields.fields = vec![int32(8).into()].into();
-    assert!(
-        rewrite_resource_instance(&opened, &wrong_fields, &definition, &assumptions, false)
-            .is_err()
-    );
+    assert!(folded.open_instances.is_empty());
 }
 
 #[test]
@@ -146,10 +906,7 @@ fn instance_memory_fold_work_is_local_to_the_selected_instance() {
             let (open, _) =
                 rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
                     .unwrap();
-            assert_eq!(
-                open.resource_instance_fields(instance.identity()),
-                Some(&instance)
-            );
+            assert!(open.resource_instance_fields(instance.identity()).is_none());
             rewrite_resource_instance(&open, &instance, &definition, &assumptions, false).unwrap()
         });
         samples.push(work);
@@ -357,6 +1114,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         let expression = SpecExpression::ResourceField {
             projection: ResourceFieldProjection {
                 identity: Variable(10),
+                children: vec![],
                 field_index: 1,
                 at_entry,
             },
@@ -378,6 +1136,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         algebraic_type: ty.clone(),
         node: SpecAlgebraicExpressionNode::ResourceField(ResourceFieldProjection {
             identity: Variable(10),
+            children: vec![],
             field_index: 0,
             at_entry,
         }),
@@ -462,6 +1221,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         let expression = SpecExpression::ResourceField {
             projection: ResourceFieldProjection {
                 identity: Variable(identity),
+                children: vec![],
                 field_index,
                 at_entry: false,
             },

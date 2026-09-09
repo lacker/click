@@ -721,7 +721,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     ));
     assert!(matches!(
         ProofTactic::CloseInvariants.class(),
-        TacticClass::Simple(SimpleTactic::CloseInvariants)
+        TacticClass::Smart(SmartTacticKind::CloseInvariants)
     ));
     assert!(matches!(
         ProofTactic::Mark("before_write".to_string()).class(),
@@ -767,7 +767,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
             })],
             else_tactics: vec![ProofTactic::Normalize],
         }),
-        ProofTactic::CloseInvariants,
+        ProofTactic::CloseInvariantsBy(vec![ProofTactic::Assumption]),
     ];
     let certificate = ProofCertificate::from_proof_tactics(&tactics)
         .expect("test tactics should form a surface certificate");

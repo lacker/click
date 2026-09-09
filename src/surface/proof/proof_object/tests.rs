@@ -8323,6 +8323,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
     for size in [16, 32, 64, 128] {
         let mut frontier = ExecutionFrontier::default();
         frontier.region = ExecutionRegionKind::LoopBody;
+        frontier.position = FrontierPosition::RegionBoundary;
         let root = Proof::for_execution_frontier(
             "checked loop have",
             0,
@@ -8334,7 +8335,10 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
-            ExecutionProofConstants::default(),
+            ExecutionProofConstants {
+                invariant_body_context: Some(Arc::new((CState::new(), checks.clone()))),
+                ..ExecutionProofConstants::default()
+            },
             &file.function_blocks()[0],
             &function,
             &parsed,
@@ -8389,12 +8393,10 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
         let execution = certified.execution().unwrap();
         let record = execution.core.checked_invariant_lowerings.as_ref().unwrap();
         assert_eq!(record.checks(), checks);
-        assert_eq!(
-            record.paths().len(),
-            2,
-            "the explicit have must not bypass retained lowering"
-        );
-        assert!(record.paths().iter().all(|path| path.recheck()));
+        assert!(matches!(
+            prepared.certificate().steps().last(),
+            Some(ProofStep::CloseInvariantsBy(_))
+        ));
     }
     for pair in samples.windows(2) {
         assert!(
@@ -8431,6 +8433,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             let mut frontier = ExecutionFrontier::default();
             if loop_invariant_region {
                 frontier.region = ExecutionRegionKind::LoopBody;
+                frontier.position = FrontierPosition::RegionBoundary;
             }
             Proof::for_execution_frontier(
                 "persistent close invariants",
@@ -8473,16 +8476,23 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             None,
             None,
         )];
-        let retained = root.with_kernel_state(
-            root.state
-                .retain_checked_invariant_lowerings(&CState::new(), &checks)
-                .expect("retain a checked lowering on the kernel proof object"),
-        );
+        let (body, scope) = root
+            .state
+            .open_invariant_body(&CState::new(), &checks, |_| PropositionPresentation {
+                surface: None,
+                surface_bindings: PersistentMap::default(),
+            })
+            .unwrap();
+        let completed = body.apply_normalize().ok().unwrap();
+        let retained =
+            root.with_kernel_state(root.state.retain_invariant_body(scope, &completed).unwrap());
         let retained_core = &retained.execution().unwrap().core;
         let evidence = retained_core.checked_invariant_lowerings.as_ref().unwrap();
-        assert_eq!(evidence.paths().len(), 1);
         assert_eq!(evidence.checks(), checks);
-        assert!(evidence.paths()[0].recheck());
+        retained
+            .state
+            .validate_checked_invariant_lowerings(&checks)
+            .unwrap();
         assert!(
             evidence
                 .snapshot()

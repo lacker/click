@@ -1225,6 +1225,9 @@ impl<'a> Proof<'a> {
             execution: outcomes,
         };
         execution.core.execution_evidence = execution_evidence.into();
+        execution.core.evidence_completed = true;
+        execution.core.evidence_state = None;
+        execution.core.evidence_source = None;
         execution.presentation.branch_decisions =
             parent_execution.presentation.branch_decisions.clone();
         execution.presentation.outcome_provenance = Arc::new(outcome_provenance);

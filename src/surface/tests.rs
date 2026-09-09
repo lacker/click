@@ -2,6 +2,720 @@ use super::diagnostics::describe_contract_expression;
 use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
+const GUARDED_CELL_SOURCE: &str = r#"verifying "read.c";
+resource cell(p: int32*) {
+    field value: int32;
+    if p != 0 { owns p[0..1]; fact p[0] == value; }
+}
+int32 read(int32* p) {
+    owns c: cell(p);
+    ensures p == 0 or result == c.value;
+    ensures c.value == old(c.value);
+} by { BODY }
+"#;
+
+const GUARDED_CELL_C: &str = "int32 read(int32* p) { if (p == 0) return 0; return *p; }";
+
+const RECURSIVE_CHILD_SOURCE: &str = r#"verifying "read.c";
+spec enum Chain { End, More(int32, int32*, Chain) }
+resource chain(p: int32*) {
+    field model: Chain;
+    match model {
+        Chain::End => { fact p == 0; },
+        Chain::More(value, next, rest) => {
+            owns p[0..1];
+            owns tail: chain(next);
+            fact p[0] == value;
+            fact tail.model == rest;
+        },
+    }
+}
+int32 read(int32* p, int32* next, int32 value) {
+    owns root: chain(p);
+    requires root.model == Chain::More(value, next, Chain::End);
+    ensures result == value;
+    ensures root.model == old(root.model);
+} by { BODY }
+"#;
+
+#[test]
+fn recursive_child_resources_round_trip_and_expand() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+    )];
+    for body in [
+        "unfold(root); unfold(root.tail); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); have root.tail.model == Chain::End by { simp(); } unfold(root.tail); fold(root.tail); fold(root); unfold(root); execute(); fold(root); simp();",
+    ] {
+        let source = RECURSIVE_CHILD_SOURCE.replace("BODY", body);
+        let verified = verify_c0_sources(&source, &c).unwrap();
+        verify_c0_sources(
+            &source.replace(
+                &format!("by {{ {body} }}"),
+                &verified[0].expanded_proof_source().unwrap(),
+            ),
+            &c,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn recursive_child_resources_deep_paths_own_memory_and_recheck() {
+    let source = r#"verifying "middle.c";
+        spec enum Nonempty { Last(int32), More(int32, int32*, Nonempty) }
+        resource chain(p: int32*) {
+            field model: Nonempty;
+            match model {
+                Nonempty::Last(value) => { owns p[0..1]; fact p[0] == value; },
+                Nonempty::More(value, next, rest) => {
+                    owns p[0..1]; fact p[0] == value;
+                    owns tail: chain(next); fact tail.model == rest;
+                },
+            }
+        }
+        int32 middle(int32* p, int32* q, int32* r) {
+            owns root: chain(p);
+            requires root.model == Nonempty::More(7, q, Nonempty::More(8, r, Nonempty::Last(9)));
+            ensures result == 8;
+            ensures root.model == old(root.model);
+        } by { BODY }
+    "#;
+    let body = "unfold(root); unfold(root.tail); unfold(root.tail.tail); have root.tail.tail.model == Nonempty::Last(9) by { simp(); } execute(); fold(root.tail.tail); fold(root.tail); fold(root); simp();";
+    let c = [(
+        "middle.c",
+        "int32 middle(int32* p, int32* q, int32* r) { return *q; }",
+    )];
+    let source = source.replace("BODY", body);
+    let verified = verify_c0_sources(&source, &c).unwrap();
+    verify_c0_sources(
+        &source.replace(
+            &format!("by {{ {body} }}"),
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace(body, "unfold(root); execute(); fold(root); simp();"),
+            &c
+        )
+        .is_err()
+    );
+    assert!(verify_c0_sources(&source.replace("result == 8", "result == 9"), &c).is_err());
+}
+
+#[test]
+fn recursive_child_resources_do_not_capture_earlier_function_names() {
+    let source = RECURSIVE_CHILD_SOURCE
+        .replace(
+            "BODY",
+            "unfold(root); unfold(root.root); execute(); fold(root.root); fold(root); simp();",
+        )
+        .replace("owns tail: chain(next);", "owns root: chain(next);")
+        .replace("fact tail.model", "fact root.model");
+    let declaration = source.find("resource chain").unwrap();
+    let function = source.find("int32 read").unwrap();
+    let reordered = format!(
+        "{}{}{}",
+        &source[..declaration],
+        &source[function..],
+        &source[declaration..function]
+    );
+    verify_c0_sources(
+        &reordered,
+        &[(
+            "read.c",
+            "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+        )],
+    )
+    .unwrap();
+}
+
+#[test]
+fn recursive_child_resources_reject_bad_lifetimes_and_folds() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+    )];
+    for body in [
+        "unfold(root.tail); execute(); simp();",
+        "unfold(root); unfold(root.tail); execute(); fold(root); simp();",
+        "unfold(root); unfold(root.tail); unfold(root.tail); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); execute(); fold(root); unfold(root.tail); simp();",
+        "unfold(root); unfold(root.missing); execute(); fold(root); simp();",
+        "unfold(root); unfold(root.tail.tail); execute(); fold(root); simp();",
+    ] {
+        let source = RECURSIVE_CHILD_SOURCE.replace("BODY", body);
+        assert!(verify_c0_sources(&source, &c).is_err(), "accepted {body}");
+    }
+    let source =
+        RECURSIVE_CHILD_SOURCE.replace("BODY", "unfold(root); execute(); fold(root); simp();");
+    let changed = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { *p = 0; return *p; }",
+    )];
+    assert!(verify_c0_sources(&source, &changed).is_err());
+}
+
+#[test]
+fn recursive_child_resources_reject_nonstructural_definitions() {
+    for (from, to) in [
+        ("fact tail.model == rest;", ""),
+        ("fact tail.model == rest;", "fact tail.model == model;"),
+        ("fact tail.model == rest;", "fact tail.model == value;"),
+        (
+            "fact tail.model == rest;",
+            "fact tail.model == Chain::More(value, next, rest);",
+        ),
+        (
+            "owns tail: chain(next);",
+            "owns tail: chain(next); owns tail: chain(next);",
+        ),
+        ("owns tail: chain(next);", "views chain(next);"),
+    ] {
+        assert!(
+            parser::parse(&RECURSIVE_CHILD_SOURCE.replace("BODY", "").replace(from, to)).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn algebraic_pointer_constructor_null_literal_is_explicitly_unsupported() {
+    let error =
+        parser::parse("spec enum Ptr { At(int32*) } function null_ptr() -> Ptr { Ptr::At(0) }")
+            .unwrap_err();
+    assert!(
+        error.message().contains("expects int32*, got int32"),
+        "{}",
+        error.message()
+    );
+}
+
+const MATCH_CELL_SOURCE: &str = r#"verifying "read.c";
+spec enum Maybe<T> { None, Some(T) }
+resource cell(p: int32*) {
+    field model: Maybe<int32>;
+    match model {
+        Maybe::None => { fact p == 0; },
+        Maybe::Some(value) => { owns p[0..1]; fact p[0] == value; },
+    }
+}
+int32 read(int32* p, int32 expected) {
+    owns c: cell(p);
+    requires c.model == Maybe<int32>::Some(expected);
+    ensures result == expected;
+    ensures c.model == old(c.model);
+} by { unfold(c); execute(); fold(c); simp(); }
+"#;
+
+fn tree_node_init_fixture() -> (&'static str, Vec<(&'static str, &'static str)>) {
+    let fixture = include_str!("../../mdtests/resource_tree_node_init.md");
+    let source = fixture
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let c = fixture
+        .split("```c filename=resource_tree_node_init.c\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    (source, vec![("resource_tree_node_init.c", c)])
+}
+
+#[test]
+fn tree_node_init_and_stored_child_links_expand() {
+    let (source, c) = tree_node_init_fixture();
+    verify_c0_sources(source, &c).unwrap();
+    for function in ["tree_node_init", "read_value", "empty"] {
+        let expanded = expand_c0_claim_source(source, &c, function, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &c).unwrap();
+    }
+}
+
+#[test]
+fn tree_node_init_rejects_invalid_models_and_ownership() {
+    let (source, c) = tree_node_init_fixture();
+    for (from, to) in [
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, 0, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(left, value, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, value, r.model, l.model)",
+        ),
+        ("{ left: l, right: r });", "{ left: r, right: l });"),
+        ("{ left: l, right: r });", "{ left: l, right: l });"),
+        ("consumes node->left;", ""),
+        ("consumes r: tree_at(right);", ""),
+        ("requires p == 0;", ""),
+        // A child address may not be read from an unowned stored link.
+        ("owns p->left;", ""),
+        ("owns p->right;", ""),
+        // Child ownership has been consumed into root, so it cannot be reused.
+        (
+            "}, { left: l, right: r });\n    simp();",
+            "}, { left: l, right: r });\n    unfold(l);\n    simp();",
+        ),
+    ] {
+        assert!(source.contains(from));
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &c).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    // Retain the real stores in the positive fixture; these intentionally
+    // broken programs ensure the contract catches wrong/missing links.
+    for broken in [
+        c[0].1.replace("node->left = left;", "node->left = right;"),
+        c[0].1.replace("node->right = right;", ""),
+        c[0].1.replace("node->value = value;", "node->value = 0;"),
+    ] {
+        assert!(verify_c0_sources(source, &[(c[0].0, broken.as_str())]).is_err());
+    }
+}
+
+fn independent_children_source() -> &'static str {
+    include_str!("../../mdtests/resource_independent_children.md")
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+}
+
+const INDEPENDENT_CHILDREN_C: &[(&str, &str)] = &[(
+    "resource_independent_children.c",
+    "int32 read_left(int32* p, int32* left, int32* right) { return *left; }
+     void init(int32* p, int32* left, int32* right, int32 value) { *p = value; }",
+)];
+
+#[test]
+fn independent_children_construct_and_expand() {
+    let source = independent_children_source();
+    verify_c0_sources(source, INDEPENDENT_CHILDREN_C).unwrap();
+    for name in ["read_left", "init"] {
+        let expanded =
+            expand_c0_claim_source(source, INDEPENDENT_CHILDREN_C, name, CProofClaim::Grouped)
+                .unwrap();
+        verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+        assert!(expanded.contains("as { left: l, right: r }"));
+    }
+}
+
+#[test]
+fn independent_children_may_change_roles_in_a_new_model() {
+    let source = independent_children_source()
+        .split("\nvoid init")
+        .next()
+        .unwrap()
+        .replace(
+            "ensures root.model == old(root.model);",
+            "ensures root.model == Tree::Branch(1, right, Tree::Leaf(3), left, Tree::Leaf(2));",
+        )
+        .replace(
+            "{ model: old(root.model) }, { left: l, right: r }",
+            "{ model: Tree::Branch(1, right, r.model, left, l.model) }, { left: r, right: l }",
+        );
+    verify_c0_sources(&source, INDEPENDENT_CHILDREN_C).unwrap();
+    let expanded = expand_c0_claim_source(
+        &source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+}
+
+#[test]
+fn independent_children_reject_bad_selection_and_consumed_names() {
+    let source = independent_children_source();
+    for (from, to) in [
+        ("as { left: l, right: r }", "as { left: l }"),
+        ("as { left: l, right: r }", "as { left: l, wrong: r }"),
+        ("as { left: l, right: r }", "as { left: l, right: l }"),
+        ("as { left: l, right: r }", "as { left: root, right: r }"),
+        ("{ model: old(root.model) }", "{ model: root.model }"),
+        ("}, { left: l, right: r });", "}, { left: l });"),
+        ("}, { left: l, right: r });", "}, { left: l, right: l });"),
+        ("}, { left: l, right: r });", "}, { left: r, right: l });"),
+        ("let l = fold(tree(left), { model: Tree::Leaf(2) });", ""),
+        (
+            "let l = fold(tree(left), { model: Tree::Leaf(2) });",
+            "let l = fold(tree(right), { model: Tree::Leaf(2) });",
+        ),
+        ("unfold(l);", "unfold(root); unfold(l);"),
+        ("unfold(l);", "unfold(l); unfold(l);"),
+        ("consumes r: tree(right);", ""),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), INDEPENDENT_CHILDREN_C).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    let expanded = expand_c0_claim_source(
+        source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("}, { left: l, right: r });", "}, { left: r, right: l });"),
+            INDEPENDENT_CHILDREN_C
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn conditional_explicit_folds_update_models_and_expand() {
+    let source = r#"verifying "cell.c";
+        spec enum Model { Zero, Value(int32) }
+        resource cell(p: int32*) {
+            field model: Model;
+            match model {
+                Model::Zero => { owns p[0..1]; fact p[0] == 0; },
+                Model::Value(value) => { owns p[0..1]; fact p[0] == value; },
+            }
+        }
+        void set(int32* p, int32 value) {
+            owns c: cell(p);
+            requires c.model == Model::Zero;
+            ensures c.model == Model::Value(value);
+            ensures old(c.model) == Model::Zero;
+        } by {
+            unfold(c);
+            execute();
+            let c = fold(cell(p), { model: Model::Value(value) });
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void set(int32* p, int32 value) { *p = value; }")];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "set", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for (from, to) in [
+        ("model: Model::Value(value)", "model: Model::Zero"),
+        ("model: Model::Value(value)", "model: Model::Value(0)"),
+        ("model: Model::Value(value)", "model: c.model"),
+        ("model: Model::Value(value)", "model: old(c.model)"),
+        ("unfold(c);", ""),
+        (
+            "simp();",
+            "let duplicate = fold(cell(p), { model: Model::Value(value) }); simp();",
+        ),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &sources).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("model: Model::Value(value)", "model: Model::Zero"),
+            &sources
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn conditional_empty_fold_requires_arm_facts_and_no_live_result() {
+    let source = r#"verifying "empty.c";
+        spec enum Maybe<T> { None, Some(T) }
+        resource cell(p: int32*) {
+            field model: Maybe<int32>;
+            match model {
+                Maybe::None => { fact p == 0; },
+                Maybe::Some(value) => { owns p[0..1]; fact p[0] == value; },
+            }
+        }
+        void empty(int32* p) {
+            requires p == 0;
+            produces c: cell(p);
+            ensures c.model == Maybe<int32>::None;
+        } by {
+            let c = fold(cell(p), { model: Maybe<int32>::None });
+            execute(); simp();
+        }
+    "#;
+    let sources = [("empty.c", "void empty(int32* p) { }")];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "empty", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for (from, to) in [
+        ("requires p == 0;", ""),
+        ("model: Maybe<int32>::None", "model: Maybe<int32>::Some(0)"),
+        (
+            "execute();",
+            "let c = fold(cell(p), { model: Maybe<int32>::None }); execute();",
+        ),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &sources).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn guarded_explicit_folds_check_each_return_path() {
+    let source = r#"verifying "cell.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            if p != 0 { owns p[0..1]; fact p[0] == value; }
+        }
+        void set(int32* p, int32 value) {
+            owns c: cell(p);
+            ensures c.value == value;
+        } by {
+            if p == 0 {
+                unfold(c); execute();
+                let c = fold(cell(p), { value: value }); simp();
+            } else {
+                unfold(c); execute();
+                let c = fold(cell(p), { value: value }); simp();
+            }
+        }
+    "#;
+    let sources = [(
+        "cell.c",
+        "void set(int32* p, int32 value) { if (p != 0) *p = value; }",
+    )];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "set", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    assert!(verify_c0_sources(&source.replace("value: value", "value: 0"), &sources).is_err());
+    assert!(
+        verify_c0_sources(
+            &source.replace("unfold(c); execute();", "unfold(c); unfold(c); execute();"),
+            &sources
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn resource_match_expands_and_rechecks() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    let verified = verify_c0_sources(MATCH_CELL_SOURCE, &c).unwrap();
+    verify_c0_sources(
+        &MATCH_CELL_SOURCE.replace(
+            "by { unfold(c); execute(); fold(c); simp(); }",
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn resource_match_rejects_unknown_cases_missing_memory_and_invalid_folds() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    for (from, to) in [
+        ("requires c.model == Maybe<int32>::Some(expected);", ""),
+        (
+            "requires c.model == Maybe<int32>::Some(expected);",
+            "requires c.model == Maybe<int32>::None;",
+        ),
+        ("unfold(c);", ""),
+        ("fold(c); simp();", "simp();"),
+        ("fold(c); simp();", "fold(c); fold(c); simp();"),
+        ("result == expected", "result == 42"),
+    ] {
+        assert!(
+            verify_c0_sources(&MATCH_CELL_SOURCE.replace(from, to), &c).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    let changed = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { *p = 0; return *p; }",
+    )];
+    assert!(verify_c0_sources(MATCH_CELL_SOURCE, &changed).is_err());
+}
+
+#[test]
+fn resource_match_checks_exhaustiveness_and_binding_scope() {
+    for (from, to) in [
+        ("Maybe::None => { fact p == 0; },", ""),
+        (
+            "Maybe::None => { fact p == 0; },",
+            "Maybe::Some(other) => {},",
+        ),
+        ("Maybe::Some(value)", "Maybe::Missing(value)"),
+        ("Maybe::Some(value)", "Other::Some(value)"),
+        ("Maybe::Some(value)", "Maybe::Some(value, extra)"),
+        ("Maybe::Some(value)", "Maybe::Some(p)"),
+        ("Maybe::Some(value)", "Maybe::Some(model)"),
+        ("fact p == 0;", "fact value == 0;"),
+        (
+            "owns p[0..1];",
+            "match model { Maybe::None => {}, Maybe::Some(x) => {} }",
+        ),
+        ("owns p[0..1];", "field extra: int32;"),
+    ] {
+        assert!(
+            parser::parse(&MATCH_CELL_SOURCE.replace(from, to)).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn resource_match_binds_pointer_and_nested_algebraic_payloads() {
+    let source = r#"verifying "read.c";
+        spec enum Boxed<T> { Box(T) }
+        resource cell(p: int32*) {
+            field model: Boxed<int32*>;
+            field nested: Boxed<int32>;
+            match model {
+                Boxed::Box(address) => { owns address[0..1]; fact address == p; }
+            }
+        }
+        int32 read(int32* p, int32 expected) {
+            owns c: cell(p);
+            requires c.model == Boxed<int32*>::Box(p);
+            ensures c.model == old(c.model);
+        } by { unfold(c); execute(); fold(c); simp(); }
+    "#;
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 expected) { return *p; }",
+    )];
+    verify_c0_sources(source, &c).unwrap();
+    let nested = source
+        .replace(
+            "field model: Boxed<int32*>;",
+            "field model: Boxed<Boxed<int32>>;",
+        )
+        .replace(
+            "Boxed::Box(address) => { owns address[0..1]; fact address == p; }",
+            "Boxed::Box(inner) => { owns p[0..1]; fact inner == nested; }",
+        )
+        .replace(
+            "requires c.model == Boxed<int32*>::Box(p);",
+            "requires c.model == Boxed<Boxed<int32>>::Box(c.nested);",
+        );
+    let verified = verify_c0_sources(&nested, &c).unwrap();
+    verify_c0_sources(
+        &nested.replace(
+            "by { unfold(c); execute(); fold(c); simp(); }",
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn instance_return_folds_follow_distinct_c_results_without_proof_branching() {
+    let source = r#"verifying "read.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            owns p[0..1]; fact p[0] == value;
+        }
+        int32 read(int32* p, int32 fallback, int32 use_value) {
+            owns c: cell(p);
+            ensures (use_value == 0 and result == fallback) or (use_value != 0 and result == c.value);
+            ensures c.value == old(c.value);
+        } by { unfold(c); execute(); fold(c); simp(); }
+    "#;
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 fallback, int32 use_value) { if (use_value == 0) return fallback; return *p; }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(
+        &source.replace("by { unfold(c); execute(); fold(c); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace("result == fallback", "result == c.value"),
+            &c
+        )
+        .is_err()
+    );
+    let body = "by { unfold(c); execute(); if use_value == 0 { fold(c); simp(); } else { fold(c); simp(); } }";
+    let branched = source.replace("by { unfold(c); execute(); fold(c); simp(); }", body);
+    let verified = verify_c0_sources(&branched, &c).unwrap();
+    verify_c0_sources(
+        &branched.replace(body, &verified[0].expanded_proof_source().unwrap()),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn guarded_instance_return_paths_expand_and_recheck() {
+    let body = "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }";
+    let source = GUARDED_CELL_SOURCE.replace("BODY", body);
+    let c = [("read.c", GUARDED_CELL_C)];
+    let verified = verify_c0_sources(&source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(&source.replace(&format!("by {{ {body} }}"), &expanded), &c).unwrap();
+}
+
+#[test]
+fn guarded_instance_return_paths_reject_invalid_folds() {
+    for body in [
+        "unfold(c); execute(); fold(c); simp();",
+        "if p == 0 { unfold(c); execute(); simp(); } else { unfold(c); execute(); fold(c); simp(); }",
+        "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); simp(); }",
+        "if p == 0 { unfold(c); execute(); fold(c); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }",
+    ] {
+        assert!(
+            verify_c0_sources(
+                &GUARDED_CELL_SOURCE.replace("BODY", body),
+                &[("read.c", GUARDED_CELL_C)]
+            )
+            .is_err(),
+            "accepted {body}"
+        );
+    }
+    // A body fact exposed only on the nonnull arm cannot justify the null result.
+    let body = "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }";
+    let source = GUARDED_CELL_SOURCE.replace("BODY", body);
+    assert!(
+        verify_c0_sources(
+            &source.replace("p == 0 or result == c.value", "result == c.value"),
+            &[("read.c", GUARDED_CELL_C)]
+        )
+        .is_err()
+    );
+    // Only one branch changes memory: the other branch's valid fold cannot
+    // certify this return's stale field relation.
+    let changed = "int32 read(int32* p) { if (p == 0) return 0; *p = 0; return *p; }";
+    assert!(verify_c0_sources(&source, &[("read.c", changed)]).is_err());
+}
+
 #[test]
 fn named_instance_memory_body_round_trip_preserves_fields() {
     let source = r#"verifying "read.c";
@@ -27,6 +741,288 @@ fn named_instance_memory_body_round_trip_preserves_fields() {
         &c,
     )
     .unwrap();
+}
+
+#[test]
+fn single_cell_adt_initializers_verify_and_expand() {
+    let source = r#"verifying "cell.c";
+        spec enum Mark { Set(int32) }
+        function mark(x: int32) -> Mark { Mark::Set(x) }
+        resource cell(p: int32*) {
+            field model: Mark;
+            owns p[0..1];
+            fact model == MODEL;
+        }
+        void init(int32* p, int32 value) {
+            consumes p[0..1];
+            produces c: cell(p);
+            ensures c.model == INITIALIZER;
+        } by {
+            execute();
+            let c = fold(cell(p), { model: INITIALIZER });
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void init(int32* p, int32 value) { *p = value; }")];
+    for (model, initializer) in [
+        ("Mark::Set(p[0])", "Mark::Set(value)"),
+        ("Mark::Set(p[0])", "Mark::Set(p[0])"),
+        ("mark(p[0])", "mark(value)"),
+    ] {
+        let source = source
+            .replace("MODEL", model)
+            .replace("INITIALIZER", initializer);
+        verify_c0_sources(&source, &sources).unwrap();
+        let expanded =
+            expand_c0_claim_source(&source, &sources, "init", CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources).unwrap();
+    }
+}
+
+#[test]
+fn single_cell_adt_initializers_reject_invalid_models() {
+    let source = r#"verifying "cell.c";
+        spec enum Mark { Set(int32) }
+        spec enum Other { Set(int32) }
+        resource cell(p: int32*) {
+            field model: Mark;
+            owns p[0..1];
+            fact model == Mark::Set(p[0]);
+        }
+        void init(int32* p, int32* q, int32 value) {
+            consumes p[0..1];
+            produces c: cell(p);
+        } by {
+            execute();
+            let c = fold(cell(p), { model: INITIALIZER });
+            simp();
+        }
+    "#;
+    let sources = [(
+        "cell.c",
+        "void init(int32* p, int32* q, int32 value) { *p = value; }",
+    )];
+    for initializer in [
+        "Mark::Set(0)",
+        "Other::Set(value)",
+        "value",
+        "Mark::Set(q[0])",
+        "Mark::Set(value, value)",
+        "Mark::Set()",
+        "Mark::Missing",
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace("INITIALIZER", initializer), &sources).is_err(),
+            "accepted {initializer}"
+        );
+    }
+    let update = source
+        .replace(
+            "consumes p[0..1];\n            produces c: cell(p);",
+            "owns c: cell(p);",
+        )
+        .replace("execute();", "unfold(c); execute();");
+    for initializer in ["c.model", "old(c.model)"] {
+        assert!(
+            verify_c0_sources(&update.replace("INITIALIZER", initializer), &sources).is_err(),
+            "accepted stale {initializer}"
+        );
+    }
+    // An unconstrained field must not hide an invalid read either.
+    let unconstrained = source.replace("fact model == Mark::Set(p[0]);", "");
+    assert!(
+        verify_c0_sources(
+            &unconstrained.replace("INITIALIZER", "Mark::Set(q[0])"),
+            &sources
+        )
+        .is_err()
+    );
+    let scalar = unconstrained.replace("field model: Mark;", "field model: int32;");
+    assert!(verify_c0_sources(&scalar.replace("INITIALIZER", "q[0]"), &sources).is_err());
+}
+
+#[test]
+fn single_cell_adt_initializers_preserve_arbitrary_entry_models() {
+    let source = r#"verifying "cell.c";
+        spec enum Maybe<T> { None, Some(T) }
+        function identity<T>(x: Maybe<T>) -> Maybe<T> { x }
+        function passthrough<T>(x: T) -> T { x }
+        resource cell(p: int32*) {
+            field model: Maybe<int32>;
+            owns p[0..1];
+        }
+        void preserve(int32* p) {
+            owns c: cell(p);
+            ensures c.model == VALUE;
+        } by {
+            unfold(c);
+            let c = fold(cell(p), { model: VALUE });
+            execute();
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void preserve(int32* p) { }")];
+    for value in [
+        "old(c.model)",
+        "identity(old(c.model))",
+        "passthrough(old(c.model))",
+        "match old(c.model) { Maybe::None => Maybe<int32>::None, Maybe::Some(x) => Maybe<int32>::Some(x), }",
+    ] {
+        let source = source.replace("VALUE", value);
+        verify_c0_sources(&source, &sources).unwrap_or_else(|error| panic!("{value}: {error:?}"));
+        let expanded =
+            expand_c0_claim_source(&source, &sources, "preserve", CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{value}: {error:?}\n{expanded}"));
+    }
+    let changed = source
+        .replace(
+            "owns c: cell(p);",
+            "owns c: cell(p); requires c.model == Maybe<int32>::None;",
+        )
+        .replace(
+            "ensures c.model == VALUE;",
+            "ensures old(c.model) == Maybe<int32>::None;",
+        )
+        .replace("VALUE", "Maybe<int32>::Some(7)");
+    verify_c0_sources(&changed, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(&changed, &sources, "preserve", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    assert!(
+        verify_c0_sources(
+            &changed.replace(
+                "ensures old(c.model) == Maybe<int32>::None;",
+                "ensures old(c.model) == Maybe<int32>::Some(7);"
+            ),
+            &sources
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn single_cell_explicit_fold_constructs_updates_and_expands() {
+    let source = r#"verifying "cell.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            owns p[0..1];
+            fact p[0] == value;
+        }
+        void init(int32* p, int32 value) {
+            consumes p[0..1];
+            produces c: cell(p);
+            ensures c.value == value;
+        } by {
+            execute();
+            let c = fold(cell(p), { value: value });
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void init(int32* p, int32 value) { *p = value; }")];
+    for source in [
+        source.to_string(),
+        source
+            .replace(
+                "consumes p[0..1];\n            produces c: cell(p);",
+                "owns c: cell(p);",
+            )
+            .replace("execute();", "unfold(c); execute();"),
+    ] {
+        verify_c0_sources(&source, &sources).unwrap();
+        let expanded =
+            expand_c0_claim_source(&source, &sources, "init", CProofClaim::Grouped).unwrap();
+        assert!(expanded.contains("let c = fold("), "{expanded}");
+        verify_c0_sources(&expanded, &sources).unwrap();
+    }
+}
+
+#[test]
+fn single_cell_explicit_fold_rejects_missing_wrong_and_duplicate_ownership() {
+    let source = r#"verifying "cell.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            owns p[0..1];
+            fact p[0] == value;
+        }
+        void init(int32* p, int32 value) {
+            consumes p[0..1];
+            produces c: cell(p);
+            ensures c.value == value;
+        } by { execute(); FOLD simp(); }
+    "#;
+    let sources = [("cell.c", "void init(int32* p, int32 value) { *p = value; }")];
+    for fold in [
+        "let c = fold(cell(p), {});",
+        "let c = fold(cell(p), { wrong: value });",
+        "let c = fold(cell(p), { value: value, value: value });",
+        "let c = fold(cell(p), { value: p });",
+        "let c = fold(cell(p), { value: 0 });",
+        "let c = fold(cell(p), { value: value }); let c = fold(cell(p), { value: value });",
+        "let c = fold(cell(p), { value: value }); let other = fold(cell(p), { value: value });",
+        "let c = fold(cell(p), { value: value }); unfold(c);",
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace("FOLD", fold), &sources).is_err(),
+            "accepted {fold}"
+        );
+    }
+    let no_ownership = source
+        .replace("consumes p[0..1];", "")
+        .replace("execute();", "")
+        .replace("FOLD", "let c = fold(cell(p), { value: value });");
+    assert!(verify_c0_sources(&no_ownership, &sources).is_err());
+}
+
+#[test]
+fn single_cell_explicit_fold_preserves_entry_fields_and_consumes_names() {
+    let source = r#"verifying "cell.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            field revision: int32;
+            owns p[0..1];
+            fact p[0] == value;
+        }
+        void set(int32* p, int32 value) {
+            owns c: cell(p);
+            requires c.value == 7;
+            requires c.revision == 1;
+            ensures old(c.value) == 7;
+            ensures old(c.revision) == 1;
+            ensures c.value == value;
+            ensures c.revision == 2;
+        } by {
+            unfold(c);
+            step();
+            let c = fold(cell(p), { revision: 2, value: value });
+            unfold(c);
+            let c = fold(cell(p), { value: value, revision: 2 });
+            execute();
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void set(int32* p, int32 value) { *p = value; }")];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "set", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for stale in [
+        source.replace("ensures c.revision == 2;", "ensures c.revision == 1;"),
+        source.replace("ensures c.value == value;", "ensures c.value == 7;"),
+    ] {
+        assert!(
+            verify_c0_sources(&stale, &sources).is_err(),
+            "entry fields must not be reused as current fields after an update"
+        );
+    }
+    let invalid = source.replacen(
+        "unfold(c);",
+        "unfold(c); have c.value == c.value by { reflexivity(); }",
+        1,
+    );
+    assert!(
+        verify_c0_sources(&invalid, &sources).is_err(),
+        "consumed resource fields are not a live handle"
+    );
 }
 
 #[test]
@@ -72,7 +1068,7 @@ fn named_instance_memory_body_rejects_invalid_folds() {
             assert!(
                 error
                     .message
-                    .contains("fold requires the unchanged instance body facts"),
+                    .contains("fold requires the instance body facts for the proposed fields"),
                 "{error:?}"
             );
         }
@@ -733,8 +1729,10 @@ fn adt_resource_parameters_report_unsupported_types_without_panicking() {
 
 #[test]
 fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
-    let source = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click")
-        .replace("verifying \"modeled_binary_tree.c\";", "");
+    let example = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click");
+    // This regression is about the generic laws, independent of the C heap
+    // resource and initializer contract that now precede them in the example.
+    let source = &example[example.find("spec enum Tree<T>").unwrap()..];
     verify_c0_sources(&source, &[]).expect("generic tree laws should verify");
     for (from, to) in [("right", "left"), ("left", "right")] {
         let wrong_mirror = source.replacen(

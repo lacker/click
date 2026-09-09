@@ -278,28 +278,79 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     })
                     .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
                 let surface_propositions = initialization_surface_propositions.borrow();
-                let fact = prove_pure_proposition_in_state(
-                    &have.proposition,
-                    surface_propositions.unique_kernel(&have.proposition),
-                    &have.proof,
-                    "initialize",
-                    environment.theorem_environment,
+                // Check structured initialization through the same checked
+                // proof object that emitted it, including both/and children.
+                let exact_entry_goal = invariant_index
+                    .and_then(|index| {
+                        let obligation_context =
+                            format!("loop {loop_index} invariant {index} entry");
+                        entry_obligations
+                            .iter()
+                            .find(|obligation| obligation.context() == Some(&obligation_context))
+                            .map(|obligation| obligation.proposition().clone())
+                    })
+                    .map(|mut goal| {
+                        let facts =
+                            crate::kernel::proof::ProofFacts::from_ordered(&certificate_available);
+                        while let Proposition::Implies(antecedent, body) = &goal {
+                            if !facts.contains(antecedent) {
+                                break;
+                            }
+                            goal = body.as_ref().clone();
+                        }
+                        goal
+                    });
+                let fact = exact_entry_goal
+                    .or_else(|| {
+                        surface_propositions
+                            .unique_kernel(&have.proposition)
+                            .cloned()
+                    })
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        lower_fixed_state_proposition(
+                            &have.proposition,
+                            &certificate_available,
+                            environment.parsed_function.parameters(),
+                            environment.arguments,
+                            environment.initial_state,
+                            &context.state,
+                            None,
+                            &recorded_snapshots,
+                            environment.predicate_environment,
+                            environment.click_function_environment,
+                        )
+                    })
+                    .map_err(ClickError::new)?;
+                let root = Proof::for_fixed_state_surface_goal(
                     &step_claim_label,
                     certificate_index,
                     &certificate_available,
-                    &[],
+                    fact.clone(),
+                    have.proposition.clone(),
                     environment.parsed_function.parameters(),
                     environment.arguments,
                     environment.initial_state,
                     &context.state,
-                    None,
                     &recorded_snapshots,
-                    Some(&surface_propositions),
+                    &surface_propositions,
                     environment.predicate_environment,
                     environment.click_function_environment,
-                    environment.function_block.requires(),
-                    None,
-                )?;
+                    environment.theorem_environment,
+                    &[],
+                    &[],
+                );
+                let SourceProof::Script(tactics) = &have.proof else {
+                    return Err(ClickError::new(
+                        "invariant initialization requires an explicit proof body",
+                    ));
+                };
+                let checked = root.try_authoritative_linear_script(tactics)?;
+                if !checked.is_some_and(|proof| proof.is_complete()) {
+                    return Err(ClickError::new(
+                        "invariant initialization proof body did not close its goal",
+                    ));
+                }
                 if !certificate_available.contains(&fact) {
                     certificate_available.push(fact);
                 }
@@ -496,6 +547,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::Induct { .. }
         | ProofStep::Both { .. }
         | ProofStep::StructuralInduct { .. }
+        | ProofStep::Match { .. }
         | ProofStep::ApplyInduction { .. }
         | ProofStep::Open { .. }
         | ProofStep::If { .. }
@@ -1283,11 +1335,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    recorded_snapshots.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Loop(loop_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_code_region_program_snapshot_state(
+        &mut recorded_snapshots,
+        environment.function_block,
+        CodeRegion::Loop(loop_index),
+        ProgramPointKind::Entry,
         preservation.loop_entry_state().clone(),
     );
     // The invariants are available at the body entry as kernel facts. A
@@ -1447,6 +1499,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_close_requested = context_execution.core.region_invariants_close_requested;
+        let has_retained_invariant_body =
+            context_execution.core.checked_invariant_lowerings.is_some();
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some(step) = context_execution.presentation.invariant_closer_step {
@@ -1503,19 +1557,18 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // now becomes a nested proof `if` here instead of recursive search in
         // proposition reasoning.
         let mut leaf = leaf;
-        if region_simp.is_some() {
+        if has_retained_invariant_body {
+            // A completed body is bound to this exact premise store. Validate
+            // it before skipping preplanning; a source close request alone
+            // is not evidence. Adding further `have`s would stale the body.
+            leaf.validate_loop_invariant_bundle(invariant_checks)?;
+        } else if region_simp.is_some() {
             if invariant_surfaces.len() != invariant_checks.len() {
                 return Err(leaf.step_error(
                     "surface invariants do not align with the lowered invariant bundle",
                 ));
             }
             for (index, invariant) in invariant_surfaces.iter().enumerate() {
-                if leaf.legacy_loop_invariant_prefix_holds(
-                    preservation.loop_entry_state(),
-                    &invariant_checks[..=index],
-                )? {
-                    continue;
-                }
                 let scope = leaf.begin_have(invariant.clone())?;
                 let Some(proved) =
                     scope.try_simp_closure_with_surfaces(&invariant_premise_surfaces[..=index])?

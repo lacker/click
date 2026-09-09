@@ -1098,7 +1098,12 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
-        ContractExpression::ResourceField(access) => format!("{}.{}", access.owner, access.field),
+        ContractExpression::ResourceField(access) => {
+            let mut parts = vec![access.owner.as_str()];
+            parts.extend(access.children.iter().map(String::as_str));
+            parts.push(access.field.as_str());
+            parts.join(".")
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -1208,6 +1213,18 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         }
         ContractExpression::BitwiseNot(expression) => {
             format!("~{}", describe_contract_expression(expression))
+        }
+        // Qualified C array indices have already been flattened by the
+        // parser. Offset the decayed pointer explicitly so reparsing does
+        // not interpret this as an incomplete multidimensional subscript.
+        ContractExpression::Index(base, index)
+            if matches!(base.as_ref(), ContractExpression::QualifiedC { .. }) =>
+        {
+            format!(
+                "({} + {})[0]",
+                describe_contract_expression(base),
+                describe_contract_expression(index)
+            )
         }
         ContractExpression::Index(base, index) => format!(
             "{}[{}]",

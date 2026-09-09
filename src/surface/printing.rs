@@ -136,11 +136,68 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 format_click_function_application(application)
             ),
         ),
+        ProofTactic::UnfoldResource(resource @ ResourceClause::Named { binding, .. })
+            if binding.child_bindings.is_some() =>
+        {
+            let children = binding
+                .child_bindings
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(slot, name, _)| format!("{slot}: {name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "unfold({}) as {{ {children} }};",
+                    format_resource_call(resource)
+                ),
+            );
+        }
         ProofTactic::UnfoldResource(resource) => line(
             output,
             &prefix,
             &format!("unfold({});", format_resource_call(resource)),
         ),
+        ProofTactic::FoldResource(ResourceClause::Named { binding, resource })
+            if binding.fold_fields.is_some() =>
+        {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "let {} = fold({}, {{ {} }}{});",
+                    binding.name,
+                    format_resource_target(resource),
+                    binding
+                        .fold_fields
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|(name, value)| format!(
+                            "{name}: {}",
+                            describe_contract_expression(value)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    binding
+                        .child_bindings
+                        .as_ref()
+                        .filter(|children| !children.is_empty())
+                        .map(|children| format!(
+                            ", {{ {} }}",
+                            children
+                                .iter()
+                                .map(|(slot, name, _)| format!("{slot}: {name}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                        .unwrap_or_default(),
+                ),
+            )
+        }
         ProofTactic::FoldResource(resource) => line(
             output,
             &prefix,
@@ -166,6 +223,33 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("induct({parameter}) as {hypothesis};"),
         ),
+        ProofTactic::Match(proof_match) => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "match {} {{",
+                    describe_contract_expression(&proof_match.scrutinee)
+                ),
+            );
+            for arm in &proof_match.arms {
+                let arguments = if arm.bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", arm.bindings.join(", "))
+                };
+                line(
+                    output,
+                    &format!("{prefix}    "),
+                    &format!("{}::{}{arguments} => {{", arm.type_name, arm.variant),
+                );
+                for tactic in &arm.tactics {
+                    write_tactic(output, tactic, indent + 2);
+                }
+                line(output, &format!("{prefix}    "), "}");
+            }
+            line(output, &prefix, "}");
+        }
         ProofTactic::StructuralInduct {
             parameter,
             hypothesis,

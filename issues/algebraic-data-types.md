@@ -44,17 +44,51 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   `cell.model` reads its current field, while `old(cell.model)` reads its entry
   field. Identity, field values, and ownership are distinct. Equal fields do
   not identify two instances; ownership alone does not promise preservation.
-- `unfold(cell)` exposes an unguarded, nonrecursive, witness-free memory body
-  and its facts. Bare field names in the body denote the instance's fields.
-  An exclusive open handle retains the identity and fields, but grants no
-  folded ownership for calls or returns.
-- `fold(cell)` requires the matching open handle, complete body ownership, and
-  established body facts at the current memory. It restores the same identity
-  and unchanged fields. A declaration or field value alone grants no memory
-  authority, and raw body ownership alone cannot create an instance.
-- Checked folds may follow a C return when there is one retained execution
-  trace. Certification preserves the C result and memory and checks returned
-  ownership; a proof snapshot cannot replace the checked execution outcome.
+- `unfold(cell)` exposes a witness-free immediate memory body and its
+  facts, optionally under the existing single `if` with an empty false case.
+  The guard must be proved true or false; unknown guards do not eagerly split.
+  The false case exposes no body ownership or facts. Bare field names in the
+  body denote the instance's fields.
+  Memory-only bodies, including guarded and matched bodies, leave no open
+  handle. Recursive children can be independently named with `as { ... }`;
+  only the older parent-qualified compatibility syntax retains a handle.
+- A resource body may instead `match` one ADT field with exhaustive
+  `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
+  arm without implicit proof-by-cases. Bindings have the constructor's
+  instantiated types, including pointers and nested ADTs. Only that arm's
+  immediate owned memory, folded children, and facts are exposed. Arm bindings cannot escape
+  or capture incidental C locals. Return folds recheck constructor evidence
+  on their retained execution path.
+- Match arms can declare direct recursive children with `owns left: tree(lp);`
+  and equations such as `fact left.model == lm;`. Each child uses the same
+  resource definition; every child field must equal an immediate constructor
+  binding of its declared type. The matched model field therefore strictly
+  descends through a proper submodel, without extra recursion syntax.
+- `unfold(root) as { left: l, right: r };` consumes the parent and exposes
+  independently owned, folded children without retaining a parent handle.
+  `let root = fold(tree(p), { model: value }, { left: l, right: r });`
+  consumes the selected children plus immediate memory. Each selected-arm slot
+  must occur exactly once with a distinct owned identity. Child arguments and
+  fields must match the proposed model; replacement identities and reordered
+  children are allowed. Named `consumes` inputs support constructing parents
+  from separately owned children. The older parent-qualified syntax remains
+  compatible and requires its recorded children unchanged.
+- Plain memory bodies support explicit construction from raw ownership:
+  `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
+  checks the complete body ownership and facts. Initializers accept typed
+  symbolic expressions, including ADT constructors, entry-model values,
+  matches, and pure-function applications; they do not execute pure functions
+  or split arbitrary models into cases. The legacy `fold(c)` shorthand
+  selects entry-state fields without requiring an open handle. Guarded and
+  matched memory-only bodies also support explicit fields: fold selects the
+  proved guard or constructor case from the proposed instance and checks its
+  complete body. Recursive-child bodies accept explicit child selections.
+  A declaration or field value alone grants no memory authority.
+- Checked folds may follow C returns on multiple retained execution paths.
+  Each fold is tied to its exact path's ownership, memory, and guard case;
+  sibling evidence cannot supply the fold. Completion collects the path-local
+  exchanges and certifies complete path coverage. A proof snapshot cannot
+  replace the checked execution outcome.
 - Explicit callback applications transport named instances. For example,
   `contract Read(cell: marked_cell(p)) for int32(int32* p) { owns cell; ... }`
   declares a proof parameter, and `step(Read(first))` supplies it. Parameters
@@ -70,73 +104,114 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_fields.md](../mdtests/resource_fields.md)
 - [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
+- [resource_cell_construction.md](../mdtests/resource_cell_construction.md)
+- [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
+- [resource_conditional_construction.md](../mdtests/resource_conditional_construction.md)
+- [resource_independent_children.md](../mdtests/resource_independent_children.md)
+- [resource_tree_node_init.md](../mdtests/resource_tree_node_init.md)
+- [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
+- [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
+- [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
 - [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
 - [contract_resource_call_transport.md](../mdtests/contract_resource_call_transport.md)
 - [contract_resource_call_no_implicit_preservation.md](../mdtests/contract_resource_call_no_implicit_preservation.md)
 
-## Next slice: guarded bodies and path-specific return folds
-
-Use existing syntax: leading field declarations, a single resource-body
-`if` with an empty false case, and `unfold(cell)` / `fold(cell)` in the existing
-proof scopes. No path identifiers or extra fold arguments are needed.
-This slice extends checking, not the language grammar.
-
-1. **Guarded memory bodies.** Extend named-instance fold/unfold to the existing
-   load-free guard form. Require proof that the guard is true or false before
-   choosing a body; do not eagerly split unknown symbolic values. The true
-   case exposes the immediate memory and facts. The false case exposes no
-   body ownership or facts, while retaining the exclusive instance handle and
-   unchanged fields. Folding must check the justified case and all its body
-   obligations. Keep recursive and nested resources out of this first slice.
-2. **Path-specific return folds.** Attach each post-return resource exchange
-   to its exact retained execution path, rather than requiring one trace or
-   appending one exchange to every trace. Preserve exhaustive path coverage,
-   each path's result and memory, and the provenance of its assumptions.
-   Ownership or facts from a sibling path must never justify a fold.
-3. **Regressions.** Verify an unchanged nullable-cell read with null and
-   nonnull C return paths. Check explicit true/false guard cases, including
-   expanded proofs. Reject selecting an unproved guard, exposing memory in
-   the false case, using a sibling's body facts or ownership, missing a fold
-   on one return path, duplicate folds, and changed body facts. Include
-   deterministic scaling over retained paths and unrelated proof state.
-
 ## Remaining work toward the C tree
 
-1. **Resource `match` and child ownership.** Resource bodies currently lack
-   `else` and constructor `match`. Check exhaustive constructor arms and
-   scoped typed fields, exposing only the selected arm's immediate resources
-   and facts. Support nested named child resources and a checked finite,
-   well-founded interpretation of recursive definitions. No operation should
-   eagerly traverse an unknown model.
-2. **Field establishment and updates.** Define how body proofs initially
-   establish fields and justify changed fields. Fields are symbolic values,
+### Constructor elimination in execution proofs (blocks left rotation)
+
+An arbitrary resource model needs an explicit proof operation that splits on
+its constructors and introduces typed field names. Knowing `model != Empty`
+does not currently expose the unknown fields of `Node`. Pure `match` remains
+a symbolic expression, and theorem-level `induct` is not an execution-proof
+case split. Do not specialize the rotation to concrete payloads or subtree
+models to bypass this gap.
+
+The reduced regression is
+[resource_nonempty_model_needs_constructor_cases.md](../mdtests/resource_nonempty_model_needs_constructor_cases.md):
+reading a cell whose model is an arbitrary `Some(value)` is safe, but `unfold`
+requires an explicit constructor term. It currently records the bounded
+rejection. The intended positive proof names `value` in the `Some` case and
+discharges the impossible `None` case from the precondition.
+
+The selected syntax is `match model { Type::Variant(fields) => { tactics } }`
+in proof blocks, distinct in context from pure match expressions.
+The kernel now provides constructor exhaustion as a disjunction of constructor
+equations with existentially bound, typed fields. It validates the datatype
+schema and reserves the scrutinee's variable identities, including variables
+inside symbolic matches and calls. Tests cover generic and recursive fields,
+pointer payloads, capture avoidance, complete constructor families, and
+malformed or unsupported inputs. This rule alone neither chooses witnesses
+nor grants ownership. The proof-level tactic supports one or two constructors
+at unchanged function entry. Each arm starts with the same owned resources,
+introduces only its fresh typed fields, and must run to function exit. Nested
+entry matches and deferred return-state folds retain their lexical bindings.
+Expansion preserves the match and rechecks its constructor arms. The positive
+[resource regression](../mdtests/proof_match_resource.md) covers two reachable
+memory-owning cases; it does not replace the nonempty-cell gap above.
+Its current payload sorts are signed 32/64-bit integers, pointers, and ADTs.
+
+The next integration is **checked exclusion of contradictory constructor
+arms**. A constructor excluded by the precondition must close without executing
+invalid C on that impossible branch, while its checked contradiction remains
+part of the partition's coverage certificate. Do not omit the arm or simulate
+an arbitrary return state. The nonempty-cell regression above is the intended
+positive test; missing or unrelated contradiction premises must be rejected.
+Also extend joins to wider constructor families without quadratic selector
+construction, shared continuations, and matches after C/resource transitions
+with indexed witness freshness. These are implementation limits, not changes
+to pure match semantics. Then verify unchanged `tree_rotate_left` for arbitrary
+nonempty root/right-child models, preserving both node identities/payloads and
+all three arbitrary subtrees. Its sidecar still has no rotation contract.
+
+### Other remaining work
+
+1. **Broader child bodies.** Direct, structurally descending same-resource
+   children are implemented. Child arguments accept read-only C expressions,
+   including stored struct links. Loads require the immediate body's memory
+   ownership; fold checks that ownership before interpreting the arguments.
+   Expression safety and path premises must be proved, with no implicit case
+   splitting. Child field equations accept
+   immediate constructor bindings, not arbitrary expressions or existential
+   fields. Mixed resource families, mutually recursive resource groups,
+   witnesses, nested resource guards/matches, arbitrary scrutinees, and general
+   resource `if/else` remain unsupported. Keep recursion finite and avoid
+   eagerly traversing an unknown model when extending these cases.
+2. **Field snapshots.** Explicit field establishment and updates work for
+   memory bodies and selected recursive children. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
-   relation to concrete memory. Support arbitrary symbolic terms in post-state
-   snapshots, not just entry variables or concrete constructors. Syntax for
-   establishment and updates remains undecided.
+   relation to concrete memory. Extend fixed post-state snapshots to arbitrary
+   symbolic terms, not just entry-bound variables. A regression should capture
+   a newly constructed model at a named proof point, unfold its owner, and
+   reuse that captured model in a later explicit fold without a live handle.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
-   contracts. Resource-body witnesses currently admit only C pointers, not
+   contracts, and transport parent-qualified child handles through explicit
+   contract arguments. Resource-body witnesses currently admit only C pointers, not
    existential child models. Contract `let ... where` witnesses are separate
    per clause; they must not silently become shared instance bindings.
-4. **Tree heap relation.** Add an example-local resource with a tree-model field
-   to the modeled-binary-tree sidecar. The empty case requires a null root;
-   the node case owns the node fields, relates the payload to memory, and owns
-   disjoint modeled children. Preserve node identities as well as values.
-   A pointer occurring in a model grants no ownership.
-5. **First C proof.** Verify unchanged `tree_node_init`: a separately owned,
-   nonnull parent and two modeled children become a correctly modeled parent
-   tree. Reject wrong values, swapped children, duplicated nonempty subtrees,
-   and parent/child overlap. Then continue rotations and traversals under
+4. **Tree algorithms.** Continue rotations and traversals under
    [recursive-structure-models.md](recursive-structure-models.md); iterative
    termination is tracked by
    [structural-loop-termination.md](structural-loop-termination.md).
 
-The modeled-binary-tree sidecar does not yet contain a verified C function
-contract. Pure tree proofs and kernel identity tests are not verification of
-the C tree.
+The modeled-binary-tree sidecar now verifies the unchanged `tree_node_init`.
+Its `tree_at` resource has a `HeapTree` model preserving node identities and
+payloads, a null empty case, owned struct fields, and disjoint children reached
+through the stored links. The initializer consumes separate parent memory and
+two arbitrary modeled children to construct the modeled parent. The focused
+fixture and kernel/surface tests cover expansion, invalid models and links,
+missing/duplicated ownership, overlap, and unrelated-resource scaling.
+No C traversal or rotation is verified yet.
 
 ## Other ADT gaps
+
+- **Pointer constructor literals.** A pointer-valued constructor argument
+  such as `Ptr::At(0)` is currently rejected as an integer/pointer type
+  mismatch. Support contextual null-pointer formation, preserving its pointer
+  type and granting no memory ownership. Keep the rejection regression until
+  that elaboration is implemented; do not change existing C to supply a
+  proof-only null-pointer parameter.
 
 - **Surface ADT resource arguments.** Kernel resource identities and population
   keys support symbolic ADT arguments, with checked transfer and substitution.
@@ -165,7 +240,7 @@ model values themselves carry neither runtime storage nor memory authority.
 
 - Preserve the implemented pure ADT and resource capabilities while closing
   the gaps above, with checked positive and negative regressions.
-- Establish the tree heap relation and verify the unchanged initializer.
+- Preserve the tree heap relation and verified unchanged initializer.
   Track later algorithm obligations in the related recursive-structure issue.
 - Keep simple checking output-sensitive in the selected source, terms, and
   certificate, without scanning or cloning unrelated state. Representation

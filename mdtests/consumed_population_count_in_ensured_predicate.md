@@ -38,13 +38,11 @@ void consume_population(struct owner* owner, int32 amount) {
     requires defined(owner->capacity - amount);
     owns object(owner);
     consumes amount of slot(owner);
-    mutable owner->capacity;
 
     ensures valid_capacity(owner);
 } by {
     unfold(valid_capacity);
     execute();
-    frame();
     simp();
 }
 ```

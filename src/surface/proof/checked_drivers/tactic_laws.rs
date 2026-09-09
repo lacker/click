@@ -2,7 +2,7 @@ use super::*;
 use crate::surface::proof::proof_object::ExecutionProofState;
 
 /// The one mid-execution `have` law: checked fixed-state proof first, generated
-/// smart plan second, direct derivation last, with the entry-prerequisite,
+/// smart plan second, with the entry-prerequisite,
 /// surface-lowering, and certificate-fact recording every caller shares.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn check_mid_execution_have(
@@ -10,7 +10,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     pure_facts: &mut Vec<Proposition>,
-) -> Result<Option<ProofCertificate>, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     let function_block = proof_context.function_block;
     let parsed_function = proof_context.parsed_function;
     let arguments = proof_context.arguments;
@@ -148,24 +148,9 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
             (checked.0, checked.1)
         }
         (None, None) => {
-            let fact = prove_have_in_current_state(
-                have,
-                theorem_environment,
-                claim_label,
-                tactic_index,
-                &have_facts,
-                &execution.core.effect_facts,
-                parsed_function.parameters(),
-                arguments,
-                proof_context.old_reference_state(&execution.core.frontier, state),
-                &state,
-                &execution.presentation.recorded_snapshots,
-                &execution.presentation.surface_propositions,
-                predicate_environment,
-                click_function_environment,
-                function_block.requires(),
-            )?;
-            (fact, None)
+            return Err(ClickError::new(format!(
+                "`{claim_label}` have proof {tactic_index}: `have` failed: body did not construct a completed proof object"
+            )));
         }
     };
     let retained_certificate = surface_certificate;
@@ -180,7 +165,8 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
     if !pure_facts.contains(&fact) {
         pure_facts.push(fact.clone());
     }
-    Ok(retained_certificate)
+    retained_certificate
+        .ok_or_else(|| ClickError::new("completed have proof did not retain its proof body"))
 }
 
 pub(in crate::surface::proof) fn execute_frontier_local_loop(
@@ -253,6 +239,13 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
     let initial_state = execution.core.frontier.execution_start_state(state).clone();
+    // A frontier-local whole-loop effect already supplies the loop's range;
+    // inheriting the function effect as well duplicates the frame path. Loops
+    // without one still need the function summary for static-storage writes.
+    let inherit_function_effects_into_loops = !loop_template
+        .items()
+        .iter()
+        .any(|item| item.kind() == StructuralItemKind::Effect);
     let annotated = annotated_function(
         &bound_function_block,
         parsed_function,
@@ -261,7 +254,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        false,
+        inherit_function_effects_into_loops,
     )?;
     if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
@@ -575,7 +568,7 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
     );
     let proof = match plan {
         Plan::Script(tactics) => {
-            let Some(checked) = proof.try_linear_script(tactics)? else {
+            let Some(checked) = proof.try_authoritative_linear_script(tactics)? else {
                 return Ok(None);
             };
             checked

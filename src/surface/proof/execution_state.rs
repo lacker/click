@@ -487,6 +487,29 @@ pub(super) fn record_post_execution_surface_tactic(
 }
 
 pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: ProofStep) {
+    if let Some(ProofStep::Match { scrutinee, arms }) = steps.last_mut() {
+        // The terminal join retains a binary path selector for deferred
+        // operations. Serialize those operations inside the original lexical
+        // constructor arms, not after the match where field names escape.
+        if let ProofStep::If {
+            condition,
+            then_proof,
+            else_proof,
+        } = &step
+            && is_match_arm_selector(condition, scrutinee, arms)
+        {
+            for (arm, suffix) in arms.iter_mut().zip([then_proof, else_proof]) {
+                for next in suffix.steps() {
+                    append_surface_step_to_leaves(&mut arm.proof.steps, next.clone());
+                }
+            }
+        } else {
+            for arm in arms {
+                append_surface_step_to_leaves(&mut arm.proof.steps, step.clone());
+            }
+        }
+        return;
+    }
     if let Some(ProofStep::If {
         then_proof,
         else_proof,
@@ -498,6 +521,33 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
     } else {
         steps.push(step);
     }
+}
+
+fn is_match_arm_selector(
+    condition: &ClickProposition,
+    scrutinee: &ContractExpression,
+    arms: &[CertificateInductionArm],
+) -> bool {
+    let ClickProposition::Comparison {
+        left:
+            ContractExpression::AlgebraicMatch {
+                scrutinee: selected,
+                arms: selector_arms,
+            },
+        operator: ComparisonOperator::Equal,
+        right:
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(Bitvector32Term::Constant(
+                1,
+            )))),
+    } = condition
+    else {
+        return false;
+    };
+    arms.len() == 2 && selector_arms.len() == 2 && selected.as_ref() == scrutinee
+        && arms.iter().zip(selector_arms).enumerate().all(|(index, (arm, selector))| {
+            arm.type_name == selector.type_name && arm.variant == selector.variant && arm.bindings == selector.bindings
+                && matches!(&selector.body, ContractExpression::CFragment(CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value)))) if *value == u32::from(index == 0))
+        })
 }
 
 pub(super) fn append_surface_tactics_by_leaf(
@@ -529,6 +579,12 @@ pub(super) fn append_surface_tactics_by_leaf(
         path_steps: &[Vec<ProofStep>],
         next_path: &mut usize,
     ) {
+        if let Some(ProofStep::Match { arms, .. }) = steps.last_mut() {
+            for arm in arms {
+                append(&mut arm.proof.steps, path_steps, next_path);
+            }
+            return;
+        }
         if let Some(ProofStep::If {
             then_proof,
             else_proof,
@@ -883,6 +939,8 @@ pub(super) enum PostExecutionTactic {
 
 #[derive(Clone)]
 pub(super) struct DeferredPostExecutionTactic {
+    pub(super) lexical_bindings:
+        Option<crate::persistent::PersistentMap<String, ContractExpression>>,
     pub(super) tactic_index: usize,
     pub(super) source_index: usize,
     pub(super) tactic: PostExecutionTactic,

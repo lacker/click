@@ -1449,6 +1449,20 @@ impl CMemory {
         self
     }
 
+    /// Ends the lifetime of one automatic-storage object at a function exit.
+    pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
+        if !self.blocks.contains_key(block) {
+            return self.clone();
+        }
+
+        let mut memory = self.clone();
+        std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(pointer, _), _| &pointer.block != block);
+        memory
+    }
+
     pub(in crate::kernel) fn free_heap_block(
         mut self,
         pointer: &Pointer,
@@ -2534,6 +2548,27 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn resource_instance_at_path(
+        &self,
+        identity: Variable,
+        children: &[String],
+    ) -> Option<&ResourceInstance> {
+        let mut instance = self.resource_instance_fields(identity)?;
+        for name in children {
+            crate::instrumentation::record_deterministic_work(1);
+            let parent = self.open_instances.owned_instance(instance.identity)?;
+            let index = parent
+                .opened_children
+                .binary_search_by(|(slot, _)| slot.cmp(name))
+                .ok()?;
+            let (_, child) = &parent.opened_children[index];
+            instance = self
+                .resources
+                .owned_instance(child.identity)
+                .or_else(|| self.open_instances.owned_instance(child.identity))?;
+        }
+        Some(instance)
+    }
     pub(crate) fn resource_instance_fields(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
             Some(bindings) => *bindings.get(&identity)?,
