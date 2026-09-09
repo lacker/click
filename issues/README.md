@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## P1: before launch (22)
+## P1: before launch (24)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -76,7 +76,6 @@ C import and execution:
 Specification and proof:
 
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
-- [Complete algebraic data types and modeled resource ownership](algebraic-data-types.md)
 - [Give function-pointer values checked named contracts](function-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
@@ -108,6 +107,7 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
+- [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
