@@ -991,6 +991,11 @@ impl CCompositeResourceDefinition {
         self.instance_schema = schema;
         self
     }
+
+    pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
+        self.matched = body;
+        self
+    }
     pub fn new(
         name: impl Into<String>,
         parameters: Vec<CParameter>,
@@ -1001,6 +1006,7 @@ impl CCompositeResourceDefinition {
     ) -> Self {
         Self {
             instance_schema: None,
+            matched: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),
@@ -1030,6 +1036,7 @@ impl CCompositeResourceDefinition {
     ) -> Self {
         Self {
             instance_schema: None,
+            matched: None,
             name: name.into(),
             parameters,
             witnesses: Vec::new(),

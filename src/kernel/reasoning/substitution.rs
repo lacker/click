@@ -2854,6 +2854,37 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_bitvector_variable_in_spec_proposition(condition, from, to)
                 }),
+                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                    field_index: body.field_index,
+                    algebraic_type: body.algebraic_type.clone(),
+                    arms: body
+                        .arms
+                        .iter()
+                        .map(|arm| CResourceMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            binding_types: arm.binding_types.clone(),
+                            contains: arm
+                                .contains
+                                .iter()
+                                .map(|resource| {
+                                    substitute_bitvector_variable_in_resource_spec(
+                                        resource, from, to,
+                                    )
+                                })
+                                .collect(),
+                            facts: arm
+                                .facts
+                                .iter()
+                                .map(|fact| {
+                                    substitute_bitvector_variable_in_spec_proposition(
+                                        fact, from, to,
+                                    )
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                }),
                 recursive: definition.recursive,
                 counted_population: definition.counted_population,
                 contains: definition
@@ -5620,6 +5651,33 @@ fn substitute_pointer_variable_in_c_function(
                 witnesses: definition.witnesses.clone(),
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_pointer_variable_in_spec_proposition(condition, from, to)
+                }),
+                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                    field_index: body.field_index,
+                    algebraic_type: body.algebraic_type.clone(),
+                    arms: body
+                        .arms
+                        .iter()
+                        .map(|arm| CResourceMatchArm {
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            binding_types: arm.binding_types.clone(),
+                            contains: arm
+                                .contains
+                                .iter()
+                                .map(|resource| {
+                                    substitute_pointer_variable_in_resource_spec(resource, from, to)
+                                })
+                                .collect(),
+                            facts: arm
+                                .facts
+                                .iter()
+                                .map(|fact| {
+                                    substitute_pointer_variable_in_spec_proposition(fact, from, to)
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 }),
                 recursive: definition.recursive,
                 counted_population: definition.counted_population,

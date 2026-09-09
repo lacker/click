@@ -3280,6 +3280,82 @@ pub(in crate::surface) fn composite_resource_definitions(
             })
             .collect();
         let observes_its_population = body.facts().iter().any(proposition_contains_resource_count);
+        let matched = if let Some(matched) = &body.matched {
+            let schema = definition
+                .field_schema()
+                .ok_or_else(|| ClickError::new("resource match requires a checked field schema"))?;
+            let field_index = definition
+                .fields()
+                .iter()
+                .position(|field| field.name == matched.field)
+                .ok_or_else(|| ClickError::new("unknown resource match field"))?;
+            let crate::kernel::ResourceFieldType::Algebraic(algebraic_type) =
+                &schema.fields()[field_index].1
+            else {
+                return Err(ClickError::new(
+                    "resource match requires an algebraic field",
+                ));
+            };
+            let scopes = validation::resource_match_arm_scopes(definition, |name| {
+                click_function_environment
+                    .algebraic_type_definitions
+                    .get(name)
+            })?;
+            let mut arms = Vec::new();
+            for (variant, bindings, arm) in scopes {
+                let parameters = arm
+                    .parameters()
+                    .iter()
+                    .map(|parameter| {
+                        syntax::C0Parameter::new(
+                            parameter.c_type(),
+                            parameter.name().to_string(),
+                            parameter.struct_name().map(str::to_string),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let contains = arm
+                    .composite_body()
+                    .unwrap()
+                    .contains()
+                    .iter()
+                    .map(|resource| {
+                        resource_clause_to_resource_spec_with_parameters(
+                            resource,
+                            &parameters,
+                            None,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let facts = lower_composite_resource_facts_with_bindings(
+                    &arm,
+                    predicate_environment,
+                    click_function_environment,
+                    &bindings,
+                )?;
+                let binding_types = algebraic_type
+                    .variants
+                    .iter()
+                    .find(|entry| entry.name == variant)
+                    .ok_or_else(|| ClickError::new("unknown resource match constructor"))?
+                    .fields
+                    .clone();
+                arms.push(crate::kernel::CResourceMatchArm {
+                    variant,
+                    bindings: bindings.into_iter().map(|(name, _)| name).collect(),
+                    binding_types,
+                    contains,
+                    facts,
+                });
+            }
+            Some(crate::kernel::CResourceMatchBody {
+                field_index,
+                algebraic_type: algebraic_type.clone(),
+                arms,
+            })
+        } else {
+            None
+        };
         definitions.push(
             if observes_its_population {
                 CCompositeResourceDefinition::counted_population(
@@ -3300,6 +3376,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                 )
             }
             .with_witnesses(witnesses)
+            .with_resource_match_body(matched)
             .with_instance_schema(definition.field_schema().cloned()),
         );
     }

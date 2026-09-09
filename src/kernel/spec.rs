@@ -70,7 +70,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     )
 }
 
-fn lower_spec_proposition_at_state_with_algebraic_bindings(
+pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings(
     state: &CState,
     proposition: &SpecProposition,
     loop_entry_state: Option<&CState>,

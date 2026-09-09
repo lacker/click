@@ -282,6 +282,20 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<SpecProposition>, ClickError> {
+    lower_composite_resource_facts_with_bindings(
+        definition,
+        predicate_environment,
+        click_function_environment,
+        &[],
+    )
+}
+
+pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
+    definition: &ResourceDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    bindings: &[(String, ClickType)],
+) -> Result<Vec<SpecProposition>, ClickError> {
     let body = definition
         .composite_body()
         .expect("only composite definitions have logical facts");
@@ -321,6 +335,18 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         .cloned()
         .collect::<Vec<_>>();
     let mut facts = Vec::new();
+    for (name, ty) in bindings {
+        if let ClickType::Algebraic(application) = ty {
+            lowerer.algebraic_variables.insert(
+                name.clone(),
+                SpecAlgebraicExpression {
+                    algebraic_type: algebraic_kernel_type(click_function_environment, application)
+                        .map_err(ClickError::new)?,
+                    node: SpecAlgebraicExpressionNode::Binding(name.clone()),
+                },
+            );
+        }
+    }
     for fact in body.facts() {
         let unfolded = unfold_click_predicates_in_proposition_with_active(
             predicate_environment,

@@ -777,6 +777,34 @@ Post-return folds are checked separately against each return path's memory,
 ownership, and guard assumptions. Every returning path must restore the
 ownership promised by the contract; a sibling's fold cannot supply it.
 The regression is `mdtests/resource_fields_guarded_memory_body.md`.
+
+A field-bearing body may instead match one algebraic field:
+
+<!-- verified-example: mdtests/resource_fields_match_memory_body.md -->
+```click
+resource cell(p: int32*) {
+    field model: Maybe<int32>;
+    match model {
+        Maybe::None => { fact p == 0; },
+        Maybe::Some(value) => {
+            owns p[0..1];
+            fact p[0] == value;
+        },
+    }
+}
+```
+
+Here `Maybe<T>` is declared in the linked fixture. Arms must cover every
+constructor exactly once. Bindings are scoped to their arm and have the
+constructor's instantiated types, including pointers and nested ADTs. They
+cannot shadow resource parameters or fields. Fold/unfold requires constructor
+evidence for the actual instance field (for example,
+`c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
+implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
+The same ownership, unchanged-field, and path-local return checks still apply.
+This slice accepts immediate owned memory and facts, not child resources,
+witnesses, nested resource matches/guards, or arbitrary match scrutinees.
+
 Field establishment, updates, and ordinary inline-call transport remain
 unsupported. A declaration alone grants no ownership, and binding an instance
 does not implicitly expose its memory body.

@@ -952,23 +952,94 @@ impl Parser {
             self.expect(Token::Semicolon)?;
             fields.push(ResourceFieldDefinition { name, click_type });
         }
-        self.current_resource_fields = fields
-            .iter()
-            .enumerate()
-            .map(|(field_index, field)| {
-                (
-                    field.name.clone(),
-                    ResourceFieldAccess {
-                        owner: "__body".into(),
-                        resource_name: resource_name.into(),
-                        identity: Variable(u64::MAX),
-                        field: field.name.clone(),
-                        field_index,
-                        click_type: Some(field.click_type.clone()),
-                    },
-                )
-            })
-            .collect();
+        let previous_resource_fields = self.current_resource_fields.clone();
+        if !fields.is_empty() {
+            self.current_resource_fields = fields
+                .iter()
+                .enumerate()
+                .map(|(field_index, field)| {
+                    (
+                        field.name.clone(),
+                        ResourceFieldAccess {
+                            owner: "__body".into(),
+                            resource_name: resource_name.into(),
+                            identity: Variable(u64::MAX),
+                            field: field.name.clone(),
+                            field_index,
+                            click_type: Some(field.click_type.clone()),
+                        },
+                    )
+                })
+                .collect();
+        }
+        if self.peek_ident() == Some("match") {
+            if self.match_nesting != 0 {
+                return Err(self.error("nested resource matches are not supported"));
+            }
+            self.position += 1;
+            let field = self.expect_ident("resource model field")?;
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let type_name = self.expect_ident("match pattern datatype")?;
+                self.expect(Token::ColonColon)?;
+                let variant = self.expect_ident("match pattern variant")?;
+                let mut bindings = Vec::new();
+                if self.peek() == Some(&Token::LParen) {
+                    self.position += 1;
+                    while self.peek() != Some(&Token::RParen) {
+                        bindings.push(self.expect_ident("match pattern binding")?);
+                        if self.peek() != Some(&Token::Comma) {
+                            break;
+                        }
+                        self.position += 1;
+                    }
+                    self.expect(Token::RParen)?;
+                }
+                self.expect(Token::FatArrow)?;
+                let inserted = bindings
+                    .iter()
+                    .filter(|name| self.current_contract_bindings.insert((*name).clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.match_nesting += 1;
+                let body = self.parse_composite_resource_body(resource_name);
+                self.match_nesting -= 1;
+                let body = body?;
+                for name in inserted {
+                    self.current_contract_bindings.remove(&name);
+                }
+                if !body.fields.is_empty()
+                    || body.matched.is_some()
+                    || body.condition.is_some()
+                    || !body.witnesses.is_empty()
+                {
+                    return Err(self.error("resource match arms currently require immediate memory clauses and facts, without fields, guards, matches, or witnesses"));
+                }
+                arms.push(ResourceMatchArm {
+                    type_name,
+                    variant,
+                    bindings,
+                    body,
+                });
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                } else if self.peek() != Some(&Token::RBrace) {
+                    return Err(self.error("expected `,` or `}` after resource match arm"));
+                }
+            }
+            self.expect(Token::RBrace)?;
+            self.expect(Token::RBrace)?;
+            self.current_resource_fields = previous_resource_fields;
+            return Ok(CompositeResourceBody {
+                fields,
+                matched: Some(ResourceMatchBody { field, arms }),
+                condition: None,
+                contains: vec![],
+                facts: vec![],
+                witnesses: vec![],
+            });
+        }
         let condition = if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -1056,9 +1127,10 @@ impl Parser {
             .into_iter()
             .flat_map(expand_aggregate_resource_clause)
             .collect();
-        self.current_resource_fields.clear();
+        self.current_resource_fields = previous_resource_fields;
         Ok(CompositeResourceBody {
             fields,
+            matched: None,
             condition,
             contains,
             facts,

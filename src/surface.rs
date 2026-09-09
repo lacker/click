@@ -487,6 +487,7 @@ pub struct ResourceDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
     fields: Vec<ResourceFieldDefinition>,
+    matched: Option<ResourceMatchBody>,
     condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
@@ -494,6 +495,20 @@ pub struct CompositeResourceBody {
     /// `where` proposition is also one of `facts`; the witness name is in
     /// scope for every later clause of the body.
     witnesses: Vec<ResourceWitness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceMatchBody {
+    field: String,
+    arms: Vec<ResourceMatchArm>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceMatchArm {
+    type_name: String,
+    variant: String,
+    bindings: Vec<String>,
+    body: CompositeResourceBody,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
