@@ -146,10 +146,11 @@ unbounded search.
 
 Loop migration follow-up (2026-09-09): completed-body prepass ordering and
 named loop-entry snapshots are fixed. Automatic/bare closure still uses the
-legacy path. A staged migration exposed a
-[pointer-equality proof emission gap](pointer-increment-equality-proof.md);
-resolve that tooling blocker before finishing explicit fixture proofs and
-deleting legacy invariant discovery. See
+legacy path. Pointer-increment equality now emits an explicit arithmetic
+proof from the selected relation and overflow bounds. The unchanged pointer
+loop verifies, expands, and rechecks with explicit closure and zero legacy
+discovery. Finish the remaining explicit fixture proofs before deleting
+legacy invariant discovery. See
 [the loop migration issue](quantified-invariant-body-planning.md) for the census.
 
 Older counts retain their stated measurement dates. The reentrancy census was

@@ -17,7 +17,27 @@ Copy3 now also stores its expanded explicit closure proof in
 
 ## Producer migration attempt (2026-09-09)
 
-### Latest checkpoint and remaining blocker
+### Latest checkpoint
+
+The pointer-equality emission gap is resolved. `arithmetic() using` checks
+equal exact byte translations of one explicit pointer relation, distributing
+an atomic signed index sum only when the listed bounds exclude overflow.
+Smart emission consumes its selected premises, without a new search path.
+The original pointer-loop fixture now has an explicit preservation and closure
+body; `pointer_loop_increment_emits_checked_equality_proof` verifies, expands,
+and rechecks it with zero legacy discovery. Missing/unavailable premises,
+unequal advances, changed blocks, and wrapped sums reject; four-size
+deterministic tests cover explicit-input scaling.
+
+Whole-claim expansion also exposed initialization checking still using a legacy
+interpreter that rejected its own generated `both` body. Initialization checking
+now constructs the fixed-state proof object and requires its explicit body to
+close. This is not migration of automatic preservation or deletion of the
+legacy invariant-discovery builders.
+
+Next resume the branch-increment definedness, old-count, and permutation
+closure proofs from the historical census below, then rerun the full producer
+migration gates before legacy deletion.
 
 Loop-preservation snapshot registration now records the loop's label aliases
 as well as its numeric region. The regression
@@ -35,15 +55,14 @@ permutation closure. The latter two roots require explicit implication and
 quantifier handling; a root without a surface rendering is not evidence that
 the kernel goal is absent.
 
-The pointer attempt exposed a tooling failure rather than an ordinary bounded
+The pointer attempt originally exposed a tooling failure rather than an ordinary bounded
 miss: smart reasoning finds an equality but cannot emit its simple proof.
-See [pointer-increment-equality-proof.md](pointer-increment-equality-proof.md)
-for an executable reproduction independent of migration. Tooling-first policy
-stops the migration here. The producer changes, temporary diagnostics, and
+The regression reproduced it independently of migration. Tooling-first policy
+stopped that migration attempt. The producer changes, temporary diagnostics, and
 experimental fixture proofs were reverted; only the independently tested
-label fix and focused regressions are retained. Bare/automatic closure and
-the legacy builders/prefix probe remain. Fix the pointer proof gap before
-resuming the remaining explicit fixture proofs and legacy deletion.
+label fix and focused regressions were retained. The pointer follow-up above
+resolves that blocker. Bare/automatic closure and the legacy builders/prefix
+probe remain; resume the remaining explicit fixture proofs and legacy deletion.
 
 ### Earlier prototype (historical)
 

@@ -278,28 +278,56 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     })
                     .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
                 let surface_propositions = initialization_surface_propositions.borrow();
-                let fact = prove_pure_proposition_in_state(
-                    &have.proposition,
-                    surface_propositions.unique_kernel(&have.proposition),
-                    &have.proof,
-                    "initialize",
-                    environment.theorem_environment,
+                // Check structured initialization through the same checked
+                // proof object that emitted it, including both/and children.
+                let fact = surface_propositions
+                    .unique_kernel(&have.proposition)
+                    .cloned()
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        lower_fixed_state_proposition(
+                            &have.proposition,
+                            &certificate_available,
+                            environment.parsed_function.parameters(),
+                            environment.arguments,
+                            environment.initial_state,
+                            &context.state,
+                            None,
+                            &recorded_snapshots,
+                            environment.predicate_environment,
+                            environment.click_function_environment,
+                        )
+                    })
+                    .map_err(ClickError::new)?;
+                let root = Proof::for_fixed_state_surface_goal(
                     &step_claim_label,
                     certificate_index,
                     &certificate_available,
-                    &[],
+                    fact.clone(),
+                    have.proposition.clone(),
                     environment.parsed_function.parameters(),
                     environment.arguments,
                     environment.initial_state,
                     &context.state,
-                    None,
                     &recorded_snapshots,
-                    Some(&surface_propositions),
+                    &surface_propositions,
                     environment.predicate_environment,
                     environment.click_function_environment,
-                    environment.function_block.requires(),
-                    None,
-                )?;
+                    environment.theorem_environment,
+                    &[],
+                    &[],
+                );
+                let SourceProof::Script(tactics) = &have.proof else {
+                    return Err(ClickError::new(
+                        "invariant initialization requires an explicit proof body",
+                    ));
+                };
+                let checked = root.try_authoritative_linear_script(tactics)?;
+                if !checked.is_some_and(|proof| proof.is_complete()) {
+                    return Err(ClickError::new(
+                        "invariant initialization proof body did not close its goal",
+                    ));
+                }
                 if !certificate_available.contains(&fact) {
                     certificate_available.push(fact);
                 }

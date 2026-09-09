@@ -35,7 +35,7 @@ fn loop_preservation_have_resolves_entry_label_and_expands() {
 }
 
 #[test]
-fn pointer_loop_increment_reports_missing_simple_equality_proof() {
+fn pointer_loop_increment_emits_checked_equality_proof() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_pointer_local_loop_invariant.md");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -45,25 +45,14 @@ fn pointer_loop_increment_reports_missing_simple_equality_proof() {
         .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
-    let click = fixture.click_source.unwrap().replace(
-        "invariant p == arr + i;",
-        r#"invariant p == arr + i;
-        preserve by {
-            step(); step();
-            have p == arr + i by simp;
-            close_invariants();
-        }"#,
-    );
-    // Track the tooling gap without accepting a success lacking a proof or
-    // attempting to expand an incomplete run. See the dedicated issue.
-    let error = verify_c0_sources(&click, &sources).expect_err("pointer proof gap remains open");
-    assert!(
-        error
-            .message()
-            .contains("no explicit simple certificate for pointer equality"),
-        "{}",
-        error.message()
-    );
+    let click = fixture.click_source.unwrap();
+    let before = crate::kernel::invariant_discovery_calls();
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "last_element", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    assert!(expanded.contains("arithmetic() using"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    assert_eq!(before, crate::kernel::invariant_discovery_calls());
 }
 
 #[test]
