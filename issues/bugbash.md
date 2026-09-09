@@ -1,12 +1,12 @@
 # Bug bash: open soundness holes and C mis-models
 
-Fourteen independent root causes. Every one has a reproduction that verifies
+Thirteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
-Six are critical: an ordinary contract over ordinary C is certified while
+Five are critical: an ordinary contract over ordinary C is certified while
 false, with no unusual tactics. The other eight are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
@@ -404,95 +404,6 @@ changes; both claims verify today.
   range's element width.
 
 ---
-
-## 5. By-value struct postconditions land on the caller's object
-
-**Severity: critical.** The callee is certified against its own copy, and the
-resulting fact is applied to the caller's object, producing a contradictory
-state in which anything verifies.
-
-**Violated invariant.** A by-value parameter is a callee-local object. Its
-post-state is not observable by the caller, so no `ensures` about it may be
-instantiated on the caller's argument.
-
-**Mechanism.** Aggregate parameter binding copies the argument into a fresh
-block for the callee, but ensures instantiation maps the parameter back to the
-caller's object (`src/kernel/functions.rs`, aggregate binding and the ensures
-substitution that follows).
-
-**Regression** (`mdtests/by_value_struct_param_ensures_rejected.md`):
-
-```c
-struct pair {
-    int32 first;
-    int32 second;
-};
-
-int32 bump(struct pair value) {
-    value.first = 5;
-    return value.first;
-}
-
-int32 call_bump() {
-    struct pair original;
-    int32 r;
-    original.first = 4;
-    original.second = 0;
-    r = bump(original);
-    return original.first;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 bump(struct pair value) {
-    ensures value.first == 5;
-}
-
-int32 call_bump() {
-    ensures result == 999;
-}
-```
-
-`call_bump` returns 4. The absurd `result == 999` verifies because the caller's
-state has both `original.first == 4` and `original.first == 5`.
-
-**Acceptance criteria.**
-- `call_bump`'s claim is rejected, and so is any other value: after the call
-  the only provable fact about `original.first` is that it is still 4.
-- `mdtests/struct_by_value_scalar_copy.md` and the rest of the by-value family
-  still pass.
-
-**Do not bind the parameter to a fresh, empty post-state block.** Binding it to
-a fresh, empty block in the call's post-contract state
-(`with_contract_argument_views` keeps the caller's object; the two ensures
-lowerings at `src/kernel/functions.rs:1193` and `:1245` would rebind) fixes
-the regression below and leaves the caller's state consistent, but is too
-destructive as it stands:
-
-- `mdtests/struct_conditional_value.md` fails. `choose_packet` states
-  `ensures result.tag == right.tag` over by-value parameters it never
-  modifies, and the caller needs that to chain into `sum_packet`'s
-  precondition. With an unconstrained post-state parameter the chain is lost.
-- `old(value.field)` breaks with it, so the migration those contracts would
-  need is not available: `old` resolves the parameter's address in the *post*
-  state and then reads it in entry memory, so an empty fresh block reads as
-  nothing. A fresh block would have to carry the argument's entry image for
-  `old` to keep working, while staying unconstrained in the post state.
-
-**Suggested direction.** The existing reading of a
-by-value parameter in `ensures` is sound exactly when the callee does not
-modify its copy, which is the case for every by-value contract in the tree
-today (`choose_packet`, `sum_packet`, `struct_by_value_pointer_copy.md`).
-Only a callee that writes to its copy, as `bump` does here, can state
-something the caller must not believe. So certification can keep the current
-call-site behaviour and instead reject an `ensures` that mentions a by-value
-aggregate parameter outside `old(...)` when the body writes to that
-parameter's storage. That preserves every contract in the tree and rejects
-this regression, and it needs no surface migration. The check belongs where
-the callee's body is certified, comparing the parameter's copy block between
-entry and exit, or by walking `source_body` for stores into it.
 
 ---
 

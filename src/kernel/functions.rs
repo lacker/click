@@ -412,6 +412,22 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             ) else {
                 continue;
             };
+            if let Some(parameter) = modified_by_value_aggregate_parameter_with_current_ensure(
+                &callee_state,
+                &body_path.outcome,
+                function,
+            ) {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        format!(
+                            "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
+                        ),
+                    )),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
             let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
@@ -609,6 +625,22 @@ pub(super) fn execute_c_function_verification_paths(
             ) else {
                 continue;
             };
+            if let Some(parameter) = modified_by_value_aggregate_parameter_with_current_ensure(
+                &callee_state,
+                &body_path.outcome,
+                function,
+            ) {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        format!(
+                            "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
+                        ),
+                    )),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
             let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
@@ -3405,6 +3437,1039 @@ fn c_expression_is_state_independent(expression: &CExpression) -> bool {
         | CExpression::TypedLoad { .. }
         | CExpression::Index(_, _) => false,
     }
+}
+
+/// Whether a specification expression reads a by-value aggregate parameter
+/// from the current callee state. Entry-state reads (`old(...)`) use
+/// `SpecMemory::FunctionEntry` and are intentionally ignored: they describe
+/// the caller's argument image, which is stable across the call.
+fn spec_expression_reads_current_parameter(
+    expression: &SpecExpression,
+    parameter_name: &str,
+) -> bool {
+    match expression {
+        SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => false,
+        SpecExpression::CExpression(expression) => {
+            c_expression_mentions_variable(expression, parameter_name)
+        }
+        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
+                || arms
+                    .iter()
+                    .any(|arm| spec_expression_reads_current_parameter(&arm.body, parameter_name))
+        }
+        SpecExpression::CountedResourceCount { arguments, .. } => arguments
+            .iter()
+            .flatten()
+            .any(|argument| spec_expression_reads_current_parameter(argument, parameter_name)),
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
+            spec_expression_reads_current_parameter(left, parameter_name)
+                || spec_expression_reads_current_parameter(right, parameter_name)
+        }
+        SpecExpression::BitwiseNot(body)
+        | SpecExpression::Cast(body, _)
+        | SpecExpression::LoopEntrySnapshot(body) => {
+            spec_expression_reads_current_parameter(body, parameter_name)
+        }
+        SpecExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            spec_proposition_reads_current_parameter(condition, parameter_name)
+                || spec_expression_reads_current_parameter(then_branch, parameter_name)
+                || spec_expression_reads_current_parameter(else_branch, parameter_name)
+        }
+        SpecExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            spec_expression_reads_current_parameter(start, parameter_name)
+                || spec_expression_reads_current_parameter(end, parameter_name)
+                || spec_expression_reads_current_parameter(initial, parameter_name)
+                || spec_expression_reads_current_parameter(body, parameter_name)
+        }
+        SpecExpression::Let { value, body, .. } => {
+            spec_expression_reads_current_parameter(value, parameter_name)
+                || spec_expression_reads_current_parameter(body, parameter_name)
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(|argument| {
+                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
+            })
+        }
+        SpecExpression::PointerOffset {
+            pointer, elements, ..
+        } => {
+            spec_expression_reads_current_parameter(pointer, parameter_name)
+                || spec_expression_reads_current_parameter(elements, parameter_name)
+        }
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
+            ..
+        } => false,
+        SpecExpression::MemoryLoad { pointer, .. } => {
+            spec_expression_reads_current_parameter(pointer, parameter_name)
+        }
+    }
+}
+
+fn spec_proposition_reads_current_parameter(
+    proposition: &SpecProposition,
+    parameter_name: &str,
+) -> bool {
+    match proposition {
+        SpecProposition::AlgebraicComparison { left, right, .. } => {
+            spec_algebraic_expression_reads_current_parameter(left, parameter_name)
+                || spec_algebraic_expression_reads_current_parameter(right, parameter_name)
+        }
+        SpecProposition::SequenceMembership { element, sequence } => {
+            spec_expression_reads_current_parameter(element, parameter_name)
+                || spec_sequence_reads_current_parameter(sequence, parameter_name)
+        }
+        SpecProposition::SequenceComparison { left, right, .. } => {
+            spec_sequence_reads_current_parameter(left, parameter_name)
+                || spec_sequence_reads_current_parameter(right, parameter_name)
+        }
+        SpecProposition::Comparison { left, right, .. } => {
+            spec_expression_reads_current_parameter(left, parameter_name)
+                || spec_expression_reads_current_parameter(right, parameter_name)
+        }
+        SpecProposition::FloatClassification { expression, .. }
+        | SpecProposition::Defined(expression) => {
+            spec_expression_reads_current_parameter(expression, parameter_name)
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            spec_proposition_reads_current_parameter(left, parameter_name)
+                || spec_proposition_reads_current_parameter(right, parameter_name)
+        }
+        SpecProposition::Not(body)
+        | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllPointer { body, .. }
+        | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsPointer { body, .. } => {
+            spec_proposition_reads_current_parameter(body, parameter_name)
+        }
+        SpecProposition::Predicate { arguments, .. } => {
+            arguments.iter().any(|argument| match argument {
+                SpecPredicateArgument::Value(expression) => {
+                    spec_expression_reads_current_parameter(expression, parameter_name)
+                }
+                SpecPredicateArgument::ArrayRef { memory, pointer } => {
+                    !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                        && spec_expression_reads_current_parameter(pointer, parameter_name)
+                }
+            })
+        }
+        SpecProposition::ResourceSeparate { left, right }
+        | SpecProposition::ResourceContains {
+            parent: left,
+            child: right,
+        } => {
+            spec_resource_reads_current_parameter(left, parameter_name)
+                || spec_resource_reads_current_parameter(right, parameter_name)
+        }
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            ..
+        } => {
+            !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                && (spec_expression_reads_current_parameter(base, parameter_name)
+                    || spec_expression_reads_current_parameter(start, parameter_name)
+                    || spec_expression_reads_current_parameter(end, parameter_name))
+        }
+    }
+}
+
+fn spec_sequence_reads_current_parameter(
+    sequence: &SpecSequenceExpression,
+    parameter_name: &str,
+) -> bool {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => elements
+            .iter()
+            .any(|element| spec_expression_reads_current_parameter(element, parameter_name)),
+        SpecSequenceExpression::Concat(left, right) => {
+            spec_sequence_reads_current_parameter(left, parameter_name)
+                || spec_sequence_reads_current_parameter(right, parameter_name)
+        }
+    }
+}
+
+fn spec_resource_reads_current_parameter(resource: &SpecResource, parameter_name: &str) -> bool {
+    match resource {
+        SpecResource::Memory {
+            base, start, end, ..
+        } => {
+            spec_expression_reads_current_parameter(base, parameter_name)
+                || spec_expression_reads_current_parameter(start, parameter_name)
+                || spec_expression_reads_current_parameter(end, parameter_name)
+        }
+        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
+            arguments
+                .iter()
+                .any(|argument| spec_expression_reads_current_parameter(argument, parameter_name))
+        }
+    }
+}
+
+fn spec_algebraic_expression_reads_current_parameter(
+    expression: &SpecAlgebraicExpression,
+    parameter_name: &str,
+) -> bool {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_)
+        | SpecAlgebraicExpressionNode::Binding(_)
+        | SpecAlgebraicExpressionNode::ResourceField(_) => false,
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
+            fields.iter().any(|field| match field {
+                SpecAlgebraicValue::C(expression) => {
+                    spec_expression_reads_current_parameter(expression, parameter_name)
+                }
+                SpecAlgebraicValue::Algebraic(expression) => {
+                    spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
+                }
+            })
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
+                || arms.iter().any(|arm| {
+                    spec_algebraic_expression_reads_current_parameter(&arm.body, parameter_name)
+                })
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(|argument| {
+                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
+            })
+        }
+    }
+}
+
+fn spec_pure_function_argument_reads_current_parameter(
+    argument: &SpecPureFunctionArgument,
+    parameter_name: &str,
+) -> bool {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            spec_expression_reads_current_parameter(expression, parameter_name)
+        }
+        SpecPureFunctionArgument::Algebraic(expression) => {
+            spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
+        }
+        SpecPureFunctionArgument::ArrayRef {
+            memory, pointer, ..
+        } => {
+            !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                && spec_expression_reads_current_parameter(pointer, parameter_name)
+        }
+    }
+}
+
+fn c_expression_mentions_variable(expression: &CExpression, name: &str) -> bool {
+    match expression {
+        CExpression::Variable(variable) => variable == name,
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::AddressOf(expression)
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::Load(expression)
+        | CExpression::TypedLoad {
+            pointer: expression,
+            ..
+        }
+        | CExpression::BitwiseNot(expression) => c_expression_mentions_variable(expression, name),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_mentions_variable(condition, name)
+                || c_expression_mentions_variable(then_branch, name)
+                || c_expression_mentions_variable(else_branch, name)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_mentions_variable(left, name)
+                || c_expression_mentions_variable(right, name)
+        }
+    }
+}
+
+fn c_expression_takes_address_of_variable(expression: &CExpression, name: &str) -> bool {
+    match expression {
+        CExpression::AddressOf(expression) => c_expression_mentions_variable(expression, name),
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => false,
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::Load(expression)
+        | CExpression::TypedLoad {
+            pointer: expression,
+            ..
+        }
+        | CExpression::BitwiseNot(expression) => {
+            c_expression_takes_address_of_variable(expression, name)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_takes_address_of_variable(condition, name)
+                || c_expression_takes_address_of_variable(then_branch, name)
+                || c_expression_takes_address_of_variable(else_branch, name)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_takes_address_of_variable(left, name)
+                || c_expression_takes_address_of_variable(right, name)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ParameterAccessRange {
+    start: u32,
+    end: u32,
+}
+
+fn parameter_access_range(start: u32, width: u32) -> Option<ParameterAccessRange> {
+    (width > 0).then_some(())?;
+    Some(ParameterAccessRange {
+        start,
+        end: start.checked_add(width)?,
+    })
+}
+
+impl ParameterAccessRange {
+    fn overlaps(self, other: Self) -> bool {
+        self.start < other.end && other.start < self.end
+    }
+}
+
+fn c_expression_parameter_offset(expression: &CExpression, parameter_name: &str) -> Option<u32> {
+    match expression {
+        CExpression::Variable(variable) if variable == parameter_name => Some(0),
+        CExpression::PointerOffsetBytes { pointer, bytes } => {
+            c_expression_parameter_offset(pointer, parameter_name)?.checked_add(*bytes)
+        }
+        CExpression::Cast { expression, .. } => {
+            c_expression_parameter_offset(expression, parameter_name)
+        }
+        _ => None,
+    }
+}
+
+fn spec_expression_constant(expression: &SpecExpression) -> Option<u32> {
+    let SpecExpression::Value(value) = expression else {
+        return None;
+    };
+    match value {
+        CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term) => term.as_const(),
+        CValue::Void | CValue::Float32(_) | CValue::Float64(_) | CValue::Pointer(_) => None,
+    }
+}
+
+fn spec_expression_parameter_offset(
+    expression: &SpecExpression,
+    parameter_name: &str,
+) -> Option<u32> {
+    match expression {
+        SpecExpression::CExpression(expression) => {
+            c_expression_parameter_offset(expression, parameter_name)
+        }
+        SpecExpression::Cast(expression, _) | SpecExpression::LoopEntrySnapshot(expression) => {
+            spec_expression_parameter_offset(expression, parameter_name)
+        }
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width,
+        } => spec_expression_parameter_offset(pointer, parameter_name)?
+            .checked_add(spec_expression_constant(elements)?.checked_mul(*byte_width)?),
+        _ => None,
+    }
+}
+
+fn statement_writes_aggregate_parameter(
+    statement: &CStatement,
+    parameter_name: &str,
+    writes: &mut Vec<ParameterAccessRange>,
+    unknown_write: &mut bool,
+) {
+    match statement {
+        CStatement::Store { pointer, .. } => {
+            if c_expression_parameter_offset(pointer, parameter_name).is_some() {
+                *unknown_write = true;
+            } else if c_expression_mentions_variable(pointer, parameter_name) {
+                *unknown_write = true;
+            }
+        }
+        CStatement::TypedStore {
+            pointer,
+            value_type,
+            ..
+        } => {
+            if let Some(offset) = c_expression_parameter_offset(pointer, parameter_name) {
+                if let Some(range) = parameter_access_range(offset, value_type.byte_width()) {
+                    writes.push(range);
+                }
+            } else if c_expression_mentions_variable(pointer, parameter_name) {
+                *unknown_write = true;
+            }
+        }
+        CStatement::CopyAggregate { target, layout, .. } => {
+            if let Some(offset) = c_expression_parameter_offset(target, parameter_name) {
+                if let Some(range) = parameter_access_range(offset, layout.size_bytes()) {
+                    writes.push(range);
+                }
+            } else if c_expression_mentions_variable(target, parameter_name) {
+                *unknown_write = true;
+            }
+        }
+        CStatement::Update { target, .. } => {
+            if c_expression_mentions_variable(target, parameter_name) {
+                *unknown_write = true;
+            }
+        }
+        CStatement::Call { arguments, .. } | CStatement::CallAssign { arguments, .. } => {
+            if arguments
+                .iter()
+                .any(|argument| c_expression_takes_address_of_variable(argument, parameter_name))
+            {
+                *unknown_write = true;
+            }
+        }
+        CStatement::Seq(first, second) => {
+            statement_writes_aggregate_parameter(first, parameter_name, writes, unknown_write);
+            statement_writes_aggregate_parameter(second, parameter_name, writes, unknown_write);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_writes_aggregate_parameter(
+                then_branch,
+                parameter_name,
+                writes,
+                unknown_write,
+            );
+            statement_writes_aggregate_parameter(
+                else_branch,
+                parameter_name,
+                writes,
+                unknown_write,
+            );
+        }
+        CStatement::ContinueWithStep { step } => {
+            statement_writes_aggregate_parameter(step, parameter_name, writes, unknown_write);
+        }
+        CStatement::While { body, .. } => {
+            statement_writes_aggregate_parameter(body, parameter_name, writes, unknown_write);
+        }
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                statement_writes_aggregate_parameter(
+                    &case.body,
+                    parameter_name,
+                    writes,
+                    unknown_write,
+                );
+            }
+        }
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_) => {}
+    }
+}
+
+fn spec_expression_current_parameter_accesses(
+    expression: &SpecExpression,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match expression {
+        SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => {}
+        SpecExpression::CExpression(expression) => {
+            if c_expression_mentions_variable(expression, parameter_name) {
+                *unknown_read = true;
+            }
+        }
+        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            spec_algebraic_expression_current_parameter_accesses(
+                scrutinee,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            for arm in arms {
+                spec_expression_current_parameter_accesses(
+                    &arm.body,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+        SpecExpression::CountedResourceCount { arguments, .. } => {
+            for argument in arguments.iter().flatten() {
+                spec_expression_current_parameter_accesses(
+                    argument,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
+            spec_expression_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_expression_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+        SpecExpression::BitwiseNot(body)
+        | SpecExpression::Cast(body, _)
+        | SpecExpression::LoopEntrySnapshot(body) => {
+            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
+        }
+        SpecExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            spec_proposition_current_parameter_accesses(
+                condition,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_expression_current_parameter_accesses(
+                then_branch,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_expression_current_parameter_accesses(
+                else_branch,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            spec_expression_current_parameter_accesses(start, parameter_name, reads, unknown_read);
+            spec_expression_current_parameter_accesses(end, parameter_name, reads, unknown_read);
+            spec_expression_current_parameter_accesses(
+                initial,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
+        }
+        SpecExpression::Let { value, body, .. } => {
+            spec_expression_current_parameter_accesses(value, parameter_name, reads, unknown_read);
+            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                spec_pure_function_argument_current_parameter_accesses(
+                    argument,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+        SpecExpression::PointerOffset {
+            pointer, elements, ..
+        } => {
+            spec_expression_current_parameter_accesses(
+                pointer,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_expression_current_parameter_accesses(
+                elements,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
+            ..
+        } => {}
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer,
+            value_type,
+        } => {
+            if let Some(offset) = spec_expression_parameter_offset(pointer, parameter_name) {
+                if let Some(range) = parameter_access_range(offset, value_type.byte_width()) {
+                    reads.push(range);
+                }
+            } else if spec_expression_reads_current_parameter(pointer, parameter_name) {
+                *unknown_read = true;
+            }
+        }
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::LoopEntry,
+            pointer,
+            ..
+        } => {
+            if spec_expression_reads_current_parameter(pointer, parameter_name) {
+                *unknown_read = true;
+            }
+        }
+    }
+}
+
+fn spec_proposition_current_parameter_accesses(
+    proposition: &SpecProposition,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match proposition {
+        SpecProposition::AlgebraicComparison { left, right, .. } => {
+            spec_algebraic_expression_current_parameter_accesses(
+                left,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_algebraic_expression_current_parameter_accesses(
+                right,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecProposition::SequenceMembership { element, sequence } => {
+            spec_expression_current_parameter_accesses(
+                element,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            spec_sequence_current_parameter_accesses(sequence, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::SequenceComparison { left, right, .. } => {
+            spec_sequence_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_sequence_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::Comparison { left, right, .. } => {
+            spec_expression_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_expression_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::FloatClassification { expression, .. }
+        | SpecProposition::Defined(expression) => {
+            spec_expression_current_parameter_accesses(
+                expression,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            spec_proposition_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_proposition_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::Not(body)
+        | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllPointer { body, .. }
+        | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsPointer { body, .. } => {
+            spec_proposition_current_parameter_accesses(body, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                match argument {
+                    SpecPredicateArgument::Value(expression) => {
+                        spec_expression_current_parameter_accesses(
+                            expression,
+                            parameter_name,
+                            reads,
+                            unknown_read,
+                        );
+                    }
+                    SpecPredicateArgument::ArrayRef { memory, pointer } => {
+                        if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                            && spec_expression_reads_current_parameter(pointer, parameter_name)
+                        {
+                            *unknown_read = true;
+                        }
+                    }
+                }
+            }
+        }
+        SpecProposition::ResourceSeparate { left, right }
+        | SpecProposition::ResourceContains {
+            parent: left,
+            child: right,
+        } => {
+            spec_resource_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_resource_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            ..
+        } => {
+            if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                && (spec_expression_reads_current_parameter(base, parameter_name)
+                    || spec_expression_reads_current_parameter(start, parameter_name)
+                    || spec_expression_reads_current_parameter(end, parameter_name))
+            {
+                *unknown_read = true;
+            }
+        }
+    }
+}
+
+fn spec_sequence_current_parameter_accesses(
+    sequence: &SpecSequenceExpression,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match sequence {
+        SpecSequenceExpression::Literal(elements) => {
+            for element in elements {
+                spec_expression_current_parameter_accesses(
+                    element,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+        SpecSequenceExpression::Concat(left, right) => {
+            spec_sequence_current_parameter_accesses(left, parameter_name, reads, unknown_read);
+            spec_sequence_current_parameter_accesses(right, parameter_name, reads, unknown_read);
+        }
+    }
+}
+
+fn spec_resource_current_parameter_accesses(
+    resource: &SpecResource,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match resource {
+        SpecResource::Memory {
+            base, start, end, ..
+        } => {
+            if spec_expression_reads_current_parameter(base, parameter_name)
+                || spec_expression_reads_current_parameter(start, parameter_name)
+                || spec_expression_reads_current_parameter(end, parameter_name)
+            {
+                *unknown_read = true;
+            }
+        }
+        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
+            for argument in arguments {
+                spec_expression_current_parameter_accesses(
+                    argument,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+    }
+}
+
+fn spec_algebraic_expression_current_parameter_accesses(
+    expression: &SpecAlgebraicExpression,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_)
+        | SpecAlgebraicExpressionNode::Binding(_)
+        | SpecAlgebraicExpressionNode::ResourceField(_) => {}
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
+            for field in fields {
+                match field {
+                    SpecAlgebraicValue::C(expression) => {
+                        spec_expression_current_parameter_accesses(
+                            expression,
+                            parameter_name,
+                            reads,
+                            unknown_read,
+                        );
+                    }
+                    SpecAlgebraicValue::Algebraic(expression) => {
+                        spec_algebraic_expression_current_parameter_accesses(
+                            expression,
+                            parameter_name,
+                            reads,
+                            unknown_read,
+                        );
+                    }
+                }
+            }
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            spec_algebraic_expression_current_parameter_accesses(
+                scrutinee,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+            for arm in arms {
+                spec_algebraic_expression_current_parameter_accesses(
+                    &arm.body,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                spec_pure_function_argument_current_parameter_accesses(
+                    argument,
+                    parameter_name,
+                    reads,
+                    unknown_read,
+                );
+            }
+        }
+    }
+}
+
+fn spec_pure_function_argument_current_parameter_accesses(
+    argument: &SpecPureFunctionArgument,
+    parameter_name: &str,
+    reads: &mut Vec<ParameterAccessRange>,
+    unknown_read: &mut bool,
+) {
+    match argument {
+        SpecPureFunctionArgument::Value(expression) => {
+            spec_expression_current_parameter_accesses(
+                expression,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecPureFunctionArgument::Algebraic(expression) => {
+            spec_algebraic_expression_current_parameter_accesses(
+                expression,
+                parameter_name,
+                reads,
+                unknown_read,
+            );
+        }
+        SpecPureFunctionArgument::ArrayRef {
+            memory, pointer, ..
+        } => {
+            if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
+                && spec_expression_reads_current_parameter(pointer, parameter_name)
+            {
+                *unknown_read = true;
+            }
+        }
+    }
+}
+
+/// Rejects a postcondition that would expose a modified by-value aggregate
+/// parameter through the caller-side contract view. This source-level check
+/// runs while the function contract is assembled, before any proof tactic can
+/// publish the private copy as a caller fact.
+pub(crate) fn modified_by_value_aggregate_parameter_with_current_ensure_in_source(
+    function: &CFunction,
+) -> Option<String> {
+    function
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.aggregate_layout().is_some())
+        .find(|parameter| {
+            let mut writes = Vec::new();
+            let mut unknown_write = false;
+            statement_writes_aggregate_parameter(
+                function.source_body(),
+                parameter.name(),
+                &mut writes,
+                &mut unknown_write,
+            );
+            if writes.is_empty() && !unknown_write {
+                return false;
+            }
+            let mut reads = Vec::new();
+            let mut unknown_read = false;
+            for ensure in function.contract_ensures() {
+                spec_proposition_current_parameter_accesses(
+                    ensure,
+                    parameter.name(),
+                    &mut reads,
+                    &mut unknown_read,
+                );
+            }
+            (unknown_write && (unknown_read || !reads.is_empty()))
+                || (unknown_read && !writes.is_empty())
+                || writes
+                    .iter()
+                    .any(|write| reads.iter().any(|read| write.overlaps(*read)))
+        })
+        .map(|parameter| parameter.name().to_string())
+}
+
+fn statement_outcome_state(outcome: &CStatementOutcome) -> Option<&CState> {
+    match outcome {
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state) => Some(state),
+        CStatementOutcome::Return { state, .. } => Some(state),
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => None,
+    }
+}
+
+fn aggregate_parameter_copy_changed(
+    entry_state: &CState,
+    outcome: &CStatementOutcome,
+    parameter: &CParameter,
+) -> bool {
+    let Some(exit_state) = statement_outcome_state(outcome) else {
+        return false;
+    };
+    let Some(CLocalBinding::AggregateObject { slot, layout, .. }) =
+        entry_state.locals.binding(parameter.name())
+    else {
+        return false;
+    };
+    let end = i64::from(layout.size_bytes());
+    entry_state
+        .memory
+        .differing_cell_pointers(&exit_state.memory)
+        .into_iter()
+        .any(|pointer| {
+            pointer.block == slot.block
+                && pointer
+                    .offset
+                    .as_const()
+                    .is_some_and(|offset| offset >= 0 && offset < end)
+        })
+}
+
+fn modified_by_value_aggregate_parameter_with_current_ensure(
+    entry_state: &CState,
+    outcome: &CStatementOutcome,
+    function: &CFunction,
+) -> Option<String> {
+    function
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.aggregate_layout().is_some())
+        .find(|parameter| {
+            aggregate_parameter_copy_changed(entry_state, outcome, parameter)
+                && function.contract_ensures().iter().any(|ensure| {
+                    spec_proposition_reads_current_parameter(ensure, parameter.name())
+                })
+        })
+        .map(|parameter| parameter.name().to_string())
 }
 
 fn add_verified_function_ensure_facts(
