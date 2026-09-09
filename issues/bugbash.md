@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Sixteen independent root causes. Every one has a reproduction that verifies
+Fifteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other ten are high: the trigger is
+false, with no unusual tactics. The other nine are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -652,68 +652,6 @@ the comparison is false: the function returns 0.
   unsignedness; unsigned wraparound in global constant initializers being
   reported as overflow; `-2147483648 / -1` reported as undefined behaviour when
   in C it is well-defined `long` division.
-
----
-
-
-## 9. A store through `&local` in an inline header helper is dropped
-
-**Severity: high.** The caller keeps the old value of a local the inlined body
-wrote through a pointer.
-
-**Violated invariant.** An inline helper executes on the caller's memory; a
-store through a pointer to a caller local is visible to later reads of that
-local by name.
-
-**Mechanism.** Inline bodies from headers are checked at the call site on the
-caller's memory (`src/languages/c/source.rs` expansion plus ordinary
-execution), but the store does not go through the address-escape path that
-syncs an address-taken local's named binding.
-
-**Regression** (`mdtests/inline_helper_store_dropped_rejected.md`), a header
-plus a source:
-
-```c
-/* include/hset.h */
-#ifndef HSET_H
-#define HSET_H
-static inline int32 set0(int32* p) {
-    p[0] = 9;
-    return 0;
-}
-#endif
-```
-
-```c
-/* t.c */
-#include "include/hset.h"
-
-int32 run_set0_local() {
-    int32 n;
-    int32 ignored;
-    n = 100;
-    ignored = set0(&n);
-    return n;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 run_set0_local() {
-    ensures result == 100;
-}
-```
-
-The function returns 9.
-
-**Acceptance criteria.**
-- The sidecar is rejected and `ensures result == 9` verifies instead.
-- The same test with the helper written as an ordinary function in the same
-  translation unit continues to behave (it already does), so the regression
-  pins the inline path specifically.
-
----
 
 ## 10. A reloaded pointer to a local is treated as a distinct block
 
