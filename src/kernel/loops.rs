@@ -487,8 +487,21 @@ pub(super) fn execute_c_call_assign_paths(
                             obligations: path.obligations,
                         };
                     };
-                    state.memory =
-                        copy_aggregate_fields(state.memory, pointer.pointer(), &slot, layout);
+                    state.memory = match copy_aggregate_fields_checked(
+                        state.memory,
+                        pointer.pointer(),
+                        &slot,
+                        layout,
+                    ) {
+                        Ok(memory) => memory,
+                        Err(undefined_behavior) => {
+                            return CStatementExecutionPath {
+                                outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                                facts: path.facts,
+                                obligations: path.obligations,
+                            };
+                        }
+                    };
                     return CStatementExecutionPath {
                         outcome: CStatementOutcome::Normal(state),
                         facts: path.facts,
