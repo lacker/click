@@ -27,6 +27,8 @@ pub(crate) fn take_checked_function_body_execution_count() -> usize {
 
 pub(in crate::kernel) mod contract_certification;
 pub use contract_certification::*;
+mod algebraic_cases;
+pub use algebraic_cases::algebraic_constructor_cases;
 use contract_certification::{
     c_function_contract_certification_assumptions,
     certification_proves_condition_from_verified_pure_implication,

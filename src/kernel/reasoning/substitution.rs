@@ -733,13 +733,7 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
         Term::CValue(value) => collect_c_value_bound_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bound_variables(sequence, variables),
-        Term::Algebraic(term) => {
-            if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
-                for field in fields {
-                    collect_algebraic_value_bound_variables(field, variables);
-                }
-            }
-        }
+        Term::Algebraic(term) => collect_algebraic_bound_variables(term, variables),
         Term::CExpressionOutcome(outcome) => {
             collect_expression_outcome_bound_variables(outcome, variables)
         }
@@ -1273,7 +1267,11 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
 
 fn collect_algebraic_bound_variables(term: &AlgebraicTerm, variables: &mut BTreeSet<Variable>) {
     match &term.node {
-        AlgebraicTermNode::Variable(_) => {}
+        AlgebraicTermNode::Variable(variable) => {
+            // Algebraic variables share the kernel identity namespace with
+            // scalar variables and binders. Freshness must reserve them too.
+            variables.insert(*variable);
+        }
         AlgebraicTermNode::Constructor { fields, .. } => {
             for field in fields {
                 collect_algebraic_value_bound_variables(field, variables);
