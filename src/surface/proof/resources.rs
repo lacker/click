@@ -1597,7 +1597,7 @@ pub(super) fn append_lowered_resource_clause_loadable_fact(
     state: &CState,
     propositions: &mut Vec<Proposition>,
 ) {
-    let (ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_)) = resource else {
+    let ResourceClause::ViewMemory(_) = resource else {
         return;
     };
     let Some(range) = lowered
@@ -1609,6 +1609,11 @@ pub(super) fn append_lowered_resource_clause_loadable_fact(
     let proposition = memory_range_loadable_prop(state.memory(), range);
     if !propositions.contains(&proposition) {
         propositions.push(proposition);
+    }
+    for guard in crate::surface::memory_range_loadable_guards(range) {
+        if !propositions.contains(&guard) {
+            propositions.push(guard);
+        }
     }
 }
 
