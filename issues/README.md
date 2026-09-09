@@ -110,4 +110,3 @@ Proof language and tooling:
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
-- [Keep deep snapshot annotation below the native stack limit](snapshot-annotation-stack-overflow.md)
