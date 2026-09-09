@@ -44,7 +44,7 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   `cell.model` reads its current field, while `old(cell.model)` reads its entry
   field. Identity, field values, and ownership are distinct. Equal fields do
   not identify two instances; ownership alone does not promise preservation.
-- `unfold(cell)` exposes a nonrecursive, witness-free memory body and its
+- `unfold(cell)` exposes a witness-free immediate memory body and its
   facts, optionally under the existing single `if` with an empty false case.
   The guard must be proved true or false; unknown guards do not eagerly split.
   The false case exposes no body ownership or facts. Bare field names in the
@@ -55,9 +55,22 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
   instantiated types, including pointers and nested ADTs. Only that arm's
-  immediate owned memory and facts are exposed. Arm bindings cannot escape
+  immediate owned memory, folded children, and facts are exposed. Arm bindings cannot escape
   or capture incidental C locals. Return folds recheck constructor evidence
   on their retained execution path.
+- Match arms can declare direct recursive children with `owns left: tree(lp);`
+  and equations such as `fact left.model == lm;`. Each child uses the same
+  resource definition; every child field must equal an immediate constructor
+  binding of its declared type. The matched model field therefore strictly
+  descends through a proper submodel, without extra recursion syntax.
+- `unfold(root)` exposes `root.left`; deeper paths such as
+  `root.left.left` require each intervening parent to be open. Children remain
+  folded until explicitly unfolded. The parent handle records distinct child
+  identities and their unchanged arguments/fields. Folding requires those
+  exact children back in folded form and consumes their exposed ownership.
+  Child names are unavailable after the parent folds; a later reopening may
+  introduce fresh child resource identities. Model values and C pointer
+  identities are not changed by this logical exchange.
 - `fold(cell)` requires the matching open handle, complete body ownership, and
   established body facts at the current memory. It restores the same identity
   and unchanged fields. A declaration or field value alone grants no memory
@@ -84,18 +97,21 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
+- [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
 - [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
 - [contract_resource_call_transport.md](../mdtests/contract_resource_call_transport.md)
 - [contract_resource_call_no_implicit_preservation.md](../mdtests/contract_resource_call_no_implicit_preservation.md)
 
 ## Remaining work toward the C tree
 
-1. **Child ownership and recursive bodies.** Constructor matches currently
-   support immediate owned memory and facts, not child resources, witnesses,
-   nested guards/matches, or arbitrary scrutinee expressions. Support nested
-   named child resources and a checked finite, well-founded interpretation of
-   recursive definitions. No operation should eagerly traverse an unknown
-   model. General resource `if/else` remains unsupported.
+1. **Broader child bodies.** Direct, structurally descending same-resource
+   children are implemented. Child arguments currently accept C bindings or
+   literals, not heap loads/computed expressions. Child field equations accept
+   immediate constructor bindings, not arbitrary expressions or existential
+   fields. Mixed resource families, mutually recursive resource groups,
+   witnesses, nested resource guards/matches, arbitrary scrutinees, and general
+   resource `if/else` remain unsupported. Keep recursion finite and avoid
+   eagerly traversing an unknown model when extending these cases.
 2. **Field establishment and updates.** Define how body proofs initially
    establish fields and justify changed fields. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
@@ -104,7 +120,8 @@ expansion/rechecking, and deterministic multi-size scaling:
    establishment and updates remains undecided.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
-   contracts. Resource-body witnesses currently admit only C pointers, not
+   contracts, and transport parent-qualified child handles through explicit
+   contract arguments. Resource-body witnesses currently admit only C pointers, not
    existential child models. Contract `let ... where` witnesses are separate
    per clause; they must not silently become shared instance bindings.
 4. **Tree heap relation.** Add an example-local resource with a tree-model field
@@ -125,6 +142,13 @@ contract. Pure tree proofs and kernel identity tests are not verification of
 the C tree.
 
 ## Other ADT gaps
+
+- **Pointer constructor literals.** A pointer-valued constructor argument
+  such as `Ptr::At(0)` is currently rejected as an integer/pointer type
+  mismatch. Support contextual null-pointer formation, preserving its pointer
+  type and granting no memory ownership. Keep the rejection regression until
+  that elaboration is implemented; do not change existing C to supply a
+  proof-only null-pointer parameter.
 
 - **Surface ADT resource arguments.** Kernel resource identities and population
   keys support symbolic ADT arguments, with checked transfer and substitution.

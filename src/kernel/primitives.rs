@@ -799,6 +799,7 @@ pub enum SpecAlgebraicExpressionNode {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceFieldProjection {
     pub identity: Variable,
+    pub children: Vec<String>,
     pub field_index: usize,
     /// Select the explicit entry state supplied to spec evaluation. There is
     /// no fallback to the current state when that snapshot is unavailable.
@@ -1973,6 +1974,17 @@ pub struct CResourceMatchArm {
     pub binding_types: Vec<AlgebraicValueType>,
     pub contains: Vec<CResourceSpec>,
     pub facts: Vec<SpecProposition>,
+    pub children: Vec<CResourceChildSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceChildSpec {
+    pub name: String,
+    pub binding: Variable,
+    pub arguments: Vec<CExpression>,
+    /// Each field is an immediate constructor binding. The matched model
+    /// field must be a proper submodel of the same algebraic type.
+    pub field_bindings: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2939,6 +2951,7 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    pub(super) next_resource_child: u64,
     /// Exclusive handles retained by explicit unfolding. These permit pure
     /// field projections, never folded ownership or modular call transfer.
     pub(super) open_instances: ResourceContext,
@@ -3121,6 +3134,9 @@ pub struct ResourceInstance {
     pub(super) arguments: ResourceArguments,
     pub(super) schema: ResourceFieldSchema,
     pub(super) fields: ResourceArguments,
+    /// Present only in the open-handle ledger. These are the folded child
+    /// instances that must be returned before the parent can close.
+    pub(super) opened_children: std::sync::Arc<[(String, ResourceInstance)]>,
 }
 
 impl ResourceInstance {
@@ -3152,6 +3168,7 @@ impl ResourceInstance {
             arguments,
             schema,
             fields,
+            opened_children: Default::default(),
         })
     }
 

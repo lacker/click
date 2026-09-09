@@ -75,6 +75,250 @@ fn instance_memory_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
     (instance, definition, state)
 }
 
+fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition, CState) {
+    let (mut instance, mut definition, _) = instance_memory_fixture();
+    let tree = AlgebraicValueType::Algebraic {
+        name: "Tree".into(),
+        arguments: vec![],
+    };
+    let ty = resource_index_type(
+        "Tree",
+        vec![
+            AlgebraicValueType::C(CType::Int32Pointer),
+            tree.clone(),
+            AlgebraicValueType::C(CType::Int32Pointer),
+            tree,
+        ],
+    );
+    let empty = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Clear".into(),
+            fields: vec![],
+        },
+    };
+    instance.schema = ResourceFieldSchema::new(vec![(
+        "model".into(),
+        ResourceFieldType::Algebraic(ty.clone()),
+    )])
+    .unwrap();
+    instance.fields = vec![AlgebraicValue::Algebraic(AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![
+                CValue::pointer(Pointer::null()).into(),
+                AlgebraicValue::Algebraic(empty.clone()),
+                CValue::pointer(Pointer::null()).into(),
+                AlgebraicValue::Algebraic(empty),
+            ],
+        },
+    })]
+    .into();
+    definition.instance_schema = Some(instance.schema.clone());
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                contains: vec![],
+                facts: vec![],
+                children: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                bindings: vec!["lp".into(), "lm".into(), "rp".into(), "rm".into()],
+                binding_types: ty.variants[1].fields.clone(),
+                contains: std::mem::take(&mut definition.contains),
+                facts: vec![],
+                children: vec![
+                    CResourceChildSpec {
+                        name: "left".into(),
+                        binding: Variable(90),
+                        arguments: vec![c_variable("lp")],
+                        field_bindings: vec![1],
+                    },
+                    CResourceChildSpec {
+                        name: "right".into(),
+                        binding: Variable(91),
+                        arguments: vec![c_variable("rp")],
+                        field_bindings: vec![3],
+                    },
+                ],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    (instance, definition, state)
+}
+
+#[test]
+fn recursive_child_kernel_requires_exact_folded_children() {
+    let (instance, definition, state) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    assert!(
+        state
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let (open, _) =
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+    let parent = open
+        .resource_instance_fields(instance.identity())
+        .unwrap()
+        .clone();
+    let left = open
+        .resource_instance_at_path(instance.identity(), &["left".into()])
+        .unwrap()
+        .clone();
+    let right = open
+        .resource_instance_at_path(instance.identity(), &["right".into()])
+        .unwrap()
+        .clone();
+    assert_ne!(left.identity(), right.identity());
+    assert_eq!(left.fields(), right.fields());
+    assert!(
+        ResourceContext::new()
+            .try_compose_with_fact(
+                CResourceFact::own(CResource::Instance(parent.clone())),
+                &assumptions
+            )
+            .is_err(),
+        "open handle must not become folded ownership"
+    );
+    let (left_open, _) =
+        rewrite_resource_instance(&open, &left, &definition, &assumptions, true).unwrap();
+    assert!(
+        rewrite_resource_instance(&left_open, &parent, &definition, &assumptions, false).is_err()
+    );
+    let (children_closed, _) =
+        rewrite_resource_instance(&left_open, &left, &definition, &assumptions, false).unwrap();
+    let (closed, _) =
+        rewrite_resource_instance(&children_closed, &parent, &definition, &assumptions, false)
+            .unwrap();
+    assert_eq!(closed.resources(), state.resources());
+    assert!(closed.open_instances.is_empty());
+    assert!(
+        closed
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let (reopened, _) =
+        rewrite_resource_instance(&closed, &instance, &definition, &assumptions, true).unwrap();
+    assert_ne!(
+        reopened
+            .resource_instance_at_path(instance.identity(), &["left".into()])
+            .unwrap()
+            .identity(),
+        left.identity()
+    );
+    let mut missing = open.clone();
+    missing.resources = missing
+        .resources
+        .without_exact_representation(&CResourceFact::own(CResource::Instance(right.clone())))
+        .unwrap();
+    assert!(
+        rewrite_resource_instance(&missing, &parent, &definition, &assumptions, false).is_err()
+    );
+    let mut wrong = missing;
+    let mut altered = right;
+    altered.fields = instance.fields.clone();
+    wrong.resources = wrong
+        .resources
+        .unchecked_with_fact(CResourceFact::own(CResource::Instance(altered)));
+    assert!(rewrite_resource_instance(&wrong, &parent, &definition, &assumptions, false).is_err());
+    let mut invalid = definition.clone();
+    invalid.matched.as_mut().unwrap().arms[1].children[0].field_bindings = vec![0];
+    assert!(rewrite_resource_instance(&state, &instance, &invalid, &assumptions, true).is_err());
+}
+
+#[test]
+fn recursive_child_kernel_work_ignores_unrelated_handles() {
+    let (instance, definition, initial) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut state = initial.clone();
+        for identity in 2..=size {
+            let mut unrelated = instance.clone();
+            unrelated.identity = Variable(identity);
+            state.open_instances = state
+                .open_instances
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (open, _) =
+                rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
+                    .unwrap();
+            assert!(
+                open.resource_instance_at_path(instance.identity(), &["left".into()])
+                    .is_some()
+            );
+            rewrite_resource_instance(
+                &open,
+                open.resource_instance_fields(instance.identity()).unwrap(),
+                &definition,
+                &assumptions,
+                false,
+            )
+            .unwrap()
+        });
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
+fn recursive_child_kernel_keeps_unknown_submodels_folded() {
+    let (mut instance, definition, _) = recursive_child_fixture();
+    let mut fields = instance.fields.to_vec();
+    let AlgebraicValue::Algebraic(model) = &mut fields[0] else {
+        unreachable!()
+    };
+    let unknown = AlgebraicTerm {
+        algebraic_type: model.algebraic_type.clone(),
+        node: AlgebraicTermNode::Variable(Variable(555)),
+    };
+    let AlgebraicTermNode::Constructor { fields, .. } = &mut model.node else {
+        unreachable!()
+    };
+    fields[0] = CValue::pointer(Pointer::symbolic(Variable(556))).into();
+    fields[1] = AlgebraicValue::Algebraic(unknown.clone());
+    // Rebuild the outer argument list after updating only its immediate fields.
+    let model = model.clone();
+    instance.fields = vec![AlgebraicValue::Algebraic(model)].into();
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let assumptions = PureFactContext::new();
+    let (open, _) =
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+    let child = open
+        .resource_instance_at_path(instance.identity(), &["left".into()])
+        .unwrap();
+    assert_eq!(child.fields(), &[AlgebraicValue::Algebraic(unknown)]);
+    assert!(rewrite_resource_instance(&open, child, &definition, &assumptions, true).is_err());
+    let (closed, _) = rewrite_resource_instance(
+        &open,
+        open.resource_instance_fields(instance.identity()).unwrap(),
+        &definition,
+        &assumptions,
+        false,
+    )
+    .unwrap();
+    assert_eq!(closed.resources(), state.resources());
+}
+
 #[test]
 fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
     let (instance, mut definition, state) = instance_memory_fixture();
@@ -198,6 +442,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
         algebraic_type: ty.clone(),
         arms: vec![
             CResourceMatchArm {
+                children: vec![],
                 variant: "Clear".into(),
                 bindings: vec![],
                 binding_types: vec![],
@@ -206,6 +451,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
             },
             CResourceMatchArm {
                 variant: "Set".into(),
+                children: vec![],
                 bindings: vec![],
                 binding_types: vec![],
                 contains: std::mem::take(&mut definition.contains),
@@ -553,6 +799,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         let expression = SpecExpression::ResourceField {
             projection: ResourceFieldProjection {
                 identity: Variable(10),
+                children: vec![],
                 field_index: 1,
                 at_entry,
             },
@@ -574,6 +821,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         algebraic_type: ty.clone(),
         node: SpecAlgebraicExpressionNode::ResourceField(ResourceFieldProjection {
             identity: Variable(10),
+            children: vec![],
             field_index: 0,
             at_entry,
         }),
@@ -658,6 +906,7 @@ fn resource_instance_projections_use_owned_current_or_explicit_entry_state() {
         let expression = SpecExpression::ResourceField {
             projection: ResourceFieldProjection {
                 identity: Variable(identity),
+                children: vec![],
                 field_index,
                 at_entry: false,
             },

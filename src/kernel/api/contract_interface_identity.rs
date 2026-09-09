@@ -106,6 +106,7 @@ mod tests {
                     left: SpecExpression::ResourceField {
                         projection: ResourceFieldProjection {
                             identity: Variable(identity),
+                            children: vec![],
                             field_index: 0,
                             at_entry,
                         },

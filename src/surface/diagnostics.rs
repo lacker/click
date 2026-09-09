@@ -1098,7 +1098,12 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
-        ContractExpression::ResourceField(access) => format!("{}.{}", access.owner, access.field),
+        ContractExpression::ResourceField(access) => {
+            let mut parts = vec![access.owner.as_str()];
+            parts.extend(access.children.iter().map(String::as_str));
+            parts.push(access.field.as_str());
+            parts.join(".")
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,

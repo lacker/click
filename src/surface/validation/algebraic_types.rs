@@ -89,15 +89,117 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
             }
             bindings.push((name.clone(), ty));
         }
-        if arm
-            .body
-            .contains
+        let mut children = Vec::new();
+        let mut child_names = BTreeSet::new();
+        let mut child_equations = BTreeSet::new();
+        let binding_indexes = bindings
             .iter()
-            .any(|resource| !matches!(resource, ResourceClause::OwnMemory(_)))
-        {
-            return Err(ClickError::new(
-                "resource match currently supports owned memory bodies, not child resources",
-            ));
+            .enumerate()
+            .map(|(index, (name, ty))| (name.as_str(), (index, ty)))
+            .collect::<BTreeMap<_, _>>();
+        let mut equations = BTreeMap::<(Variable, &str), Vec<(usize, &ContractExpression)>>::new();
+        for (index, fact) in arm.body.facts.iter().enumerate() {
+            if let ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::Equal,
+                right,
+            } = fact
+            {
+                for (access, value) in [(left, right), (right, left)] {
+                    if let ContractExpression::ResourceField(access) = access
+                        && access.children.is_empty()
+                    {
+                        equations
+                            .entry((access.identity, access.field.as_str()))
+                            .or_default()
+                            .push((index, value));
+                    }
+                }
+            }
+        }
+        for resource in &arm.body.contains {
+            if matches!(resource, ResourceClause::OwnMemory(_)) {
+                continue;
+            }
+            let ResourceClause::Named { binding, resource } = resource else {
+                return Err(ClickError::new(
+                    "resource match children require named exclusive ownership",
+                ));
+            };
+            let ResourceClause::Declared {
+                name, arguments, ..
+            } = resource.as_ref()
+            else {
+                return Err(ClickError::new(
+                    "child ownership requires a declared resource",
+                ));
+            };
+            if name != definition.name() || !binding.children.is_empty() {
+                return Err(ClickError::new(
+                    "this slice supports direct recursive children of the same resource",
+                ));
+            }
+            for argument in arguments {
+                if !matches!(
+                    resource_argument_to_c_expression(argument)?,
+                    CExpression::Variable(_) | CExpression::Value(_)
+                ) {
+                    return Err(ClickError::new(
+                        "recursive child arguments currently require C bindings or literals, not loads or computed expressions",
+                    ));
+                }
+            }
+            if reserved.contains(binding.name.as_str())
+                || names.contains(binding.name.as_str())
+                || !child_names.insert(binding.name.clone())
+            {
+                return Err(ClickError::new(
+                    "child name duplicates or shadows a resource binding",
+                ));
+            }
+            let mut field_bindings = Vec::new();
+            for field in definition.fields() {
+                let candidates = equations
+                    .get(&(binding.identity, field.name()))
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "child `{}` needs an equation for field `{}`",
+                            binding.name,
+                            field.name()
+                        ))
+                    })?;
+                let [(fact_index, value)] = candidates.as_slice() else {
+                    return Err(ClickError::new("duplicate child field equation"));
+                };
+                let variable = match value {
+                    ContractExpression::Binding(name)
+                    | ContractExpression::CBinding(name)
+                    | ContractExpression::AlgebraicVariable { name, .. }
+                    | ContractExpression::CFragment(CExpression::Variable(name)) => name,
+                    _ => {
+                        return Err(ClickError::new(
+                            "child fields must be related to immediate constructor bindings",
+                        ));
+                    }
+                };
+                let (index, ty) = binding_indexes
+                    .get(variable.as_str())
+                    .filter(|(_, ty)| *ty == field.click_type())
+                    .ok_or_else(|| {
+                        ClickError::new(
+                            "child field requires a constructor binding of the same type",
+                        )
+                    })?;
+                let _ = ty;
+                field_bindings.push(*index);
+                child_equations.insert(*fact_index);
+            }
+            children.push(ResourceChildBody {
+                name: binding.name.clone(),
+                identity: binding.identity,
+                arguments: arguments.clone(),
+                field_bindings,
+            });
         }
         let mut referenced = BTreeSet::new();
         for fact in &arm.body.facts {
@@ -106,6 +208,11 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
         for resource in &arm.body.contains {
             if let ResourceClause::OwnMemory(segment) = resource {
                 referenced.extend(contract_segment_referenced_names(segment));
+            }
+        }
+        for child in &children {
+            for argument in &child.arguments {
+                collect_contract_expression_referenced_names(argument, &mut referenced);
             }
         }
         if let Some(name) = referenced
@@ -117,10 +224,16 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
             )));
         }
         let mut body = arm.body.clone();
+        body.children = children;
+        body.contains
+            .retain(|resource| matches!(resource, ResourceClause::OwnMemory(_)));
         body.fields = definition.fields().to_vec();
         body.facts = body
             .facts
             .iter()
+            .enumerate()
+            .filter(|(index, _)| !child_equations.contains(index))
+            .map(|(_, fact)| fact)
             .map(|fact| substitute_click_proposition(fact, &substitution).map_err(ClickError::new))
             .collect::<Result<_, _>>()?;
         result.push((

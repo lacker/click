@@ -2517,6 +2517,27 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn resource_instance_at_path(
+        &self,
+        identity: Variable,
+        children: &[String],
+    ) -> Option<&ResourceInstance> {
+        let mut instance = self.resource_instance_fields(identity)?;
+        for name in children {
+            crate::instrumentation::record_deterministic_work(1);
+            let parent = self.open_instances.owned_instance(instance.identity)?;
+            let index = parent
+                .opened_children
+                .binary_search_by(|(slot, _)| slot.cmp(name))
+                .ok()?;
+            let (_, child) = &parent.opened_children[index];
+            instance = self
+                .resources
+                .owned_instance(child.identity)
+                .or_else(|| self.open_instances.owned_instance(child.identity))?;
+        }
+        Some(instance)
+    }
     pub(crate) fn resource_instance_fields(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
             Some(bindings) => *bindings.get(&identity)?,
