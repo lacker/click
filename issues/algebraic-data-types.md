@@ -118,6 +118,32 @@ expansion/rechecking, and deterministic multi-size scaling:
 
 ## Remaining work toward the C tree
 
+### Constructor elimination in execution proofs (blocks left rotation)
+
+An arbitrary resource model needs an explicit proof operation that splits on
+its constructors and introduces typed field names. Knowing `model != Empty`
+does not currently expose the unknown fields of `Node`. Pure `match` remains
+a symbolic expression, and theorem-level `induct` is not an execution-proof
+case split. Do not specialize the rotation to concrete payloads or subtree
+models to bypass this gap.
+
+The reduced regression is
+[resource_nonempty_model_needs_constructor_cases.md](../mdtests/resource_nonempty_model_needs_constructor_cases.md):
+reading a cell whose model is an arbitrary `Some(value)` is safe, but `unfold`
+requires an explicit constructor term. It currently records the bounded
+rejection. The intended positive proof names `value` in the `Some` case and
+discharges the impossible `None` case from the precondition.
+
+Choose explicit proof-level constructor-case syntax, distinct in context from
+pure match expressions. Acceptance requires exhaustive checked cases, fresh
+typed bindings with correct scope, retained C execution/ownership on each
+branch, expansion/rechecking, and rejection of omitted reachable cases or
+escaping fields. Then verify unchanged `tree_rotate_left` for arbitrary
+nonempty root/right-child models, preserving both node identities/payloads and
+all three arbitrary subtrees. Its sidecar still has no rotation contract.
+
+### Other remaining work
+
 1. **Broader child bodies.** Direct, structurally descending same-resource
    children are implemented. Child arguments accept read-only C expressions,
    including stored struct links. Loads require the immediate body's memory
