@@ -51,7 +51,13 @@ impl<'a> Proof<'a> {
         let updated_branch = if let Some(goal) = outcome {
             execution
                 .core
-                .record_return_resource_rewrite(context.function, self.facts(), &selected, &facts)
+                .record_return_resource_rewrite(
+                    context.function,
+                    goal.path_index,
+                    self.facts(),
+                    &selected,
+                    &facts,
+                )
                 .map_err(|message| self.step_error(message))?;
             execution.core.state = after.clone().into();
             let mut updated = goal.clone();

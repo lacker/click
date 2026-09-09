@@ -44,17 +44,22 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   `cell.model` reads its current field, while `old(cell.model)` reads its entry
   field. Identity, field values, and ownership are distinct. Equal fields do
   not identify two instances; ownership alone does not promise preservation.
-- `unfold(cell)` exposes an unguarded, nonrecursive, witness-free memory body
-  and its facts. Bare field names in the body denote the instance's fields.
+- `unfold(cell)` exposes a nonrecursive, witness-free memory body and its
+  facts, optionally under the existing single `if` with an empty false case.
+  The guard must be proved true or false; unknown guards do not eagerly split.
+  The false case exposes no body ownership or facts. Bare field names in the
+  body denote the instance's fields.
   An exclusive open handle retains the identity and fields, but grants no
   folded ownership for calls or returns.
 - `fold(cell)` requires the matching open handle, complete body ownership, and
   established body facts at the current memory. It restores the same identity
   and unchanged fields. A declaration or field value alone grants no memory
   authority, and raw body ownership alone cannot create an instance.
-- Checked folds may follow a C return when there is one retained execution
-  trace. Certification preserves the C result and memory and checks returned
-  ownership; a proof snapshot cannot replace the checked execution outcome.
+- Checked folds may follow C returns on multiple retained execution paths.
+  Each fold is tied to its exact path's ownership, memory, and guard case;
+  sibling evidence cannot supply the fold. Completion collects the path-local
+  exchanges and certifies complete path coverage. A proof snapshot cannot
+  replace the checked execution outcome.
 - Explicit callback applications transport named instances. For example,
   `contract Read(cell: marked_cell(p)) for int32(int32* p) { owns cell; ... }`
   declares a proof parameter, and `step(Read(first))` supplies it. Parameters
@@ -70,35 +75,10 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_fields.md](../mdtests/resource_fields.md)
 - [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
+- [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [contract_resource_parameters.md](../mdtests/contract_resource_parameters.md)
 - [contract_resource_call_transport.md](../mdtests/contract_resource_call_transport.md)
 - [contract_resource_call_no_implicit_preservation.md](../mdtests/contract_resource_call_no_implicit_preservation.md)
-
-## Next slice: guarded bodies and path-specific return folds
-
-Use existing syntax: leading field declarations, a single resource-body
-`if` with an empty false case, and `unfold(cell)` / `fold(cell)` in the existing
-proof scopes. No path identifiers or extra fold arguments are needed.
-This slice extends checking, not the language grammar.
-
-1. **Guarded memory bodies.** Extend named-instance fold/unfold to the existing
-   load-free guard form. Require proof that the guard is true or false before
-   choosing a body; do not eagerly split unknown symbolic values. The true
-   case exposes the immediate memory and facts. The false case exposes no
-   body ownership or facts, while retaining the exclusive instance handle and
-   unchanged fields. Folding must check the justified case and all its body
-   obligations. Keep recursive and nested resources out of this first slice.
-2. **Path-specific return folds.** Attach each post-return resource exchange
-   to its exact retained execution path, rather than requiring one trace or
-   appending one exchange to every trace. Preserve exhaustive path coverage,
-   each path's result and memory, and the provenance of its assumptions.
-   Ownership or facts from a sibling path must never justify a fold.
-3. **Regressions.** Verify an unchanged nullable-cell read with null and
-   nonnull C return paths. Check explicit true/false guard cases, including
-   expanded proofs. Reject selecting an unproved guard, exposing memory in
-   the false case, using a sibling's body facts or ownership, missing a fold
-   on one return path, duplicate folds, and changed body facts. Include
-   deterministic scaling over retained paths and unrelated proof state.
 
 ## Remaining work toward the C tree
 

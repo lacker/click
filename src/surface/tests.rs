@@ -2,6 +2,104 @@ use super::diagnostics::describe_contract_expression;
 use super::*;
 use crate::kernel::{AlgebraicValueType, int32};
 
+const GUARDED_CELL_SOURCE: &str = r#"verifying "read.c";
+resource cell(p: int32*) {
+    field value: int32;
+    if p != 0 { owns p[0..1]; fact p[0] == value; }
+}
+int32 read(int32* p) {
+    owns c: cell(p);
+    ensures p == 0 or result == c.value;
+    ensures c.value == old(c.value);
+} by { BODY }
+"#;
+
+const GUARDED_CELL_C: &str = "int32 read(int32* p) { if (p == 0) return 0; return *p; }";
+
+#[test]
+fn instance_return_folds_follow_distinct_c_results_without_proof_branching() {
+    let source = r#"verifying "read.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            owns p[0..1]; fact p[0] == value;
+        }
+        int32 read(int32* p, int32 fallback, int32 use_value) {
+            owns c: cell(p);
+            ensures (use_value == 0 and result == fallback) or (use_value != 0 and result == c.value);
+            ensures c.value == old(c.value);
+        } by { unfold(c); execute(); fold(c); simp(); }
+    "#;
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32 fallback, int32 use_value) { if (use_value == 0) return fallback; return *p; }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(
+        &source.replace("by { unfold(c); execute(); fold(c); simp(); }", &expanded),
+        &c,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace("result == fallback", "result == c.value"),
+            &c
+        )
+        .is_err()
+    );
+    let body = "by { unfold(c); execute(); if use_value == 0 { fold(c); simp(); } else { fold(c); simp(); } }";
+    let branched = source.replace("by { unfold(c); execute(); fold(c); simp(); }", body);
+    let verified = verify_c0_sources(&branched, &c).unwrap();
+    verify_c0_sources(
+        &branched.replace(body, &verified[0].expanded_proof_source().unwrap()),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn guarded_instance_return_paths_expand_and_recheck() {
+    let body = "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }";
+    let source = GUARDED_CELL_SOURCE.replace("BODY", body);
+    let c = [("read.c", GUARDED_CELL_C)];
+    let verified = verify_c0_sources(&source, &c).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    verify_c0_sources(&source.replace(&format!("by {{ {body} }}"), &expanded), &c).unwrap();
+}
+
+#[test]
+fn guarded_instance_return_paths_reject_invalid_folds() {
+    for body in [
+        "unfold(c); execute(); fold(c); simp();",
+        "if p == 0 { unfold(c); execute(); simp(); } else { unfold(c); execute(); fold(c); simp(); }",
+        "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); simp(); }",
+        "if p == 0 { unfold(c); execute(); fold(c); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }",
+    ] {
+        assert!(
+            verify_c0_sources(
+                &GUARDED_CELL_SOURCE.replace("BODY", body),
+                &[("read.c", GUARDED_CELL_C)]
+            )
+            .is_err(),
+            "accepted {body}"
+        );
+    }
+    // A body fact exposed only on the nonnull arm cannot justify the null result.
+    let body = "if p == 0 { unfold(c); execute(); fold(c); simp(); } else { unfold(c); execute(); fold(c); simp(); }";
+    let source = GUARDED_CELL_SOURCE.replace("BODY", body);
+    assert!(
+        verify_c0_sources(
+            &source.replace("p == 0 or result == c.value", "result == c.value"),
+            &[("read.c", GUARDED_CELL_C)]
+        )
+        .is_err()
+    );
+    // Only one branch changes memory: the other branch's valid fold cannot
+    // certify this return's stale field relation.
+    let changed = "int32 read(int32* p) { if (p == 0) return 0; *p = 0; return *p; }";
+    assert!(verify_c0_sources(&source, &[("read.c", changed)]).is_err());
+}
+
 #[test]
 fn named_instance_memory_body_round_trip_preserves_fields() {
     let source = r#"verifying "read.c";

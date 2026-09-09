@@ -769,8 +769,14 @@ body and its facts; field names in the body denote that instance's fields.
 `fold(cell)` requires the complete memory body and re-establishes its facts,
 preserving the same identity and fields. The open handle permits field
 projections but does not count as folded ownership for calls or returns.
-This supports unguarded, nonrecursive, witness-free memory bodies only.
-Post-return instance folds currently require a single retained execution trace.
+This supports nonrecursive, witness-free memory bodies, optionally under the
+existing single `if` guard with an empty false case. Fold/unfold requires proof
+of the selected guard case. The false case exposes no memory or body facts;
+the exclusive open handle and fields remain available in either case.
+Post-return folds are checked separately against each return path's memory,
+ownership, and guard assumptions. Every returning path must restore the
+ownership promised by the contract; a sibling's fold cannot supply it.
+The regression is `mdtests/resource_fields_guarded_memory_body.md`.
 Field establishment, updates, and ordinary inline-call transport remain
 unsupported. A declaration alone grants no ownership, and binding an instance
 does not implicitly expose its memory body.
