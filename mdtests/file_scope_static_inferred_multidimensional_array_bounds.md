@@ -25,10 +25,12 @@ verifying "private.c";
 verifying "external.c";
 
 int32 read_private_table() {
+    requires table[0][2] == 0 and table[1][2] == 6;
     ensures result == 6 by auto;
 }
 
 int32 read_external_table() {
+    requires table[0][2] == 12 and table[1][2] == 15;
     ensures result == 27 by auto;
 }
 ```

@@ -7,6 +7,7 @@ use super::*;
 #[derive(Clone, Debug)]
 pub(super) struct QualifiedCObject {
     pub expression: CExpression,
+    pub address: Option<CExpression>,
     pub struct_name: Option<String>,
     pub array_shape: Option<Vec<u32>>,
     pub ambiguous: bool,
@@ -4232,6 +4233,20 @@ impl Parser {
             let (surface, expression) = self.parse_segment_primary()?;
             let base = match expression {
                 CExpression::TypedLoad { pointer, .. } => *pointer,
+                CExpression::Value(CValue::Pointer(_)) => {
+                    let ContractExpression::CFragment(CExpression::Variable(name)) = &surface
+                    else {
+                        return Err(self
+                            .error("memory segment base must be a current C pointer expression"));
+                    };
+                    let Some(address) = self
+                        .qualified_object(name)
+                        .and_then(|object| object.address.clone())
+                    else {
+                        return Err(self.error("cannot take the address of this C expression"));
+                    };
+                    address
+                }
                 expression => CExpression::AddressOf(Box::new(expression)),
             };
             let surface = CExpression::AddressOf(Box::new(
@@ -4283,9 +4298,21 @@ impl Parser {
                     .and_then(|name| self.struct_layouts.get(name))
                     .map(|layout| layout.size_bytes())
             }
+            ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .qualified_object(name)
+                .filter(|object| object.struct_name.is_some() && object.array_shape.is_some())
+                .and_then(|object| object.struct_name.as_ref())
+                .and_then(|name| self.struct_layouts.get(name))
+                .map(|layout| layout.size_bytes()),
             _ => None,
         };
-        let mut struct_array_shape: Option<Vec<u32>> = None;
+        let mut struct_array_shape = match &surface_base {
+            ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .qualified_object(name)
+                .filter(|object| object.struct_name.is_some())
+                .and_then(|object| object.array_shape.clone()),
+            _ => None,
+        };
         let mut scalar_array_shape = match &surface_base {
             ContractExpression::Binding(name)
             | ContractExpression::CFragment(CExpression::Variable(name)) => self
@@ -5251,9 +5278,21 @@ impl Parser {
                         .map(|layout| layout.size_bytes())
                 })
                 .flatten(),
+            ContractExpression::QualifiedC { name, .. } => self
+                .qualified_object(name)
+                .filter(|object| object.struct_name.is_some() && object.array_shape.is_some())
+                .and_then(|object| object.struct_name.as_ref())
+                .and_then(|name| self.struct_layouts.get(name))
+                .map(|layout| layout.size_bytes()),
             _ => None,
         };
-        let mut struct_array_shape: Option<Vec<u32>> = None;
+        let mut struct_array_shape = match &expression {
+            ContractExpression::QualifiedC { name, .. } => self
+                .qualified_object(name)
+                .filter(|object| object.struct_name.is_some())
+                .and_then(|object| object.array_shape.clone()),
+            _ => None,
+        };
         let mut scalar_array_shape = match &expression {
             ContractExpression::QualifiedC { name, .. } => self
                 .qualified_object(name)

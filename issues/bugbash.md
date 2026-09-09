@@ -1,12 +1,12 @@
 # Bug bash: open soundness holes and C mis-models
 
-Eleven independent root causes. Every one has a reproduction that verifies
+Ten independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
-Five are critical: an ordinary contract over ordinary C is certified while
+Four are critical: an ordinary contract over ordinary C is certified while
 false, with no unusual tactics. The other six are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
@@ -36,111 +36,6 @@ reproduces. Each regression is intended to land as an mdtest whose `expect`
 block is a rejection, so the diagnostic in the acceptance criteria is a shape,
 not an exact string; where the fix makes a previously-rejected program verify
 instead, land the positive test too.
-
----
-
-## 1. Globals and statics assumed at their initializer on every entry
-
-**Severity: critical.** Any function that reads a mutable global is certified
-against its initial value, so a false postcondition about a global verifies
-and composes into false claims about callers.
-
-**Violated invariant.** A function may assume nothing about the value of an
-object with static storage duration at entry beyond its declared contract. C11
-6.2.4p3: such an object is initialized once before program startup and then
-holds its last stored value.
-
-**Mechanism.** `initialize_c_function_globals`
-(`src/kernel/functions.rs:3005-3060`) stores `global.initial_value()` into the
-slot whenever the entry state has no block for it, and every standalone
-certification starts from a state with no global blocks. Function-local
-statics take the same path a few lines below (`static_local.initial_value()`,
-around `:3216`).
-
-**Regression** (`mdtests/global_entry_initializer_rejected.md`):
-
-```c
-int32 counter = 3;
-
-int32 increment_counter() {
-    counter = counter + 1;
-    return counter;
-}
-
-int32 read_counter() {
-    return counter;
-}
-
-int32 run() {
-    int32 ignored;
-    ignored = increment_counter();
-    return read_counter();
-}
-```
-
-```click
-verifying "t.c";
-
-int32 increment_counter() {
-    requires counter < 1000;
-    mutable &counter[0..1];
-    ensures result == old(counter) + 1;
-    ensures counter == old(counter) + 1;
-}
-
-int32 read_counter() {
-    ensures result == 3;
-}
-
-int32 run() {
-    mutable &counter[0..1];
-    ensures result == 3;
-}
-```
-
-`run()` returns 4 in every execution; all three claims verify today. The
-static-storage variant is the same bug:
-
-```c
-int32 counter() {
-    static int32 calls = 0;
-    calls = calls + 1;
-    return calls;
-}
-
-int32 twice() {
-    int32 a = counter();
-    int32 b = counter();
-    return b;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 counter() {
-    mutable &calls[0..1];
-    ensures result == 1;
-}
-
-int32 twice() {
-    ensures result == 1;
-}
-```
-
-`twice()` returns 2.
-
-**Acceptance criteria.**
-- Both sidecars are rejected; `read_counter`'s `ensures result == 3` fails for
-  want of a precondition relating `counter` to 3.
-- A sidecar that states the same claim under an explicit `requires counter == 3`
-  still verifies.
-- The existing global and static mdtests (`file_scope_globals.md`,
-  `static_local_arrays.md`, `aggregate_static_effect.md`, and the rest of the
-  file-scope family) still pass, or their contracts are updated in the same
-  change with the added preconditions spelled out.
-- Decide and document where initializer values may still be assumed. A
-  designated program entry point is the natural place; nothing else is.
 
 ---
 

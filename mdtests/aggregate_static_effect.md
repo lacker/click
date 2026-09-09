@@ -19,6 +19,7 @@ int32 increment() {
 verifying "aggregate_static_effect.c";
 
 int32 increment() {
+    requires state.value < 1000;
     immutable;
     ensures result == old(state.value) + 1 by auto;
 }

@@ -54,21 +54,98 @@ int32 run() {
 
 ```click
 verifying "shared.c";
-verifying "private.c";
+verifying "private.c" as private_file;
 
 int32 read_shared() {
+    requires shared_table[0] == 0;
+    requires shared_table[1] == 3;
+    requires shared_table[2] == 6;
+    requires shared_table[3] == 0;
+    requires shared_table[4] == 9;
     ensures result == 18 by auto;
 }
 
 int32 read_private() {
-    ensures result == 11 by auto;
+    owns private_table[0..4];
+    owns local_table[0..4];
+    requires private_table[0] > -1000;
+    requires private_table[0] < 1000;
+    requires private_table[2] > -1000;
+    requires private_table[2] < 1000;
+    requires local_table[0] > -1000;
+    requires local_table[0] < 1000;
+    requires local_table[1] > -1000;
+    requires local_table[1] < 1000;
+    requires local_table[2] > -1000;
+    requires local_table[2] < 1000;
+    requires local_table[3] > -1000;
+    requires local_table[3] < 1000;
+    ensures result == private_table[0] + private_table[2] + local_table[0] + local_table[1] + local_table[2] + local_table[3] by auto;
 }
 
 int32 run() {
-    ensures result == 29 by auto;
+    owns private_file::private_table[0..4];
+    owns private_file::read_private::local_table[0..4];
+    requires shared_table[0] == 0;
+    requires shared_table[1] == 3;
+    requires shared_table[2] == 6;
+    requires shared_table[3] == 0;
+    requires shared_table[4] == 9;
+    requires private_file::private_table[0] == 0;
+    requires private_file::private_table[1] == 0;
+    requires private_file::private_table[2] == 5;
+    requires private_file::private_table[3] == 0;
+    requires private_file::read_private::local_table[0] == 0;
+    requires private_file::read_private::local_table[1] == 2;
+    requires private_file::read_private::local_table[2] == 0;
+    requires private_file::read_private::local_table[3] == 4;
+    requires private_file::private_table[0] > -1000;
+    requires private_file::private_table[0] < 1000;
+    requires private_file::private_table[2] > -1000;
+    requires private_file::private_table[2] < 1000;
+    requires private_file::read_private::local_table[0] > -1000;
+    requires private_file::read_private::local_table[0] < 1000;
+    requires private_file::read_private::local_table[1] > -1000;
+    requires private_file::read_private::local_table[1] < 1000;
+    requires private_file::read_private::local_table[2] > -1000;
+    requires private_file::read_private::local_table[2] < 1000;
+    requires private_file::read_private::local_table[3] > -1000;
+    requires private_file::read_private::local_table[3] < 1000;
+    ensures result == 29;
+} by {
+    have shared_table[0] == 0 by simp;
+    have shared_table[1] == 3 by simp;
+    have shared_table[2] == 6 by simp;
+    have shared_table[3] == 0 by simp;
+    have shared_table[4] == 9 by simp;
+    step();
+    have private_file::private_table[0] == 0 by simp;
+    have private_file::private_table[2] == 5 by simp;
+    have private_file::read_private::local_table[0] == 0 by simp;
+    have private_file::read_private::local_table[1] == 2 by simp;
+    have private_file::read_private::local_table[2] == 0 by simp;
+    have private_file::read_private::local_table[3] == 4 by simp;
+    have private_file::private_table[0] > -1000 by simp;
+    have private_file::private_table[0] < 1000 by simp;
+    have private_file::private_table[2] > -1000 by simp;
+    have private_file::private_table[2] < 1000 by simp;
+    have private_file::read_private::local_table[0] > -1000 by simp;
+    have private_file::read_private::local_table[0] < 1000 by simp;
+    have private_file::read_private::local_table[1] > -1000 by simp;
+    have private_file::read_private::local_table[1] < 1000 by simp;
+    have private_file::read_private::local_table[2] > -1000 by simp;
+    have private_file::read_private::local_table[2] < 1000 by simp;
+    have private_file::read_private::local_table[3] > -1000 by simp;
+    have private_file::read_private::local_table[3] < 1000 by simp;
+    step();
+    step();
+    step();
+    step();
+    step();
+    simp();
 }
 ```
 
 ```expect
-pass
+fail: run.contract
 ```

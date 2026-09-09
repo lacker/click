@@ -16,6 +16,7 @@ int32 increment() {
 verifying "global_effect_requires_mutable.c";
 
 int32 increment() {
+    requires counter < 1000;
     immutable;
     ensures result == old(counter) + 1 by auto;
 }

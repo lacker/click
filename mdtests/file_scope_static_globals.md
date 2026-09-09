@@ -44,30 +44,53 @@ int32 run() {
 ```
 
 ```click
-verifying "alpha.c";
-verifying "beta.c";
+verifying "alpha.c" as alpha_file;
+verifying "beta.c" as beta_file;
 verifying "runner.c";
 
 int32 increment_alpha() {
+    owns &counter[0..1];
+    requires counter < 1000;
     mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
+    ensures result == counter by auto;
 }
 
 int32 increment_alpha_again() {
+    owns &counter[0..1];
+    requires counter < 1000;
     mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
+    ensures result == counter by auto;
 }
 
 int32 increment_beta() {
+    owns &counter[0..1];
+    requires counter < 1000;
     mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
+    ensures result == counter by auto;
 }
 
 int32 run() {
-    ensures result == 16 by auto;
+    owns &alpha_file::counter[0..1];
+    owns &beta_file::counter[0..1];
+    requires alpha_file::counter == 1;
+    requires beta_file::counter == 10;
+    requires alpha_file::counter < 1000;
+    requires beta_file::counter < 1000;
+    ensures alpha_file::counter == 3;
+    ensures beta_file::counter == 11;
+} by {
+    have alpha_file::counter == 1 by simp;
+    have beta_file::counter == 10 by simp;
+    have alpha_file::counter < 1000 by simp;
+    have beta_file::counter < 1000 by simp;
+    execute();
+    simp();
 }
 ```
 

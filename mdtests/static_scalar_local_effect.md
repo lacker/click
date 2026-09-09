@@ -15,6 +15,7 @@ int32 increment() {
 verifying "static_scalar_local_effect.c";
 
 int32 increment() {
+    requires calls < 1000;
     immutable;
     ensures result == old(calls) + 1 by auto;
 }

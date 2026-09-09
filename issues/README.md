@@ -79,7 +79,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (15)
+## P2: after launch (16)
 
 - [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 
@@ -90,6 +90,7 @@ normal tooling-first policy and moves up.
 
 C language coverage:
 
+- [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
 - [Lower calls in short-circuit right operands](short-circuit-operand-calls.md)

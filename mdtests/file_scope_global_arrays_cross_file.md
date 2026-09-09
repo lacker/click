@@ -41,16 +41,19 @@ verifying "table.c";
 verifying "reader.c";
 
 int32 increment_middle() {
+    requires table[1] < 1000;
     mutable table[0..3] by auto;
     ensures result == old(table[1]) + 1 by auto;
     ensures table[1] == old(table[1]) + 1 by auto;
 }
 
 int32 read_last() {
+    requires table[2] == 5;
     ensures result == 5 by auto;
 }
 
 int32 run() {
+    requires table[1] == 3;
     mutable table[0..3] by auto;
     ensures result == 4 by auto;
 }

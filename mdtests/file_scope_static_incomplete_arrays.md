@@ -22,10 +22,12 @@ int32 run() {
 verifying "private.c";
 
 int32 read_incomplete() {
+    requires values[1] == 6;
     ensures result == 6 by auto;
 }
 
 int32 run() {
+    requires values[1] == 6;
     ensures result == 6 by auto;
 }
 ```

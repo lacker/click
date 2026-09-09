@@ -292,7 +292,9 @@ fn c0_small_volatile_model_preserves_metadata_and_access_facts() {
         Vec::new(),
         crate::kernel::PureFactContext::new(),
     );
-    assert_eq!(global_execution.paths().len(), 1);
+    // A mutable volatile global is current state at ordinary entry, so two
+    // reads may observe distinct values and produce two symbolic paths.
+    assert_eq!(global_execution.paths().len(), 2);
     assert_eq!(volatile_read_names(&global_execution).len(), 2);
 
     let static_function = &functions[2];
@@ -1947,10 +1949,13 @@ fn c0_links_incomplete_extern_arrays_to_complete_definitions() {
         verifying "definitions.c";
 
         int32 definitions_anchor() {
+            requires values[0] == 2;
             ensures result == 2 by auto;
         }
 
         int32 run() {
+            requires values[1] == 6;
+            requires entries[0].value == 4;
             ensures result == 10 by auto;
         }
         "#,
@@ -1987,10 +1992,12 @@ fn c0_links_incomplete_tentative_array_to_complete_tentative_definition() {
         verifying "definitions.c";
 
         int32 read() {
+            requires values[1] == 0;
             ensures result == 0 by auto;
         }
 
         int32 definition_anchor() {
+            requires values[0] == 0;
             ensures result == 0 by auto;
         }
         "#,

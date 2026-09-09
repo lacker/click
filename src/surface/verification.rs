@@ -2216,21 +2216,32 @@ pub(in crate::surface) fn parse_c_layouts(
         let mut objects = BTreeMap::new();
         for (name, global) in &unit.globals {
             if let Some(pointer_type) = global.c_type().pointer_type() {
-                let pointer = CExpression::Value(
-                    CValue::typed_pointer_with_pointee_constant(
-                        CMemory::global_pointer(global.kernel_name()),
-                        pointer_type.to_kernel_type(),
-                        global.is_constant(),
-                    )
-                    .with_pointer_pointee_volatile(global.is_volatile()),
-                );
+                let pointer = CMemory::global_pointer(global.kernel_name());
+                let value_type = global.c_type().to_kernel_type();
+                let mut value = if value_type.is_object_pointer() {
+                    crate::kernel::stable_symbolic_pointer_cell_value(&pointer, value_type)
+                } else {
+                    CValue::typed_pointer(pointer.clone(), pointer_type.to_kernel_type())
+                };
+                value = value
+                    .with_pointer_pointee_constant(global.is_constant())
+                    .with_pointer_pointee_volatile(global.is_volatile());
+                let expression = if value_type.is_object_pointer() {
+                    CExpression::Value(value)
+                } else {
+                    CExpression::TypedLoad {
+                        pointer: Box::new(CExpression::Value(value)),
+                        value_type,
+                    }
+                };
                 objects.insert(
                     name.clone(),
                     parser::QualifiedCObject {
-                        expression: CExpression::TypedLoad {
-                            pointer: Box::new(pointer),
-                            value_type: global.c_type().to_kernel_type(),
-                        },
+                        expression,
+                        address: Some(CExpression::Value(CValue::typed_pointer(
+                            CMemory::global_pointer(global.kernel_name()),
+                            pointer_type.to_kernel_type(),
+                        ))),
                         struct_name: global.struct_name().map(str::to_owned),
                         array_shape: None,
                         ambiguous: false,
@@ -2250,6 +2261,7 @@ pub(in crate::surface) fn parse_c_layouts(
                                 array.is_constant(),
                             ),
                         ),
+                        address: None,
                         struct_name: None,
                         array_shape: array.index_shape(),
                         ambiguous: false,
@@ -2266,11 +2278,32 @@ pub(in crate::surface) fn parse_c_layouts(
                         CType::Int32Pointer,
                         aggregate.is_constant(),
                     )),
+                    address: None,
                     struct_name: Some(aggregate.struct_name().to_owned()),
                     array_shape: None,
                     ambiguous: false,
                 },
             );
+        }
+        for (name, aggregate_array) in &unit.global_aggregate_arrays {
+            if let Some(length) = aggregate_array.array_length() {
+                objects.insert(
+                    name.clone(),
+                    parser::QualifiedCObject {
+                        expression: CExpression::Value(
+                            CValue::typed_pointer_with_pointee_constant(
+                                CMemory::global_pointer(aggregate_array.kernel_name()),
+                                CType::Int32Pointer,
+                                aggregate_array.is_constant(),
+                            ),
+                        ),
+                        address: None,
+                        struct_name: Some(aggregate_array.struct_name().to_owned()),
+                        array_shape: Some(vec![length]),
+                        ambiguous: false,
+                    },
+                );
+            }
         }
         for function in &unit.functions {
             let mut names = BTreeMap::<&str, usize>::new();
@@ -2301,23 +2334,32 @@ pub(in crate::surface) fn parse_c_layouts(
             }
             for local in function.static_locals().values() {
                 if let Some(pointer_type) = local.c_type().pointer_type() {
+                    let pointer = CMemory::static_pointer(function.name(), local.kernel_name());
+                    let value_type = local.c_type().to_kernel_type();
+                    let mut value = if value_type.is_object_pointer() {
+                        crate::kernel::stable_symbolic_pointer_cell_value(&pointer, value_type)
+                    } else {
+                        CValue::typed_pointer(pointer.clone(), pointer_type.to_kernel_type())
+                    };
+                    value = value
+                        .with_pointer_pointee_constant(local.is_constant())
+                        .with_pointer_pointee_volatile(local.is_volatile());
+                    let expression = if value_type.is_object_pointer() {
+                        CExpression::Value(value)
+                    } else {
+                        CExpression::TypedLoad {
+                            pointer: Box::new(CExpression::Value(value)),
+                            value_type,
+                        }
+                    };
                     objects.insert(
                         format!("{}::{}", function.name(), local.name()),
                         parser::QualifiedCObject {
-                            expression: CExpression::TypedLoad {
-                                pointer: Box::new(CExpression::Value(
-                                    CValue::typed_pointer_with_pointee_constant(
-                                        CMemory::static_pointer(
-                                            function.name(),
-                                            local.kernel_name(),
-                                        ),
-                                        pointer_type.to_kernel_type(),
-                                        local.is_constant(),
-                                    )
-                                    .with_pointer_pointee_volatile(local.is_volatile()),
-                                )),
-                                value_type: local.c_type().to_kernel_type(),
-                            },
+                            expression,
+                            address: Some(CExpression::Value(CValue::typed_pointer(
+                                CMemory::static_pointer(function.name(), local.kernel_name()),
+                                pointer_type.to_kernel_type(),
+                            ))),
                             struct_name: None,
                             array_shape: None,
                             ambiguous: names[local.name()] > 1,
@@ -2337,6 +2379,7 @@ pub(in crate::surface) fn parse_c_layouts(
                                     array.is_constant(),
                                 ),
                             ),
+                            address: None,
                             struct_name: None,
                             array_shape: Some(array.shape().to_vec()),
                             ambiguous: names[array.name()] > 1,
@@ -2355,9 +2398,31 @@ pub(in crate::surface) fn parse_c_layouts(
                                 aggregate.is_constant(),
                             ),
                         ),
+                        address: None,
                         struct_name: Some(aggregate.struct_name().to_owned()),
                         array_shape: None,
                         ambiguous: names[aggregate.name()] > 1,
+                    },
+                );
+            }
+            for aggregate_array in function.static_aggregate_arrays().values() {
+                objects.insert(
+                    format!("{}::{}", function.name(), aggregate_array.name()),
+                    parser::QualifiedCObject {
+                        expression: CExpression::Value(
+                            CValue::typed_pointer_with_pointee_constant(
+                                CMemory::static_pointer(
+                                    function.name(),
+                                    aggregate_array.kernel_name(),
+                                ),
+                                CType::Int32Pointer,
+                                aggregate_array.is_constant(),
+                            ),
+                        ),
+                        address: None,
+                        struct_name: Some(aggregate_array.struct_name().to_owned()),
+                        array_shape: Some(vec![aggregate_array.length()]),
+                        ambiguous: false,
                     },
                 );
             }

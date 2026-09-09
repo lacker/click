@@ -67,14 +67,17 @@ verifying "tentative.c";
 verifying "runner.c";
 
 int32 read_initialized() {
+    requires zero.value == 0 and zero_table[0].value == 0 and zero_table[1].value == 0 and shared.value == 7 and shared_table[0].value == 4 and shared_table[1].value == 3;
     ensures result == 14 by auto;
 }
 
 int32 read_tentative() {
+    requires zero.value == 0 and zero_table[0].value == 0 and zero_table[1].value == 0 and shared.value == 7 and shared_table[0].value == 4 and shared_table[1].value == 3;
     ensures result == 14 by auto;
 }
 
 int32 run() {
+    requires zero.value == 0 and zero_table[0].value == 0 and zero_table[1].value == 0 and shared.value == 7 and shared_table[0].value == 4 and shared_table[1].value == 3;
     ensures result == 28 by auto;
 }
 ```

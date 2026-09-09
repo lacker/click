@@ -21,7 +21,10 @@ int32 b() { return table[0].x + table[0].y; }
 ```click
 verifying "a.c";
 verifying "b.c";
-int32 a() { ensures result == 33 by auto; }
+int32 a() {
+    requires zero[1][1] == 0;
+    ensures result == 33 by auto;
+}
 int32 b() { ensures result == 9 by auto; }
 ```
 

@@ -190,11 +190,17 @@ pub(in crate::surface) fn initial_call_state(
         }
     }
 
-    let mut memory = CMemory::new();
-    memory = memory_with_symbolic_loadable_cells(memory, &loadable_ranges);
-    memory = materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
-    let state =
-        crate::kernel::initialize_c_function_globals(&CState::new().with_memory(memory), function);
+    // Install ordinary function storage before adding symbolic loadable
+    // cells. Otherwise a loadable clause can create a block first and leave
+    // entry initialization unable to install its stable typed cells.
+    let state = crate::kernel::initialize_c_function_globals(&CState::new(), function);
+    let memory = memory_with_symbolic_loadable_cells(state.memory().clone(), &loadable_ranges);
+    // In particular, a resource such as `pointer[0..1]` must follow the
+    // pointer value already present in the entry state, rather than deriving
+    // a second pointer from the raw memory-load term for the pointer slot.
+    let memory =
+        materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
+    let state = state.with_memory(memory);
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
     Ok((state.with_resource_context(resources), arguments))
 }
@@ -222,6 +228,9 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
                         &element_pointer,
                         memory,
                         |memory, pointer, element_type| {
+                            if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                                return memory;
+                            }
                             let value =
                                 symbolic_value_for_element(&base_memory, &pointer, element_type);
                             memory.store(pointer, value)
@@ -247,7 +256,9 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
                 range.element_width,
             );
             let value = symbolic_value_for_element(&base_memory, &pointer, element_type);
-            memory = memory.store(pointer, value);
+            if !matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                memory = memory.store(pointer, value);
+            }
             offset += range.element_width;
         }
     }

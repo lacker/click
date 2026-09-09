@@ -27,6 +27,7 @@ int32 read() {
 verifying "static_integer_constant_expression_control.c";
 
 int32 read() {
+    requires values[0] == 1 and values[1] == 20 and values[2] == 30 and values[3] == 255 and values[4] == 42 and private_value == 3 and mixed_value == 1 and local_value == 9;
     ensures result == 361 by auto;
 }
 ```

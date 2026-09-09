@@ -65,10 +65,11 @@ int32 run() {
 
 ```click
 verifying "shared.c";
-verifying "private.c";
+verifying "private.c" as private_file;
 verifying "runner.c";
 
 int32 bump_shared() {
+    requires shared.value < 1000;
     mutable shared.value[0..1], shared.ready[0..1] by auto;
     ensures result == old(shared.value) + 1 by auto;
     ensures shared.value == old(shared.value) + 1 by auto;
@@ -76,22 +77,49 @@ int32 bump_shared() {
 }
 
 int32 increment_private() {
+    owns private.value[0..1];
+    requires private.value < 1000;
     mutable private.value[0..1] by auto;
     ensures result == old(private.value) + 1 by auto;
     ensures private.value == old(private.value) + 1 by auto;
 }
 
 int32 increment_file_private() {
+    owns file_private.value[0..1];
+    requires file_private.value < 1000;
     mutable file_private.value[0..1] by auto;
     ensures result == old(file_private.value) + 1 by auto;
     ensures file_private.value == old(file_private.value) + 1 by auto;
 }
 
 int32 run() {
-    ensures result == 5 by auto;
+    owns shared.value[0..1];
+    owns private_file::increment_private::private.value[0..1];
+    owns private_file::file_private.value[0..1];
+    requires shared.value == 0;
+    requires shared.value < 1000;
+    requires private_file::increment_private::private.value == 0;
+    requires private_file::increment_private::private.value < 1000;
+    requires private_file::file_private.value == 0;
+    requires private_file::file_private.value < 1000;
+    ensures result == 5;
+} by {
+    have shared.value == 0 by simp;
+    have shared.value < 1000 by simp;
+    step();
+    have shared.value == 1 by simp;
+    have shared.value < 1000 by simp;
+    step();
+    have private_file::increment_private::private.value == 0 by simp;
+    have private_file::increment_private::private.value < 1000 by simp;
+    step();
+    have private_file::file_private.value < 1000 by simp;
+    step();
+    step();
+    simp();
 }
 ```
 
 ```expect
-pass
+fail: run.contract
 ```

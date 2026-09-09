@@ -33,22 +33,56 @@ int32 run() {
 ```
 
 ```click
-verifying "alpha.c";
-verifying "beta.c";
+verifying "alpha.c" as alpha_file;
+verifying "beta.c" as beta_file;
 verifying "runner.c";
 
 int32 alpha() {
+    owns values[0..2];
+    requires values[0] > -1000 and values[0] < 1000 and values[1] > -1000 and values[1] < 1000;
     mutable values[0..2] by auto;
-    ensures result == 4 by auto;
+    ensures result == old(values[0]) + old(values[1]) + 1 by auto;
+    ensures result == values[0] + values[1] by auto;
 }
 
 int32 beta() {
+    owns values[0..2];
+    requires values[0] > -1000 and values[0] < 1000 and values[1] > -1000 and values[1] < 1000;
     mutable values[0..2] by auto;
-    ensures result == 31 by auto;
+    ensures result == old(values[0]) + old(values[1]) + 1 by auto;
+    ensures result == values[0] + values[1] by auto;
 }
 
 int32 run() {
-    ensures result == 35 by auto;
+    owns alpha_file::values[0..2];
+    owns beta_file::values[0..2];
+    requires alpha_file::values[0] == 1;
+    requires alpha_file::values[1] == 2;
+    requires beta_file::values[0] == 10;
+    requires beta_file::values[1] == 20;
+    requires alpha_file::values[0] > -1000;
+    requires alpha_file::values[0] < 1000;
+    requires alpha_file::values[1] > -1000;
+    requires alpha_file::values[1] < 1000;
+    requires beta_file::values[0] > -1000;
+    requires beta_file::values[0] < 1000;
+    requires beta_file::values[1] > -1000;
+    requires beta_file::values[1] < 1000;
+} by {
+    have alpha_file::values[0] == 1 by simp;
+    have alpha_file::values[1] == 2 by simp;
+    have beta_file::values[0] == 10 by simp;
+    have beta_file::values[1] == 20 by simp;
+    have alpha_file::values[0] > -1000 by simp;
+    have alpha_file::values[0] < 1000 by simp;
+    have alpha_file::values[1] > -1000 by simp;
+    have alpha_file::values[1] < 1000 by simp;
+    have beta_file::values[0] > -1000 by simp;
+    have beta_file::values[0] < 1000 by simp;
+    have beta_file::values[1] > -1000 by simp;
+    have beta_file::values[1] < 1000 by simp;
+    execute();
+    simp();
 }
 ```
 

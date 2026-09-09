@@ -22,7 +22,11 @@ int32 *alias = &scalar;
 ```click
 verifying "reader.c";
 verifying "data.c";
-int32 read() { ensures result == 19 by auto; }
+int32 read() {
+    owns alias[0..1];
+    requires scalar == 2 and values[1] == 4 and object.x == 5 and entries[0].x == 6 and alias[0] == 2;
+    ensures result == 19 by auto;
+}
 ```
 
 ```expect

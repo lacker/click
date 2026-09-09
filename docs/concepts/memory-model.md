@@ -254,6 +254,16 @@ writes and initialization of a function-fresh allocation are allowed.
 It is an upper bound, not a promise that each cell changed. Allocation and
 deallocation must still satisfy their separate allocation/resource obligations.
 
+Static-storage objects are initialized once before program startup. The
+designated program-entry state owns those initialized values; certifying an
+ordinary function starts with the same storage objects but does not restore
+initializers for mutable objects. A function may therefore rely on a mutable
+initializer only through its precondition (for example, `requires counter ==
+3`) or through the program-entry proof. Const-qualified objects are the
+exception: because a valid C program cannot modify them, their initializers
+remain stable facts. Calls preserve the caller's current static-storage
+values.
+
 Loop-level effects describe dynamic writes inside a loop. Step effects describe
 one loop body iteration and may use iteration locals.
 

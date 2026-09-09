@@ -44,15 +44,30 @@ int32 run() {
 ```
 
 ```click
-verifying "storage.c";
+verifying "storage.c" as storage_file;
 verifying "reader.c";
 
 int32 read_subobjects() {
+    owns storage_file::middle[0..1];
+    owns storage_file::timeout_pointer[0..1];
+    owns storage_file::byte_pointer[0..1];
+    requires storage_file::middle[0] == 6 and storage_file::timeout_pointer[0] == 0 and storage_file::byte_pointer[0] == 0;
     ensures result == 6 by auto;
 }
 
 int32 run() {
-    ensures result == 6 by auto;
+    owns storage_file::middle[0..1];
+    owns storage_file::timeout_pointer[0..1];
+    owns storage_file::byte_pointer[0..1];
+    requires storage_file::middle[0] == 6 and storage_file::timeout_pointer[0] == 0 and storage_file::byte_pointer[0] == 0;
+    ensures result == 6;
+} by {
+    have storage_file::middle[0] == 6 by simp;
+    have storage_file::timeout_pointer[0] == 0 by simp;
+    have storage_file::byte_pointer[0] == 0 by simp;
+    step();
+    step();
+    simp();
 }
 ```
 

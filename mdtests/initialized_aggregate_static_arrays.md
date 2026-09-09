@@ -57,16 +57,21 @@ int32 run() {
 
 ```click
 verifying "shared.c";
-verifying "private.c";
+verifying "private.c" as private_file;
 verifying "runner.c";
 
 int32 bump_shared() {
+    requires shared_table[1].value < 1000;
     mutable shared_table[1].value[0..1] by auto;
     ensures result == old(shared_table[1].value) + 1 by auto;
     ensures shared_table[1].value == old(shared_table[1].value) + 1 by auto;
 }
 
 int32 increment_private() {
+    requires private_table[1].value > -1000;
+    requires private_table[1].value < 1000;
+    requires local_table[0].value > -1000;
+    requires local_table[0].value < 1000;
     mutable private_table[1].value[0..1], local_table[0].value[0..1] by auto;
     ensures result == old(private_table[1].value) + old(local_table[0].value) + 2 by auto;
     ensures private_table[1].value == old(private_table[1].value) + 1 by auto;
@@ -74,10 +79,50 @@ int32 increment_private() {
 }
 
 int32 run() {
-    ensures result == 5 by auto;
+    owns shared_table[1].value[0..1];
+    owns private_file::private_table[1].value[0..1];
+    owns private_file::increment_private::local_table[0].value[0..1];
+    requires shared_table[1].value == 2;
+    requires shared_table[1].value < 1000;
+    requires private_file::private_table[1].value == 5;
+    requires private_file::private_table[1].value > -1000;
+    requires private_file::private_table[1].value < 1000;
+    requires private_file::increment_private::local_table[0].value == 2;
+    requires private_file::increment_private::local_table[0].value > -1000;
+    requires private_file::increment_private::local_table[0].value < 1000;
+    ensures result == 5;
+} by {
+    have shared_table[1].value == 2 by simp;
+    have shared_table[1].value < 1000 by simp;
+    have private_file::private_table[1].value == 5 by simp;
+    have private_file::private_table[1].value > -1000 by simp;
+    have private_file::private_table[1].value < 1000 by simp;
+    have private_file::increment_private::local_table[0].value == 2 by simp;
+    have private_file::increment_private::local_table[0].value > -1000 by simp;
+    have private_file::increment_private::local_table[0].value < 1000 by simp;
+    step();
+    have shared_table[1].value == 3 by simp;
+    have shared_table[1].value < 1000 by simp;
+    step();
+    have private_file::private_table[1].value == 5 by simp;
+    have private_file::private_table[1].value > -1000 by simp;
+    have private_file::private_table[1].value < 1000 by simp;
+    have private_file::increment_private::local_table[0].value == 2 by simp;
+    have private_file::increment_private::local_table[0].value > -1000 by simp;
+    have private_file::increment_private::local_table[0].value < 1000 by simp;
+    step();
+    have private_file::private_table[1].value == 6 by simp;
+    have private_file::private_table[1].value > -1000 by simp;
+    have private_file::private_table[1].value < 1000 by simp;
+    have private_file::increment_private::local_table[0].value == 3 by simp;
+    have private_file::increment_private::local_table[0].value > -1000 by simp;
+    have private_file::increment_private::local_table[0].value < 1000 by simp;
+    step();
+    step();
+    simp();
 }
 ```
 
 ```expect
-pass
+fail: run.contract
 ```

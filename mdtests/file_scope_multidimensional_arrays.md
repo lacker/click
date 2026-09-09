@@ -42,15 +42,20 @@ verifying "definitions.c";
 verifying "reader.c";
 
 int32 definition_anchor() {
+    requires values[0][1] == 2;
     ensures result == 2 by auto;
 }
 
 int32 read_values() {
-    ensures result == 5 by auto;
-    ensures values[1][2] == 5 by auto;
+    owns values[1][2..3];
+    owns flags[0][1..2];
+    requires values[1][2] > -1000;
+    requires values[1][2] < 1000;
+    ensures result == values[1][2] + flags[0][1] by auto;
 }
 
 int32 update_values() {
+    requires values[0][1] == 2;
     mutable values[1][0..1] by auto;
     ensures result == 2 by auto;
     ensures values[1][0] == 2 by auto;

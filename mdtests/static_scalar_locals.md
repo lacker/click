@@ -22,15 +22,19 @@ int32 call_twice() {
 ```
 
 ```click
-verifying "static_scalar_locals.c";
+verifying "static_scalar_locals.c" as source;
 
 int32 increment_twice() {
+    owns &calls[0..1];
+    requires calls < 1000;
     mutable &calls[0..1] by auto;
     ensures result == old(calls) + 2 by auto;
     ensures calls == old(calls) + 2 by auto;
 }
 
 int32 call_twice() {
+    owns &source::increment_twice::calls[0..1];
+    requires source::increment_twice::calls == 5;
     ensures result == 9 by auto;
 }
 ```

@@ -15,6 +15,7 @@ int32 increment() {
 verifying "static_array_local_effect.c";
 
 int32 increment() {
+    requires values[0] < 1000;
     immutable;
     ensures result == old(values[0]) + 1 by auto;
 }

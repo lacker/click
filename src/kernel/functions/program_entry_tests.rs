@@ -35,6 +35,52 @@ fn static_declaration_preserves_a_cell_materialized_before_its_block() {
 }
 
 #[test]
+fn ordinary_function_entry_does_not_restore_static_initializers() {
+    let global = CGlobal::new("state", CType::Int32, int32(7));
+    let function =
+        storage_function("read", vec![global]).with_static_variables(vec![CStaticLocal::new(
+            "calls",
+            "calls",
+            CType::Int32,
+            int32(11),
+        )]);
+
+    let ordinary = initialize_c_function_globals(&CState::new(), &function);
+    assert!(
+        ordinary
+            .memory()
+            .has_block(&CMemory::global_pointer("state").block)
+    );
+    assert_ne!(
+        ordinary.memory().load(&CMemory::global_pointer("state")),
+        CExpressionOutcome::Value(int32(7))
+    );
+    assert!(
+        ordinary
+            .memory()
+            .has_block(&CMemory::static_pointer("read", "calls").block)
+    );
+    assert_ne!(
+        ordinary
+            .memory()
+            .load(&CMemory::static_pointer("read", "calls")),
+        CExpressionOutcome::Value(int32(11))
+    );
+
+    let startup = initialize_c_program_storage([function]);
+    assert_eq!(
+        startup.memory().load(&CMemory::global_pointer("state")),
+        CExpressionOutcome::Value(int32(7))
+    );
+    assert_eq!(
+        startup
+            .memory()
+            .load(&CMemory::static_pointer("read", "calls")),
+        CExpressionOutcome::Value(int32(11))
+    );
+}
+
+#[test]
 fn startup_coalesces_declarations_and_calls_cannot_replenish_ownership() {
     let global = CGlobal::new("state", CType::Int32, int32(7));
     let left = storage_function("left", vec![global.clone()]);

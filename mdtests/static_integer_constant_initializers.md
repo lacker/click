@@ -25,6 +25,7 @@ int32 read_values() {
 verifying "static_integer_constant_initializers.c";
 
 int32 read_values() {
+    requires values[0] == 3 and values[1] == 9 and values[2] == 5 and private_value == 15 and local_value == 7;
     ensures result == 39 by auto;
 }
 ```

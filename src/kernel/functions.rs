@@ -5492,12 +5492,14 @@ fn coerce_c_function_arguments(
 
 /// Installs the stable global and static-local bindings needed by a function's
 /// entry and contract states. Existing memory is preserved so nested calls
-/// observe writes performed by their caller; a missing block is the fresh
-/// program entry case and receives the object's initial value. Static locals
-/// use a function-qualified block identity and are therefore initialized once
-/// for the whole symbolic execution, not once per call frame.
+/// observe writes performed by their caller. Ordinary function entry declares
+/// missing storage without restoring its initializer; reads then remain
+/// symbolic until a caller state or a precondition constrains them. The
+/// startup-only storage constructor passes `true` to materialize initializers.
+/// Static locals use a function-qualified block identity and are therefore
+/// initialized once for the whole symbolic execution, not once per call frame.
 pub(crate) fn initialize_c_function_globals(state: &CState, function: &CFunction) -> CState {
-    initialize_c_function_globals_owned(state.clone(), function)
+    initialize_c_function_globals_owned(state.clone(), function, false)
 }
 
 /// Constructs a fresh startup state, never an ordinary call transition.
@@ -5508,7 +5510,7 @@ pub(crate) fn initialize_c_program_storage(
 ) -> CState {
     let mut state = CState::new();
     for function in functions {
-        state = initialize_c_function_globals_owned(state, &function);
+        state = initialize_c_function_globals_owned(state, &function, true);
         // Private source spellings are lexical bindings, not program globals.
         state.locals = CLocalEnvironment::default();
     }
@@ -5583,7 +5585,11 @@ fn initial_static_resources(memory: &CMemory, mut visit: impl FnMut()) -> Resour
 #[cfg(test)]
 mod program_entry_tests;
 
-fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) -> CState {
+fn initialize_c_function_globals_owned(
+    mut state: CState,
+    function: &CFunction,
+    initialize_missing_storage: bool,
+) -> CState {
     for literal in function.string_literals() {
         let slot =
             CMemory::string_literal_pointer(function.name(), literal.name(), literal.bytes());
@@ -5628,14 +5634,30 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
         let slot = CMemory::global_pointer(global.kernel_name());
         register_block_alignment(&slot.block, global.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                global.c_type().byte_width(),
+                global.is_constant(),
+            );
+            if initialize_missing_storage || global.is_constant() {
+                state.memory = state
+                    .memory
+                    .store(slot.clone(), global.initial_value().clone());
+            } else {
+                state.memory = materialize_symbolic_cell(state.memory, &slot, global.c_type());
+            }
+        } else if !initialize_missing_storage
+            && !global.is_constant()
+            && global.c_type().is_object_pointer()
+            && state
                 .memory
-                .with_block_or_read_only(
-                    slot.block.clone(),
-                    global.c_type().byte_width(),
-                    global.is_constant(),
-                )
-                .store(slot.clone(), global.initial_value().clone());
+                .known_value(&slot)
+                .is_some_and(|value| symbolic_pointer_placeholder(&value, &slot))
+        {
+            // Resource setup may declare a pointer's storage before the
+            // global binding is installed. Replace an untyped placeholder
+            // with the authoritative typed symbolic pointer cell.
+            state.memory = materialize_symbolic_cell(state.memory, &slot, global.c_type());
         }
         state.locals.set_global_with_all_qualifiers(
             global.kernel_name().to_string(),
@@ -5671,14 +5693,23 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 bytes,
                 global_array.is_constant(),
             );
-            for (index, value) in global_array.initial_values().iter().enumerate() {
-                state.memory = state.memory.store(
-                    slot.offset_by_bytes(
-                        u32::try_from(index)
-                            .expect("validated C global array length")
-                            .saturating_mul(global_array.element_type().byte_width()),
-                    ),
-                    value.clone(),
+            if initialize_missing_storage || global_array.is_constant() {
+                for (index, value) in global_array.initial_values().iter().enumerate() {
+                    state.memory = state.memory.store(
+                        slot.offset_by_bytes(
+                            u32::try_from(index)
+                                .expect("validated C global array length")
+                                .saturating_mul(global_array.element_type().byte_width()),
+                        ),
+                        value.clone(),
+                    );
+                }
+            } else {
+                state.memory = materialize_symbolic_array(
+                    state.memory,
+                    &slot,
+                    global_array.element_type(),
+                    global_array.length(),
                 );
             }
         }
@@ -5710,13 +5741,21 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 global_aggregate.layout().size_bytes(),
                 global_aggregate.is_constant(),
             );
-            state.memory =
-                zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
-            state.memory = initialize_aggregate_fields(
-                state.memory.clone(),
-                &slot,
-                global_aggregate.initializers(),
-            );
+            if initialize_missing_storage || global_aggregate.is_constant() {
+                state.memory =
+                    zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
+                state.memory = initialize_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    global_aggregate.initializers(),
+                );
+            } else {
+                state.memory = materialize_symbolic_aggregate_fields(
+                    state.memory,
+                    &slot,
+                    global_aggregate.layout(),
+                );
+            }
         }
         state.locals.set_aggregate_object_at_with_constant(
             global_aggregate.kernel_name().to_string(),
@@ -5751,17 +5790,26 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 bytes,
                 global_aggregate_array.is_constant(),
             );
-            state.memory = zero_aggregate_array_fields(
-                state.memory.clone(),
-                &slot,
-                global_aggregate_array.layout(),
-                global_aggregate_array.length(),
-            );
-            state.memory = initialize_aggregate_fields(
-                state.memory.clone(),
-                &slot,
-                global_aggregate_array.initializers(),
-            );
+            if initialize_missing_storage || global_aggregate_array.is_constant() {
+                state.memory = zero_aggregate_array_fields(
+                    state.memory.clone(),
+                    &slot,
+                    global_aggregate_array.layout(),
+                    global_aggregate_array.length(),
+                );
+                state.memory = initialize_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    global_aggregate_array.initializers(),
+                );
+            } else {
+                state.memory = materialize_symbolic_aggregate_array(
+                    state.memory,
+                    &slot,
+                    global_aggregate_array.layout(),
+                    global_aggregate_array.length(),
+                );
+            }
         }
         state.locals.set_array_object_at_with_constant(
             global_aggregate_array.kernel_name().to_string(),
@@ -5796,11 +5844,28 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
             // A qualified resource can materialize the cell before this
             // function's storage declaration is installed. Adding block
             // metadata must not overwrite that existing value.
-            if state.memory.known_value(&slot).is_none() {
+            if (initialize_missing_storage || static_local.is_constant())
+                && state.memory.known_value(&slot).is_none()
+            {
                 state.memory = state
                     .memory
                     .store(slot.clone(), static_local.initial_value().clone());
+            } else if !initialize_missing_storage
+                && !static_local.is_constant()
+                && state.memory.known_value(&slot).is_none()
+            {
+                state.memory =
+                    materialize_symbolic_cell(state.memory, &slot, static_local.c_type());
             }
+        } else if !initialize_missing_storage
+            && !static_local.is_constant()
+            && static_local.c_type().is_object_pointer()
+            && state
+                .memory
+                .known_value(&slot)
+                .is_some_and(|value| symbolic_pointer_placeholder(&value, &slot))
+        {
+            state.memory = materialize_symbolic_cell(state.memory, &slot, static_local.c_type());
         }
         state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),
@@ -5842,14 +5907,23 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 bytes,
                 static_array.is_constant(),
             );
-            for (index, value) in static_array.initial_values().iter().enumerate() {
-                state.memory = state.memory.store(
-                    slot.offset_by_bytes(
-                        u32::try_from(index)
-                            .expect("validated C static local array length")
-                            .saturating_mul(static_array.element_type().byte_width()),
-                    ),
-                    value.clone(),
+            if initialize_missing_storage || static_array.is_constant() {
+                for (index, value) in static_array.initial_values().iter().enumerate() {
+                    state.memory = state.memory.store(
+                        slot.offset_by_bytes(
+                            u32::try_from(index)
+                                .expect("validated C static local array length")
+                                .saturating_mul(static_array.element_type().byte_width()),
+                        ),
+                        value.clone(),
+                    );
+                }
+            } else {
+                state.memory = materialize_symbolic_array(
+                    state.memory,
+                    &slot,
+                    static_array.element_type(),
+                    static_array.length(),
                 );
             }
         }
@@ -5881,13 +5955,21 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 static_aggregate.layout().size_bytes(),
                 static_aggregate.is_constant(),
             );
-            state.memory =
-                zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
-            state.memory = initialize_aggregate_fields(
-                state.memory.clone(),
-                &slot,
-                static_aggregate.initializers(),
-            );
+            if initialize_missing_storage || static_aggregate.is_constant() {
+                state.memory =
+                    zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
+                state.memory = initialize_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    static_aggregate.initializers(),
+                );
+            } else {
+                state.memory = materialize_symbolic_aggregate_fields(
+                    state.memory,
+                    &slot,
+                    static_aggregate.layout(),
+                );
+            }
         }
         state.locals.set_aggregate_object_at_with_constant(
             static_aggregate.kernel_name().to_string(),
@@ -5922,17 +6004,26 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
                 bytes,
                 static_aggregate_array.is_constant(),
             );
-            state.memory = zero_aggregate_array_fields(
-                state.memory.clone(),
-                &slot,
-                static_aggregate_array.layout(),
-                static_aggregate_array.length(),
-            );
-            state.memory = initialize_aggregate_fields(
-                state.memory.clone(),
-                &slot,
-                static_aggregate_array.initializers(),
-            );
+            if initialize_missing_storage || static_aggregate_array.is_constant() {
+                state.memory = zero_aggregate_array_fields(
+                    state.memory.clone(),
+                    &slot,
+                    static_aggregate_array.layout(),
+                    static_aggregate_array.length(),
+                );
+                state.memory = initialize_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    static_aggregate_array.initializers(),
+                );
+            } else {
+                state.memory = materialize_symbolic_aggregate_array(
+                    state.memory,
+                    &slot,
+                    static_aggregate_array.layout(),
+                    static_aggregate_array.length(),
+                );
+            }
         }
         state.locals.set_array_object_at_with_constant(
             static_aggregate_array.kernel_name().to_string(),
@@ -5956,6 +6047,128 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
         }
     }
     state
+}
+
+fn materialize_symbolic_cell(mut memory: CMemory, pointer: &Pointer, c_type: CType) -> CMemory {
+    let symbolic_base = symbolic_memory_base(&memory, pointer);
+    let value = if c_type.is_object_pointer() {
+        Some(symbolic_pointer_cell_load(&symbolic_base, pointer, c_type))
+    } else {
+        symbolic_load_value(&symbolic_base, pointer, c_type)
+    };
+    if let Some(value) = value {
+        memory = memory.store(pointer.clone(), value);
+    }
+    memory
+}
+
+fn symbolic_pointer_placeholder(value: &CValue, storage: &Pointer) -> bool {
+    let CValue::Pointer(value) = value else {
+        return false;
+    };
+    value.pointer().block == storage.block
+        && !matches!(value.pointer().offset, PointerOffsetTerm::Constant(_))
+}
+
+fn symbolic_pointer_cell_load(memory: &CMemory, pointer: &Pointer, value_type: CType) -> CValue {
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(memory.clone()),
+        Box::new(pointer.clone()),
+    );
+    let (variable, _) = crate::kernel::eval::load_variable_for_term(&load)
+        .expect("symbolic pointer cells must be backed by memory loads");
+    CValue::typed_pointer(Pointer::symbolic(variable), value_type)
+}
+
+/// Returns the stable symbolic value of a pointer object whose storage is not
+/// available in the current function's C state. Contract-only references to
+/// an external pointer use the same canonical load identity as ordinary entry
+/// initialization, so resource transfer follows the current pointer value.
+pub(crate) fn stable_symbolic_pointer_cell_value(pointer: &Pointer, value_type: CType) -> CValue {
+    let memory = CMemory::new()
+        .with_block_without_derivation(pointer.block.clone(), value_type.byte_width());
+    symbolic_pointer_cell_load(&memory, pointer, value_type)
+}
+
+/// Returns the stable symbolic value for a typed static-storage cell. The
+/// backing memory contains only the storage block, so resource lowering and
+/// ordinary function entry derive the same load identity even when the
+/// caller has not yet materialized the surrounding object.
+fn symbolic_memory_base(memory: &CMemory, pointer: &Pointer) -> CMemory {
+    let size = memory
+        .blocks
+        .get(&pointer.block)
+        .and_then(|block| block.size().as_const())
+        .expect("symbolic static-storage block has a constant size");
+    CMemory::new().with_block_without_derivation(pointer.block.clone(), size)
+}
+
+fn materialize_symbolic_array(
+    mut memory: CMemory,
+    base: &Pointer,
+    element_type: CType,
+    length: u32,
+) -> CMemory {
+    for index in 0..length {
+        let pointer = base.offset_by_bytes(index.saturating_mul(element_type.byte_width()));
+        memory = materialize_symbolic_cell(memory, &pointer, element_type);
+    }
+    memory
+}
+
+fn materialize_symbolic_aggregate_fields(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+) -> CMemory {
+    for field in layout.fields() {
+        let field_base = base.offset_by_bytes(field.offset_bytes());
+        match field.c_type() {
+            CType::Int32Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::Int32, length);
+            }
+            CType::UInt8Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::UInt8, length);
+            }
+            CType::Float32Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::Float32, length);
+            }
+            CType::Float64Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::Float64, length);
+            }
+            _ => {
+                memory = materialize_symbolic_cell(memory, &field_base, field.c_type());
+            }
+        }
+    }
+    for union in layout.unions() {
+        let union_base = base.offset_by_bytes(union.offset_bytes());
+        for field in union.fields() {
+            let pointer = union_base.offset_by_bytes(field.offset_bytes());
+            let symbolic_base = symbolic_memory_base(&memory, &pointer);
+            if let Some(value) = symbolic_load_value(&symbolic_base, &pointer, field.c_type()) {
+                memory = memory.store_union(pointer, field.c_type(), value);
+            }
+        }
+    }
+    memory
+}
+
+fn materialize_symbolic_aggregate_array(
+    mut memory: CMemory,
+    base: &Pointer,
+    layout: &CAggregateLayout,
+    length: u32,
+) -> CMemory {
+    for index in 0..length {
+        let element_base = base.offset_by_bytes(
+            index
+                .checked_mul(layout.size_bytes())
+                .expect("validated aggregate symbolic offset"),
+        );
+        memory = materialize_symbolic_aggregate_fields(memory, &element_base, layout);
+    }
+    memory
 }
 
 fn zero_aggregate_fields(

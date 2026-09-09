@@ -20,6 +20,7 @@ int32 increment() {
 verifying "aggregate_array_static_effect.c";
 
 int32 increment() {
+    requires entries[1].value < 1000;
     immutable;
     ensures result == old(entries[1].value) + 1 by auto;
 }

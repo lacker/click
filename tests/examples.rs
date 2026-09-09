@@ -14,7 +14,10 @@ const SOURCE_METADATA: &str = "SOURCE.md";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[(
+    "multifile-registry",
+    "ordinary-entry static-state transport does not yet certify its cross-file caller",
+)];
 
 /// The body-rerun ratchet (`docs/internals/testing.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.

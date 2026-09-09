@@ -40,14 +40,17 @@ verifying "definitions.c";
 verifying "reader.c";
 
 int32 read_flags() {
-    ensures result == 0 by auto;
+    owns flags[0..3];
+    ensures result == flags[1] by auto;
 }
 
 int32 definition_anchor() {
+    requires values[0] == 2;
     ensures result == 2 by auto;
 }
 
 int32 run() {
+    requires values[1] == 6;
     ensures result == 6 by auto;
 }
 ```

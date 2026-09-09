@@ -41,6 +41,7 @@ verifying "counter.c";
 verifying "reader.c";
 
 int32 increment_counter() {
+    requires counter < 1000;
     mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
@@ -51,6 +52,7 @@ int32 read_counter() {
 }
 
 int32 run() {
+    requires counter == 3;
     mutable &counter[0..1] by auto;
     ensures result == 4 by auto;
 }

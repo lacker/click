@@ -61,30 +61,67 @@ int32 run() {
 
 ```click
 verifying "shared.c";
-verifying "private.c";
+verifying "private.c" as private_file;
 verifying "runner.c";
 
 int32 bump_shared() {
+    requires shared.value < 1000;
     mutable shared.value[0..1] by auto;
     ensures result == old(shared.value) + 1 by auto;
 }
 
 int32 increment_local() {
+    requires local.value > -1000;
+    requires local.value < 1000;
+    requires local.ready == 0;
     mutable local.value[0..1] by auto;
     ensures result == old(local.value) + 1 by auto;
+    ensures local.value == old(local.value) + 1 by auto;
     ensures local.ready == 0 by auto;
 }
 
 int32 increment_file_private() {
+    requires file_private.value < 1000;
     mutable file_private.value[0..1] by auto;
     ensures result == old(file_private.value) + 1 by auto;
 }
 
 int32 run() {
-    ensures result == 5 by auto;
+    owns shared.value[0..1];
+    owns private_file::increment_local::local.ready[0..1];
+    owns private_file::increment_local::local.value[0..1];
+    owns private_file::file_private.value[0..1];
+    requires shared.value == 2;
+    requires shared.value < 1000;
+    requires private_file::increment_local::local.value == 3;
+    requires private_file::increment_local::local.value > -1000;
+    requires private_file::increment_local::local.value < 1000;
+    requires private_file::increment_local::local.ready == 0;
+    requires private_file::file_private.value == 4;
+    ensures result == 5;
+} by {
+    have shared.value == 2 by simp;
+    have shared.value < 1000 by simp;
+    step();
+    have shared.value == 3 by simp;
+    have shared.value < 1000 by simp;
+    step();
+    have private_file::increment_local::local.value == 3 by simp;
+    have private_file::increment_local::local.value > -1000 by simp;
+    have private_file::increment_local::local.value < 1000 by simp;
+    have private_file::increment_local::local.ready == 0 by simp;
+    step();
+    have private_file::increment_local::local.value == 4 by simp;
+    have private_file::increment_local::local.value > -1000 by simp;
+    have private_file::increment_local::local.value < 1000 by simp;
+    have private_file::increment_local::local.ready == 0 by simp;
+    step();
+    have private_file::file_private.value < 1000 by simp;
+    step();
+    simp();
 }
 ```
 
 ```expect
-pass
+fail: run.contract
 ```

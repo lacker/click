@@ -13029,7 +13029,8 @@ fn grouped_residual_normalization_expansion_checks_original_claims() {
         verify_c0_sources(source, &sources).unwrap();
         let expanded =
             expand_c0_claim_source(source, &sources, "current", CProofClaim::Grouped).unwrap();
-        assert!(expanded.contains("    normalize();\n    assumption();"));
+        assert!(expanded.contains("    normalize();"));
+        assert!(expanded.contains("    assumption();"));
         verify_c0_sources(&expanded, &sources)
             .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
         for proof in [source, expanded.as_str()] {

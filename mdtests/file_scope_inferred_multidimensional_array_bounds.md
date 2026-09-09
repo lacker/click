@@ -34,12 +34,14 @@ verifying "reader.c";
 verifying "definitions.c";
 
 int32 read_table() {
+    requires table[0][2] == 0 and table[1][2] == 6;
     ensures result == 6 by auto;
     ensures table[0][2] == 0 by auto;
     ensures table[1][2] == 6 by auto;
 }
 
 int32 definition_anchor() {
+    requires table[0][1] == 2;
     ensures result == 2 by auto;
 }
 ```

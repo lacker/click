@@ -10,6 +10,10 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# A few expansion regressions recurse deeply enough to overflow the default
+# per-test thread stack on otherwise healthy runners.
+export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
+
 # Formatting is part of the gate: the same command judges locally and in CI,
 # so drift cannot accumulate. Run `cargo fmt` to fix a failure.
 cargo fmt --check
