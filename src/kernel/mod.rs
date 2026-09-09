@@ -13,8 +13,6 @@ mod functions;
 pub(crate) use functions::rewrite_resource_instance;
 pub(crate) use functions::rewrite_resource_instance_selecting_children;
 mod loops;
-#[cfg(test)]
-pub(crate) use loops::invariant_discovery_calls;
 mod memory_provenance;
 mod primitives;
 pub(crate) mod proof;

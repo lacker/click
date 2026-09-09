@@ -326,31 +326,6 @@ fn c_loop_preservation_contexts_with_mode(
     Ok(contexts)
 }
 
-pub fn c_loop_invariants_hold_at_back_edge(
-    state: &CState,
-    iteration_entry_state: &CState,
-    invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &PureFactContext,
-) -> Result<(), String> {
-    let obligations = c_loop_invariant_obligations_at_back_edge(
-        state,
-        iteration_entry_state,
-        invariant_checks,
-        assumptions,
-    )?;
-    if let Some(obligation) = obligations.first() {
-        return Err(format!(
-            "missing invariant fact{}: {:?}",
-            obligation
-                .context()
-                .map(|context| format!(" ({context})"))
-                .unwrap_or_default(),
-            obligation.proposition()
-        ));
-    }
-    Ok(())
-}
-
 pub fn c_loop_invariant_obligations_at_back_edge(
     state: &CState,
     iteration_entry_state: &CState,
@@ -366,23 +341,6 @@ pub fn c_loop_invariant_obligations_at_back_edge(
         &mut ExecutionBudget::default(),
     )
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
-}
-
-pub fn c_loop_invariants_hold_at_back_edge_using(
-    state: &CState,
-    iteration_entry_state: &CState,
-    invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &PureFactContext,
-) -> Result<(), String> {
-    verify_invariant_checks_at_back_edge_using(
-        state,
-        iteration_entry_state,
-        invariant_checks,
-        assumptions,
-        &mut ExecutionBudget::default(),
-    )
-    .map(|_| ())
-    .map_err(|error| format!("could not check invariant closer: {error}"))
 }
 
 pub fn c_loop_invariant_obligations_at_entry(
@@ -452,12 +410,11 @@ pub fn c_loop_invariants_hold_at_entry(
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
     if let Some(obligation) = obligations.first() {
         return Err(format!(
-            "missing invariant fact{}: {:?}",
+            "missing invariant fact{}",
             obligation
                 .context()
                 .map(|context| format!(" ({context})"))
-                .unwrap_or_default(),
-            obligation.proposition()
+                .unwrap_or_default()
         ));
     }
     Ok(())
@@ -5613,7 +5570,7 @@ pub fn prove_memory_load_after_store_other(
 /// - termination, and framing of memory across iterations.
 ///
 /// Why it is fenced rather than fixed: the sound loop path already exists as
-/// `c_loop_preservation_contexts` / `c_loop_invariants_hold_at_back_edge`
+/// `c_loop_preservation_contexts` and exact invariant-body proof scopes
 /// over state-parametric `CLoopInvariantCheck` (`SpecProposition`), with
 /// `prepare_loop_top_state` supplying the havoc. Making this rule sound means
 /// evaluating the invariant at the body's post-state, which a flat

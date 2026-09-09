@@ -28,6 +28,18 @@ int32 loop_old_count_invariant(int32 p[3]) {
         invariant i >= 0 and i <= 3;
         invariant old(count(p, 0, 3, p[0])) == old(count(p, 0, 3, p[0]));
         immutable by frame;
+        preserve by {
+            step();
+            have i >= 0 and i <= 3 by simp;
+            close_invariants by {
+                both {
+                    transport(at(function.entry, loadable(p[0..3])), at(function.entry, loadable(p[0..1]))) using {
+                        at(function.entry, loadable(p[0..3]));
+                    }
+                    assumption();
+                } and { intro(); normalize(); }
+            }
+        }
     }
     step();
     simp();

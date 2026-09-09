@@ -35,6 +35,17 @@ int32 nest(int32 n) {
             loop {
                 decreases 10 - n;
                 invariant n >= 0 and n <= 100;
+                preserve by {
+                    have n + 1 >= 0 by {
+                        apply(int32_increment_greater_equal_lower_bound(n, 0, 10)) using { n >= 0; n < 10; }
+                    }
+                    have n < 100 by { arithmetic() using { n < 10; } }
+                    have n + 1 <= 100 by {
+                        apply(int32_increment_upper_bound(n, 100)) using { n < 100; }
+                    }
+                    step();
+                    close_invariants by { simp(); }
+                }
             }
             step();
             close_invariants();

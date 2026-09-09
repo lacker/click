@@ -624,7 +624,9 @@ fn advance_checked_linear_continuation<'a>(
             )
         });
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
+        let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+            proof.apply_close_invariants_body(&[ProofTactic::Simp])?
+        } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
@@ -1775,7 +1777,9 @@ fn advance_focused_execution_arm<'a>(
             continue;
         }
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
+        let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+            proof.apply_close_invariants_body(&[ProofTactic::Simp])?
+        } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step(step)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
