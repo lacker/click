@@ -138,10 +138,22 @@ pub(in crate::surface) fn check_resource_field_schemas(
             bindings.insert(binding.identity, binding.clone());
         }
         for ensure in &mut function.ensures {
-            if let Ensure::Resource(ResourceClause::Named { binding, .. }) = &mut ensure.ensure {
-                *binding = bindings.get(&binding.identity).cloned().ok_or_else(|| {
-                    ClickError::new("returned resource instance has no entry binding")
-                })?;
+            if let Ensure::Resource(ResourceClause::Named { binding, resource }) =
+                &mut ensure.ensure
+            {
+                if let Some(entry) = bindings.get(&binding.identity) {
+                    *binding = entry.clone();
+                } else {
+                    let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                        unreachable!()
+                    };
+                    binding.schema = Some(
+                        schemas
+                            .get(name)
+                            .ok_or_else(|| ClickError::new("returned resource has no schema"))?
+                            .clone(),
+                    );
+                }
             }
         }
     }
@@ -2342,6 +2354,13 @@ impl AnnotationLowerer<'_> {
                     .iter()
                     .find(|schema| schema.name == *variant)
                     .ok_or_else(|| format!("unknown match variant `{variant}`"))?;
+                if arguments.len() != schema.fields.len() {
+                    return Err(format!(
+                        "constructor `{variant}` expects {} argument(s), got {}",
+                        schema.fields.len(),
+                        arguments.len(),
+                    ));
+                }
                 let fields = arguments
                     .iter()
                     .zip(&schema.fields)
@@ -2690,6 +2709,10 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<Option<ClickType>, String> {
         match argument {
+            ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
+            } => self.infer_unconstrained_call_argument_type(inner, environment),
             ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
             ContractExpression::AlgebraicVariable { algebraic_type, .. }
             | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {

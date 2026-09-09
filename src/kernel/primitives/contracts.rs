@@ -992,6 +992,14 @@ impl CCompositeResourceDefinition {
         self
     }
 
+    pub(crate) fn instance_field_schema(&self) -> Option<&ResourceFieldSchema> {
+        self.instance_schema.as_ref()
+    }
+
+    pub(crate) fn has_plain_instance_body(&self) -> bool {
+        self.matched.is_none() && self.condition.is_none()
+    }
+
     pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
         self.matched = body;
         self

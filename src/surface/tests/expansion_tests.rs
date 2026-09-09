@@ -1,6 +1,83 @@
 use super::*;
 
 #[test]
+fn return_population_proofs_expand_without_effect_clauses() {
+    for (fixture_name, functions) in [
+        (
+            "counted_resource_refcount_transitions.md",
+            vec!["object_retain", "object_release_nonfinal"],
+        ),
+        (
+            "counted_resource_population_lifetime.md",
+            vec!["object_init", "object_finish"],
+        ),
+        (
+            "consumed_population_count_in_ensured_predicate.md",
+            vec!["consume_population"],
+        ),
+        (
+            "resource_count_predicate_snapshot.md",
+            vec!["object_retain"],
+        ),
+        (
+            "resource_pattern_counts_cross_contracts.md",
+            vec!["pool_checkout", "pool_return", "pool_roundtrip"],
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(fixture_name);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &sources)
+            .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
+        for function in functions {
+            let expanded =
+                expand_c0_claim_source(source, &sources, function, CProofClaim::Grouped).unwrap();
+            verify_c0_sources(&expanded, &sources)
+                .unwrap_or_else(|error| panic!("{fixture_name}: {}\n{expanded}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn return_population_count_is_not_an_assumed_invariant() {
+    let c_source =
+        "struct object { int32 refs; }; struct object* retain(struct object* obj) { return obj; }";
+    for proof in [
+        "execute(); simp();",
+        "unfold(reference(obj)); execute(); simp();",
+        "open(reference(obj)) { execute(); } simp();",
+    ] {
+        let source = format!(
+            r#"
+resource reference(obj: struct object*) {{
+    owns obj->refs;
+    fact obj->refs == count(reference(obj));
+}}
+verifying "retain.c";
+struct object* retain(struct object* obj) {{
+    requires count(reference(obj)) < 2147483647;
+    owns reference(obj);
+    produces reference(obj);
+    ensures obj->refs == count(reference(obj));
+    ensures result == obj;
+}} by {{ {proof} }}
+"#
+        );
+        assert!(
+            verify_c0_sources(&source, &[("retain.c", c_source)]).is_err(),
+            "accepted an unchanged stored count with {proof}"
+        );
+    }
+}
+
+#[test]
 fn signed_antisymmetry_simp_expands_to_checked_arithmetic() {
     let source = "theorem bounded_equal(i: int32) { requires 0 <= i; requires i <= 0; ensures i == 0 by { simp(); } }";
     verify_c0_sources(source, &[]).unwrap();

@@ -518,7 +518,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
 }
 
 #[test]
-fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
+fn instance_memory_fold_requires_body_ownership_not_an_open_handle() {
     let (instance, definition, state) = instance_memory_fixture();
     let assumptions = PureFactContext::new();
     let (opened, _) =
@@ -528,10 +528,12 @@ fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
             .owned_resource_instance(instance.identity())
             .is_none()
     );
-    assert_eq!(
-        opened.resource_instance_fields(instance.identity()),
-        Some(&instance)
+    assert!(
+        opened
+            .resource_instance_fields(instance.identity())
+            .is_none()
     );
+    assert!(opened.open_instances.is_empty());
     assert_eq!(
         rewrite_resource_instance(&opened, &instance, &definition, &assumptions, false)
             .unwrap()
@@ -550,24 +552,19 @@ fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
         rewrite_resource_instance(&missing_body, &instance, &definition, &assumptions, false)
             .is_err()
     );
-    let mut missing_handle = opened.clone();
-    missing_handle.open_instances = ResourceContext::new();
-    assert!(
-        rewrite_resource_instance(&missing_handle, &instance, &definition, &assumptions, false)
-            .is_err()
+    let raw = CState::new().with_resource_context(opened.resources.clone());
+    let mut constructed = instance.clone();
+    constructed.identity = Variable(2);
+    // This fixture's field is unconstrained by its body. Any well-typed value
+    // is legitimate; neither its identity nor field must match an old package.
+    constructed.fields = vec![int32(8).into()].into();
+    let (folded, _) =
+        rewrite_resource_instance(&raw, &constructed, &definition, &assumptions, false).unwrap();
+    assert_eq!(
+        folded.owned_resource_instance(Variable(2)),
+        Some(&constructed)
     );
-    let mut wrong_identity = instance.clone();
-    wrong_identity.identity = Variable(2);
-    assert!(
-        rewrite_resource_instance(&opened, &wrong_identity, &definition, &assumptions, false)
-            .is_err()
-    );
-    let mut wrong_fields = instance.clone();
-    wrong_fields.fields = vec![int32(8).into()].into();
-    assert!(
-        rewrite_resource_instance(&opened, &wrong_fields, &definition, &assumptions, false)
-            .is_err()
-    );
+    assert!(folded.open_instances.is_empty());
 }
 
 #[test]
@@ -588,10 +585,7 @@ fn instance_memory_fold_work_is_local_to_the_selected_instance() {
             let (open, _) =
                 rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
                     .unwrap();
-            assert_eq!(
-                open.resource_instance_fields(instance.identity()),
-                Some(&instance)
-            );
+            assert!(open.resource_instance_fields(instance.identity()).is_none());
             rewrite_resource_instance(&open, &instance, &definition, &assumptions, false).unwrap()
         });
         samples.push(work);

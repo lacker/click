@@ -49,8 +49,9 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   The guard must be proved true or false; unknown guards do not eagerly split.
   The false case exposes no body ownership or facts. Bare field names in the
   body denote the instance's fields.
-  An exclusive open handle retains the identity and fields, but grants no
-  folded ownership for calls or returns.
+  Plain unconditional memory bodies leave no open handle. Guarded and matched
+  bodies still retain one during their migration; it grants no folded
+  ownership for calls or returns.
 - A resource body may instead `match` one ADT field with exhaustive
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
@@ -71,10 +72,15 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   Child names are unavailable after the parent folds; a later reopening may
   introduce fresh child resource identities. Model values and C pointer
   identities are not changed by this logical exchange.
-- `fold(cell)` requires the matching open handle, complete body ownership, and
-  established body facts at the current memory. It restores the same identity
-  and unchanged fields. A declaration or field value alone grants no memory
-  authority, and raw body ownership alone cannot create an instance.
+- Plain memory bodies support explicit construction from raw ownership:
+  `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
+  checks the complete body ownership and facts. Initializers accept typed
+  symbolic expressions, including ADT constructors, entry-model values,
+  matches, and pure-function applications; they do not execute pure functions
+  or split arbitrary models into cases. The legacy `fold(c)` shorthand
+  selects entry-state fields without requiring an open handle. Guarded and
+  matched bodies still require a matching open handle and unchanged fields.
+  A declaration or field value alone grants no memory authority.
 - Checked folds may follow C returns on multiple retained execution paths.
   Each fold is tied to its exact path's ownership, memory, and guard case;
   sibling evidence cannot supply the fold. Completion collects the path-local
@@ -95,6 +101,8 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_fields.md](../mdtests/resource_fields.md)
 - [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
+- [resource_cell_construction.md](../mdtests/resource_cell_construction.md)
+- [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
@@ -112,12 +120,18 @@ expansion/rechecking, and deterministic multi-size scaling:
    witnesses, nested resource guards/matches, arbitrary scrutinees, and general
    resource `if/else` remain unsupported. Keep recursion finite and avoid
    eagerly traversing an unknown model when extending these cases.
-2. **Field establishment and updates.** Define how body proofs initially
-   establish fields and justify changed fields. Fields are symbolic values,
+2. **Field establishment and updates.** Plain unconditional memory bodies
+   support `let c = fold(cell(p), { model: Mark::Set(value) });`, with every field
+   supplied explicitly. `produces c: cell(p);` can introduce a result resource
+   from raw ownership. Folding checks the body with the proposed fields;
+   unfolding consumes the instance without an open handle. Existing
+   `fold(c)` proofs use entry-state fields as a compatibility template.
+   Migrate guarded and
+   recursive bodies away from their open-handle protocol. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
    relation to concrete memory. Support arbitrary symbolic terms in post-state
-   snapshots, not just entry variables or concrete constructors. Syntax for
-   establishment and updates remains undecided.
+   snapshots, not just entry variables or concrete constructors. Independently
+   named children and explicit child selection at fold remain to be designed.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
    contracts, and transport parent-qualified child handles through explicit

@@ -1366,6 +1366,33 @@ pub fn apply_c_function_contract_resource_transition(
     }
 }
 
+/// Prepares the count interpretation used to prove a function's return
+/// resource invariants, without transferring the body's ownership. This
+/// creates no theorem or invariant facts: the eventual specification must
+/// still be certified against the checked exit outcome. In particular callers
+/// must not project resource invariant facts from this provisional state.
+pub(crate) fn function_body_with_return_counts(
+    body: &CFunctionOutcome,
+    checked_exit: &CFunctionOutcome,
+) -> CFunctionOutcome {
+    match (body, checked_exit) {
+        (
+            CFunctionOutcome::Return { value, state },
+            CFunctionOutcome::Return {
+                state: exit_state, ..
+            },
+        ) => {
+            let mut state = state.clone();
+            state.counted_populations = exit_state.counted_populations.clone();
+            CFunctionOutcome::Return {
+                value: value.clone(),
+                state,
+            }
+        }
+        _ => body.clone(),
+    }
+}
+
 /// Applies a kernel-checked, zero-source construction of one abstract token
 /// to a function outcome state.
 pub fn construct_c_function_resource(
