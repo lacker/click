@@ -891,6 +891,12 @@ pub(crate) struct CheckedLoadEquality {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum CheckedLoadEqualityEvidence {
+    OriginStoredValue {
+        endpoint: OriginLoadEndpoint,
+        cell: MemoryDagCell,
+        offset: PointerOffsetCongruenceEvidence,
+        reversed: bool,
+    },
     /// Both terms have the same assumption-free canonical form. This is a
     /// structural check, not a lookup through ambient equality facts.
     Canonical,
@@ -1296,6 +1302,35 @@ impl CheckedLoadEquality {
         call_events: &crate::kernel::proof::CheckedCallEvents,
     ) -> bool {
         match &self.evidence {
+            CheckedLoadEqualityEvidence::OriginStoredValue {
+                endpoint,
+                cell,
+                offset,
+                reversed,
+            } => {
+                let (value, load) = if *reversed {
+                    (&self.right, &self.left)
+                } else {
+                    (&self.left, &self.right)
+                };
+                let Some(derivation) = cell.node().derivation() else {
+                    return false;
+                };
+                let CMemoryDerivation::Store {
+                    pointer,
+                    value: CValue::Int32(stored),
+                    ..
+                } = derivation.as_ref()
+                else {
+                    return false;
+                };
+                endpoint.matches_term(load)
+                    && cell.has_only_typed_hops()
+                    && cell.checks_walk_from(&endpoint.memory, &endpoint.pointer, assumptions)
+                    && pointer.block == endpoint.pointer.block
+                    && offset.checks(&pointer.offset, &endpoint.pointer.offset, assumptions)
+                    && stored == value
+            }
             CheckedLoadEqualityEvidence::Canonical => {
                 crate::kernel::eval::canonical_term(&self.left)
                     == crate::kernel::eval::canonical_term(&self.right)
@@ -1401,6 +1436,7 @@ impl CheckedLoadEquality {
         match &self.evidence {
             CheckedLoadEqualityEvidence::MemoryDag(evidence) => Some(evidence),
             CheckedLoadEqualityEvidence::Canonical
+            | CheckedLoadEqualityEvidence::OriginStoredValue { .. }
             | CheckedLoadEqualityEvidence::OriginDirectSnapshot { .. }
             | CheckedLoadEqualityEvidence::OriginMemoryDag { .. }
             | CheckedLoadEqualityEvidence::OriginEffectSummary { .. }
@@ -1461,6 +1497,68 @@ pub(crate) fn checked_recorded_atomic_load_equality(
     };
     retain_checked_load_equality(equality);
     true
+}
+
+/// Retain a selected stored-value path for a rewritten load representation.
+pub(crate) fn checked_stored_origin_equality(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    for (value, load, reversed) in [(left, right, false), (right, left, true)] {
+        let Some(endpoint) = OriginLoadEndpoint::for_term(load) else {
+            continue;
+        };
+        let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
+        let cell = with_extended_dag_bridging(|| {
+            memory_dag_cell_source(&endpoint.memory, &endpoint.pointer, assumptions, true)
+        });
+        EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
+        let Some(cell) = cell else {
+            continue;
+        };
+        if !cell.has_only_typed_hops() {
+            continue;
+        }
+        let Some(derivation) = cell.node().derivation() else {
+            continue;
+        };
+        let CMemoryDerivation::Store {
+            pointer,
+            value: CValue::Int32(stored),
+            ..
+        } = derivation.as_ref()
+        else {
+            continue;
+        };
+        if stored != value || pointer.block != endpoint.pointer.block {
+            continue;
+        }
+        let Some(offset) = assumptions
+            .pointer_offset_congruence_evidence(&pointer.offset, &endpoint.pointer.offset)
+        else {
+            continue;
+        };
+        let equality = CheckedLoadEquality {
+            left: left.clone(),
+            right: right.clone(),
+            evidence: CheckedLoadEqualityEvidence::OriginStoredValue {
+                endpoint,
+                cell,
+                offset,
+                reversed,
+            },
+        };
+        if !equality.checks_with_call_events(
+            assumptions,
+            &crate::kernel::proof::CheckedCallEvents::default(),
+        ) {
+            continue;
+        }
+        retain_checked_load_equality(equality);
+        return true;
+    }
+    false
 }
 
 /// Select a finite equality witness for two loads at the snapshots where the

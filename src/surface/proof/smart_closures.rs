@@ -3532,6 +3532,14 @@ impl<'a> Proof<'a> {
                 }
                 return Ok(None);
             }
+            // The theorem can close the goal before a written rewrite suffix.
+            // Retain that completed application as a checked have, keeping the
+            // outer goal open so the suffix is checked rather than discarded.
+            let retain_application = matches!(tactic, ProofTactic::ApplyTheoremUsing { .. })
+                && tactics
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(next, ProofTactic::Rewrite(_)));
+            let before_application = retain_application.then(|| proof.clone());
             match tactic {
                 ProofTactic::ApplyTheorem(application) => {
                     if authoritative {
@@ -3655,6 +3663,18 @@ impl<'a> Proof<'a> {
                         .expect("the linear script was recognized before execution");
                     proof = proof.apply_step(step)?;
                 }
+            }
+            if let Some(before) = before_application
+                && proof.focused_discharged()
+            {
+                let Some(proposition) = before.surface_goal().cloned() else {
+                    return Ok(None);
+                };
+                let body = proof.certificate_since(&before.checkpoint())?;
+                proof = before.apply_step(ProofStep::Have {
+                    proposition,
+                    proof: Box::new(body),
+                })?;
             }
         }
 

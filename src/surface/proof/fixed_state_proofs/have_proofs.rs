@@ -659,45 +659,6 @@ pub(in crate::surface::proof) fn reverse_kernel_equality(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::surface::proof) fn prove_have_in_current_state(
-    have: &ProofHave,
-    theorem_environment: &TheoremEnvironment,
-    claim_label: &str,
-    outer_tactic_index: usize,
-    outer_available: &[Proposition],
-    transition_facts: &[ExecutionPureFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    recorded_snapshots: &RecordedSnapshots,
-    surface_propositions: &SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    original_requirements: &[Requirement],
-) -> Result<Proposition, ClickError> {
-    prove_have_in_state(
-        have,
-        theorem_environment,
-        claim_label,
-        outer_tactic_index,
-        outer_available,
-        transition_facts,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        None,
-        recorded_snapshots,
-        Some(surface_propositions),
-        predicate_environment,
-        click_function_environment,
-        original_requirements,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
     have: &ProofHave,
     claim_label: &str,

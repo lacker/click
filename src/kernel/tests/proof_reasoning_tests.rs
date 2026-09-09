@@ -433,8 +433,7 @@ fn pointer_substitution_replaces_the_block_and_preserves_the_offset() {
 
 #[test]
 fn atomic_derivation_evidence_does_not_inline_multi_premise_payloads() {
-    let one_step_envelope = std::mem::size_of::<SignedOrderDerivationStep>()
-        + std::mem::align_of::<SignedOrderDerivationStep>();
+    let one_step_envelope = 4 * std::mem::size_of::<usize>();
     assert!(
         std::mem::size_of::<AtomicPropositionDerivationEvidence>() <= one_step_envelope,
         "multi-premise evidence must stay behind an indirection so unrelated recursive proof frames do not grow"

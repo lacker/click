@@ -116,12 +116,26 @@ leaf/binder work is now outlined without changing proof rules, traversal
 order, synthesis depth/work limits, or the ordinary stack size. Four-size
 1 MiB-stack regressions check linear visits/work in both directions.
 
-`explicit_sorting_transport_has_a_bounded_lowering_result` retains that full
-unchanged-C reproduction. It now returns the existing local smart-work-budget
-failure from `close_invariants` (2,000,001 units against the 2,000,000 limit),
-not a stack overflow. The failing proof is not expanded. The full quantified
-planner task remains open; the successful reduced C is not substituted for
-the original fixture.
+The full reproduction now explicitly enumerates the fixed-range invariant and
+carries the branch ordering through the swap. Its growing invariant's
+`unfold; rewrite(j == 1); simp` body constructs a checked proof, expands, and
+independently rechecks. The regression is
+`sorting_rewritten_invariant_body_checks_and_expands`; it retains the original
+C and invariants and leaves the original legacy closers in place for this
+positive proof-body check.
+
+The rewrite retains typed load-equality witnesses, including an exact stored
+source value, the selected destination-address equality, and intervening
+memory edges. This connects the rewritten source goal to its kernel value
+representation. The mid-execution `have` success-without-a-proof fallback is
+deleted: success now requires a retained body. Atomic derivation payloads are
+boxed to keep unrelated evidence off recursive frames; the small-stack
+scaling regression and a compact representation-size assertion cover this.
+
+The same test separately replaces all bare closers with explicit `simp`
+bodies and requires a bounded closure-planning miss with zero legacy discovery.
+That failing variant is not expanded. Exact closure value/safety planning,
+automatic body emission, and legacy closer removal remain open.
 
 The aggregate regression also crosses nextest's 10-second slow-test threshold:
 an isolated run on `8ccc9bd6` took 11.5 seconds, and a resource-match worktree
