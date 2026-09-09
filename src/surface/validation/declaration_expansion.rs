@@ -423,6 +423,7 @@ fn expand_declared_resource_tactic(
         tactic @ (ProofTactic::Have(_)
         | ProofTactic::Open(_)
         | ProofTactic::If(_)
+        | ProofTactic::Match(_)
         | ProofTactic::Cases(_)
         | ProofTactic::StructuralInduct { .. }
         | ProofTactic::Branch(_)
