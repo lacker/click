@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Eleven independent root causes. Every one has a reproduction that verifies
+Ten independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Five are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other six are high: the trigger is
+false, with no unusual tactics. The other five are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -561,71 +561,6 @@ The function returns 9.
   pins the inline path specifically.
 
 ---
-
-## 10. A reloaded pointer to a local is treated as a distinct block
-
-**Severity: high.** After a call, a pointer loaded back out of caller-visible
-memory no longer aliases the local it points to, and the resulting state is
-contradictory.
-
-**Violated invariant.** A pointer value loaded from memory that may hold the
-address of a local must be able to alias that local. A state in which
-`q == &x` holds and a store through `q` does not affect `x` is unsound
-regardless of what is then proved from it.
-
-**Mechanism.** The reload after a `CallHavoc` edge produces a symbolic pointer
-in a fresh block rather than one that may alias existing blocks
-(`src/kernel/functions.rs` call application together with the transport rules
-in `src/kernel/memory_provenance.rs`).
-
-**Regression** (`mdtests/reloaded_local_pointer_rejected.md`):
-
-```c
-void keep(int32** pp) {
-}
-
-int32 reloaded_store_hits_local(int32** pp) {
-    int32 x = 1;
-    int32* q;
-    *pp = &x;
-    keep(pp);
-    q = *pp;
-    if (q == &x) {
-        *q = 2;
-    }
-    return x;
-}
-```
-
-```click
-verifying "t.c";
-
-void keep(int32** pp) {
-    requires loadable(pp[0..1]);
-    consumes pp[0..1];
-    mutable pp[0..1];
-    ensures pp[0] == old(pp[0]);
-    produces pp[0..1];
-}
-
-int32 reloaded_store_hits_local(int32** pp) {
-    requires loadable(pp[0..1]);
-    consumes pp[0..1];
-    mutable pp[0..1];
-    ensures result == 1;
-    produces pp[0..1];
-}
-```
-
-The branch is taken and `*q = 2` writes `x`, so the function returns 2. That
-`ensures result == 7` also verifies is the tell: the post-call state is
-inconsistent.
-
-**Acceptance criteria.**
-- The sidecar is rejected, and the state after the call proves no numeric value
-  for `result` other than through the real aliasing.
-- Add an inconsistency probe to the regression: a claim like `result == 7`,
-  which no execution satisfies, must never verify.
 
 ---
 

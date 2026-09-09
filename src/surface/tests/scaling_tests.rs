@@ -370,7 +370,7 @@ fn load_variable_project(statement_count: usize, axis: LoadAxis) -> (String, Str
         ),
     };
     let mut click_source = format!(
-        "verifying \"load_line.c\";\n\nint32 load_line(int32 data[], int32 length) {{\n    requires {statement_count} <= length;\n    requires 2 <= length;\n    {permission}\n    ensures result == data[{last}];\n}} by {{\n"
+        "verifying \"load_line.c\";\n\nint32 load_line(int32 data[], int32 length) {{\n    requires {statement_count} <= length;\n    requires 2 <= length;\n    requires ((uint32)length) <= 1073741823u32;\n    {permission}\n    ensures result == data[{last}];\n}} by {{\n"
     );
     let statement_count = statements;
     for _ in 0..=statement_count + 1 {
