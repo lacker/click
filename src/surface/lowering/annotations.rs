@@ -427,6 +427,12 @@ pub(in crate::surface) fn annotated_function(
     } else {
         &[]
     };
+    let resource_derived_mutable_frame = function_block.effects().is_empty()
+        && (!contract_mutable.is_empty()
+            || function_block
+                .requires()
+                .iter()
+                .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_))));
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         function_effects: if inherit_function_effects_into_loops {
@@ -542,7 +548,7 @@ pub(in crate::surface) fn annotated_function(
             "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
         )));
     }
-    Ok(if function_block.effects().is_empty() {
+    Ok(if resource_derived_mutable_frame {
         function.with_resource_derived_mutable_frame()
     } else {
         function

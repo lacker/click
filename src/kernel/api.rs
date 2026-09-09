@@ -320,7 +320,7 @@ fn c_loop_preservation_contexts_with_mode(
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {
                 state: top_state.clone(),
-                loop_entry_state: top_state.clone(),
+                loop_entry_state: loop_entry_state.clone(),
                 pure_facts,
                 whole_loop_effect_facts: whole_loop_effect_summaries.clone(),
             });
