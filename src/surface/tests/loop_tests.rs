@@ -1,5 +1,169 @@
 use super::*;
 
+/// The former stack-overflow reproduction must return a local search result.
+/// The full quantified proof remains a planner task; never expand its failure.
+#[test]
+fn explicit_sorting_transport_has_a_bounded_lowering_result() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/bubble_sort3_two_pass_sorted.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    verify_c0_sources(click, &sources).unwrap();
+    let mut expanded = expand_c0_claim_source(
+        click,
+        &sources,
+        "bubble_sort3_two_pass",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    let preserve = expanded.rfind("preserve by {").unwrap();
+    let branch = preserve + expanded[preserve..].find("if ").unwrap();
+    expanded.insert_str(branch, r#"
+        unfold(all_le_range);
+        have j == 0 by {
+            apply(int32_lt_successor_implies_le(j, 0)) using { j < 1; }
+            apply(int32_le_and_not_lt_implies_eq(j, 0)) using { j <= 0; j >= 0; }
+            assumption();
+        }
+        have p[0] <= p[2] by {
+            instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 0) using {}
+            assumption();
+        }
+        have p[1] <= p[2] by {
+            instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 1) using {}
+            assumption();
+        }
+        mark before_swap;
+    "#);
+    let swap_close = preserve + expanded[preserve..].find("close_invariants();").unwrap();
+    expanded.insert_str(
+        swap_close,
+        r#"
+        transport(at(before_swap, p[1] <= p[2]), p[0] <= p[2]) using {
+            at(before_swap, p[1] <= p[2]); at(before_swap, j) == 0;
+        }
+        transport(at(before_swap, p[0] <= p[2]), p[1] <= p[2]) using {
+            at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
+        }
+    "#,
+    );
+    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
+    let discovery_before = crate::kernel::invariant_discovery_calls();
+    if let Err(error) = verify_c0_sources(&explicit, &sources) {
+        let message = error.message();
+        assert!(
+            message.contains("closure body did not prove every invariant obligation")
+                || (message.contains("deterministic smart work budget")
+                    && message.contains("close_invariants")),
+            "{message}"
+        );
+    }
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
+}
+
+#[test]
+fn explicit_straight_line_swap_transports_an_entry_bound() {
+    for index in ["0", "j"] {
+        let c = format!(
+            "int32 swap(int32 p[3], int32 j) {{ int32 tmp; tmp = p[{index}]; p[{index}] = p[{index} + 1]; p[{index} + 1] = tmp; return 0; }}"
+        );
+        let click = r#"
+            verifying "swap.c";
+            int32 swap(int32 p[3], int32 j) {
+                requires j == 0;
+                requires p[0] <= p[2];
+                requires p[1] <= p[2];
+                consumes p[0..3];
+                ensures p[0] <= p[2];
+            } by {
+                step(); step(); step(); step();
+                have p[0] <= p[2] by {
+                    transport(old(p[1]) <= old(p[2]), p[0] <= p[2]) using {
+                        old(p[1]) <= old(p[2]); old(j) == 0;
+                    }
+                    assumption();
+                }
+                step(); simp();
+            }
+        "#;
+        verify_c0_sources(click, &[("swap.c", c.as_str())])
+            .unwrap_or_else(|e| panic!("index {index}: {}", e.message()));
+    }
+}
+
+/// A reduction of the second sorting loop, not a replacement for its original C.
+/// Existing simple steps suffice when entry index and cell facts are explicit.
+#[test]
+fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
+    let c = "int32 swap(int32 p[3]) { int32 j; int32 tmp; j = 0; while (j < 1) { if (p[j + 1] < p[j]) { tmp = p[j]; p[j] = p[j + 1]; p[j + 1] = tmp; } j = j + 1; } return 0; }";
+    let transport = r#"
+        transport(at(before_swap, p[1] <= p[2]), p[0] <= p[2]) using {
+            at(before_swap, p[1] <= p[2]); at(before_swap, j) == 0;
+        }
+        transport(at(before_swap, p[0] <= p[2]), p[1] <= p[2]) using {
+            at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
+        }
+    "#;
+    let click = format!(
+        r#"
+        verifying "swap.c";
+        int32 swap(int32 p[3]) {{
+            requires p[0] <= p[2]; requires p[1] <= p[2];
+            consumes p[0..3]; ensures result == 0;
+        }} by {{
+            step(); step(); step();
+            loop {{
+                invariant j >= 0 and j <= 1;
+                invariant p[0] <= p[2];
+                invariant p[1] <= p[2];
+                initialize by simp;
+                preserve by {{
+                    have j == 0 by {{
+                        apply(int32_lt_successor_implies_le(j, 0)) using {{ j < 1; }}
+                        apply(int32_le_and_not_lt_implies_eq(j, 0)) using {{ j <= 0; j >= 0; }}
+                        assumption();
+                    }}
+                    mark before_swap;
+                    if p[j + 1] < p[j] {{
+                        step(); step(); step(); step(); step();
+                        {transport}
+                        close_invariants by {{ simp(); }}
+                    }} else {{
+                        step(); step(); step();
+                        close_invariants by {{ simp(); }}
+                    }}
+                }}
+            }}
+            step(); simp();
+        }}
+    "#
+    );
+    let sources = [("swap.c", c)];
+    let discovery_before = crate::kernel::invariant_discovery_calls();
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "swap", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    assert!(!expanded.contains("close_invariants();"));
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
+
+    let missing_transports = click.replace(transport, "");
+    assert_ne!(missing_transports, click);
+    let error = verify_c0_sources(&missing_transports, &sources).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("closure body did not prove every invariant obligation")
+    );
+    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
+}
+
 #[test]
 fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
     let c_source = "int32 count() { int32 i; i = 0; while (i < 3) { i = i + 1; } return i; }";
